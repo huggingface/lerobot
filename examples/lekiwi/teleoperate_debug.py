@@ -57,13 +57,13 @@ while True:
     arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
 
     keyboard_keys = keyboard.get_action()
-    
+
     # 添加键盘调试信息
     if loop_count % 30 == 0:  # 每30帧打印一次
         print(f"键盘按键: {keyboard_keys}")
-    
+
     base_action = robot._from_keyboard_to_base_action(keyboard_keys)
-    
+
     # 添加动作调试信息
     if base_action and any(v != 0 for v in base_action.values()):
         print(f"检测到键盘动作: {base_action}")
@@ -74,4 +74,4 @@ while True:
 
     robot.send_action(action)
 
-    busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0)) 
+    busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))

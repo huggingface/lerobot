@@ -107,7 +107,7 @@ class SO100Leader(Teleoperator):
         full_turn_motors = []
         unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
         print(
-            f"Move all joints sequentially through their "
+            "Move all joints sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)

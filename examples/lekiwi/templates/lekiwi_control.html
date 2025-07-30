@@ -58,29 +58,29 @@
                 <h2 class="text-2xl font-bold text-gray-800 mb-2">LeKiwi 连接设置</h2>
                 <p class="text-gray-600">请输入机器人连接参数</p>
             </div>
-            
+
             <form id="connectionForm" class="space-y-4">
                 <div>
                     <label for="remoteIp" class="block text-sm font-medium text-gray-700 mb-2">
                         机器人IP地址
                     </label>
-                    <input type="text" id="remoteIp" name="remoteIp" 
+                    <input type="text" id="remoteIp" name="remoteIp"
                            value="192.168.101.33" required
                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
-                
+
                 <div>
                     <label for="armPort" class="block text-sm font-medium text-gray-700 mb-2">
                         机械臂端口
                     </label>
-                    <input type="text" id="armPort" name="armPort" 
+                    <input type="text" id="armPort" name="armPort"
                            value="/dev/ttyACM0" required
                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
-                
+
                 <div>
                     <label class="flex items-center">
-                        <input type="checkbox" id="calibrateArm" name="calibrateArm" 
+                        <input type="checkbox" id="calibrateArm" name="calibrateArm"
                                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
                         <span class="ml-2 text-sm text-gray-700">校准机械臂（首次使用需要）</span>
                     </label>
@@ -88,9 +88,9 @@
                         如果机械臂连接失败，请勾选此选项进行校准。校准过程需要手动移动机械臂到中间位置。
                     </p>
                 </div>
-                
+
                 <div class="flex space-x-3 pt-4">
-                    <button type="submit" 
+                    <button type="submit"
                             class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors">
                         连接
                     </button>
@@ -110,12 +110,12 @@
             <div class="mb-6">
                 <div class="flex items-center justify-between mb-4">
                     <h1 class="text-2xl font-bold text-gray-800">LeKiwi 控制台</h1>
-                    <button id="disconnectBtn" onclick="disconnectRobot()" 
+                    <button id="disconnectBtn" onclick="disconnectRobot()"
                             class="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 transition-colors hidden">
                         断开连接
                     </button>
                 </div>
-                
+
                 <div class="grid grid-cols-2 gap-3 text-sm">
                     <div class="status-indicator px-3 py-2 rounded" id="robot-status">
                         机器人: 未连接
@@ -151,7 +151,7 @@
                         前进 (W)
                     </button>
                     <div></div>
-                    
+
                     <button id="left" class="control-btn bg-blue-500 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-600">
                         左转 (A)
                     </button>
@@ -161,7 +161,7 @@
                     <button id="right" class="control-btn bg-blue-500 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-600">
                         右转 (D)
                     </button>
-                    
+
                     <div></div>
                     <button id="backward" class="control-btn bg-blue-500 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-600">
                         后退 (S)
@@ -208,7 +208,7 @@
         <!-- 右侧视频显示 -->
         <div class="flex-1 bg-black flex items-center justify-center p-4">
             <div class="video-container w-full h-full flex items-center justify-center relative">
-                <img id="video-stream" src="/video_feed" alt="视频流" 
+                <img id="video-stream" src="/video_feed" alt="视频流"
                      class="max-w-full max-h-full object-contain rounded-lg">
                 <div class="absolute top-4 left-4 bg-black bg-opacity-50 text-white px-3 py-1 rounded text-sm">
                     实时视频流
@@ -224,7 +224,7 @@
         // 键盘控制
         const keys = {
             'w': 'forward',
-            's': 'backward', 
+            's': 'backward',
             'a': 'left',
             'd': 'right',
             'h': 'rotate_left',
@@ -252,10 +252,10 @@
             const remoteIp = document.getElementById('remoteIp').value;
             const armPort = document.getElementById('armPort').value;
             const calibrateArm = document.getElementById('calibrateArm').checked;
-            
+
             // 更新状态为连接中
             updateStatusIndicators('connecting');
-            
+
             try {
                 const response = await fetch('/connect', {
                     method: 'POST',
@@ -268,15 +268,15 @@
                         calibrate_arm: calibrateArm
                     })
                 });
-                
+
                 const result = await response.json();
-                
+
                 if (result.success) {
                     isConnected = true;
                     closeConnectionModal();
                     document.getElementById('disconnectBtn').classList.remove('hidden');
                     updateStatusIndicators('connected');
-                    
+
                     // 显示连接成功消息
                     if (calibrateArm) {
                         alert('连接成功！机械臂校准已完成。');
@@ -303,9 +303,9 @@
                         'Content-Type': 'application/json',
                     }
                 });
-                
+
                 const result = await response.json();
-                
+
                 if (result.success) {
                     isConnected = false;
                     document.getElementById('disconnectBtn').classList.add('hidden');
@@ -325,22 +325,22 @@
         function updateStatusIndicators(status) {
             const robotStatus = document.getElementById('robot-status');
             const armStatus = document.getElementById('arm-status');
-            
+
             const statusClasses = {
                 'connected': 'status-connected',
                 'disconnected': 'status-disconnected',
                 'connecting': 'status-connecting'
             };
-            
+
             const statusTexts = {
                 'connected': '已连接',
                 'disconnected': '未连接',
                 'connecting': '连接中...'
             };
-            
+
             robotStatus.className = `status-indicator px-3 py-2 rounded ${statusClasses[status]}`;
             armStatus.className = `status-indicator px-3 py-2 rounded ${statusClasses[status]}`;
-            
+
             robotStatus.textContent = `机器人: ${statusTexts[status]}`;
             armStatus.textContent = `机械臂: ${statusTexts[status]}`;
         }
@@ -348,7 +348,7 @@
         // 键盘事件监听
         document.addEventListener('keydown', (e) => {
             if (!isConnected) return;
-            
+
             const key = e.key.toLowerCase();
             if (keys[key] && !pressedKeys.has(key)) {
                 console.log('键盘按下:', key);
@@ -362,7 +362,7 @@
 
         document.addEventListener('keyup', (e) => {
         if (!isConnected) return;
-        
+
         const key = e.key.toLowerCase();
         if (keys[key]) {
             console.log('键盘释放:', key);
@@ -459,12 +459,12 @@
                 document.getElementById(id)?.classList.remove('active');
             });
             activeButtons.clear();
-            
+
             // 发送stop动作
             const action = {
                 keys: ['stop']
             };
-            
+
             console.log('发送停止动作:', action.keys);
             fetch('/send_action', {
                 method: 'POST',
@@ -480,14 +480,14 @@
         // 发送动作到服务器
         async function sendAction() {
             if (!isConnected) return;
-            
+
             // 将按键名称转换为动作名称
             const actionKeys = Array.from(pressedKeys).map(key => keys[key] || key);
-            
+
             const action = {
                 keys: actionKeys
             };
-            
+
             // 只有当有按键时才发送动作
             if (action.keys.length > 0) {
                 console.log('发送动作:', action.keys);
@@ -510,12 +510,12 @@
             try {
                 const response = await fetch('/get_status');
                 const data = await response.json();
-                
+
                 document.getElementById('speed-display').textContent = data.speed_level;
                 document.getElementById('x-vel').textContent = data.x_vel.toFixed(2) + ' m/s';
                 document.getElementById('y-vel').textContent = data.y_vel.toFixed(2) + ' m/s';
                 document.getElementById('theta-vel').textContent = data.theta_vel.toFixed(2) + ' deg/s';
-                
+
                 // 更新连接状态
                 const wasConnected = isConnected;
                 if (data.robot_connected && data.arm_connected) {
@@ -546,17 +546,17 @@
 
         // 定期更新状态
         setInterval(updateStatus, 1000);
-        
+
         // 初始化
         updateStatus();
-        
+
         // 显示连接模态框
         showConnectionModal();
-        
+
         // 调试信息
         console.log('页面初始化完成');
         console.log('当前按键状态:', pressedKeys);
         console.log('当前连接状态:', isConnected);
     </script>
 </body>
-</html> 
+</html>

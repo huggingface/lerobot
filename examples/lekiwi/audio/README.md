@@ -43,11 +43,13 @@ python app.py
 ## API接口
 
 ### 获取音频配置
+
 ```
 GET /api/audio/config
 ```
 
 ### 更新音频配置
+
 ```
 POST /api/audio/config
 Content-Type: application/json
@@ -60,16 +62,19 @@ Content-Type: application/json
 ```
 
 ### 获取音频统计
+
 ```
 GET /api/audio/stats
 ```
 
 ### 启动服务器录音
+
 ```
 POST /api/audio/record/start
 ```
 
 ### 停止服务器录音
+
 ```
 POST /api/audio/record/stop
 ```
@@ -77,12 +82,14 @@ POST /api/audio/record/stop
 ## WebSocket事件
 
 ### 客户端发送事件
+
 - `audio_data`: 发送音频数据到服务器
 - `start_recording`: 请求启动服务器录音
 - `stop_recording`: 请求停止服务器录音
 - `stop_audio`: 请求停止服务器音频播放
 
 ### 服务器发送事件
+
 - `server_audio`: 服务器录音数据
 - `recording_status`: 录音状态更新
 - `recording_error`: 录音错误信息
@@ -106,16 +113,19 @@ POST /api/audio/record/stop
 ## 故障排除
 
 ### 音频播放问题
+
 - 检查系统音频设备是否正常工作
 - 调整 `buffer_size` 参数
 - 确保pygame正确初始化
 
 ### 录音问题
+
 - 检查麦克风权限
 - 确保pyaudio正确安装
 - 检查系统音频输入设备
 
 ### 网络延迟问题
+
 - 调整 `queue_size` 和 `queue_timeout` 参数
 - 启用 `enable_direct_play` 选项
 - 检查网络连接质量
@@ -125,4 +135,4 @@ POST /api/audio/record/stop
 - 服务器录音功能需要系统有可用的音频输入设备
 - 在Docker容器中运行时，需要正确配置音频设备
 - 高采样率和大缓冲区会增加延迟，但提高稳定性
-- 建议在生产环境中使用更专业的音频处理库 
+- 建议在生产环境中使用更专业的音频处理库

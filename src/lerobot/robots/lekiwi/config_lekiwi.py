@@ -82,7 +82,6 @@ class LeKiwiClientConfig(RobotConfig):
             "right": "d",
             "rotate_left": "h",
             "rotate_right": "j",
-            
             # Speed control
             "speed_up": "r",
             "speed_down": "f",

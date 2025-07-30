@@ -6,11 +6,11 @@ LeKiwi 简化网页遥操作服务
 """
 
 import json
-import time
 import threading
-import base64
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
+
 import cv2
 import numpy as np
 
@@ -39,8 +39,8 @@ HTML_PAGE = """
         .container { display: flex; height: 90vh; }
         .control-panel { width: 300px; background: white; padding: 20px; border-radius: 10px; margin-right: 20px; }
         .video-panel { flex: 1; background: black; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
-        .control-btn { 
-            width: 80px; height: 80px; margin: 5px; border: none; border-radius: 10px; 
+        .control-btn {
+            width: 80px; height: 80px; margin: 5px; border: none; border-radius: 10px;
             font-size: 14px; font-weight: bold; cursor: pointer; transition: background 0.2s;
         }
         .direction-btn { background: #4CAF50; color: white; }
@@ -61,7 +61,7 @@ HTML_PAGE = """
     <div class="container">
         <div class="control-panel">
             <h2>控制面板</h2>
-            
+
             <div class="status">
                 <div>机器人状态: <span id="robot-status">连接中...</span></div>
                 <div>机械臂状态: <span id="arm-status">连接中...</span></div>
@@ -158,124 +158,126 @@ HTML_PAGE = """
 </html>
 """
 
+
 class LeKiwiHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_path = urlparse(self.path)
-        
-        if parsed_path.path == '/':
+
+        if parsed_path.path == "/":
             self.send_response(200)
-            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.send_header("Content-type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(HTML_PAGE.encode('utf-8'))
-            
-        elif parsed_path.path == '/video':
+            self.wfile.write(HTML_PAGE.encode("utf-8"))
+
+        elif parsed_path.path == "/video":
             self.send_response(200)
-            self.send_header('Content-type', 'image/jpeg')
+            self.send_header("Content-type", "image/jpeg")
             self.end_headers()
-            
+
             with frame_lock:
                 if latest_frame is not None:
-                    ret, buffer = cv2.imencode('.jpg', latest_frame)
+                    ret, buffer = cv2.imencode(".jpg", latest_frame)
                     if ret:
                         self.wfile.write(buffer.tobytes())
                     else:
                         # 发送空白图像
-                        self.wfile.write(b'')
+                        self.wfile.write(b"")
                 else:
-                    self.wfile.write(b'')
-                    
-        elif parsed_path.path == '/status':
+                    self.wfile.write(b"")
+
+        elif parsed_path.path == "/status":
             self.send_response(200)
-            self.send_header('Content-type', 'application/json')
+            self.send_header("Content-type", "application/json")
             self.end_headers()
-            
+
             try:
                 speed_levels = ["低速", "中速", "高速"]
                 speed_level = speed_levels[robot.speed_index] if robot else "未知"
-                
-                x_vel = current_action.get('x.vel', 0.0)
-                y_vel = current_action.get('y.vel', 0.0)
-                theta_vel = current_action.get('theta.vel', 0.0)
-                
+
+                x_vel = current_action.get("x.vel", 0.0)
+                y_vel = current_action.get("y.vel", 0.0)
+                theta_vel = current_action.get("theta.vel", 0.0)
+
                 status_data = {
                     "robot_connected": robot.is_connected if robot else False,
                     "arm_connected": leader_arm.is_connected if leader_arm else False,
                     "speed_level": speed_level,
                     "x_vel": x_vel,
                     "y_vel": y_vel,
-                    "theta_vel": theta_vel
+                    "theta_vel": theta_vel,
                 }
-                
-                self.wfile.write(json.dumps(status_data).encode('utf-8'))
+
+                self.wfile.write(json.dumps(status_data).encode("utf-8"))
             except Exception as e:
-                self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
-            self.wfile.write(b'Not Found')
+            self.wfile.write(b"Not Found")
 
     def do_POST(self):
-        if self.path == '/control':
-            content_length = int(self.headers['Content-Length'])
+        if self.path == "/control":
+            content_length = int(self.headers["Content-Length"])
             post_data = self.rfile.read(content_length)
-            
+
             try:
-                data = json.loads(post_data.decode('utf-8'))
-                key = data.get('key', '')
-                
+                data = json.loads(post_data.decode("utf-8"))
+                key = data.get("key", "")
+
                 # 处理按键
-                if key == 'stop':
+                if key == "stop":
                     # 停止所有动作
                     pressed_keys = np.array([False] * 8)
                 else:
                     # 设置对应按键
-                    key_map = ['w', 's', 'a', 'd', 'z', 'x', 'r', 'f']
+                    key_map = ["w", "s", "a", "d", "z", "x", "r", "f"]
                     pressed_keys = np.array([k == key for k in key_map])
-                
+
                 # 转换为机器人动作
                 if robot:
                     base_action = robot._from_keyboard_to_base_action(pressed_keys)
-                    
+
                     # 获取机械臂动作
                     if leader_arm:
                         arm_action = leader_arm.get_action()
                         arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
                     else:
                         arm_action = {}
-                    
+
                     # 合并动作
                     action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-                    
+
                     # 发送动作
                     robot.send_action(action)
-                    
+
                     # 更新全局变量
                     global current_action
                     current_action = action
-                
+
                 self.send_response(200)
-                self.send_header('Content-type', 'application/json')
+                self.send_header("Content-type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"status": "success"}).encode('utf-8'))
-                
+                self.wfile.write(json.dumps({"status": "success"}).encode("utf-8"))
+
             except Exception as e:
                 self.send_response(500)
-                self.send_header('Content-type', 'application/json')
+                self.send_header("Content-type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
-            self.wfile.write(b'Not Found')
+            self.wfile.write(b"Not Found")
 
     def log_message(self, format, *args):
         # 减少日志输出
         pass
 
+
 def init_robot():
     """初始化机器人连接"""
     global robot, leader_arm, keyboard
-    
+
     # 创建配置
     robot_config = LeKiwiClientConfig(remote_ip="192.168.101.33", id="my_lekiwi")
     teleop_arm_config = SO100LeaderConfig(port="/dev/ttyACM0", id="my_awesome_leader_arm")
@@ -305,19 +307,20 @@ def init_robot():
     if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
         raise ValueError("Robot, leader arm or keyboard is not connected!")
 
+
 def robot_control_loop():
     """机器人控制循环"""
     global current_action, latest_frame
-    
+
     FPS = 30
-    
+
     while True:
         t0 = time.perf_counter()
 
         try:
             # 获取观察数据
             observation = robot.get_observation()
-            
+
             # 获取机械臂动作
             arm_action = leader_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
@@ -325,49 +328,50 @@ def robot_control_loop():
             # 获取键盘动作
             keyboard_keys = keyboard.get_action()
             base_action = robot._from_keyboard_to_base_action(keyboard_keys)
-            
+
             # 合并动作
             action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-            
+
             # 发送动作
             robot.send_action(action)
-            
+
             # 更新全局变量
             current_action = action
-            
+
             # 更新视频帧
-            if 'front' in observation:
+            if "front" in observation:
                 with frame_lock:
-                    latest_frame = observation['front']
-            
+                    latest_frame = observation["front"]
+
             # 控制循环频率
             busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
-            
+
         except Exception as e:
             print(f"控制循环错误: {e}")
             time.sleep(0.1)
+
 
 def main():
     """主函数"""
     print("=== LeKiwi 简化网页遥操作服务 ===")
     print("正在初始化机器人连接...")
-    
+
     try:
         # 初始化机器人
         init_robot()
-        
+
         # 启动控制线程
         control_thread = threading.Thread(target=robot_control_loop, daemon=True)
         control_thread.start()
-        
+
         print("机器人控制线程已启动")
         print("启动Web服务器...")
         print("请在浏览器中访问: http://localhost:8080")
-        
+
         # 启动HTTP服务器
-        server = HTTPServer(('0.0.0.0', 8080), LeKiwiHTTPHandler)
+        server = HTTPServer(("0.0.0.0", 8080), LeKiwiHTTPHandler)
         server.serve_forever()
-        
+
     except KeyboardInterrupt:
         print("\n正在关闭服务...")
     except Exception as e:
@@ -382,5 +386,6 @@ def main():
             keyboard.disconnect()
         print("服务已关闭")
 
+
 if __name__ == "__main__":
-    main() 
+    main()

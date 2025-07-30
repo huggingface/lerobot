@@ -6,16 +6,12 @@ LeKiwi 网页遥操作服务
 使用Flask作为Web服务器，TailwindCSS进行样式设计。
 """
 
-import base64
-import json
-import time
 import threading
-from io import BytesIO
-from typing import Dict, Any
+import time
 
 import cv2
 import numpy as np
-from flask import Flask, render_template_string, Response, request, jsonify
+from flask import Flask, Response, jsonify, render_template_string, request
 from flask_cors import CORS
 
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
@@ -95,7 +91,7 @@ HTML_TEMPLATE = """
                         前进 (W)
                     </button>
                     <div></div>
-                    
+
                     <button id="left" class="control-btn bg-blue-500 text-white py-3 px-4 rounded-lg font-medium">
                         左转 (A)
                     </button>
@@ -105,7 +101,7 @@ HTML_TEMPLATE = """
                     <button id="right" class="control-btn bg-blue-500 text-white py-3 px-4 rounded-lg font-medium">
                         右转 (D)
                     </button>
-                    
+
                     <div></div>
                     <button id="backward" class="control-btn bg-blue-500 text-white py-3 px-4 rounded-lg font-medium">
                         后退 (S)
@@ -155,7 +151,7 @@ HTML_TEMPLATE = """
         // 键盘控制
         const keys = {
             'w': 'forward',
-            's': 'backward', 
+            's': 'backward',
             'a': 'left',
             'd': 'right',
             'z': 'rotate-left',
@@ -254,7 +250,7 @@ HTML_TEMPLATE = """
             const action = {
                 keys: Array.from(pressedKeys)
             };
-            
+
             fetch('/send_action', {
                 method: 'POST',
                 headers: {
@@ -286,10 +282,11 @@ HTML_TEMPLATE = """
 </html>
 """
 
+
 def init_robot():
     """初始化机器人连接"""
     global robot, leader_arm, keyboard
-    
+
     # 创建配置
     robot_config = LeKiwiClientConfig(remote_ip="192.168.101.33", id="my_lekiwi")
     teleop_arm_config = SO100LeaderConfig(port="/dev/ttyACM0", id="my_awesome_leader_arm")
@@ -319,13 +316,14 @@ def init_robot():
     if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
         raise ValueError("Robot, leader arm or keyboard is not connected!")
 
+
 def robot_control_loop():
     """机器人控制循环"""
     global current_action, latest_frame
-    
+
     FPS = 30
     loop_count = 0
-    
+
     while True:
         t0 = time.perf_counter()
         loop_count += 1
@@ -333,7 +331,7 @@ def robot_control_loop():
         try:
             # 获取观察数据
             observation = robot.get_observation()
-            
+
             # 获取机械臂动作
             arm_action = leader_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
@@ -341,120 +339,127 @@ def robot_control_loop():
             # 获取键盘动作
             keyboard_keys = keyboard.get_action()
             base_action = robot._from_keyboard_to_base_action(keyboard_keys)
-            
+
             # 合并动作
             action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-            
+
             # 发送动作
             robot.send_action(action)
-            
+
             # 更新全局变量
             current_action = action
-            
+
             # 更新视频帧
-            if 'front' in observation:
+            if "front" in observation:
                 with frame_lock:
-                    latest_frame = observation['front']
-            
+                    latest_frame = observation["front"]
+
             # 控制循环频率
             busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
-            
+
         except Exception as e:
             print(f"控制循环错误: {e}")
             time.sleep(0.1)
 
-@app.route('/')
+
+@app.route("/")
 def index():
     """主页"""
     return render_template_string(HTML_TEMPLATE)
 
-@app.route('/video_feed')
+
+@app.route("/video_feed")
 def video_feed():
     """视频流端点"""
+
     def generate():
         while True:
             with frame_lock:
                 if latest_frame is not None:
                     # 编码图像为JPEG
-                    ret, buffer = cv2.imencode('.jpg', latest_frame)
+                    ret, buffer = cv2.imencode(".jpg", latest_frame)
                     if ret:
                         frame_data = buffer.tobytes()
-                        yield (b'--frame\r\n'
-                               b'Content-Type: image/jpeg\r\n\r\n' + frame_data + b'\r\n')
-            time.sleep(1/30)  # 30 FPS
-    
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+                        yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame_data + b"\r\n")
+            time.sleep(1 / 30)  # 30 FPS
 
-@app.route('/send_action', methods=['POST'])
+    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.route("/send_action", methods=["POST"])
 def send_action():
     """接收网页发送的动作"""
     global current_action
-    
+
     try:
         data = request.get_json()
-        keys = data.get('keys', [])
-        
+        keys = data.get("keys", [])
+
         # 将按键转换为动作
-        pressed_keys = np.array([key in keys for key in ['w', 's', 'a', 'd', 'z', 'x', 'r', 'f']])
+        pressed_keys = np.array([key in keys for key in ["w", "s", "a", "d", "z", "x", "r", "f"]])
         base_action = robot._from_keyboard_to_base_action(pressed_keys)
-        
+
         # 获取机械臂动作
         arm_action = leader_arm.get_action()
         arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-        
+
         # 合并动作
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-        
+
         # 发送动作
         robot.send_action(action)
         current_action = action
-        
+
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/get_status')
+
+@app.route("/get_status")
 def get_status():
     """获取机器人状态"""
     try:
         speed_levels = ["低速", "中速", "高速"]
         speed_level = speed_levels[robot.speed_index] if robot else "未知"
-        
-        x_vel = current_action.get('x.vel', 0.0)
-        y_vel = current_action.get('y.vel', 0.0)
-        theta_vel = current_action.get('theta.vel', 0.0)
-        
-        return jsonify({
-            "robot_connected": robot.is_connected if robot else False,
-            "arm_connected": leader_arm.is_connected if leader_arm else False,
-            "speed_level": speed_level,
-            "x_vel": x_vel,
-            "y_vel": y_vel,
-            "theta_vel": theta_vel
-        })
+
+        x_vel = current_action.get("x.vel", 0.0)
+        y_vel = current_action.get("y.vel", 0.0)
+        theta_vel = current_action.get("theta.vel", 0.0)
+
+        return jsonify(
+            {
+                "robot_connected": robot.is_connected if robot else False,
+                "arm_connected": leader_arm.is_connected if leader_arm else False,
+                "speed_level": speed_level,
+                "x_vel": x_vel,
+                "y_vel": y_vel,
+                "theta_vel": theta_vel,
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 def main():
     """主函数"""
     print("=== LeKiwi 网页遥操作服务 ===")
     print("正在初始化机器人连接...")
-    
+
     try:
         # 初始化机器人
         init_robot()
-        
+
         # 启动控制线程
         control_thread = threading.Thread(target=robot_control_loop, daemon=True)
         control_thread.start()
-        
+
         print("机器人控制线程已启动")
         print("启动Web服务器...")
         print("请在浏览器中访问: http://localhost:5000")
-        
+
         # 启动Flask应用
-        app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
-        
+        app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+
     except KeyboardInterrupt:
         print("\n正在关闭服务...")
     except Exception as e:
@@ -469,5 +474,6 @@ def main():
             keyboard.disconnect()
         print("服务已关闭")
 
+
 if __name__ == "__main__":
-    main() 
+    main()

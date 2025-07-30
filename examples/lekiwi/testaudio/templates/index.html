@@ -44,7 +44,7 @@
             let scriptProcessor;
             let nextPlayTime = 0;
             // 关键：此采样率必须与服务器 `app.py` 中的 RATE 完全匹配
-            const SAMPLE_RATE = 48000; 
+            const SAMPLE_RATE = 48000;
 
             // 诊断标志
             let serverAudioReceivedLogPrinted = false;
@@ -92,7 +92,7 @@
                 }
                 // 'data' 是 ArrayBuffer 格式的原始 Int16 PCM 数据
                 const int16Array = new Int16Array(data);
-                
+
                 // 将 Int16 数据转换为 Web Audio API 使用的 Float32 数据 (-1.0 to 1.0)
                 const float32Array = new Float32Array(int16Array.length);
                 for (let i = 0; i < int16Array.length; i++) {
@@ -114,7 +114,7 @@
                 }
                 source.start(nextPlayTime);
                 nextPlayTime += audioBuffer.duration;
-                
+
                 serverAudioStatus.textContent = '正在播放...';
             });
 
@@ -130,7 +130,7 @@
                     .then(stream => {
                         clientAudioStatus.textContent = '麦克风已激活，正在发送...';
                         const source = audioContext.createMediaStreamSource(stream);
-                        
+
                         // 创建一个 ScriptProcessorNode 用于实时处理
                         const bufferSize = 4096; // 缓冲区大小，可以是 2048, 4096, 8192 等
                         scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
@@ -138,10 +138,10 @@
                         scriptProcessor.onaudioprocess = (e) => {
                             // 获取原始的 Float32 PCM 数据
                             const pcmData = e.inputBuffer.getChannelData(0);
-                            
+
                             // 发送给服务器。转成普通数组，因为 Socket.IO 对 TypedArray 支持不一
-                            socket.emit('audio_from_client', { 
-                                audio_data: Array.from(pcmData) 
+                            socket.emit('audio_from_client', {
+                                audio_data: Array.from(pcmData)
                             });
 
                             // 仅在第一次发送时打印诊断日志
@@ -152,7 +152,7 @@
                         };
 
                         source.connect(scriptProcessor);
-                        
+
                         // 消除本地回声的关键步骤：
                         // 将处理器连接到一个音量为0的哑节点，而不是直接连接到扬声器。
                         // 这能确保 onaudioprocess 持续触发，但听不到自己的声音。

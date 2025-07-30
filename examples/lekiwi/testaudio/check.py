@@ -4,13 +4,13 @@ p = pyaudio.PyAudio()
 
 print("---------- 可用的音频设备列表 ----------")
 info = p.get_host_api_info_by_index(0)
-numdevices = info.get('deviceCount')
+numdevices = info.get("deviceCount")
 
 for i in range(0, numdevices):
     device_info = p.get_device_info_by_index(i)
-    is_input = device_info.get('maxInputChannels') > 0
-    is_output = device_info.get('maxOutputChannels') > 0
-    
+    is_input = device_info.get("maxInputChannels") > 0
+    is_output = device_info.get("maxOutputChannels") > 0
+
     print(f"\n--- 设备索引 (Index): {i} ---")
     print(f"  名称: {device_info.get('name')}")
     print(f"  是否为输入设备 (麦克风): {'是' if is_input else '否'}")
