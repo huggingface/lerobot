@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from collections import deque
 
 import torch
@@ -71,3 +72,16 @@ def get_output_shape(module: nn.Module, input_shape: tuple) -> tuple:
     with torch.inference_mode():
         output = module(dummy_input)
     return tuple(output.shape)
+
+
+def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) -> None:
+    """Log missing and unexpected keys when loading a model.
+
+    Args:
+        missing_keys (list[str]): Keys that were expected but not found.
+        unexpected_keys (list[str]): Keys that were found but not expected.
+    """
+    if missing_keys:
+        logging.warning(f"Missing key(s) when loading model: {missing_keys}")
+    if unexpected_keys:
+        logging.warning(f"Unexpected key(s) when loading model: {unexpected_keys}")
