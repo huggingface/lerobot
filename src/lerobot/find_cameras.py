@@ -163,12 +163,16 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
 
     try:
         if cam_type == "OpenCV":
+            # For Camera #0, try to set a higher FPS since default is only 5 FPS
+            target_fps = 30 if cam_id == 0 else None
             cv_config = OpenCVCameraConfig(
                 index_or_path=cam_id,
+                fps=target_fps,
                 color_mode=ColorMode.RGB,
             )
             instance = OpenCVCamera(cv_config)
         elif cam_type == "RealSense":
+            target_fps = 45 if cam_id == 0 else None
             rs_config = RealSenseCameraConfig(
                 serial_number_or_name=cam_id,
                 color_mode=ColorMode.RGB,

@@ -106,7 +106,7 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
-from lerobot.utils.inference_logger import InferenceLogger
+from debug_utils.inference_logger import InferenceLogger
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     get_safe_torch_device,
@@ -361,7 +361,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         log_dir = (
             Path("inference_logs") / cfg.dataset.repo_id.replace("/", "_") / time.strftime("%Y%m%d_%H%M%S")
         )
-        inference_logger = InferenceLogger(log_dir, robot_name=robot.name)
+        inference_logger = InferenceLogger(log_dir, robot_name=robot.name, target_fps=cfg.dataset.fps)
         print(f"🔬 Inference logging enabled! Data will be saved to: {log_dir}")
 
     with VideoEncodingManager(dataset):
