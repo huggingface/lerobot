@@ -30,7 +30,7 @@ class UDPReceiver:
             data, _ = self.sock.recvfrom(self.bufsize)
             try:
                 return json.loads(data)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 return data
         except socket.timeout:
             return None
