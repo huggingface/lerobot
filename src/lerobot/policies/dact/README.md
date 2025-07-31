@@ -77,12 +77,7 @@ Combine the structured chunking and style latent of ACT with the expressive iter
 
 **Loss Function**:
 
-$$
-\mathcal{L} = \mathbb{E}_{a_0, \text{obs}} \left[
-\mathbb{E}_{t, z \sim q(z \mid a_0, \text{obs}), \epsilon} \left\| \epsilon - \epsilon_\theta(a_t, t \mid z, \text{obs}) \right\|^2
-+ \beta \cdot \mathrm{KL}(q(z \mid a_0, \text{obs}) \, \| \, p(z \mid \text{obs}))
-\right]
-$$
+$\mathcal{L} = \mathbb{E}_{a_0, \text{obs}} \left[\mathbb{E}_{t, z \sim q(z \mid a_0, \text{obs}), \epsilon} \left\| \epsilon - \epsilon_\theta(a_t, t \mid z, \text{obs}) \right\|^2 + \beta \cdot \mathrm{KL}(q(z \mid a_0, \text{obs}) \, \| \, p(z \mid \text{obs})) \right]$
 
 - $\beta$ can be annealed or use free-bits to avoid posterior collapse.
 
