@@ -180,7 +180,7 @@ Now let's simulate a crash by killing the process (hit `ctrl`+`c`). We can then 
 
 ```bash
 python -m lerobot.scripts.train \
-    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/train_config.json \
     --resume=true
 ```
 
@@ -191,7 +191,7 @@ You could double the number of steps of the previous run with:
 
 ```bash
 python -m lerobot.scripts.train \
-    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/train_config.json \
     --resume=true \
     --steps=200000
 ```
