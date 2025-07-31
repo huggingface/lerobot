@@ -11,19 +11,26 @@ class UDPSender:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def send(self, msg: Dict[str, Any]):
-        data = json.dumps(msg).encode()
+        if isinstance(msg, (bytes, bytearray)):
+            data = msg
+        else:
+            data = json.dumps(msg).encode()
         self.sock.sendto(data, self.addr)
 
 
 class UDPReceiver:
-    def __init__(self, port: int = _DEFAULT_PORT, timeout_s: float = 0.02):
+    def __init__(self, port: int, bufsize: int = 2048, timeout: float = 0.005):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("", port))
-        self.sock.settimeout(timeout_s)
+        self.sock.settimeout(timeout)
+        self.bufsize = bufsize
 
-    def recv(self) -> Optional[Dict[str, Any]]:
+    def recv(self):
         try:
-            buf, _ = self.sock.recvfrom(_MAX_SIZE)
-            return json.loads(buf.decode())
+            data, _ = self.sock.recvfrom(self.bufsize)
+            try:
+                return json.loads(data)
+            except json.JSONDecodeError:
+                return data
         except socket.timeout:
             return None

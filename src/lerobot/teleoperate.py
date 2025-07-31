@@ -120,7 +120,11 @@ def teleop_loop(
             observation = robot.get_observation()
             log_rerun_data(observation, action)
 
+        # fast-path: drop frame if operator hasn’t moved
+        if not action:
+            continue
         robot.send_action(action)
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
