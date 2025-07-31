@@ -74,3 +74,6 @@ class DeviceProcessor:
     def get_config(self) -> dict[str, Any]:
         """Return configuration for serialization."""
         return {"device": self.device}
+
+    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+        return features
