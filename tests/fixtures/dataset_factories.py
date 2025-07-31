@@ -17,12 +17,12 @@ from pathlib import Path
 from typing import Protocol
 from unittest.mock import patch
 
-import datasets
 import numpy as np
 import PIL.Image
 import pytest
 import torch
 
+import datasets
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,

@@ -14,12 +14,12 @@
 import json
 from pathlib import Path
 
-import datasets
 import jsonlines
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 
+import datasets
 from lerobot.datasets.utils import (
     EPISODES_PATH,
     EPISODES_STATS_PATH,

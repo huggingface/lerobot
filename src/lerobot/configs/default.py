@@ -37,6 +37,8 @@ class DatasetConfig:
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_codec)
+    # Tolerance in seconds for timestamp validation. Used to handle variable timestamps in datasets.
+    tolerance_s: float = 1e-4
 
 
 @dataclass

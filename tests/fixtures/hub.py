@@ -13,10 +13,10 @@
 # limitations under the License.
 from pathlib import Path
 
-import datasets
 import pytest
 from huggingface_hub.utils import filter_repo_objects
 
+import datasets
 from lerobot.datasets.utils import (
     EPISODES_PATH,
     EPISODES_STATS_PATH,
