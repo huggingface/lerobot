@@ -145,8 +145,8 @@ class ProcessorStep(Protocol):
 
 
     **Required**:
-        - ``__call__(transition) -> EnvTransition``
-        - ``feature_contract(features) -> dict[str, Any]``
+        - ``__call__(transition: EnvTransition) -> EnvTransition``
+        - ``feature_contract(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
 
     Optional helper protocol:
     * ``get_config() -> dict[str, Any]`` – User-defined JSON-serializable
