@@ -204,7 +204,7 @@ class NormalizerProcessor:
     def reset(self):
         pass
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -331,5 +331,5 @@ class UnnormalizerProcessor:
     def reset(self):
         pass
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features

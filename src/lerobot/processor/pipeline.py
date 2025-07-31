@@ -1182,5 +1182,5 @@ class IdentityProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, Any] | None = None) -> dict[str, Any]:
-        return {} if features is None else features
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features

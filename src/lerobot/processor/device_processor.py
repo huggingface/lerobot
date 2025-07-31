@@ -18,6 +18,7 @@ from typing import Any
 
 import torch
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, TransitionKey
 
 
@@ -75,5 +76,5 @@ class DeviceProcessor:
         """Return configuration for serialization."""
         return {"device": self.device}
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
