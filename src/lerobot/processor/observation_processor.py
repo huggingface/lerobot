@@ -21,6 +21,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
@@ -110,7 +111,7 @@ class ImageProcessor:
         """Reset processor state (no-op for this processor)."""
         pass
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Transforms:
         pixels -> OBS_IMAGE,
         observation.pixels -> OBS_IMAGE,
@@ -190,7 +191,7 @@ class StateProcessor:
         """Reset processor state (no-op for this processor)."""
         pass
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Transforms:
         environment_state -> OBS_ENV_STATE,
         agent_pos -> OBS_STATE,
@@ -260,7 +261,7 @@ class VanillaObservationProcessor:
         self.image_processor.reset()
         self.state_processor.reset()
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features = self.image_processor.feature_contract(features)
         features = self.state_processor.feature_contract(features)
         return features

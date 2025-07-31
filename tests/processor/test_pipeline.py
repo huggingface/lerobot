@@ -26,8 +26,10 @@ import pytest
 import torch
 import torch.nn as nn
 
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.processor import EnvTransition, ProcessorStepRegistry, RobotProcessor
 from lerobot.processor.pipeline import TransitionKey
+from tests.conftest import assert_contract_is_typed
 
 
 def create_transition(
@@ -89,7 +91,7 @@ class MockStep:
     def reset(self) -> None:
         self.counter = 0
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test feature_contract here
         return features
 
@@ -111,7 +113,7 @@ class MockStepWithoutOptionalMethods:
 
         return transition
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test feature_contract here
         return features
 
@@ -167,7 +169,7 @@ class MockStepWithTensorState:
         self.running_mean.zero_()
         self.running_count.zero_()
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test feature_contract here
         return features
 
@@ -712,7 +714,7 @@ class MockModuleStep(nn.Module):
         self.running_mean.zero_()
         self.counter = 0
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test feature_contract here
         return features
 
@@ -970,7 +972,7 @@ class MockNonModuleStepWithState:
         self.step_count.zero_()
         self.history.clear()
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test feature_contract here
         return features
 
@@ -1148,7 +1150,7 @@ class MockStepWithNonSerializableParam:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test feature_contract here
         return features
 
@@ -1187,7 +1189,7 @@ class RegisteredMockStep:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test feature_contract here
         return features
 
@@ -1512,7 +1514,7 @@ class MockStepWithMixedState:
             "list_value": self.list_value,
         }
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test feature_contract here
         return features
 
@@ -1823,7 +1825,7 @@ def test_state_file_naming_with_registry():
         def load_state_dict(self, state):
             self.state_tensor = state["state_tensor"]
 
-        def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             # We do not test feature_contract here
             return features
 
@@ -1880,7 +1882,7 @@ def test_override_with_nested_config():
         def get_config(self):
             return {"name": self.name, "simple_param": self.simple_param, "nested_config": self.nested_config}
 
-        def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             # We do not test feature_contract here
             return features
 
@@ -1972,7 +1974,7 @@ def test_override_with_callables():
         def get_config(self):
             return {"name": self.name}
 
-        def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             # We do not test feature_contract here
             return features
 
@@ -2104,7 +2106,7 @@ def test_override_with_device_strings():
         def load_state_dict(self, state):
             self.buffer = state["buffer"]
 
-        def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             # We do not test feature_contract here
             return features
 
@@ -2212,7 +2214,7 @@ def test_construction_rejects_step_without_feature_contract():
 class NonCallableStep:
     """Intentionally non-compliant: missing __call__."""
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -2223,92 +2225,102 @@ def test_construction_rejects_step_without_call():
 
 @dataclass
 class FeatureContractAddStep:
-    """Adds a key to the features dict"""
+    """Adds a PolicyFeature"""
 
     key: str = "a"
-    value: Any = 1
+    value: PolicyFeature = PolicyFeature(type=FeatureType.STATE, shape=(1,))
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features[self.key] = self.value
         return features
 
 
 @dataclass
 class FeatureContractMutateStep:
+    """Mutates a PolicyFeature"""
+
     key: str = "a"
-    fn: Callable[[Any], Any] = lambda x: x  # noqa: E731
+    fn: Callable[[PolicyFeature | None], PolicyFeature] = lambda x: x  # noqa: E731
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features[self.key] = self.fn(features.get(self.key))
         return features
 
 
 @dataclass
 class FeatureContractBadReturnStep:
+    """Returns a non-dict"""
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, Any]):
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return ["not-a-dict"]
 
 
 @dataclass
 class FeatureContractRemoveStep:
+    """Removes a PolicyFeature"""
+
     key: str
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features.pop(self.key, None)
         return features
 
 
-def test_feature_contract_empty_pipeline_returns_deepcopy():
-    p = RobotProcessor()
-    out0 = p.feature_contract()
-    assert out0 == {}
-    initial = {"nested": {"x": 1}}
-    out = p.feature_contract(initial_features=initial)
-    assert out == initial and out is not initial
-    out["nested"]["x"] = 2
-    assert initial["nested"]["x"] == 1
-
-
-def test_feature_contract_orders_and_merges():
+def test_feature_contract_orders_and_merges(policy_feature_factory):
     p = RobotProcessor(
         [
-            FeatureContractAddStep("a", 1),
-            FeatureContractMutateStep("a", lambda v: v * 3),
-            FeatureContractAddStep("b", "ok"),
+            FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
+            FeatureContractMutateStep("a", lambda v: PolicyFeature(type=v.type, shape=(3,))),
+            FeatureContractAddStep("b", policy_feature_factory(FeatureType.ENV, (2,))),
         ]
     )
-    assert p.feature_contract() == {"a": 3, "b": "ok"}
+    out = p.feature_contract({})
+
+    assert out["a"].type == FeatureType.STATE and out["a"].shape == (3,)
+    assert out["b"].type == FeatureType.ENV and out["b"].shape == (2,)
+    assert_contract_is_typed(out)
 
 
-def test_feature_contract_respects_initial_without_mutation():
-    initial = {"seed": 7, "nested": {"y": 0}}
+def test_feature_contract_respects_initial_without_mutation(policy_feature_factory):
+    initial = {
+        "seed": policy_feature_factory(FeatureType.STATE, (7,)),
+        "nested": policy_feature_factory(FeatureType.ENV, (0,)),
+    }
     p = RobotProcessor(
         [
-            FeatureContractMutateStep("seed", lambda v: v + 1),
-            FeatureContractMutateStep("nested", lambda d: {"y": d["y"] + 5}),
+            FeatureContractMutateStep("seed", lambda v: PolicyFeature(type=v.type, shape=(v.shape[0] + 1,))),
+            FeatureContractMutateStep(
+                "nested", lambda v: PolicyFeature(type=v.type, shape=(v.shape[0] + 5,))
+            ),
         ]
     )
     out = p.feature_contract(initial_features=initial)
-    assert out["seed"] == 8 and out["nested"]["y"] == 5
-    assert initial == {"seed": 7, "nested": {"y": 0}}
+
+    assert out["seed"].shape == (8,)
+    assert out["nested"].shape == (5,)
+    # Initial dict must be preserved
+    assert initial["seed"].shape == (7,)
+    assert initial["nested"].shape == (0,)
+
+    assert_contract_is_typed(out)
 
 
 def test_feature_contract_type_error_on_bad_step():
     p = RobotProcessor([FeatureContractAddStep(), FeatureContractBadReturnStep()])
     with pytest.raises(TypeError, match=r"\w+\.feature_contract must return dict\[str, Any\]"):
-        _ = p.feature_contract()
+        _ = p.feature_contract({})
 
 
 def test_feature_contract_execution_order_tracking():
@@ -2316,28 +2328,35 @@ def test_feature_contract_execution_order_tracking():
         def __init__(self, label):
             self.label = label
 
-        def __call__(self, t):
-            return t
+        def __call__(self, transition: EnvTransition) -> EnvTransition:
+            return transition
 
-        def feature_contract(self, features=None):
-            f = {} if features is None else features
-            f.setdefault("order", []).append(self.label)
-            return f
+        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+            code = {"A": 1, "B": 2, "C": 3}[self.label]
+            pf = features.get("order", PolicyFeature(type=FeatureType.ENV, shape=()))
+            features["order"] = PolicyFeature(type=pf.type, shape=pf.shape + (code,))
+            return features
 
-    out = RobotProcessor([Track("A"), Track("B"), Track("C")]).feature_contract()
-    assert out["order"] == ["A", "B", "C"]
+    out = RobotProcessor([Track("A"), Track("B"), Track("C")]).feature_contract({})
+    assert out["order"].shape == (1, 2, 3)
 
 
-def test_feature_contract_remove_key():
-    p = RobotProcessor([FeatureContractAddStep("a", 123), FeatureContractRemoveStep("a")])
-    out = p.feature_contract()
+def test_feature_contract_remove_key(policy_feature_factory):
+    p = RobotProcessor(
+        [
+            FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
+            FeatureContractRemoveStep("a"),
+        ]
+    )
+    out = p.feature_contract({})
     assert "a" not in out
 
 
-def test_feature_contract_remove_from_initial():
-    initial = {"keep": 2, "drop": 1}
+def test_feature_contract_remove_from_initial(policy_feature_factory):
+    initial = {
+        "keep": policy_feature_factory(FeatureType.STATE, (1,)),
+        "drop": policy_feature_factory(FeatureType.STATE, (1,)),
+    }
     p = RobotProcessor([FeatureContractRemoveStep("drop")])
     out = p.feature_contract(initial_features=initial)
-    assert "drop" not in out and out["keep"] == 2
-    # initial dict must be preserved
-    assert "drop" in initial and initial["keep"] == 2
+    assert "drop" not in out and out["keep"] == initial["keep"]

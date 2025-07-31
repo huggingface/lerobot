@@ -18,6 +18,7 @@ from typing import Any
 
 import torch
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
 
@@ -54,7 +55,7 @@ class RenameProcessor:
     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Transforms:
         - Each key in the observation that appears in `rename_map` is renamed to its value.
         - Keys not in `rename_map` remain unchanged.

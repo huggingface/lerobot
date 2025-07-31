@@ -19,7 +19,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from lerobot.configs.types import FeatureType
 from lerobot.processor import ProcessorStepRegistry, RenameProcessor, RobotProcessor, TransitionKey
+from tests.conftest import assert_contract_is_typed
 
 
 def create_transition(
@@ -408,34 +410,42 @@ def test_value_types_preserved():
     assert processed_obs["old_list"] == [1, 2, 3]
 
 
-def test_feature_contract_basic_renaming():
+def test_feature_contract_basic_renaming(policy_feature_factory):
     processor = RenameProcessor(rename_map={"a": "x", "b": "y"})
-    features = {"a": "specA", "b": "specB", "c": "keep"}
+    features = {
+        "a": policy_feature_factory(FeatureType.STATE, (2,)),
+        "b": policy_feature_factory(FeatureType.ACTION, (3,)),
+        "c": policy_feature_factory(FeatureType.ENV, (1,)),
+    }
+
     out = processor.feature_contract(features.copy())
 
-    # Renamed keys
-    assert out["x"] == "specA"
-    assert out["y"] == "specB"
-    # Unchanged key preserved
-    assert out["c"] == "keep"
-    # Old names are gone
-    assert "a" not in out and "b" not in out
+    # Values preserved and typed
+    assert out["x"] == features["a"]
+    assert out["y"] == features["b"]
+    assert out["c"] == features["c"]
+
+    assert_contract_is_typed(out)
     # Input not mutated
-    assert features == {"a": "specA", "b": "specB", "c": "keep"}
+    assert set(features) == {"a", "b", "c"}
 
 
-def test_feature_contract_overlapping_keys():
+def test_feature_contract_overlapping_keys(policy_feature_factory):
     # Overlapping renames: both 'a' and 'b' exist. 'a'->'b', 'b'->'c'
     processor = RenameProcessor(rename_map={"a": "b", "b": "c"})
-    features = {"a": "va", "b": "vb"}
+    features = {
+        "a": policy_feature_factory(FeatureType.STATE, (1,)),
+        "b": policy_feature_factory(FeatureType.STATE, (2,)),
+    }
     out = processor.feature_contract(features)
 
-    assert "a" not in out
-    assert out["b"] == "va"  # 'a' renamed to 'b'
-    assert out["c"] == "vb"  # original 'b' renamed to 'c'
+    assert set(out) == {"b", "c"}
+    assert out["b"] == features["a"]  # 'a' renamed to'b'
+    assert out["c"] == features["b"]  # 'b' renamed to 'c'
+    assert_contract_is_typed(out)
 
 
-def test_feature_contract_chained_processors():
+def test_feature_contract_chained_processors(policy_feature_factory):
     # Chain two rename processors at the contract level
     processor1 = RenameProcessor(rename_map={"pos": "agent_position", "img": "camera_image"})
     processor2 = RenameProcessor(
@@ -443,10 +453,15 @@ def test_feature_contract_chained_processors():
     )
     pipeline = RobotProcessor([processor1, processor2])
 
-    spec = {"pos": "pos_spec", "img": "img_spec", "extra": "keep"}
+    spec = {
+        "pos": policy_feature_factory(FeatureType.STATE, (7,)),
+        "img": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
+        "extra": policy_feature_factory(FeatureType.ENV, (1,)),
+    }
     out = pipeline.feature_contract(initial_features=spec)
 
-    assert out["observation.state"] == "pos_spec"
-    assert out["observation.image"] == "img_spec"
-    assert out["extra"] == "keep"
-    assert "pos" not in out and "img" not in out and "agent_position" not in out and "camera_image" not in out
+    assert set(out) == {"observation.state", "observation.image", "extra"}
+    assert out["observation.state"] == spec["pos"]
+    assert out["observation.image"] == spec["img"]
+    assert out["extra"] == spec["extra"]
+    assert_contract_is_typed(out)
