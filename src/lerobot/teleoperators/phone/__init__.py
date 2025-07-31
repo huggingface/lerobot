@@ -14,5 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_so100_follower import SO100FollowerConfig
-from .so100_follower import SO100Follower
+from .config_phone import PhoneConfig
+from .phone import Phone
