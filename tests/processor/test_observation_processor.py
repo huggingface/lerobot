@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 import torch
 
+from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.processor import (
     ImageProcessor,
     StateProcessor,
@@ -420,3 +421,80 @@ def test_equivalent_with_image_dict():
 
     for key in original_result:
         torch.testing.assert_close(original_result[key], processor_result[key])
+
+
+def test_image_processor_feature_contract_pixels_to_image():
+    processor = ImageProcessor()
+    features = {"pixels": "img_spec", "keep": 123}
+    out = processor.feature_contract(features.copy())
+
+    assert OBS_IMAGE in out
+    assert out[OBS_IMAGE] == "img_spec"
+    assert "pixels" not in out
+    assert out["keep"] == 123
+
+
+def test_image_processor_feature_contract_observation_pixels_to_image():
+    processor = ImageProcessor()
+    features = {"observation.pixels": "img_spec_obs", "keep": "ok"}
+    out = processor.feature_contract(features.copy())
+
+    assert OBS_IMAGE in out
+    assert out[OBS_IMAGE] == "img_spec_obs"
+    assert "observation.pixels" not in out
+    assert out["keep"] == "ok"
+
+
+def test_image_processor_feature_contract_multi_camera_and_prefixed():
+    processor = ImageProcessor()
+    features = {
+        "pixels.front": "front_spec",
+        "pixels.wrist": "wrist_spec",
+        "observation.pixels.rear": "rear_spec",
+        "keep": True,
+    }
+    out = processor.feature_contract(features.copy())
+
+    assert f"{OBS_IMAGES}.front" in out and out[f"{OBS_IMAGES}.front"] == "front_spec"
+    assert f"{OBS_IMAGES}.wrist" in out and out[f"{OBS_IMAGES}.wrist"] == "wrist_spec"
+    assert f"{OBS_IMAGES}.rear" in out and out[f"{OBS_IMAGES}.rear"] == "rear_spec"
+    # Original keys are removed
+    assert "pixels.front" not in out
+    assert "pixels.wrist" not in out
+    assert "observation.pixels.rear" not in out
+    # Unrelated keys preserved
+    assert out["keep"] is True
+
+
+def test_state_processor_feature_contract_environment_and_agent_pos():
+    processor = StateProcessor()
+    features = {
+        "environment_state": "env_spec",
+        "agent_pos": "agent_spec",
+        "keep": "x",
+    }
+    out = processor.feature_contract(features.copy())
+
+    assert OBS_ENV_STATE in out and out[OBS_ENV_STATE] == "env_spec"
+    assert OBS_STATE in out and out[OBS_STATE] == "agent_spec"
+    # Original keys removed
+    assert "environment_state" not in out
+    assert "agent_pos" not in out
+    # Unrelated keys preserved
+    assert out["keep"] == "x"
+
+
+def test_state_processor_feature_contract_prefixed_inputs():
+    proc = StateProcessor()
+    features = {
+        "observation.environment_state": "env_obs_spec",
+        "observation.agent_pos": "agent_obs_spec",
+    }
+    out = proc.feature_contract(features.copy())
+
+    # Standardized keys must be present with the right values
+    assert OBS_ENV_STATE in out and out[OBS_ENV_STATE] == "env_obs_spec"
+    assert OBS_STATE in out and out[OBS_STATE] == "agent_obs_spec"
+
+    assert "environment_state" not in out
+    assert "agent_pos" not in out

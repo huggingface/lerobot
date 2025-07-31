@@ -406,3 +406,47 @@ def test_value_types_preserved():
     assert processed_obs["old_string"] == "hello"
     assert processed_obs["old_dict"] == {"nested": "value"}
     assert processed_obs["old_list"] == [1, 2, 3]
+
+
+def test_feature_contract_basic_renaming():
+    processor = RenameProcessor(rename_map={"a": "x", "b": "y"})
+    features = {"a": "specA", "b": "specB", "c": "keep"}
+    out = processor.feature_contract(features.copy())
+
+    # Renamed keys
+    assert out["x"] == "specA"
+    assert out["y"] == "specB"
+    # Unchanged key preserved
+    assert out["c"] == "keep"
+    # Old names are gone
+    assert "a" not in out and "b" not in out
+    # Input not mutated
+    assert features == {"a": "specA", "b": "specB", "c": "keep"}
+
+
+def test_feature_contract_overlapping_keys():
+    # Overlapping renames: both 'a' and 'b' exist. 'a'->'b', 'b'->'c'
+    processor = RenameProcessor(rename_map={"a": "b", "b": "c"})
+    features = {"a": "va", "b": "vb"}
+    out = processor.feature_contract(features)
+
+    assert "a" not in out
+    assert out["b"] == "va"  # 'a' renamed to 'b'
+    assert out["c"] == "vb"  # original 'b' renamed to 'c'
+
+
+def test_feature_contract_chained_processors():
+    # Chain two rename processors at the contract level
+    processor1 = RenameProcessor(rename_map={"pos": "agent_position", "img": "camera_image"})
+    processor2 = RenameProcessor(
+        rename_map={"agent_position": "observation.state", "camera_image": "observation.image"}
+    )
+    pipeline = RobotProcessor([processor1, processor2])
+
+    spec = {"pos": "pos_spec", "img": "img_spec", "extra": "keep"}
+    out = pipeline.feature_contract(initial_features=spec)
+
+    assert out["observation.state"] == "pos_spec"
+    assert out["observation.image"] == "img_spec"
+    assert out["extra"] == "keep"
+    assert "pos" not in out and "img" not in out and "agent_position" not in out and "camera_image" not in out
