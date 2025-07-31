@@ -21,6 +21,8 @@ import select
 import subprocess
 import sys
 import time
+import pkgutil
+import importlib
 from copy import copy, deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -272,6 +274,22 @@ def enter_pressed() -> bool:
 def move_cursor_up(lines):
     """Move the cursor up by a specified number of lines."""
     print(f"\033[{lines}A", end="")
+
+
+def make_device_from_device_class(device_class, config):
+    module_path, _ = device_class.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, _)(config)
+
+
+def init_third_party_devices():
+    for module_info in pkgutil.iter_modules():
+        name = module_info.name
+        if name.startswith("lerobot_"):
+            try:
+                importlib.import_module(name)
+            except Exception as e:
+                print(f"Could not import {name}: {e}")
 
 
 class TimerManager:

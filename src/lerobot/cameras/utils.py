@@ -18,6 +18,8 @@ import platform
 from pathlib import Path
 from typing import TypeAlias
 
+from lerobot.utils.utils import make_device_from_device_class
+
 from .camera import Camera
 from .configs import CameraConfig, Cv2Rotation
 
@@ -37,6 +39,9 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
             from .realsense.camera_realsense import RealSenseCamera
 
             cameras[key] = RealSenseCamera(cfg)
+
+        elif hasattr(cfg, "device_class"):
+            cameras[key] = make_device_from_device_class(cfg.device_class, cfg)
         else:
             raise ValueError(f"The motor type '{cfg.type}' is not valid.")
 
