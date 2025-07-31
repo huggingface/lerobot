@@ -283,6 +283,7 @@ class ImageTransformsConfig:
             # ),
         }
     )
+
     def __post_init__(self):
         self.tfs = self._get_transforms_by_version(self.transform_version)
 
@@ -469,7 +470,6 @@ class ImageTransformsConfig:
             }
         else:
             raise ValueError(f"Unknown transform_version: {version}")
-
 
 
 def make_transform_from_config(cfg: ImageTransformConfig):

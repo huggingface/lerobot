@@ -374,6 +374,7 @@ def pad_tensor_to_shape(tensor: torch.Tensor, target_shape: tuple, pad_value: fl
         pad.extend([0, max(target - actual, 0)])
     return F.pad(tensor, pad, value=pad_value)
 
+
 def multidataset_collate_fn(
     batch: List[Dict[str, torch.Tensor]],
     keys_to_max_dim: Dict[str, tuple] = {},
