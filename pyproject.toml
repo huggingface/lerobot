@@ -97,6 +97,9 @@ placo-dep = ["placo>=0.9.6"]
 transformers-dep = ["transformers>=4.50.3,<4.52.0"] # TODO: Bumb dependency
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
 
+# Cameras
+depthai = ["depthai>=3.0.0rc2"]
+
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0"]
 dynamixel = ["dynamixel-sdk>=3.7.31"]
@@ -143,6 +146,7 @@ all = [
     "lerobot[lekiwi]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
+    "lerobot[depthai]",
     "lerobot[pi0]",
     "lerobot[smolvla]",
     "lerobot[hilserl]",
