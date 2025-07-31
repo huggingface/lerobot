@@ -61,6 +61,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .bi_so100_follower import BiSO100Follower
 
         return BiSO100Follower(config)
+    elif config.type == "none":
+        from .none import NoneRobot
+
+        return NoneRobot(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 
@@ -70,7 +74,8 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
 
 def ensure_safe_goal_position(
-    goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[float]
+    goal_present_pos: dict[str, tuple[float, float]],
+    max_relative_target: float | dict[float],
 ) -> dict[str, float]:
     """Caps relative action target magnitude for safety."""
 
@@ -78,7 +83,9 @@ def ensure_safe_goal_position(
         diff_cap = dict.fromkeys(goal_present_pos, max_relative_target)
     elif isinstance(max_relative_target, dict):
         if not set(goal_present_pos) == set(max_relative_target):
-            raise ValueError("max_relative_target keys must match those of goal_present_pos.")
+            raise ValueError(
+                "max_relative_target keys must match those of goal_present_pos."
+            )
         diff_cap = max_relative_target
     else:
         raise TypeError(max_relative_target)

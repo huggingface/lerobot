@@ -69,5 +69,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .remote_receiver import RemoteReceiver
 
         return RemoteReceiver(config)
+    elif config.type == "remote_sender":
+        from .remote_sender import RemoteSender
+
+        return RemoteSender(config)
     else:
         raise ValueError(config.type)
