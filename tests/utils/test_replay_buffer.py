@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import sys
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 import torch

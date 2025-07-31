@@ -16,8 +16,9 @@
 # limitations under the License.
 
 import math
+from collections.abc import Callable
 from dataclasses import asdict
-from typing import Callable, Literal
+from typing import Literal
 
 import einops
 import numpy as np
