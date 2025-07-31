@@ -21,7 +21,6 @@ from lerobot.datasets.utils import (
 from lerobot.datasets.video_utils import (
     VideoDecoderCache,
     decode_video_frames_torchcodec,
-    get_safe_default_codec,
 )
 
 
@@ -73,7 +72,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         tolerance_s: float = 1e-4,
         revision: str | None = None,
         force_cache_sync: bool = False,
-        video_backend: str | None = "torchcodec",
         streaming: bool = True,
         buffer_size: int = 1000,
         max_num_shards: int = 16,
@@ -92,7 +90,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             tolerance_s (float, optional): Tolerance in seconds for timestamp matching.
             revision (str, optional): Git revision id (branch name, tag, or commit hash).
             force_cache_sync (bool, optional): Flag to sync and refresh local files first.
-            video_backend (str | None, optional): Video backend to use for decoding videos. Uses "torchcodec" by default.
             streaming (bool, optional): Whether to stream the dataset or load it all. Defaults to True.
             buffer_size (int, optional): Buffer size for shuffling when streaming. Defaults to 1000.
             max_num_shards (int, optional): Number of shards to re-shard the input dataset into. Defaults to 16.
@@ -109,7 +106,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
-        self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.seed = seed
         self.rng = rng if rng is not None else np.random.default_rng(seed)
         self.shuffle = shuffle
@@ -150,6 +146,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         )
 
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
+
+    @property
+    def num_frames(self):
+        return self.meta.total_frames
+
+    @property
+    def num_episodes(self):
+        return self.meta.total_episodes
 
     @property
     def fps(self):
@@ -317,6 +321,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 current_ts, self.delta_indices, episode_boundaries_ts
             )
             video_frames = self._query_videos(query_timestamps, ep_idx)
+
+            if self.image_transforms is not None:
+                image_keys = self.meta.camera_keys
+                for cam in image_keys:
+                    video_frames[cam] = self.image_transforms(video_frames[cam])
+
             updates.append(video_frames)
 
             if self.delta_indices is not None:
