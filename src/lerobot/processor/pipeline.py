@@ -52,8 +52,8 @@ class EnvTransition(TypedDict, total=False):
     All fields are optional (total=False) to allow flexible usage.
     """
 
-    observation: dict[str, Any] | None
-    action: Any | torch.Tensor | None
+    observation: dict[str, Any] | None  # TODO(pepijn): Go from dict[str, Any] to dict[str, PolicyFeature] (1)
+    action: Any | torch.Tensor | None  # TODO(pepijn): Add also dict[str, PolicyFeature] type? (2)
     reward: float | torch.Tensor | None
     done: bool | torch.Tensor | None
     truncated: bool | torch.Tensor | None
@@ -175,7 +175,11 @@ class ProcessorStep(Protocol):
 
     def reset(self) -> None: ...
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
+    def feature_contract(
+        self, features: dict[str, PolicyFeature]
+    ) -> dict[
+        str, PolicyFeature
+    ]: ...  # TODO(pepijn): Also have a notion of EnvTransition in feature_contract and features? (3)
 
 
 def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401

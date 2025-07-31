@@ -34,6 +34,7 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
+# TODO(Pepijn): Use default ObservationStep etc as much as possible in phone teleop to reduce boilerplate
 # TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline
 # TODO(pepijn): Add to docs with image etc
 
@@ -115,21 +116,12 @@ class Phone(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
-        features = {
-            "enabled": bool,  # if true the "enabled" the phone button is pressed
-            "target_x": float,  # meters
-            "target_y": float,
-            "target_z": float,
-            "target_qx": float,
-            "target_qy": float,
-            "target_qz": float,
-            "target_qw": float,
-            "gripper": float,  # gripper velocity in m/s
-            "x": float,  # possible forward/backward
-            "y": float,  # possible left/right
-            "theta": float,  # possible rotation (in radians)
+        return {
+            "phone.pos": np.ndarray,  # shape (3,)
+            "phone.rot": Rotation,  # scipy.spatial.transform.Rotation
+            "phone.raw_inputs": dict,  # analogs/buttons or webXR meta
+            "phone.enabled": bool,
         }
-        return features
 
     def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
         """Wait trigger for calibration: iOS: B1. Android: 'move'."""

@@ -13,23 +13,45 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specif
 
+"""
+Pipeline schema for phone teleop:
+
+[TELEOP]
+   │
+   ▼
+post_teleop_pipeline      # (deltas → safe EE)
+   │
+   └──► Dataset Action: {ee.{x,y,z,qx,qy,qz,qw}, gripper}
+   │
+   ▼
+pre_robot_pipeline        # (IK → joints)
+   │
+   ▼
+[ROBOT] send_action(joints)
+   │
+   ▼
+post_robot_pipeline       # (FK → EE pose)
+   │
+   └──► Dataset Observation: {images, ee.{x,y,z,qx,qy,qz,qw}, gripper}
+"""
+
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotProcessor, TransitionKey
+from lerobot.processor import RobotProcessor
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     EEReferenceAndDelta,
-    InverseKinematics,
+    ForwardKinematicsJointsToEE,
+    GripperVelocityToJoint,
+    InverseKinematicsEEToJoints,
 )
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone import Phone
 from lerobot.teleoperators.phone.phone_processor import PhoneAxisRemapToAction
-from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
@@ -40,87 +62,6 @@ EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
 HF_REPO_ID = "pepijn223/phone_so100_record_test0"
-
-
-class PhoneToSO100Adapter(Teleoperator):
-    """
-    An adapter that makes the phone behave like a 'teleop' for record_loop.
-    On each get_action():
-      - read phone obs
-      - map to EE action via phone pipeline
-      - read robot obs
-      - map EE action -> joint action via robot pipeline
-      - return joint action (matches robot.action_features)
-    """
-
-    name = "phone_to_so100_adapter"
-    config_class = PhoneConfig
-
-    def __init__(
-        self,
-        phone: Phone,
-        robot: SO100Follower,
-        phone_postprocessor: RobotProcessor,
-        robot_preprocessor: RobotProcessor,
-    ):
-        super().__init__(phone.config)
-        self._phone = phone
-        self._robot = robot
-        self._phone_postprocessor = phone_postprocessor
-        self._robot_preprocessor = robot_preprocessor
-
-    def connect(self):
-        self._phone.connect()
-
-    def disconnect(self):
-        self._phone.disconnect()
-
-    @property
-    def is_connected(self) -> bool:
-        return self._robot.is_connected
-
-    def calibrate(self) -> None:
-        self._phone.calibrate()
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self._phone.is_calibrated
-
-    @property
-    def action_features(self) -> dict[str, type]:
-        return self._phone.action_features
-
-    @property
-    def feedback_features(self) -> dict[str, type]:
-        pass
-
-    def configure(self) -> None:
-        self._phone.configure()
-
-    def send_feedback(self, feedback: dict[str, float]) -> None:
-        pass
-
-    def get_action(self) -> dict:
-        phone_obs = self._phone.get_action()
-        if not phone_obs:
-            return {}
-
-        # Phone observation to EE action
-        transition_phone = {TransitionKey.OBSERVATION: phone_obs}
-        transition_phone = self._phone_postprocessor(transition_phone)
-        ee_action = transition_phone.get(TransitionKey.ACTION, {})
-
-        # EE action and robot obs to joint action
-        robot_obs = self._robot.get_observation()
-        transition_robot = {
-            TransitionKey.OBSERVATION: robot_obs,
-            TransitionKey.ACTION: ee_action,
-        }
-        transition_robot = self._robot_preprocessor(transition_robot)
-        joint_action = transition_robot.get(TransitionKey.ACTION, {})
-
-        return joint_action
-
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -135,43 +76,54 @@ teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # or PhoneOS.ANDROID
 robot = SO100Follower(robot_config)
 phone = Phone(teleop_config)
 
-# Create the pipelines
 # Recommended URDF (from SO-ARM100 repo): https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 kinematics_solver = RobotKinematics(
     urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf", target_frame_name="gripper_frame_link"
 )
 
-ee_ref = EEReferenceAndDelta(
-    kinematics=kinematics_solver,
-    end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},  # meters per unit input
-    motor_names=list(robot.bus.motors.keys()),
+
+post_teleop = RobotProcessor(
+    steps=[
+        PhoneAxisRemapToAction(platform=teleop_config.phone_os),
+        EEReferenceAndDelta(
+            kinematics=kinematics_solver,
+            end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
+            motor_names=list(robot.bus.motors.keys()),
+        ),
+        EEBoundsAndSafety(
+            end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+            max_ee_step_m=0.10,
+        ),
+    ],
+    name="post_teleop_pipeline",
 )
 
-ee_safety = EEBoundsAndSafety(
-    end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
-    max_ee_step_m=0.10,
+pre_robot = RobotProcessor(
+    steps=[
+        InverseKinematicsEEToJoints(
+            kinematics=kinematics_solver,
+            motor_names=list(robot.bus.motors.keys()),
+        ),
+        GripperVelocityToJoint(
+            motor_names=list(robot.bus.motors.keys()),
+            speed_factor=5.0,
+        ),
+    ],
+    name="pre_robot_pipeline",
 )
 
-ik_step = InverseKinematics(
-    kinematics=kinematics_solver,
-    motor_names=list(robot.bus.motors.keys()),
-    gripper_speed_factor=5.0,
+post_robot = RobotProcessor(
+    steps=[
+        ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
+    ],
+    name="post_robot_pipeline",
 )
 
-robot_preprocessor = RobotProcessor(
-    steps=[ee_ref, ee_safety, ik_step],
-    name="so100_phone_record_pipeline",
-)
+# Configure dataset features in EE space
+ee_action_features = post_teleop.feature_contract(initial_features=phone.action_features)
+ee_obs_features = post_robot.feature_contract(initial_features=robot.observation_features)
 
-phone_postprocessor = RobotProcessor(
-    steps=[PhoneAxisRemapToAction(platform=teleop_config.phone_os)],
-    name="phone_mapping_pipeline",
-)
-
-# Configure the dataset features
-action_features = hw_to_dataset_features(robot.action_features, "action")
-obs_features = hw_to_dataset_features(robot.observation_features, "observation")
-dataset_features = {**action_features, **obs_features}
+dataset_features = {ee_action_features, ee_obs_features}
 
 # Create the dataset
 dataset = LeRobotDataset.create(
@@ -191,24 +143,22 @@ _init_rerun(session_name="recording_phone")
 robot.connect()
 phone.connect()
 
-# Teleop adapter that record_loop will poll for actions
-teleop_adapter = PhoneToSO100Adapter(
-    phone=phone, robot=robot, phone_postprocessor=phone_postprocessor, robot_preprocessor=robot_preprocessor
-)
-
 episode_idx = 0
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
-    record_loop(
+    record_loop(  # TODO(pepijn): Integrate post_teleop_processor, pre_robot_processor and post_robot_processor in record_loop
         robot=robot,
         events=events,
         fps=FPS,
-        teleop=teleop_adapter,
+        teleop=phone,
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
         display_data=True,
+        post_teleop_processor=post_teleop,
+        pre_robot_processor=pre_robot,
+        post_robot_processor=post_robot,
     )
 
     # Reset the environment if not stopping or re-recording
@@ -218,10 +168,13 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             robot=robot,
             events=events,
             fps=FPS,
-            teleop=teleop_adapter,
+            teleop=phone,
             control_time_s=RESET_TIME_SEC,
             single_task=TASK_DESCRIPTION,
             display_data=True,
+            post_teleop_processor=post_teleop,
+            pre_robot_processor=pre_robot,
+            post_robot_processor=post_robot,
         )
 
     if events["rerecord_episode"]:

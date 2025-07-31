@@ -198,6 +198,9 @@ def record_loop(
     policy: PreTrainedPolicy | None = None,
     preprocessor: RobotProcessor | None = None,
     postprocessor: RobotProcessor | None = None,
+    post_teleop_processor: RobotProcessor | None = None,
+    pre_robot_processor: RobotProcessor | None = None,
+    post_robot_processor: RobotProcessor | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
@@ -227,6 +230,9 @@ def record_loop(
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
+        for p in (post_teleop_processor, pre_robot_processor, post_robot_processor):
+            if p is not None and hasattr(p, "reset"):
+                p.reset()
 
     timestamp = 0
     start_episode_t = time.perf_counter()
