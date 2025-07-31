@@ -306,7 +306,7 @@ To upload these to the hub, run the following:
 huggingface-cli upload ${hf_user}/${repo_name} path/to/pretrained_model
 ```
 
-See [eval.py](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/eval.py) for an example of how other people may use your policy.
+See [eval.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/eval.py) for an example of how other people may use your policy.
 
 ### Acknowledgment
 
