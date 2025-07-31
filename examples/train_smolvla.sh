@@ -22,7 +22,7 @@ MAX_STATE_DIM=32
 USE_IMAGENET_STATS=false
 ENABLE_IMG_TRANSFORM=true
 MAX_NUM_IMAGES=2
-MAX_IMAGE_DIM=1920
+MAX_IMAGE_DIM=256
 
 # launch
 python src/lerobot/scripts/train.py \
@@ -41,6 +41,7 @@ python src/lerobot/scripts/train.py \
   --policy.peft_method=$PEFT_METHOD \
   --policy.load_vlm_weights=$LOAD_VLM_WEIGHTS \
   --policy.repo_id=$VLM_REPO_ID \
+  --policy.push_to_hub=false \
   --dataset.max_num_images=$MAX_NUM_IMAGES \
   --dataset.max_image_dim=$MAX_IMAGE_DIM \
   --num_workers=$NUM_WORKERS

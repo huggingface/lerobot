@@ -19,7 +19,7 @@ from typing import Any, Callable, Sequence
 
 import torch
 from torchvision.transforms import v2
-from torchvision.transforms.v2 import Transform
+from torchvision.transforms.v2 import Resize, Transform
 from torchvision.transforms.v2 import functional as F  # noqa: N812
 
 
@@ -128,7 +128,7 @@ class SharpnessJitter(Transform):
             raise TypeError(f"{sharpness=} should be a single number or a sequence with length 2.")
 
         if not 0.0 <= sharpness[0] <= sharpness[1]:
-            raise ValueError(f"sharpness values should be between (0., inf), but got {sharpness}.")
+            raise ValueError(f"sharpnesss values should be between (0., inf), but got {sharpness}.")
 
         return float(sharpness[0]), float(sharpness[1])
 
@@ -139,6 +139,71 @@ class SharpnessJitter(Transform):
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
         sharpness_factor = params["sharpness_factor"]
         return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
+
+
+class ResizeWithPad(Transform):
+    """Resize an image while maintaining aspect ratio, then pad to target size.
+
+    This transform resizes an image to fit within (width, height) while keeping the aspect ratio
+    and pads with a specified value.
+
+    Args:
+        size (int | tuple[int, int]): Target size (height, width).
+        pad_value (float, optional): Value to pad the image with (default: 0).
+    """
+
+    def __init__(
+        self, size: int | tuple[int, int], pad_value: float = 0, padding_side: str = "top_left"
+    ) -> None:
+        super().__init__()
+        if isinstance(size, int):
+            self.size = (size, size)
+        elif isinstance(size, collections.abc.Sequence) and len(size) == 2:
+            self.size = tuple(size)
+        else:
+            raise ValueError(f"`size` should be an int or a tuple (h, w), but got {size}")
+
+        self.pad_value = pad_value
+        self.padding_side = padding_side
+
+    def transform(self, inpt: torch.Tensor, params: dict[str, any] = None) -> torch.Tensor:
+        """Resize and pad a single image.
+
+        Expects input of shape (C, H, W).
+        """
+        original_ndim = inpt.ndim
+        if inpt.ndim == 4 and inpt.shape[0] == 1:
+            inpt = inpt.squeeze(0)
+
+        if not isinstance(inpt, torch.Tensor) or inpt.ndim != 3:
+            raise ValueError(f"Expected input of shape (C, H, W), but got {inpt.shape}")
+
+        channels, cur_height, cur_width = inpt.shape
+        target_height, target_width = self.size
+
+        # Maintain aspect ratio
+        ratio = max(cur_width / target_width, cur_height / target_height)
+        resized_height = int(cur_height / ratio)
+        resized_width = int(cur_width / ratio)
+
+        resized_img = torch.nn.functional.interpolate(
+            inpt.unsqueeze(0), size=(resized_height, resized_width), mode="bilinear", align_corners=False
+        ).squeeze(0)
+
+        # Compute padding (pad left & top)
+        pad_height = max(0, target_height - resized_height)
+        pad_width = max(0, target_width - resized_width)
+        if "left" in self.padding_side:
+            padded_img = torch.nn.functional.pad(
+                resized_img, (pad_width, 0, pad_height, 0), value=self.pad_value
+            )
+        else:
+            padded_img = torch.nn.functional.pad(
+                resized_img, (0, pad_width, 0, pad_height), value=self.pad_value
+            )
+        if original_ndim == 4:
+            padded_img = padded_img[None]
+        return padded_img
 
 
 @dataclass
@@ -159,6 +224,7 @@ class ImageTransformConfig:
     kwargs: dict[str, Any] = field(default_factory=dict)
 
 
+# FIXME(mshukor): this should be passsed as input to train.py
 @dataclass
 class ImageTransformsConfig:
     """
@@ -176,35 +242,234 @@ class ImageTransformsConfig:
     # By default, transforms are applied in Torchvision's suggested order (shown below).
     # Set this to True to apply them in a random order.
     random_order: bool = False
+    transform_version: int = 0
+    image_size: int = 256
     tfs: dict[str, ImageTransformConfig] = field(
         default_factory=lambda: {
-            "brightness": ImageTransformConfig(
+            "resize_with_pad": ImageTransformConfig(
                 weight=1.0,
-                type="ColorJitter",
-                kwargs={"brightness": (0.8, 1.2)},
+                type="ResizeWithPad",
+                kwargs={"size": (256, 256)},  # FIXME(mshukor): this should be passed as input to train.py
             ),
-            "contrast": ImageTransformConfig(
-                weight=1.0,
-                type="ColorJitter",
-                kwargs={"contrast": (0.8, 1.2)},
-            ),
-            "saturation": ImageTransformConfig(
-                weight=1.0,
-                type="ColorJitter",
-                kwargs={"saturation": (0.5, 1.5)},
-            ),
-            "hue": ImageTransformConfig(
-                weight=1.0,
-                type="ColorJitter",
-                kwargs={"hue": (-0.05, 0.05)},
-            ),
-            "sharpness": ImageTransformConfig(
-                weight=1.0,
-                type="SharpnessJitter",
-                kwargs={"sharpness": (0.5, 1.5)},
-            ),
+            # "resize": ImageTransformConfig(
+            #     weight=1.0,
+            #     type="Resize",
+            #     kwargs={"size": (256, 256)},
+            # ),
+            # "brightness": ImageTransformConfig(
+            #     weight=1.0,
+            #     type="ColorJitter",
+            #     kwargs={"brightness": (0.8, 1.2)},
+            # ),
+            # "contrast": ImageTransformConfig(
+            #     weight=1.0,
+            #     type="ColorJitter",
+            #     kwargs={"contrast": (0.8, 1.2)},
+            # ),
+            # "saturation": ImageTransformConfig(
+            #     weight=1.0,
+            #     type="ColorJitter",
+            #     kwargs={"saturation": (0.5, 1.5)},
+            # ),
+            # "hue": ImageTransformConfig(
+            #     weight=1.0,
+            #     type="ColorJitter",
+            #     kwargs={"hue": (-0.05, 0.05)},
+            # ),
+            # "sharpness": ImageTransformConfig(
+            #     weight=1.0,
+            #     type="SharpnessJitter",
+            #     kwargs={"sharpness": (0.5, 1.5)},
+            # ),
         }
     )
+    def __post_init__(self):
+        self.tfs = self._get_transforms_by_version(self.transform_version)
+
+    def _get_transforms_by_version(self, version: int) -> dict[str, ImageTransformConfig]:
+        if version == 0:
+            return {
+                "resize_with_pad": ImageTransformConfig(
+                    weight=1.0,
+                    type="ResizeWithPad",
+                    kwargs={"size": (256, 256)},
+                )
+            }
+        elif version == 1:
+            return {
+                "resize_with_pad": ImageTransformConfig(
+                    weight=1.0,
+                    type="ResizeWithPad",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                )
+            }
+        elif version == 2:
+            return {
+                "random_resize_crop": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomResizedCrop",
+                    kwargs={"size": (int(self.image_size * 0.95), int(self.image_size * 0.95))},
+                ),
+                "resize": ImageTransformConfig(
+                    weight=1.0,
+                    type="Resize",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                ),
+                "rotation": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomRotation",
+                    kwargs={"degrees": 5},
+                ),
+                "color_jitter": ImageTransformConfig(
+                    weight=1.0,
+                    type="ColorJitter",
+                    kwargs={"brightness": 0.3, "contrast": 0.4, "saturation": 0.5},
+                ),
+            }
+        elif version == 3:
+            return {
+                "resize_with_pad": ImageTransformConfig(
+                    weight=1.0,
+                    type="ResizeWithPad",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                ),
+                "random_resize_crop": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomResizedCrop",
+                    kwargs={"size": (int(self.image_size * 0.95), int(self.image_size * 0.95))},
+                ),
+                "resize": ImageTransformConfig(
+                    weight=1.0,
+                    type="Resize",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                ),
+                "rotation": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomRotation",
+                    kwargs={"degrees": 5},
+                ),
+                "color_jitter": ImageTransformConfig(
+                    weight=1.0,
+                    type="ColorJitter",
+                    kwargs={"brightness": 0.3, "contrast": 0.4, "saturation": 0.5},
+                ),
+            }
+        elif version == 4:
+            return {
+                "rotation": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomRotation",
+                    kwargs={"degrees": 5},
+                ),
+                "color_jitter": ImageTransformConfig(
+                    weight=1.0,
+                    type="ColorJitter",
+                    kwargs={"brightness": 0.3, "contrast": 0.4, "saturation": 0.5},
+                ),
+                "resize_with_pad": ImageTransformConfig(
+                    weight=1.0,
+                    type="ResizeWithPad",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                ),
+            }
+        elif version == 5:
+            return {
+                "translate": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomAffine",
+                    kwargs={"degrees": 0, "translate": (0.9, 0.9)},
+                ),
+                "rotation": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomRotation",
+                    kwargs={"degrees": 5},
+                ),
+                "color_jitter": ImageTransformConfig(
+                    weight=1.0,
+                    type="ColorJitter",
+                    kwargs={"brightness": 0.3, "contrast": 0.4, "saturation": 0.5},
+                ),
+                "resize_with_pad": ImageTransformConfig(
+                    weight=1.0,
+                    type="ResizeWithPad",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                ),
+            }
+        elif version == 6:
+            return {
+                "translate": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomAffine",
+                    kwargs={"degrees": 0, "translate": (0.9, 0.9)},
+                ),
+                "rotation": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomRotation",
+                    kwargs={"degrees": 5},
+                ),
+                "resize_with_pad": ImageTransformConfig(
+                    weight=1.0,
+                    type="ResizeWithPad",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                ),
+            }
+        elif version == 7:
+            return {
+                "flip": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomHorizontalFlip",
+                    kwargs={"p": 0.3},
+                ),
+                "translate": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomAffine",
+                    kwargs={"degrees": 0, "translate": (0.9, 0.9)},
+                ),
+                "rotation": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomRotation",
+                    kwargs={"degrees": 5},
+                ),
+                "resize_with_pad": ImageTransformConfig(
+                    weight=1.0,
+                    type="ResizeWithPad",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                ),
+            }
+        elif version == 8:
+            return {
+                "flip": ImageTransformConfig(
+                    weight=1.0,
+                    type="RandomHorizontalFlip",
+                    kwargs={"p": 0.3},
+                ),
+                "color_jitter": ImageTransformConfig(
+                    weight=1.0,
+                    type="ColorJitter",
+                    kwargs={"brightness": 0.3, "contrast": 0.4, "saturation": 0.5},
+                ),
+                "resize_with_pad": ImageTransformConfig(
+                    weight=1.0,
+                    type="ResizeWithPad",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                ),
+            }
+        elif version == 9:
+            return {
+                "color_jitter": ImageTransformConfig(
+                    weight=1.0,
+                    type="ColorJitter",
+                    kwargs={"brightness": 0.3, "contrast": 0.4, "saturation": 0.5},
+                ),
+                "resize_with_pad": ImageTransformConfig(
+                    weight=1.0,
+                    type="ResizeWithPad",
+                    kwargs={"size": (self.image_size, self.image_size)},
+                ),
+            }
+        else:
+            raise ValueError(f"Unknown transform_version: {version}")
+
 
 
 def make_transform_from_config(cfg: ImageTransformConfig):
@@ -214,6 +479,18 @@ def make_transform_from_config(cfg: ImageTransformConfig):
         return v2.ColorJitter(**cfg.kwargs)
     elif cfg.type == "SharpnessJitter":
         return SharpnessJitter(**cfg.kwargs)
+    elif cfg.type == "Resize":
+        return Resize(**cfg.kwargs)
+    elif cfg.type == "ResizeWithPad":
+        return ResizeWithPad(**cfg.kwargs)
+    elif cfg.type == "RandomRotation":
+        return v2.RandomRotation(**cfg.kwargs)
+    elif cfg.type == "RandomResizedCrop":
+        return v2.RandomResizedCrop(**cfg.kwargs)
+    elif cfg.type == "RandomAffine":
+        return v2.RandomAffine(**cfg.kwargs)
+    elif cfg.type == "RandomHorizontalFlip":
+        return v2.RandomHorizontalFlip(**cfg.kwargs)
     else:
         raise ValueError(f"Transform '{cfg.type}' is not valid.")
 

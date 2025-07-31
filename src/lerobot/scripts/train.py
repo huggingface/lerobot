@@ -127,6 +127,7 @@ def train(cfg: TrainPipelineConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     logging.info("Creating dataset")
+
     dataset = make_dataset(cfg)
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -178,6 +179,7 @@ def train(cfg: TrainPipelineConfig):
     # TODO: (jadechoghari): down the line, we should support loading as such:
     # keys_to_max_dim = getattr(dataset.meta, "keys_to_max_dim", {})
     keys_to_max_dim = extract_keys_to_max_dim_from_features(dataset.meta.features)
+
     collate_fn = partial(multidataset_collate_fn, keys_to_max_dim=keys_to_max_dim)
     dataloader = torch.utils.data.DataLoader(
         dataset,

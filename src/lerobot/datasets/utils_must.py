@@ -374,7 +374,6 @@ def pad_tensor_to_shape(tensor: torch.Tensor, target_shape: tuple, pad_value: fl
         pad.extend([0, max(target - actual, 0)])
     return F.pad(tensor, pad, value=pad_value)
 
-
 def multidataset_collate_fn(
     batch: List[Dict[str, torch.Tensor]],
     keys_to_max_dim: Dict[str, tuple] = {},
@@ -403,8 +402,14 @@ def multidataset_collate_fn(
             # compute per-batch max shape
             target_shape = tuple(max(v.shape[i] for v in values) for i in range(sample.ndim))
 
+        # uncomment this if you encounter a bug at collate level
+        # print(f"\nkey: {key}")
+        # print(f"shapes before padding {[v.shape for v in values]}")
+        # print(f" target shape: {target_shape}")
         for i in range(len(batch)):
             collated_batch[i][key] = pad_tensor_to_shape(values[i], target_shape, pad_value=pad_value)
+        # uncomment this if you encounter a bug at collate level
+        # print(f"  shapes afterr padding {[collated_batch[i][key].shape for i in range(len(batch))]}")
 
     return default_collate(collated_batch)
 
@@ -415,25 +420,27 @@ def extract_keys_to_max_dim_from_features(features: dict) -> dict:
 
     Args:
         features (dict): Dictionary where each key maps to a metadata dict
-                         that includes 'shape' (tuple) and optionally 'dtype'.
+                         that includes 'shape' (tuple), 'dtype', and optional 'names'.
 
     Returns:
         dict: A dict of {key: shape_tuple} for use in collate padding.
+              For images, shapes are returned in (C, H, W) format.
     """
     keys_to_max_dim = {}
-
     for key, meta in features.items():
         shape = meta.get("shape")
         dtype = meta.get("dtype")
-
-        # Skip if shape is missing or not a sequence
+        # skip if shape is missing or not a sequence
         if not isinstance(shape, (tuple, list)):
             continue
-
-        # also optionally skip scalar features?
+        # skip scalar features (e.g., (1,))
         if len(shape) == 1 and shape[0] == 1:
             continue
-
-        keys_to_max_dim[key] = tuple(shape)
+        # if it's an image/video (H, W, C), convert to (C, H, W)
+        if dtype in ("video", "image") and len(shape) == 3:
+            h, w, c = shape
+            keys_to_max_dim[key] = (c, h, w)
+        else:
+            keys_to_max_dim[key] = tuple(shape)
 
     return keys_to_max_dim
