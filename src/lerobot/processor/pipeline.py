@@ -867,7 +867,7 @@ class RobotProcessor(ModelHubMixin):
         Apply ALL steps in order. Each step must implement
         feature_contract(features) and return a dict (full or incremental schema).
         """
-        features: dict[str, Any] = deepcopy(initial_features)
+        features: dict[str, PolicyFeature] = deepcopy(initial_features)
 
         for _, step in enumerate(self.steps):
             out = step.feature_contract(features)
