@@ -29,7 +29,7 @@ Examples:
 
     # Quick conversion with minimal config
     python -m lerobot.datasets.create_dataset.cli --repo-id "user/dataset" --input-dir "/data" --fps 30
-        """
+        """,
     )
 
     parser.add_argument("--config", type=str, help="Path to YAML configuration file")
@@ -61,7 +61,7 @@ Examples:
                 input_dir=args.input_dir,
                 fps=args.fps,
                 debug=args.debug or False,
-                test_mode=args.test_mode or False
+                test_mode=args.test_mode or False,
             )
         else:
             # Use defaults from DEFAULT_CONFIG

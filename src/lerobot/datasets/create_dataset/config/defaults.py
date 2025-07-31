@@ -18,5 +18,5 @@ DEFAULT_CONFIG = {
     "test_mode": False,
     "push_to_hub": True,
     "private_repo": False,
-    "tolerance_s": 10.0
+    "tolerance_s": 10.0,
 }

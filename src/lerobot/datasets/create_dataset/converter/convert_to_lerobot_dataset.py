@@ -1,7 +1,7 @@
 """Main converter class for dataset conversion."""
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from tqdm import tqdm
 
@@ -15,7 +15,7 @@ from lerobot.datasets.utils import _validate_feature_names, validate_frame
 class DatasetConverter:
     """Main converter class that orchestrates the conversion process."""
 
-    def __init__(self, config: DatasetConfig, parser: Optional[DataParser] = None):
+    def __init__(self, config: DatasetConfig, parser: DataParser | None = None):
         self.config = config
         self.parser = parser or CSVImageParser(config)
         self.logger = self._setup_logging()
@@ -24,10 +24,7 @@ class DatasetConverter:
     def _setup_logging(self) -> logging.Logger:
         """Configure logging based on debug setting."""
         level = logging.DEBUG if self.config.debug else logging.INFO
-        logging.basicConfig(
-            level=level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+        logging.basicConfig(level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         return logging.getLogger(self.__class__.__name__)
 
     def convert(self) -> LeRobotDataset:
@@ -50,7 +47,7 @@ class DatasetConverter:
             use_videos=self.config.use_videos,
             image_writer_processes=self.config.image_writer_processes,
             image_writer_threads=self.config.image_writer_threads,
-            tolerance_s=self.config.tolerance_s
+            tolerance_s=self.config.tolerance_s,
         )
 
         # Get episode files
@@ -75,14 +72,11 @@ class DatasetConverter:
 
         # Push to hub if requested
         if self.config.push_to_hub:
-            self.dataset.push_to_hub(
-                private=self.config.private_repo,
-                push_videos=self.config.use_videos
-            )
+            self.dataset.push_to_hub(private=self.config.private_repo, push_videos=self.config.use_videos)
 
         return self.dataset
 
-    def _add_episode_to_dataset(self, episode_data: Dict[str, Any]) -> None:
+    def _add_episode_to_dataset(self, episode_data: dict[str, Any]) -> None:
         """Add parsed episode data to the dataset."""
         num_frames = len(episode_data["timestamps"])
 
@@ -102,7 +96,7 @@ class DatasetConverter:
         self.dataset.save_episode()
         self.logger.debug(f"Saved episode with {num_frames} frames")
 
-    def _create_frame(self, episode_data: Dict[str, Any], frame_idx: int) -> Dict[str, Any]:
+    def _create_frame(self, episode_data: dict[str, Any], frame_idx: int) -> dict[str, Any]:
         """Create a frame dictionary from episode data."""
         frame = {}
 

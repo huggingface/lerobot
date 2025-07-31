@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from lerobot.datasets.create_dataset.config.dataset_config import DatasetConfig
 
@@ -16,12 +16,12 @@ class DataParser(ABC):
         self.logger = logging.getLogger(self.__class__.__name__)
 
     @abstractmethod
-    def get_episode_files(self) -> List[Path]:
+    def get_episode_files(self) -> list[Path]:
         """Return list of episode files to process."""
         pass
 
     @abstractmethod
-    def parse_episode(self, episode_file: Path) -> Dict[str, List[Any]]:
+    def parse_episode(self, episode_file: Path) -> dict[str, list[Any]]:
         """Parse a single episode file and return structured data.
 
         Returns:
@@ -35,7 +35,7 @@ class DataParser(ABC):
         pass
 
     @abstractmethod
-    def get_features(self) -> Dict[str, Dict]:
+    def get_features(self) -> dict[str, dict]:
         """Return feature definitions for the dataset.
 
         Returns:

@@ -1,7 +1,7 @@
 """Parser for CSV trajectory data with associated images."""
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -18,7 +18,7 @@ from lerobot.datasets.create_dataset.parsers.utils import (
 class CSVImageParser(DataParser):
     """Parser for CSV trajectory data with associated images."""
 
-    def get_episode_files(self) -> List[Path]:
+    def get_episode_files(self) -> list[Path]:
         """Find all CSV files matching the pattern."""
         pattern = self.config.csv_pattern.replace("{episode}", "*")
         csv_files = list(self.config.input_dir.glob(pattern))
@@ -29,12 +29,12 @@ class CSVImageParser(DataParser):
 
         # Take first N episodes if in test mode
         if self.config.test_mode:
-            sorted_files = sorted_files[:self.config.max_test_episodes]
+            sorted_files = sorted_files[: self.config.max_test_episodes]
             self.logger.info(f"Test mode: using first {len(sorted_files)} episodes")
 
         return sorted_files
 
-    def parse_episode(self, episode_file: Path) -> Dict[str, List[Any]]:
+    def parse_episode(self, episode_file: Path) -> dict[str, list[Any]]:
         """Parse CSV file and load associated images."""
         # Extract episode number from filename
         episode_num = extract_episode_number(episode_file)
@@ -48,13 +48,7 @@ class CSVImageParser(DataParser):
         if episode_num == 0:
             self.logger.info(f"Episode 0 first row: {df.iloc[0][self.config.state_columns].values}")
 
-        episode_data = {
-            "actions": [],
-            "states": [],
-            "images": {},
-            "timestamps": [],
-            "tasks": []
-        }
+        episode_data = {"actions": [], "states": [], "images": {}, "timestamps": [], "tasks": []}
 
         # Initialize image lists for each camera
         for img_key in self.config.image_keys:
@@ -63,15 +57,12 @@ class CSVImageParser(DataParser):
         # Process each frame
         for frame_idx, row in df.iterrows():
             self._process_frame(
-                row=row,
-                frame_idx=frame_idx,
-                episode_num=episode_num,
-                episode_data=episode_data
+                row=row, frame_idx=frame_idx, episode_num=episode_num, episode_data=episode_data
             )
 
         return episode_data
 
-    def get_features(self) -> Dict[str, Dict]:
+    def get_features(self) -> dict[str, dict]:
         """Define features based on configuration."""
         features = {}
 
@@ -80,7 +71,7 @@ class CSVImageParser(DataParser):
             features["action"] = {
                 "dtype": "float32",
                 "shape": (len(self.config.action_columns),),
-                "names": self.config.action_columns
+                "names": self.config.action_columns,
             }
 
         # State features
@@ -88,33 +79,27 @@ class CSVImageParser(DataParser):
             features["observation.state"] = {
                 "dtype": "float32",
                 "shape": (len(self.config.state_columns),),
-                "names": self.config.state_columns
+                "names": self.config.state_columns,
             }
 
         # Image features
         for img_key in self.config.image_keys:
             # Get image dimensions from a sample image
             sample_img_path = find_sample_image(
-                self.config.input_dir,
-                self.config.image_pattern,
-                self.config.image_extension
+                self.config.input_dir, self.config.image_pattern, self.config.image_extension
             )
             if sample_img_path:
                 height, width, channels = get_image_dimensions(sample_img_path)
                 features[img_key] = {
                     "dtype": "video" if self.config.use_videos else "image",
                     "shape": (height, width, channels),
-                    "names": ["height", "width", "channels"]
+                    "names": ["height", "width", "channels"],
                 }
 
         return features
 
     def _process_frame(
-        self,
-        row: pd.Series,
-        frame_idx: int,
-        episode_num: int,
-        episode_data: Dict[str, List[Any]]
+        self, row: pd.Series, frame_idx: int, episode_num: int, episode_data: dict[str, list[Any]]
     ) -> None:
         """Process a single frame from CSV data."""
         # Extract action and state data
@@ -156,8 +141,8 @@ class CSVImageParser(DataParser):
 
     def _get_image_path(self, episode_num: int, frame_idx: int) -> Path:
         """Construct image file path."""
-        filename = self.config.image_pattern.format(
-            episode=episode_num,
-            frame=frame_idx
-        ) + self.config.image_extension
+        filename = (
+            self.config.image_pattern.format(episode=episode_num, frame=frame_idx)
+            + self.config.image_extension
+        )
         return self.config.input_dir / filename

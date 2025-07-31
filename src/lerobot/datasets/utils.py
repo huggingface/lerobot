@@ -24,17 +24,17 @@ from pprint import pformat
 from types import SimpleNamespace
 from typing import Any
 
+import datasets
 import jsonlines
 import numpy as np
 import packaging.version
 import torch
+from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
 from torchvision import transforms
 
-import datasets
-from datasets.table import embed_table_storage
 from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
 from lerobot.datasets.backward_compatibility import (
     V21_MESSAGE,

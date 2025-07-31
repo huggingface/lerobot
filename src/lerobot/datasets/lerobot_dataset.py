@@ -19,17 +19,17 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 
+import datasets
 import numpy as np
 import packaging.version
 import PIL.Image
 import torch
 import torch.utils
+from datasets import concatenate_datasets, load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
-import datasets
-from datasets import concatenate_datasets, load_dataset
 from lerobot.constants import HF_LEROBOT_HOME
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
