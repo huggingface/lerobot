@@ -59,6 +59,7 @@ class SO100Follower(Robot):
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
+        self.logs = {}  # Initialize timing logs
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -155,8 +156,8 @@ class SO100Follower(Robot):
             self.bus.configure_motors()
             for motor in self.bus.motors:
                 self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-                # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-                self.bus.write("P_Coefficient", motor, 16)
+                # Set P_Coefficient for responsive but smooth movement
+                self.bus.write("P_Coefficient", motor, 32)  # Default value for better responsiveness
                 # Set I_Coefficient and D_Coefficient to default value 0 and 32
                 self.bus.write("I_Coefficient", motor, 0)
                 self.bus.write("D_Coefficient", motor, 32)
@@ -175,15 +176,17 @@ class SO100Follower(Robot):
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position")
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
-        dt_ms = (time.perf_counter() - start) * 1e3
-        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
+        dt_s = time.perf_counter() - start
+        self.logs["read_follower_arm_pos_dt_s"] = dt_s
+        logger.debug(f"{self} read state: {dt_s * 1e3:.1f}ms")
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
             obs_dict[cam_key] = cam.async_read()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            dt_s = time.perf_counter() - start
+            self.logs[f"read_camera_{cam_key}_dt_s"] = dt_s
+            logger.debug(f"{self} read {cam_key}: {dt_s * 1e3:.1f}ms")
 
         return obs_dict
 
@@ -213,7 +216,10 @@ class SO100Follower(Robot):
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
+        start = time.perf_counter()
         self.bus.sync_write("Goal_Position", goal_pos)
+        dt_s = time.perf_counter() - start
+        self.logs["write_follower_arm_goal_pos_dt_s"] = dt_s
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):

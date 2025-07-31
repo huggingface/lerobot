@@ -32,6 +32,8 @@ python -m lerobot.record \
     # --teleop.id=blue \
     # <- Policy optional if you want to record with a policy \
     # --policy.path=${HF_USER}/my_policy \
+    # <- Enable comprehensive inference logging (robot state, policy outputs, trajectories) \
+    # --log=true \
 ```
 
 Example recording with bimanual so100:
@@ -63,6 +65,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 
+from debug_utils.inference_logger import InferenceLogger
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
@@ -169,6 +172,8 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Enable comprehensive inference logging (robot state, policy outputs, trajectories)
+    log: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -198,6 +203,7 @@ def record_loop(
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
+    inference_logger: InferenceLogger | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -238,6 +244,8 @@ def record_loop(
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
         if policy is not None:
+            # Time the inference for logging
+            inference_start = time.perf_counter()
             action_values = predict_action(
                 observation_frame,
                 policy,
@@ -246,7 +254,19 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
+            inference_time = time.perf_counter() - inference_start
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+
+            # Log inference data if logger is provided
+            if inference_logger is not None:
+                inference_logger.log_step_summary(
+                    observation=observation,
+                    action=action,
+                    robot=robot,
+                    policy_output=action_values,
+                    inference_time=inference_time,
+                    task=single_task,
+                )
         elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
         elif policy is None and isinstance(teleop, list):
@@ -335,6 +355,15 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener()
 
+    # Initialize inference logger if requested
+    inference_logger = None
+    if cfg.log and policy is not None:
+        log_dir = (
+            Path("inference_logs") / cfg.dataset.repo_id.replace("/", "_") / time.strftime("%Y%m%d_%H%M%S")
+        )
+        inference_logger = InferenceLogger(log_dir, robot_name=robot.name, target_fps=cfg.dataset.fps)
+        print(f"🔬 Inference logging enabled! Data will be saved to: {log_dir}")
+
     with VideoEncodingManager(dataset):
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
@@ -349,6 +378,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
+                inference_logger=inference_logger,
             )
 
             # Execute a few seconds without recording to give time to manually reset the environment
@@ -365,6 +395,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.reset_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
+                    inference_logger=None,  # Don't log during reset
                 )
 
             if events["rerecord_episode"]:
@@ -382,6 +413,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     robot.disconnect()
     if teleop is not None:
         teleop.disconnect()
+
+    # Close inference logger if it was used
+    if inference_logger is not None:
+        inference_logger.close()
 
     if not is_headless() and listener is not None:
         listener.stop()

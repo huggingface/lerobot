@@ -167,6 +167,12 @@ wandb/
 data/
 outputs/
 
+# Inference logs and debug data
+src/lerobot/inference_logs/
+inference_logs/
+*.csv
+*_logs/
+
 # Translations
 *.mo
 *.pot

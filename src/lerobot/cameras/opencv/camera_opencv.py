@@ -318,6 +318,7 @@ class OpenCVCamera(Camera):
 
         start_time = time.perf_counter()
 
+        # Get frame directly (minimal buffering for performance)
         ret, frame = self.videocapture.read()
 
         if not ret or frame is None:
@@ -420,7 +421,7 @@ class OpenCVCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
         """
         Reads the latest available frame asynchronously.
 
@@ -484,3 +485,20 @@ class OpenCVCamera(Camera):
             self.videocapture = None
 
         logger.info(f"{self} disconnected.")
+
+    def restart(self):
+        """
+        Restart the camera connection to clear any accumulated buffer issues.
+        Useful between recording episodes to ensure fresh camera state.
+        """
+        if self.is_connected:
+            logger.info(f"Restarting {self} to clear buffer...")
+            was_connected = True
+            self.disconnect()
+            time.sleep(0.1)  # Brief pause
+        else:
+            was_connected = False
+
+        if was_connected:
+            self.connect()
+            logger.info(f"{self} restarted successfully.")
