@@ -41,7 +41,9 @@ class MockTokenizer:
         max_length: int = 512,
         truncation: bool = True,
         padding: str = "max_length",
+        padding_side: str = "right",
         return_tensors: str = "pt",
+        **kwargs,
     ) -> dict[str, torch.Tensor]:
         """Mock tokenization that returns deterministic tokens based on text."""
         if isinstance(text, str):
@@ -285,6 +287,7 @@ def test_get_config_with_tokenizer_name(mock_auto_tokenizer):
         "tokenizer_name": "test-tokenizer",
         "max_length": 256,
         "task_key": "instruction",
+        "padding_side": "right",
         "padding": "longest",
         "truncation": False,
     }
@@ -310,6 +313,7 @@ def test_get_config_with_tokenizer_object():
     expected = {
         "max_length": 256,
         "task_key": "instruction",
+        "padding_side": "right",
         "padding": "longest",
         "truncation": False,
     }
@@ -535,7 +539,11 @@ def test_tokenization_parameters(mock_auto_tokenizer):
     mock_auto_tokenizer.from_pretrained.return_value = tracking_tokenizer
 
     processor = TokenizerProcessor(
-        tokenizer_name="test-tokenizer", max_length=16, padding="longest", truncation=False
+        tokenizer_name="test-tokenizer",
+        max_length=16,
+        padding="longest",
+        truncation=False,
+        padding_side="left",
     )
 
     transition = create_transition(complementary_data={"task": "test task"})
@@ -546,6 +554,7 @@ def test_tokenization_parameters(mock_auto_tokenizer):
     assert tracking_tokenizer.last_call_args == (["test task"],)
     assert tracking_tokenizer.last_call_kwargs["max_length"] == 16
     assert tracking_tokenizer.last_call_kwargs["padding"] == "longest"
+    assert tracking_tokenizer.last_call_kwargs["padding_side"] == "left"
     assert tracking_tokenizer.last_call_kwargs["truncation"] is False
     assert tracking_tokenizer.last_call_kwargs["return_tensors"] == "pt"
 
@@ -643,3 +652,48 @@ def test_very_long_task(mock_auto_tokenizer):
     attention_mask = observation[f"{OBS_LANGUAGE}.attention_mask"]
     assert tokens.shape == (5,)
     assert attention_mask.shape == (5,)
+
+
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_custom_padding_side(mock_auto_tokenizer):
+    """Test using custom padding_side parameter."""
+
+    # Create a mock tokenizer that tracks padding_side calls
+    class PaddingSideTrackingTokenizer:
+        def __init__(self):
+            self.padding_side_calls = []
+
+        def __call__(
+            self,
+            text,
+            max_length=512,
+            truncation=True,
+            padding="max_length",
+            padding_side="right",
+            return_tensors="pt",
+            **kwargs,
+        ):
+            self.padding_side_calls.append(padding_side)
+            # Return minimal valid output
+            return {
+                "input_ids": torch.zeros(max_length, dtype=torch.long),
+                "attention_mask": torch.ones(max_length, dtype=torch.long),
+            }
+
+    tracking_tokenizer = PaddingSideTrackingTokenizer()
+    mock_auto_tokenizer.from_pretrained.return_value = tracking_tokenizer
+
+    # Test left padding
+    processor_left = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=10, padding_side="left")
+
+    transition = create_transition(complementary_data={"task": "test task"})
+    processor_left(transition)
+
+    assert tracking_tokenizer.padding_side_calls[-1] == "left"
+
+    # Test right padding (default)
+    processor_right = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=10, padding_side="right")
+
+    processor_right(transition)
+
+    assert tracking_tokenizer.padding_side_calls[-1] == "right"

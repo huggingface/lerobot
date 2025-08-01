@@ -57,6 +57,7 @@ class TokenizerProcessor:
     tokenizer: AutoTokenizer | None = None
     max_length: int = 512
     task_key: str = "task"
+    padding_side: str = "right"
     padding: str = "max_length"
     truncation: bool = True
 
@@ -150,6 +151,7 @@ class TokenizerProcessor:
             max_length=self.max_length,
             truncation=self.truncation,
             padding=self.padding,
+            padding_side=self.padding_side,
             return_tensors="pt",
         )
 
@@ -162,6 +164,7 @@ class TokenizerProcessor:
         config = {
             "max_length": self.max_length,
             "task_key": self.task_key,
+            "padding_side": self.padding_side,
             "padding": self.padding,
             "truncation": self.truncation,
         }

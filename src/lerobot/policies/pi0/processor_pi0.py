@@ -69,7 +69,10 @@ def make_pi0_processor(
         ToBatchProcessor(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
         TokenizerProcessor(
-            tokenizer_name="google/paligemma-3b-pt-224", max_length=config.tokenizer_max_length
+            tokenizer_name="google/paligemma-3b-pt-224",
+            max_length=config.tokenizer_max_length,
+            padding_side="right",
+            padding="max_length",
         ),
     ]
     output_steps = [
