@@ -3,7 +3,8 @@
 Simple test to verify the multi_record function and configurations work correctly.
 """
 
-from lerobot.record import MultiDatasetRecordConfig, DatasetRecordConfig
+from lerobot.record import DatasetRecordConfig, MultiDatasetRecordConfig
+
 
 def test_multi_dataset_config():
     """Test that MultiDatasetRecordConfig creates correctly."""

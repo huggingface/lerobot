@@ -583,7 +583,9 @@ def multi_record_loop(
             action_frame = build_dataset_frame(current_dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
             # Use the task from the dataset configuration
-            current_task = dataset_configs[current_stage].single_task if current_stage < len(dataset_configs) else None
+            current_task = (
+                dataset_configs[current_stage].single_task if current_stage < len(dataset_configs) else None
+            )
             current_dataset.add_frame(frame, task=current_task, timestamp=None)
 
         if display_data:
@@ -651,8 +653,10 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
     # Validate that all datasets have the same FPS for consistent recording
     fps_values = [dataset.fps for dataset in datasets]
     if len(set(fps_values)) > 1:
-        raise ValueError(f"All datasets must have the same FPS for multi-dataset recording. Found: {fps_values}")
-    
+        raise ValueError(
+            f"All datasets must have the same FPS for multi-dataset recording. Found: {fps_values}"
+        )
+
     recording_fps = fps_values[0]
 
     # Load pretrained policy
@@ -681,11 +685,11 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
 
     # Use video encoding managers for all datasets
     video_managers = [VideoEncodingManager(dataset) for dataset in datasets]
-    
+
     # Enter all video managers
     for manager in video_managers:
         manager.__enter__()
-    
+
     try:
         recorded_episodes = 0
         max_episodes = max(dataset_cfg.num_episodes for dataset_cfg in cfg.multi_dataset.datasets)
@@ -709,7 +713,9 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
                 dataset_configs=cfg.multi_dataset.datasets,  # Pass dataset configs
                 teleop=teleop,
                 policy=policy,
-                control_time_s=sum(dataset_cfg.episode_time_s for dataset_cfg in cfg.multi_dataset.datasets),  # Sum of all stage times
+                control_time_s=sum(
+                    dataset_cfg.episode_time_s for dataset_cfg in cfg.multi_dataset.datasets
+                ),  # Sum of all stage times
                 display_data=cfg.display_data,
             )
 
@@ -742,7 +748,9 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
             # Save episodes only for datasets that have frames recorded
             saved_any_dataset = False
             for i, dataset in enumerate(datasets):
-                if dataset.episode_buffer is not None and dataset.episode_buffer.get("size", 0) > 0:  # Only save if there are frames
+                if (
+                    dataset.episode_buffer is not None and dataset.episode_buffer.get("size", 0) > 0
+                ):  # Only save if there are frames
                     try:
                         dataset.save_episode()
                         saved_any_dataset = True
