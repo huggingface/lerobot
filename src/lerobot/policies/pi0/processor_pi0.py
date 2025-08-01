@@ -14,8 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
     NormalizerProcessor,
@@ -54,6 +57,26 @@ class Pi0NewLineProcessor(ProcessorStep):
         # If task is neither string nor list of strings, leave unchanged
 
         return transition
+
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """Add tokenized task features to the feature contract."""
+        return features
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Return state dictionary (empty for this processor)."""
+        return {}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Load state dictionary (no-op for this processor)."""
+        pass
+
+    def reset(self) -> None:
+        """Reset processor state (no-op for this processor)."""
+        pass
+
+    def get_config(self) -> dict[str, Any]:
+        """Return configuration for serialization."""
+        return {}
 
 
 def make_pi0_processor(
