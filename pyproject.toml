@@ -61,7 +61,7 @@ dependencies = [
     # Hugging Face dependencies
     "datasets>=2.19.0,<=3.6.0", # TODO: Bumb dependency
     "diffusers>=0.27.2",
-    "huggingface-hub[hf-transfer,cli]>=0.27.1,<0.34.0", # TODO: Bumb dependency
+    "huggingface-hub[hf-transfer,cli]>=0.34.2",
 
     # Core dependencies
     "cmake>=3.29.0.1",
@@ -94,7 +94,7 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1"]
 placo-dep = ["placo>=0.9.6"]
-transformers-dep = ["transformers>=4.50.3,<4.52.0", "tokenizers<0.21.4"] # TODO: Bumb dependency, remove tokenizers dependency
+transformers-dep = ["transformers>=4.50.3,<4.52.0"] # TODO: Bumb dependency
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
 
 # Motors
