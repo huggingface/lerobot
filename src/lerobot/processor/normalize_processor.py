@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -12,7 +11,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey, RobotProcessor
+from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, RobotProcessor, TransitionKey
 
 
 def _convert_stats_to_tensors(stats: dict[str, dict[str, Any]]) -> dict[str, dict[str, Tensor]]:
