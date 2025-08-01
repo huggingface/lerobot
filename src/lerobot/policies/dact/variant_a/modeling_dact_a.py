@@ -22,35 +22,38 @@ The majority of changes here involve removing unused code, unifying naming, and 
 import math
 from collections import deque
 from collections.abc import Callable
-from itertools import chain
 
 import einops
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
+
+# Diffusion imports
+from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.constants import ACTION, OBS_IMAGES
-from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.dact.variant_a.configuration_dact_a import DACTConfigA
+from lerobot.policies.diffusion.modeling_diffusion import DiffusionConditionalUnet1d, DiffusionRgbEncoder
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
 
 
-class ACTPolicy(PreTrainedPolicy):
+class DACTPolicyA(PreTrainedPolicy):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://huggingface.co/papers/2304.13705, code: https://github.com/tonyzhaozh/act)
     """
 
-    config_class = ACTConfig
-    name = "act"
+    config_class = DACTConfigA
+    name = "dact_a"
 
     def __init__(
         self,
-        config: ACTConfig,
+        config: DACTConfigA,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -303,7 +306,7 @@ class ACT(nn.Module):
                                 └───────────────────────┘
     """
 
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: DACTConfigA):
         # BERT style VAE encoder with input tokens [cls, robot_state, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         super().__init__()
@@ -346,9 +349,11 @@ class ACT(nn.Module):
             # Note: The forward method of this returns a dict: {"feature_map": output}.
             self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
-        # Transformer (acts as VAE decoder when training with the variational objective).
+        # Transformer encoder for observation encoding (keep as-is)
         self.encoder = ACTEncoder(config)
-        self.decoder = ACTDecoder(config)
+        # Replace transformer decoder with diffusion model for Variant A
+        # TODO: Replace with proper diffusion model - placeholder for now
+        self.decoder = None  # Will be replaced with diffusion denoiser
 
         # Transformer encoder input projections. The tokens will be structured like
         # [latent, (robot_state), (env_state), (image_feature_map_pixels)].
@@ -375,20 +380,35 @@ class ACT(nn.Module):
         if self.config.image_features:
             self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
-        # Transformer decoder.
-        # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
-        self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.dim_model)
+        # Attention pooler for transformer encoder summary
+        self.attention_pooler = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout, batch_first=False)
+        self.pool_query = nn.Parameter(torch.randn(1, 1, config.dim_model))
 
-        # Final action regression head on the output of the transformer's decoder.
-        self.action_head = nn.Linear(config.dim_model, self.config.action_feature.shape[0])
+        # Diffusion components (replace transformer decoder + action head)
+        # TODO: Add proper diffusion model initialization
+        # For now, add noise scheduler which we'll definitely need
+        self.noise_scheduler = DDPMScheduler(
+            num_train_timesteps=1000,
+            beta_schedule="squaredcos_cap_v2",
+            clip_sample=True,
+            prediction_type="epsilon"
+        )
+
+        global_cond_dim = config.dim_model
+        if self.config.robot_state_feature:
+            global_cond_dim += self.config.robot_state_feature.shape[0]
+        if self.config.env_state_feature:
+            global_cond_dim += self.config.env_state_feature.shape[0]
 
         self._reset_parameters()
 
     def _reset_parameters(self):
-        """Xavier-uniform initialization of the transformer parameters as in the original code."""
-        for p in chain(self.encoder.parameters(), self.decoder.parameters()):
+        """Xavier-uniform initialization of the transformer encoder parameters."""
+        # Only initialize encoder parameters (decoder replaced with diffusion)
+        for p in self.encoder.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
+        # Note: Diffusion model will initialize its own parameters when implemented
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         """A forward pass through the Action Chunking Transformer (with optional VAE encoder).
@@ -409,6 +429,7 @@ class ACT(nn.Module):
             Tuple containing the latent PDF's parameters (mean, log(σ²)) both as (B, L) tensors where L is the
             latent dimension.
         """
+        # PART 1: VAE encoder code to get latent sample
         if self.config.use_vae and self.training:
             assert "action" in batch, (
                 "actions must be provided when using the variational objective in training mode."
@@ -473,6 +494,7 @@ class ACT(nn.Module):
                 batch["observation.state"].device
             )
 
+        # PART 2: Transformer encoder
         # Prepare transformer encoder inputs.
         encoder_in_tokens = [self.encoder_latent_input_proj(latent_sample)]
         encoder_in_pos_embed = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
@@ -509,7 +531,21 @@ class ACT(nn.Module):
 
         # Forward pass through the transformer modules.
         encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
-        # TODO(rcadene, alexander-soare): remove call to `device` ; precompute and use buffer
+
+        # PART 3: Attention pooling
+        batch_size = encoder_out.shape[1]
+        query = self.pool_query.repeat(1, batch_size, -1) # (1, B, D)
+        obs_summary = self.attention_pooler(query, encoder_out, encoder_out) # (1, B, D)
+        obs_summary = obs_summary.squeeze(0) # (B, D)
+
+        # PART 4: Global conditioning
+        global_cond_feats = [obs_summary]
+        if self.config.robot_state_feature:
+            global_cond_feats.append(batch["observation.state"])
+        if self.config.env_state_feature:
+            global_cond_feats.append(batch["observation.environment_state"])
+        global_cond = torch.cat(global_cond_feats, dim=-1) # (B, global_cond_dim)
+
         decoder_in = torch.zeros(
             (self.config.chunk_size, batch_size, self.config.dim_model),
             dtype=encoder_in_pos_embed.dtype,
@@ -533,7 +569,7 @@ class ACT(nn.Module):
 class ACTEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""
 
-    def __init__(self, config: ACTConfig, is_vae_encoder: bool = False):
+    def __init__(self, config: DACTConfigA, is_vae_encoder: bool = False):
         super().__init__()
         self.is_vae_encoder = is_vae_encoder
         num_layers = config.n_vae_encoder_layers if self.is_vae_encoder else config.n_encoder_layers
@@ -550,7 +586,7 @@ class ACTEncoder(nn.Module):
 
 
 class ACTEncoderLayer(nn.Module):
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: DACTConfigA):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
 
@@ -589,7 +625,7 @@ class ACTEncoderLayer(nn.Module):
 
 
 class ACTDecoder(nn.Module):
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: DACTConfigA):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
         self.layers = nn.ModuleList([ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)])
@@ -612,7 +648,7 @@ class ACTDecoder(nn.Module):
 
 
 class ACTDecoderLayer(nn.Module):
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: DACTConfigA):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
         self.multihead_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
