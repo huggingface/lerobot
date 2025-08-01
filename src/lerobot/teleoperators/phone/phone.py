@@ -35,6 +35,7 @@ from .config_phone import PhoneConfig, PhoneOS
 logger = logging.getLogger(__name__)
 
 # TODO(Pepijn): Use default ObservationStep etc as much as possible in phone teleop to reduce boilerplate
+# TODO(pepijn): Add general pipeline step test that checks that a pipeline feature contract is always returning a dict
 # TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline
 # TODO(pepijn): Add to docs with image etc
 

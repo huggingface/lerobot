@@ -1,12 +1,11 @@
+# src/lerobot/processor/utils.py
+
 from __future__ import annotations
 
 from typing import Any
 
 import numpy as np
 import torch
-
-from lerobot.robots.robot import Robot
-from lerobot.teleoperators.teleoperator import Teleoperator
 
 from .pipeline import EnvTransition, TransitionKey
 
@@ -30,16 +29,6 @@ def _from_tensor(x: Any):
     return x
 
 
-def _to_numpy(x: Any) -> np.ndarray:
-    if isinstance(x, torch.Tensor):
-        return x.detach().cpu().numpy()
-    if isinstance(x, np.ndarray):
-        return x
-    if np.isscalar(x):
-        return np.array(x)
-    return np.asarray(x)
-
-
 def _is_image(arr: Any) -> bool:
     return isinstance(arr, np.ndarray) and arr.dtype == np.uint8 and arr.ndim == 3
 
@@ -54,73 +43,47 @@ def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any],
     return state, images
 
 
-def robot_observation_to_pipeline(robot: Robot) -> EnvTransition:
-    """
-    Reads the robot observation and converts it into an EnvTransition.
-    observation.* keys are populated; action is empty.
-    Numbers/float arrays -> torch.Tensor; images (uint8 HWC) stay as np.ndarray.
-    """
-    obs = robot.get_observation()
-    state, images = _split_obs_to_state_and_images(obs)
+def make_transition(*, obs: dict | None = None, act: dict | None = None) -> EnvTransition:
+    return {
+        TransitionKey.OBSERVATION: {} if obs is None else obs,
+        TransitionKey.ACTION: {} if act is None else act,
+    }
 
-    obs_dict: dict[str, Any] = {}
+
+def prepare_teleop_action_pipeline(teleop_action: dict) -> EnvTransition:
+    act_dict = {}
+    for k, v in teleop_action.items():
+        arr = np.array(v) if np.isscalar(v) else v
+        act_dict[f"action.{k}"] = _to_tensor(arr)
+    return make_transition(act=act_dict)
+
+
+def prepare_robot_observation_pipeline(robot_obs: dict) -> EnvTransition:
+    state, images = _split_obs_to_state_and_images(robot_obs)
+    obs_dict = {}
     for k, v in state.items():
-        obs_dict[f"observation.state.{k}"] = _to_tensor(np.array(v) if np.isscalar(v) else v)
+        arr = np.array(v) if np.isscalar(v) else v
+        obs_dict[f"observation.state.{k}"] = _to_tensor(arr)
     for cam, img in images.items():
         obs_dict[f"observation.images.{cam}"] = img
-
-    transition: EnvTransition = {
-        TransitionKey.OBSERVATION: obs_dict,
-        TransitionKey.ACTION: {},
-        TransitionKey.COMPLEMENTARY_DATA: {
-            "robot_action_keys": list(robot.action_features.keys()),
-            "robot_observation_state_keys": list(state.keys()),
-            "robot_observation_image_keys": list(images.keys()),
-        },
-    }
-    return transition
+    return make_transition(obs=obs_dict)
 
 
-def pipeline_to_robot_action(transition: EnvTransition, robot: Robot | None = None) -> dict[str, Any]:
-    """
-    Extract a robot action dict from EnvTransition ACTION, keeping only keys
-    that the robot supports, and converting tensors to Python scalars/ndarrays.
-    Expected ACTION keys (unscoped): e.g. "shoulder_pan.pos", "gripper.pos", ...
-    """
-    act = transition.get(TransitionKey.ACTION) or {}
-    if not isinstance(act, dict):
-        return {}
-    allowed = set(robot.action_features.keys() if robot is not None else act.keys())
-    return {k: _from_tensor(v) for k, v in act.items() if k in allowed}
-
-
-def teleop_action_to_pipeline(teleop: Teleoperator) -> EnvTransition:
-    """
-    Convert raw teleop readings into ACTION keys.
-    Convention: INSIDE EnvTransition, ACTION keys are **unscoped** (no 'action.' prefix).
-    """
-    raw = teleop.get_action()  # e.g. {"phone.pos": np.ndarray, "phone.rot": Rotation, ...}
-    act_dict: dict[str, Any] = {}
-    for k, v in raw.items():
-        val = np.array(v) if np.isscalar(v) else v
-        act_dict[k] = _to_tensor(val)
-    transition: EnvTransition = {
-        TransitionKey.OBSERVATION: {},
-        TransitionKey.ACTION: act_dict,
-        TransitionKey.COMPLEMENTARY_DATA: {
-            "teleop_action_keys": list(raw.keys()),
-            "teleop_feedback_keys": list(teleop.feedback_features.keys()) if teleop.feedback_features else [],
-        },
-    }
-    return transition
+def pipeline_to_robot_action(transition: EnvTransition) -> dict[str, Any]:
+    """Strip 'action.' for Robot.send_action"""
+    out = {}
+    for k, v in (transition.get(TransitionKey.ACTION) or {}).items():
+        if isinstance(k, str) and k.startswith("action."):
+            out[k[len("action.") :]] = _from_tensor(v)
+    return out
 
 
 def transition_to_dataset_batch(transition: EnvTransition) -> dict[str, Any]:
     """
-    Flatten an EnvTransition into a dataset-ready frame:
-      - Copy observation.* as-is from OBSERVATION dict
-      - For ACTION unscoped keys -> 'action.<key>'
-      - next.*, info, and complementary padding/task
+    Flatten EnvTransition into a dataset-ready frame:
+      - observation.* are copied as-is
+      - action.* remain action.* (no double 'action.action.')
+      - next.*, info and selected complementary_data
     """
     batch: dict[str, Any] = {}
 
@@ -129,10 +92,11 @@ def transition_to_dataset_batch(transition: EnvTransition) -> dict[str, Any]:
     if isinstance(observation, dict):
         batch.update(observation)
 
-    # action.*
+    # action.* (keep 'action.' if already present)
     action = transition.get(TransitionKey.ACTION) or {}
     for k, v in action.items():
-        batch[f"action.{k}"] = _from_tensor(v)
+        key = k if isinstance(k, str) and k.startswith("action.") else f"action.{k}"
+        batch[key] = _from_tensor(v)
 
     # reward/done/truncated/info
     if TransitionKey.REWARD in transition:
@@ -144,7 +108,7 @@ def transition_to_dataset_batch(transition: EnvTransition) -> dict[str, Any]:
     if TransitionKey.INFO in transition:
         batch["info"] = transition[TransitionKey.INFO] or {}
 
-    # complementary data
+    # complementary data: keep *_is_pad and task
     comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
     for k, v in comp.items():
         if k.endswith("_is_pad"):
@@ -153,3 +117,21 @@ def transition_to_dataset_batch(transition: EnvTransition) -> dict[str, Any]:
         batch["task"] = comp["task"]
 
     return batch
+
+
+def merge_transitions(base: EnvTransition, *others: EnvTransition) -> EnvTransition:
+    out = {**base}
+    for tr in others:
+        if tr.get(TransitionKey.OBSERVATION):
+            out.setdefault(TransitionKey.OBSERVATION, {}).update(tr[TransitionKey.OBSERVATION])
+        if tr.get(TransitionKey.ACTION):
+            out.setdefault(TransitionKey.ACTION, {}).update(tr[TransitionKey.ACTION])
+        if tr.get(TransitionKey.INFO):
+            out.setdefault(TransitionKey.INFO, {}).update(tr[TransitionKey.INFO])
+        if tr.get(TransitionKey.COMPLEMENTARY_DATA):
+            out.setdefault(TransitionKey.COMPLEMENTARY_DATA, {}).update(tr[TransitionKey.COMPLEMENTARY_DATA])
+        # reward/done/truncated: last writer wins
+        for k in (TransitionKey.REWARD, TransitionKey.DONE, TransitionKey.TRUNCATED):
+            if k in tr:
+                out[k] = tr[k]
+    return out

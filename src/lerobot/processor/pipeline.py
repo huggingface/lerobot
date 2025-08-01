@@ -175,11 +175,7 @@ class ProcessorStep(Protocol):
 
     def reset(self) -> None: ...
 
-    def feature_contract(
-        self, features: dict[str, PolicyFeature]
-    ) -> dict[
-        str, PolicyFeature
-    ]: ...  # TODO(pepijn): Also have a notion of EnvTransition in feature_contract and features? (3)
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
 
 
 def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401

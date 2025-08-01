@@ -17,129 +17,103 @@
 from dataclasses import dataclass, field
 
 import numpy as np
-import torch
 from scipy.spatial.transform import Rotation
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.robots.robot import Robot
 
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
 @dataclass
 class EEReferenceAndDelta:
     """
-    Maintains a reference end-effector pose and converts relative delta targets
-    into an absolute desired EE transform. When enabled, the first incoming pose
-    becomes the reference; subsequent (x,y,z) deltas and optional orientation
-    offsets (quaternion) are applied to steer the EE. Also passes through the
-    gripper and enable commands, and resets reference when disabled.
+    Compute the desired end-effector pose from the target pose and the current pose.
 
-    Expected input ACTION keys:
+    Input ACTION keys:
     {
-        "enabled": bool,
-        "target_x": float,
-        "target_y": float,
-        "target_z": float,
-        "target_qx": float,
-        "target_qy": float,
-        "target_qz": float,
-        "target_qw": float,
+        "action.enabled": bool,
+        "action.target_x": float,
+        "action.target_y": float,
+        "action.target_z": float,
+        "action.target_qx": float,
+        "action.target_qy": float,
+        "action.target_qz": float,
+        "action.target_qw": float,
     }
 
-    Output transformed ACTION keys:
+    Output ACTION keys:
     {
-        "desired_ee_pose": np.ndarray,
+        "action.ee.desired_T": np.ndarray,
     }
     """
 
     kinematics: RobotKinematics
     end_effector_step_sizes: dict
     motor_names: list[str]
-
     reference_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
-    last_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         obs = transition.get(TransitionKey.OBSERVATION) or {}
         act = transition.get(TransitionKey.ACTION) or {}
 
-        # Current joints from observation.state
-        q_curr = np.array(
-            [
-                float((obs.get(f"observation.state.{name}.pos") or torch.tensor(0.0)).item())
-                for name in self.motor_names
-            ],
-            dtype=float,
-        )
-        current_ee_pose = self.kinematics.forward_kinematics(q_curr)
+        # current pose from FK on measured joints
+        q = np.array([obs[f"observation.state.{n}.pos"] for n in self.motor_names], dtype=float)
+        t_curr = self.kinematics.forward_kinematics(q)
 
-        enabled = bool(act.pop("enabled", 0))  # consumed here
-        new_action = dict(act)
+        enabled = bool(act.pop("action.enabled", 0))
+        tx = float(act.pop("action.target_x", 0.0))
+        ty = float(act.pop("action.target_y", 0.0))
+        tz = float(act.pop("action.target_z", 0.0))
+        qx = float(act.pop("action.target_qx", 0.0))
+        qy = float(act.pop("action.target_qy", 0.0))
+        qz = float(act.pop("action.target_qz", 0.0))
+        qw = float(act.pop("action.target_qw", 1.0))
 
+        new_act = dict(act)
         if enabled:
             if self.reference_ee_pose is None:
-                self.reference_ee_pose = current_ee_pose.copy()
-                self.last_ee_pose = current_ee_pose.copy()
+                self.reference_ee_pose = t_curr.copy()
 
-            ref_pose = self.reference_ee_pose
-            desired_ee_pose = np.eye(4)
-
-            delta = np.array(
+            t_ref = self.reference_ee_pose
+            delta_p = np.array(
                 [
-                    float(act.pop("target_x", 0.0)) * float(self.end_effector_step_sizes["x"]),
-                    float(act.pop("target_y", 0.0)) * float(self.end_effector_step_sizes["y"]),
-                    float(act.pop("target_z", 0.0)) * float(self.end_effector_step_sizes["z"]),
-                ],
-                dtype=float,
+                    tx * self.end_effector_step_sizes["x"],
+                    ty * self.end_effector_step_sizes["y"],
+                    tz * self.end_effector_step_sizes["z"],
+                ]
             )
+            r_delta = Rotation.from_quat([qx, qy, qz, qw]).as_matrix()
 
-            desired_position = ref_pose[:3, 3] + delta
-
-            q = np.array(
-                [
-                    float(act.pop("target_qx", 0.0)),
-                    float(act.pop("target_qy", 0.0)),
-                    float(act.pop("target_qz", 0.0)),
-                    float(act.pop("target_qw", 1.0)),
-                ],
-                dtype=float,
-            )
-
-            rot = Rotation.from_quat(q)
-
-            desired_ee_pose[:3, 3] = desired_position
-            desired_ee_pose[:3, :3] = ref_pose[:3, :3] @ rot.as_matrix()
-
-            new_action["desired_ee_pose"] = desired_ee_pose
+            t_des = np.eye(4)
+            t_des[:3, :3] = t_ref[:3, :3] @ r_delta
+            t_des[:3, 3] = t_ref[:3, 3] + delta_p
+            new_act["action.ee.desired_T"] = t_des
         else:
             self.reference_ee_pose = None
-            self.last_ee_pose = None
+            new_act["action.ee.desired_T"] = None
 
-            new_action["desired_ee_pose"] = None
-
-        transition[TransitionKey.ACTION] = new_action
+        transition[TransitionKey.ACTION] = new_act
         return transition
 
     def reset(self):
         self.reference_ee_pose = None
-        self.last_ee_pose = None
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # Accept both scoped/unscoped inputs; emit scoped outputs
-        for k in (
-            "enabled",
-            "target_x",
-            "target_y",
-            "target_z",
-            "target_qx",
-            "target_qy",
-            "target_qz",
-            "target_qw",
-        ):
-            features.pop(f"action.{k}", None)
+        # remove consumed fields; add desired pose
+        for k in [
+            "action.enabled",
+            "action.target_x",
+            "action.target_y",
+            "action.target_z",
+            "action.target_qx",
+            "action.target_qy",
+            "action.target_qz",
+            "action.target_qw",
+        ]:
             features.pop(k, None)
-        features["action.desired_ee_pose"] = np.ndarray
+        features["action.ee.desired_T"] = np.ndarray
         return features
 
 
@@ -147,133 +121,111 @@ class EEReferenceAndDelta:
 @dataclass
 class EEBoundsAndSafety:
     """
-    Clamps the EE pose to the bounds and checks for safety.
+    Clip the end-effector pose to the bounds and check for jumps.
 
-    Expected input ACTION keys:
+    Input ACTION keys:
     {
-        "desired_ee_pose": np.ndarray,
+        "action.ee.desired_T": np.ndarray,
     }
 
-    Output transformed ACTION keys:
+    Output ACTION keys:
     {
-        "desired_ee_pose": np.ndarray,
+        "action.ee.desired_T": np.ndarray,
     }
     """
 
     end_effector_bounds: dict
     max_ee_step_m: float = 0.05
-
-    last_position: np.ndarray | None = field(default=None, init=False, repr=False)
+    _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         act = transition.get(TransitionKey.ACTION) or {}
-        if "desired_ee_pose" not in act or act["desired_ee_pose"] is None:
+        t = act.get("action.ee.desired_T", None)
+        if t is None:
             return transition
 
-        pose = act["desired_ee_pose"].copy()
-        pos = pose[:3, 3]  # Extract position from pose
-        pos_clamped = np.clip(pos, self.end_effector_bounds["min"], self.end_effector_bounds["max"])
+        pos = t[:3, 3]
+        pos = np.clip(pos, self.end_effector_bounds["min"], self.end_effector_bounds["max"])
+        if self._last_pos is not None:
+            jump = np.linalg.norm(pos - self._last_pos)
+            if jump > self.max_ee_step_m:
+                raise ValueError(f"EE jump {jump:.3f}m > {self.max_ee_step_m}m")
+        t[:3, 3] = pos
+        self._last_pos = pos
 
-        if self.last_position is not None:
-            dist = np.linalg.norm(pos_clamped - self.last_position)
-            if dist > self.max_ee_step_m:
-                raise ValueError(
-                    f"EE target jump of {dist:.3f}m exceeds safety limit of {self.max_ee_step_m}m."
-                )
-
-        pose[:3, 3] = pos_clamped
-        self.last_position = pos_clamped
-
-        new_action = dict(act)
-        new_action["desired_ee_pose"] = pose
-        transition[TransitionKey.ACTION] = new_action
+        new_act = dict(act)
+        new_act["action.ee.desired_T"] = t
+        transition[TransitionKey.ACTION] = new_act
         return transition
 
     def reset(self):
-        self.last_position = None
+        self._last_pos = None
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # Only clamps the EE pose
-        return features
+    def feature_contract(self, f: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return f
 
 
 @ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
 @dataclass
 class InverseKinematicsEEToJoints:
     """
-    Converts a desired end-effector pose into joint angles using Inverse Kinematics to joints.
+    Compute the desired joint positions from the desired end-effector pose.
 
-    Expected input ACTION keys:
+    Input ACTION keys:
     {
-        "desired_ee_pose": np.ndarray,
+        "action.ee.desired_T": np.ndarray,
     }
 
-    Output transformed ACTION keys:
+    Output ACTION keys:
     {
-        "motor_name_1.pos": float,
-        "motor_name_2.pos": float,
+        "action.joint_name_1.pos": float,
+        "action.joint_name_2.pos": float,
         ...
-        "motor_name_n.pos": float,
+        "action.joint_name_n.pos": float,
     }
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
 
-    _arm_joint_names: list[str] = field(init=False, repr=False)
-
-    def __post_init__(self):
-        self._arm_joint_names = [n for n in self.motor_names if n != "gripper"]
-
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         obs = transition.get(TransitionKey.OBSERVATION) or {}
         act = transition.get(TransitionKey.ACTION) or {}
 
-        desired = act.pop("desired_ee_pose", None)
-        if desired is None:
+        t = act.pop("action.ee.desired_T", None)
+        if t is None:
             return transition
 
-        q_curr = np.array(
-            [
-                float((obs.get(f"observation.state.{n}.pos") or torch.tensor(0.0)).item())
-                for n in self.motor_names
-            ],
-            dtype=float,
-        )
-        q_target = self.kinematics.inverse_kinematics(q_curr, desired)
+        q_curr = np.array([obs[f"observation.state.{n}.pos"] for n in self.motor_names], dtype=float)
+        q_target = self.kinematics.inverse_kinematics(q_curr, t)
 
-        new_action = dict(act)
+        new_act = dict(act)
         for i, name in enumerate(self.motor_names):
-            if name == "gripper":
-                continue
-            new_action[f"{name}.pos"] = float(q_target[i])
-
-        transition[TransitionKey.ACTION] = new_action
+            new_act[f"action.{name}.pos"] = float(q_target[i])
+        transition[TransitionKey.ACTION] = new_act
         return transition
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # Emit scoped keys; remove desired_ee_pose
-        for name in self._arm_joint_names:
-            features[f"action.{name}.pos"] = float
-        features.pop("action.desired_ee_pose", None)
-        features.pop("desired_ee_pose", None)
+        features.pop("action.ee.desired_T", None)
+        for n in self.motor_names:
+            features[f"action.{n}.pos"] = float
+        return features
 
 
 @ProcessorStepRegistry.register("gripper_velocity_to_joint")
 @dataclass
 class GripperVelocityToJoint:
     """
-    Converts a scalar velocity command in action['gripper'] into absolute gripper position 'gripper.pos',
-    based on the current observation. Clips to [0, 100].
+    Convert the gripper velocity to a joint velocity.
 
-    Expected input ACTION keys:
+    Input ACTION keys:
     {
-        "gripper": float,
+        "action.gripper": float,
     }
 
-    Output transformed ACTION keys:
+    Output ACTION keys:
     {
-        "gripper.pos": float,
+        "action.gripper.pos": float,
     }
     """
 
@@ -286,46 +238,43 @@ class GripperVelocityToJoint:
         obs = transition.get(TransitionKey.OBSERVATION) or {}
         act = transition.get(TransitionKey.ACTION) or {}
 
-        if "gripper" not in act:
+        if "action.gripper" not in act:
             return transition
 
         if "gripper" not in self.motor_names:
-            new_action = dict(act)
-            new_action.pop("gripper", None)
-            transition[TransitionKey.ACTION] = new_action
+            new_act = dict(act)
+            new_act.pop("action.gripper", None)
+            transition[TransitionKey.ACTION] = new_act
             return transition
 
-        curr_pos = float((obs.get("observation.state.gripper.pos") or torch.tensor(0.0)).item())
-        delta = float(act.get("gripper", 0.0)) * float(self.speed_factor)
-        target = float(np.clip(curr_pos + delta, self.clip_min, self.clip_max))
+        curr = float(obs.get("observation.state.gripper.pos", 0.0))
+        delta = float(act.get("action.gripper", 0.0)) * float(self.speed_factor)
+        tgt = float(np.clip(curr + delta, self.clip_min, self.clip_max))
 
-        new_action = dict(act)
-        new_action["gripper.pos"] = target
-        new_action.pop("gripper", None)
-        transition[TransitionKey.ACTION] = new_action
+        new_act = dict(act)
+        new_act["action.gripper.pos"] = tgt
+        new_act.pop("action.gripper", None)
+        transition[TransitionKey.ACTION] = new_act
         return transition
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features["action.gripper.pos"] = float
         features.pop("action.gripper", None)
-        features.pop("gripper", None)
         return features
 
 
 @ProcessorStepRegistry.register("forward_kinematics_joints_to_ee")
 @dataclass
 class ForwardKinematicsJointsToEE:
-    """Compute EE pose from joints; writes to observation.state.ee.{x,y,z,qx,qy,qz,qw}.
+    """
+    Compute the end-effector pose from the joint positions.
 
-    Expected input OBSERVATION keys:
+    Input OBSERVATION keys:
     {
-        "observation.state.motor_name_1.pos": float,
-        "observation.state.motor_name_2.pos": float,
-        ...
-        "observation.state.motor_name_n.pos": float,
+        "observation.state.joint_name_1.pos": float,
     }
 
-    Output transformed OBSERVATION keys:
+    Output OBSERVATION keys:
     {
         "observation.state.ee.x": float,
         "observation.state.ee.y": float,
@@ -341,49 +290,68 @@ class ForwardKinematicsJointsToEE:
     motor_names: list[str]
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION) or {}
-
-        # Require all joints
-        if not all(f"observation.state.{n}.pos" in observation for n in self.motor_names):
+        obs = transition.get(TransitionKey.OBSERVATION) or {}
+        if not all(f"observation.state.{n}.pos" in obs for n in self.motor_names):
             return transition
 
-        q = np.array(
-            [
-                float((observation[f"observation.state.{n}.pos"]).item())
-                if isinstance(observation[f"observation.state.{n}.pos"], torch.Tensor)
-                else float(observation[f"observation.state.{n}.pos"])
-                for n in self.motor_names
-            ],
-            dtype=float,
-        )
-        ee_t = self.kinematics.forward_kinematics(q)
-        pos = ee_t[:3, 3]
-        quat_xyzw = Rotation.from_matrix(ee_t[:3, :3]).as_quat()  # x,y,z,w
+        q = np.array([obs[f"observation.state.{n}.pos"] for n in self.motor_names], dtype=float)
+        t = self.kinematics.forward_kinematics(q)
+        pos = t[:3, 3]
+        quat = Rotation.from_matrix(t[:3, :3]).as_quat()  # x,y,z,w
 
-        new_obs = dict(observation)
-        # Store as tensors for downstream steps
-        new_obs["observation.state.ee.x"] = torch.tensor(float(pos[0]), dtype=torch.float32)
-        new_obs["observation.state.ee.y"] = torch.tensor(float(pos[1]), dtype=torch.float32)
-        new_obs["observation.state.ee.z"] = torch.tensor(float(pos[2]), dtype=torch.float32)
-        new_obs["observation.state.ee.qx"] = torch.tensor(float(quat_xyzw[0]), dtype=torch.float32)
-        new_obs["observation.state.ee.qy"] = torch.tensor(float(quat_xyzw[1]), dtype=torch.float32)
-        new_obs["observation.state.ee.qz"] = torch.tensor(float(quat_xyzw[2]), dtype=torch.float32)
-        new_obs["observation.state.ee.qw"] = torch.tensor(float(quat_xyzw[3]), dtype=torch.float32)
-
+        new_obs = dict(obs)
+        new_obs["observation.state.ee.x"] = float(pos[0])
+        new_obs["observation.state.ee.y"] = float(pos[1])
+        new_obs["observation.state.ee.z"] = float(pos[2])
+        new_obs["observation.state.ee.qx"] = float(quat[0])
+        new_obs["observation.state.ee.qy"] = float(quat[1])
+        new_obs["observation.state.ee.qz"] = float(quat[2])
+        new_obs["observation.state.ee.qw"] = float(quat[3])
         transition[TransitionKey.OBSERVATION] = new_obs
         return transition
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # Augment observation contract with EE fields
-        features.update(
-            {
-                "observation.state.ee.x": float,
-                "observation.state.ee.y": float,
-                "observation.state.ee.z": float,
-                "observation.state.ee.qx": float,
-                "observation.state.ee.qy": float,
-                "observation.state.ee.qz": float,
-                "observation.state.ee.qw": float,
-            }
-        )
+        # add EE pose under observation.state.ee.*
+        for k in ["x", "y", "z", "qx", "qy", "qz", "qw"]:
+            features[f"observation.state.ee.{k}"] = float
+        return features
+
+
+@ProcessorStepRegistry.register("add_robot_observation")
+@dataclass
+class AddRobotObservation:
+    """
+    Read the robot's current observation and insert it into the transition.
+
+    - Joint positions are added under:  observation.state.<motor>.pos
+    - If include_images=True, camera frames are added under: observation.images.<camera_key>
+
+    This makes the current state available to downstream steps (e.g., IK and FK)
+    without the outer loop needing to inject or merge observations.
+    """
+
+    robot: Robot
+    include_images: bool = False
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        obs_dict = transition.get(TransitionKey.OBSERVATION) or {}
+        device_obs = self.robot.get_observation()
+
+        for key, val in device_obs.items():
+            if isinstance(val, np.ndarray) and val.dtype == np.uint8 and val.ndim == 3:
+                if self.include_images:
+                    obs_dict[f"observation.images.{key}"] = val
+            else:
+                obs_dict[f"observation.state.{key}"] = float(val) if np.isscalar(val) else val
+
+        transition[TransitionKey.OBSERVATION] = obs_dict
+        return transition
+
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        for key, ftype in self.robot.observation_features.items():
+            if isinstance(ftype, tuple) and len(ftype) == 3:
+                if self.include_images:
+                    features[f"observation.images.{key}"] = ftype
+            else:
+                features[f"observation.state.{key}"] = ftype
         return features

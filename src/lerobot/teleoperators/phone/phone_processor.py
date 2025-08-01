@@ -29,26 +29,26 @@ class MapPhoneActionToRobotAction:
 
     Expected input ACTION keys:
     {
-        "phone.enabled": bool,
-        "phone.pos": np.ndarray,
-        "phone.rot": Rotation,
-        "phone.raw_inputs": dict,
+        "action.phone.enabled": bool,
+        "action.phone.pos": np.ndarray,
+        "action.phone.rot": Rotation,
+        "action.phone.raw_inputs": dict,
     }
 
-    Output transformed ACTION keys:
+    Output ACTION keys:
     {
-        "enabled": bool,
-        "target_x": float,
-        "target_y": float,
-        "target_z": float,
-        "target_qx": float,
-        "target_qy": float,
-        "target_qz": float,
-        "target_qw": float,
-        "gripper": float,
-        "x": float,
-        "y": float,
-        "theta": float,
+        "action.enabled": bool,
+        "action.target_x": float,
+        "action.target_y": float,
+        "action.target_z": float,
+        "action.target_qx": float,
+        "action.target_qy": float,
+        "action.target_qz": float,
+        "action.target_qw": float,
+        "action.gripper": float,
+        "action.x": float,
+        "action.y": float,
+        "action.theta": float,
     }
     """
 
@@ -61,10 +61,10 @@ class MapPhoneActionToRobotAction:
             return transition
 
         # Pop them from the action
-        enabled = act.pop("phone.enabled", 0)
-        pos = act.pop("phone.pos", None)
-        rot = act.pop("phone.rot", None)
-        inputs = act.pop("phone.raw_inputs", {})
+        enabled = act.pop("action.phone.enabled", 0)
+        pos = act.pop("action.phone.pos", None)
+        rot = act.pop("action.phone.rot", None)
+        inputs = act.pop("action.phone.raw_inputs", {})
 
         if pos is None or rot is None:
             return transition
@@ -87,18 +87,18 @@ class MapPhoneActionToRobotAction:
         # For some actions we need to invert the axis
         act.update(
             {
-                "enabled": enabled,
-                "target_x": -pos[1] if enabled else 0.0,
-                "target_y": pos[0] if enabled else 0.0,
-                "target_z": pos[2] if enabled else 0.0,
-                "target_qx": quat[1] if enabled else 0.0,
-                "target_qy": quat[0] if enabled else 0.0,
-                "target_qz": -quat[2] if enabled else 0.0,
-                "target_qw": quat[3] if enabled else 0.0,
-                "gripper": gripper,  # Still send gripper action when disabled
-                "x": x if enabled else 0.0,
-                "y": y if enabled else 0.0,
-                "theta": theta if enabled else 0.0,
+                "action.enabled": enabled,
+                "action.target_x": -pos[1] if enabled else 0.0,
+                "action.target_y": pos[0] if enabled else 0.0,
+                "action.target_z": pos[2] if enabled else 0.0,
+                "action.target_qx": quat[1] if enabled else 0.0,
+                "action.target_qy": quat[0] if enabled else 0.0,
+                "action.target_qz": -quat[2] if enabled else 0.0,
+                "action.target_qw": quat[3] if enabled else 0.0,
+                "action.gripper": gripper,  # Still send gripper action when disabled
+                "action.x": x if enabled else 0.0,
+                "action.y": y if enabled else 0.0,
+                "action.theta": theta if enabled else 0.0,
             }
         )
 
@@ -126,3 +126,4 @@ class MapPhoneActionToRobotAction:
                 "action.theta": float,
             }
         )
+        return features

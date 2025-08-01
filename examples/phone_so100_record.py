@@ -31,13 +31,23 @@ High-level dataflow
   └── transition_to_dataset_batch → dataset.add_frame(...)
 """
 
+import time
+
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.configs.types import PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.pipeline import RobotProcessor
-from lerobot.record import record_loop
+from lerobot.processor.utils import (
+    merge_transitions,
+    pipeline_to_robot_action,
+    prepare_robot_observation_pipeline,
+    prepare_teleop_action_pipeline,
+    transition_to_dataset_batch,
+)
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
+    AddRobotObservation,
     EEBoundsAndSafety,
     EEReferenceAndDelta,
     ForwardKinematicsJointsToEE,
@@ -57,7 +67,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_so100_record_test0"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_0"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -77,8 +87,7 @@ kinematics_solver = RobotKinematics(
     urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf", target_frame_name="gripper_frame_link"
 )
 
-
-post_teleop = RobotProcessor(
+phone_to_robot_ee_pose = RobotProcessor(
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         EEReferenceAndDelta(
@@ -94,8 +103,9 @@ post_teleop = RobotProcessor(
     name="post_teleop_pipeline",
 )
 
-pre_robot = RobotProcessor(
+robot_ee_to_joints = RobotProcessor(
     steps=[
+        AddRobotObservation(robot=robot, include_images=True),
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
@@ -108,7 +118,7 @@ pre_robot = RobotProcessor(
     name="pre_robot_pipeline",
 )
 
-post_robot = RobotProcessor(
+robot_joints_to_ee_pose = RobotProcessor(
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
@@ -116,28 +126,39 @@ post_robot = RobotProcessor(
 )
 
 
-def _scoped_initial_features(robot: SO100Follower, phone: Phone) -> dict:
+def build_dataset_features(
+    *,
+    teleop,
+    robot,
+    teleop_to_dataset_action_feature: RobotProcessor,
+    dataset_action_feature_to_robot: RobotProcessor,
+    robot_to_dataset_observation_feature: RobotProcessor,
+) -> dict[str, PolicyFeature]:
     """
-    Build a minimal dataset feature contract:
-      - action.*  from phone.action_features → through post_teleop → pre_robot
-      - observation.* from robot.observation_features → through post_robot
+    Build the dataset schema from device- and processor-advertised features.
     """
-    # Start with ACTION: prefix 'action.' for contract
-    features = {f"action.{k}": v for k, v in phone.action_features.items()}
-    # OBSERVATION: motors to observation.state.*, cameras to observation.images.*
+    features = {f"action.{k}": v for k, v in teleop.action_features.items()}
     for k, v in robot.observation_features.items():
         if isinstance(v, tuple) and len(v) == 3:
             features[f"observation.images.{k}"] = v
         else:
             features[f"observation.state.{k}"] = v
-    # Apply contracts
-    features = post_teleop.feature_contract(features)
-    features = pre_robot.feature_contract(features)
-    features = post_robot.feature_contract(features)
+    for p in (
+        teleop_to_dataset_action_feature,
+        dataset_action_feature_to_robot,
+        robot_to_dataset_observation_feature,
+    ):
+        features = p.feature_contract(features)
     return features
 
 
-dataset_features = _scoped_initial_features(robot, phone)
+dataset_features = build_dataset_features(
+    teleop=phone,
+    robot=robot,
+    teleop_to_dataset_action_feature=phone_to_robot_ee_pose,
+    dataset_action_feature_to_robot=robot_ee_to_joints,
+    robot_to_dataset_observation_feature=robot_joints_to_ee_pose,
+)
 
 # Create the dataset
 dataset = LeRobotDataset.create(
@@ -158,38 +179,46 @@ robot.connect()
 phone.connect()
 
 episode_idx = 0
+# TODO(pepijn): add back record loop and integrate functionality below in it, so record_loop works with pipeline and without it
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
-    record_loop(  # TODO(pepijn): Integrate post_teleop_processor, pre_robot_processor and post_robot_processor in record_loop
-        robot=robot,
-        events=events,
-        fps=FPS,
-        teleop=phone,
-        dataset=dataset,
-        control_time_s=EPISODE_TIME_SEC,
-        single_task=TASK_DESCRIPTION,
-        display_data=True,
-        post_teleop_processor=post_teleop,
-        pre_robot_processor=pre_robot,
-        post_robot_processor=post_robot,
-    )
+    start_t = time.perf_counter()
+    while time.perf_counter() - start_t < EPISODE_TIME_SEC and not events["exit_early"]:
+        loop_t = time.perf_counter()
 
-    # Reset the environment if not stopping or re-recording
-    if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
-        log_say("Reset the environment")
-        record_loop(
-            robot=robot,
-            events=events,
-            fps=FPS,
-            teleop=phone,
-            control_time_s=RESET_TIME_SEC,
-            single_task=TASK_DESCRIPTION,
-            display_data=True,
-            post_teleop_processor=post_teleop,
-            pre_robot_processor=pre_robot,
-            post_robot_processor=post_robot,
-        )
+        # Read
+        teleop_action = phone.get_action()
+        robot_observation = robot.get_observation()
+
+        # Prepare for pipeline
+        teleop_action_tr = prepare_teleop_action_pipeline(
+            teleop_action
+        )  # TODO(pepijn): replace with to transition of Pipeline
+        robot_observation_tr = prepare_robot_observation_pipeline(
+            robot_observation
+        )  # TODO(pepijn): replace with to transition of Pipeline
+
+        # Run pipelines to get ee pose and corresponding joints action
+        ee_pose_action = phone_to_robot_ee_pose(teleop_action_tr)
+        joints_action = robot_ee_to_joints(ee_pose_action)
+
+        # Send to robot
+        robot_action = pipeline_to_robot_action(
+            joints_action
+        )  # TODO(pepijn): replace with from transition of Pipeline
+        robot.send_action(robot_action)
+
+        # Run pipeline to get ee pose observation
+        ee_pose_observation = robot_joints_to_ee_pose(robot_observation_tr)
+
+        # Merge and write
+        merged = merge_transitions(ee_pose_observation, ee_pose_action)
+        frame = transition_to_dataset_batch(merged)
+        dataset.add_frame(frame, task=TASK_DESCRIPTION)
+
+        dt = time.perf_counter() - loop_t
+        time.sleep(max(0.0, 1.0 / FPS - dt))
 
     if events["rerecord_episode"]:
         log_say("Re-recording episode")
