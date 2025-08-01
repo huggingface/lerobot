@@ -393,5 +393,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     return dataset
 
 
-if __name__ == "__main__":
+def main():
     record()
+
+
+if __name__ == "__main__":
+    main()

@@ -19,6 +19,11 @@ on:
     tags:
       - 'v*.*.*' # Trigger on tags like v0.1.0, v1.0.0
 
+# Sets up the environment variables
+env:
+  UV_VERSION: "0.8.0"
+  PYTHON_VERSION: "3.10"
+
 jobs:
   # This job builds the Python package and publishes it to PyPI
   build-and-publish:
@@ -120,10 +125,10 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install lerobot release
-        run: uv run pip install lerobot==${{ needs.build-and-publish.outputs.version }} # zizmor: ignore[template-injection]
+        run: uv run pip install "lerobot[all]==${{ needs.build-and-publish.outputs.version }}" # zizmor: ignore[template-injection]
 
       - name: Check lerobot version
-        run: uv run lerobot --version
+        run: uv run python -c "import lerobot; print(lerobot.__version__)"
 
       - name: Run end-to-end tests
         run: uv run make test-end-to-end
