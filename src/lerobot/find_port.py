@@ -61,5 +61,9 @@ def find_port():
         raise OSError(f"Could not detect the port. More than one port was found ({ports_diff}).")
 
 
-if __name__ == "__main__":
+def main():
     find_port()
+
+
+if __name__ == "__main__":
+    main()
