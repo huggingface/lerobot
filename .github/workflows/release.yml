@@ -94,7 +94,7 @@ jobs:
         # zizmor: ignore[template-injection]
         run: |
           gh release create ${{ github.ref_name }} \
-            --release-name "Release ${{ github.ref_name }}" \
+            --title "Release ${{ github.ref_name }}" \
             --generate-notes \
             --draft=$([[ "${{ github.ref_name }}" == *-* ]] && echo true || echo false) \
             --prerelease=$([[ "${{ github.ref_name }}" == *-* ]] && echo true || echo false) \
