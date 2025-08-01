@@ -91,13 +91,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # zizmor: ignore[template-injection]
-        run: gh release create ${{ github.ref_name }} --release-name "Release ${{ github.ref_name }}" --generate-notes ./dist/*
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --release-name "Release ${{ github.ref_name }}" \
+            --generate-notes \
+            --draft=$([[ "${{ github.ref_name }}" == *-* ]] && echo true || echo false) \
+            --prerelease=$([[ "${{ github.ref_name }}" == *-* ]] && echo true || echo false) \
+            ./dist/*
 
-      - name: Publish to PyPI
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish to TestPyPI for pre-releases
+        # True for tags like 'v0.2.0-rc1'
+        if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-')
         uses: pypa/gh-action-pypi-publish@v1.12.4 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          repository-url: https://test.pypi.org/legacy/
+          verbose: true
+          print-hash: true
+
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
+        uses: pypa/gh-action-pypi-publish@v1.12.4 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
+        with:
+          verbose: true
+          print-hash: true
 
   # This job runs end-to-end tests on the release
   test-release:
@@ -134,5 +150,6 @@ jobs:
         run: uv run make test-end-to-end
 
 
-# TODO(Steven): Publish draft/pre-release and to test pypi
+# TODO(Steven): Publish draft/pre-release and to test pypi weekly
+# TODO(Steven): Separate build and publish job
 # TODO(Steven): Tag documentation with the same version as the package
