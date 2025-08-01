@@ -3,12 +3,7 @@
 Simple test to verify the multi_record function and configurations work correctly.
 """
 
-import sys
-
-sys.path.insert(0, "src")
-
-from lerobot.record import DatasetRecordConfig, MultiDatasetRecordConfig
-
+from lerobot.record import MultiDatasetRecordConfig, DatasetRecordConfig
 
 def test_multi_dataset_config():
     """Test that MultiDatasetRecordConfig creates correctly."""

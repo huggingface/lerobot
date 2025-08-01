@@ -123,8 +123,6 @@ def decode_video_frames_torchvision(
     loaded_ts = []
     for frame in reader:
         current_ts = frame["pts"]
-        if log_loaded_timestamps:
-            logging.info(f"frame loaded at timestamp={current_ts:.4f}")
         loaded_frames.append(frame["data"])
         loaded_ts.append(current_ts)
         if current_ts >= last_ts:
@@ -156,10 +154,6 @@ def decode_video_frames_torchvision(
 
     # get closest frames to the query timestamps
     closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
-    closest_ts = loaded_ts[argmin_]
-
-    if log_loaded_timestamps:
-        logging.info(f"{closest_ts=}")
 
     # convert to the pytorch format which is float32 in [0,1] range (and channel first)
     closest_frames = closest_frames.type(torch.float32) / 255
@@ -208,8 +202,6 @@ def decode_video_frames_torchcodec(
     for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=False):
         loaded_frames.append(frame)
         loaded_ts.append(pts.item())
-        if log_loaded_timestamps:
-            logging.info(f"Frame loaded at timestamp={pts:.4f}")
 
     query_ts = torch.tensor(timestamps)
     loaded_ts = torch.tensor(loaded_ts)
@@ -231,10 +223,6 @@ def decode_video_frames_torchcodec(
 
     # get closest frames to the query timestamps
     closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
-    closest_ts = loaded_ts[argmin_]
-
-    if log_loaded_timestamps:
-        logging.info(f"{closest_ts=}")
 
     # convert to float32 in [0,1] range (channel first)
     closest_frames = closest_frames.type(torch.float32) / 255

@@ -370,7 +370,7 @@ def record_loop(
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
-            dataset.add_frame(frame, task=single_task)
+            dataset.add_frame(frame, task=single_task, timestamp=None)
 
         if display_data:
             log_rerun_data(observation, action)
@@ -583,10 +583,8 @@ def multi_record_loop(
             action_frame = build_dataset_frame(current_dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
             # Use the task from the dataset configuration
-            current_task = (
-                dataset_configs[current_stage].single_task if current_stage < len(dataset_configs) else None
-            )
-            current_dataset.add_frame(frame, task=current_task)
+            current_task = dataset_configs[current_stage].single_task if current_stage < len(dataset_configs) else None
+            current_dataset.add_frame(frame, task=current_task, timestamp=None)
 
         if display_data:
             log_rerun_data(observation, action)
@@ -595,7 +593,6 @@ def multi_record_loop(
         busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
-
     pbar.close()
 
 
@@ -651,6 +648,13 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
         datasets.append(dataset)
         print(f"Created dataset {i}: {dataset_cfg.repo_id} (current episodes: {dataset.num_episodes})")
 
+    # Validate that all datasets have the same FPS for consistent recording
+    fps_values = [dataset.fps for dataset in datasets]
+    if len(set(fps_values)) > 1:
+        raise ValueError(f"All datasets must have the same FPS for multi-dataset recording. Found: {fps_values}")
+    
+    recording_fps = fps_values[0]
+
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=datasets[0].meta)
 
@@ -675,7 +679,14 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
     print("Press ESC to stop recording")
     print("===========================================\n")
 
-    with VideoEncodingManager(datasets[0]):  # Use first dataset's video manager
+    # Use video encoding managers for all datasets
+    video_managers = [VideoEncodingManager(dataset) for dataset in datasets]
+    
+    # Enter all video managers
+    for manager in video_managers:
+        manager.__enter__()
+    
+    try:
         recorded_episodes = 0
         max_episodes = max(dataset_cfg.num_episodes for dataset_cfg in cfg.multi_dataset.datasets)
 
@@ -693,14 +704,12 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
             multi_record_loop(
                 robot=robot,
                 events=events,
-                fps=cfg.multi_dataset.datasets[0].fps,  # Use first dataset's fps
+                fps=recording_fps,
                 datasets=datasets,
                 dataset_configs=cfg.multi_dataset.datasets,  # Pass dataset configs
                 teleop=teleop,
                 policy=policy,
-                control_time_s=sum(
-                    dataset_cfg.episode_time_s for dataset_cfg in cfg.multi_dataset.datasets
-                ),  # Use first dataset's time
+                control_time_s=sum(dataset_cfg.episode_time_s for dataset_cfg in cfg.multi_dataset.datasets),  # Sum of all stage times
                 display_data=cfg.display_data,
             )
 
@@ -714,7 +723,7 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
                 record_loop(
                     robot=robot,
                     events=events,
-                    fps=cfg.multi_dataset.datasets[0].fps,
+                    fps=recording_fps,
                     teleop=teleop,
                     control_time_s=cfg.multi_dataset.datasets[0].reset_time_s,
                     single_task=None,
@@ -733,7 +742,7 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
             # Save episodes only for datasets that have frames recorded
             saved_any_dataset = False
             for i, dataset in enumerate(datasets):
-                if len(dataset.episode_buffer) > 0:  # Only save if there are frames
+                if dataset.episode_buffer is not None and dataset.episode_buffer.get("size", 0) > 0:  # Only save if there are frames
                     try:
                         dataset.save_episode()
                         saved_any_dataset = True
@@ -744,7 +753,8 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
                         dataset.clear_episode_buffer()
                 else:
                     # Clear empty buffer to avoid issues
-                    dataset.clear_episode_buffer()
+                    if dataset.episode_buffer is not None:
+                        dataset.clear_episode_buffer()
                     print(f"No data recorded for dataset {i}: {cfg.multi_dataset.datasets[i].repo_id}")
 
             if saved_any_dataset:
@@ -752,6 +762,13 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
                 print(f"Episode {recorded_episodes} completed successfully")
             else:
                 print("Warning: No data recorded for any dataset in this episode. Episode not counted.")
+    finally:
+        # Exit all video managers with proper error handling
+        for i, manager in enumerate(video_managers):
+            try:
+                manager.__exit__(None, None, None)
+            except Exception as e:
+                print(f"Warning: Error closing video manager for dataset {i}: {e}")
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
