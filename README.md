@@ -198,7 +198,6 @@ or from a dataset in a local folder with the `root` option and the `--local-file
 python -m lerobot.scripts.visualize_dataset \
     --repo-id lerobot/pusht \
     --root ./my_local_data_dir \
-    --local-files-only 1 \
     --episode-index 0
 ```
 
