@@ -33,50 +33,46 @@ class EEReferenceAndDelta:
 
     Input ACTION keys:
     {
-        "action.enabled": bool,
-        "action.target_x": float,
-        "action.target_y": float,
-        "action.target_z": float,
-        "action.target_qx": float,
-        "action.target_qy": float,
-        "action.target_qz": float,
-        "action.target_qw": float,
+        "action.ee.{x,y,z,wx,wy,wz}" : float
+        "complementary_data.raw_joint_positions": dict,
     }
 
     Output ACTION keys:
     {
-        "action.ee.desired_T": np.ndarray,
+        "action.ee.{x,y,z,wx,wy,wz}" : float
     }
     """
 
     kinematics: RobotKinematics
     end_effector_step_sizes: dict
     motor_names: list[str]
-    reference_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        obs = transition.get(TransitionKey.OBSERVATION) or {}
         act = transition.get(TransitionKey.ACTION) or {}
+        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+
+        # get joint positions from complimentary data
+        raw = comp.get("raw_joint_positions", None)
+        if raw is None:
+            raise ValueError(
+                "raw_joint_positions is not in complementary data and is required for EEReferenceAndDelta"
+            )
+
+        q = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
 
         # current pose from FK on measured joints
-        q = np.array([obs[f"observation.state.{n}.pos"] for n in self.motor_names], dtype=float)
         t_curr = self.kinematics.forward_kinematics(q)
 
         enabled = bool(act.pop("action.enabled", 0))
         tx = float(act.pop("action.target_x", 0.0))
         ty = float(act.pop("action.target_y", 0.0))
         tz = float(act.pop("action.target_z", 0.0))
-        qx = float(act.pop("action.target_qx", 0.0))
-        qy = float(act.pop("action.target_qy", 0.0))
-        qz = float(act.pop("action.target_qz", 0.0))
-        qw = float(act.pop("action.target_qw", 1.0))
+        wx = float(act.pop("action.target_wx", 0.0))
+        wy = float(act.pop("action.target_wy", 0.0))
+        wz = float(act.pop("action.target_wz", 0.0))
 
         new_act = dict(act)
         if enabled:
-            if self.reference_ee_pose is None:
-                self.reference_ee_pose = t_curr.copy()
-
-            t_ref = self.reference_ee_pose
             delta_p = np.array(
                 [
                     tx * self.end_effector_step_sizes["x"],
@@ -84,21 +80,31 @@ class EEReferenceAndDelta:
                     tz * self.end_effector_step_sizes["z"],
                 ]
             )
-            r_delta = Rotation.from_quat([qx, qy, qz, qw]).as_matrix()
+            r_delta = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
 
             t_des = np.eye(4)
-            t_des[:3, :3] = t_ref[:3, :3] @ r_delta
-            t_des[:3, 3] = t_ref[:3, 3] + delta_p
-            new_act["action.ee.desired_T"] = t_des
+            t_des[:3, :3] = t_curr[:3, :3] @ r_delta
+            t_des[:3, 3] = t_curr[:3, 3] + delta_p
+
+            # Add as absolute desired pose as scalars (pos + twist)
+            pos = t_des[:3, 3]
+            tw = Rotation.from_matrix(t_des[:3, :3]).as_rotvec()
+            new_act["action.ee.x"] = float(pos[0])
+            new_act["action.ee.y"] = float(pos[1])
+            new_act["action.ee.z"] = float(pos[2])
+            new_act["action.ee.wx"] = float(tw[0])
+            new_act["action.ee.wy"] = float(tw[1])
+            new_act["action.ee.wz"] = float(tw[2])
         else:
-            self.reference_ee_pose = None
-            new_act["action.ee.desired_T"] = None
+            new_act["action.ee.x"] = None
+            new_act["action.ee.y"] = None
+            new_act["action.ee.z"] = None
+            new_act["action.ee.wx"] = None
+            new_act["action.ee.wy"] = None
+            new_act["action.ee.wz"] = None
 
         transition[TransitionKey.ACTION] = new_act
         return transition
-
-    def reset(self):
-        self.reference_ee_pose = None
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # remove consumed fields; add desired pose
@@ -107,13 +113,17 @@ class EEReferenceAndDelta:
             "action.target_x",
             "action.target_y",
             "action.target_z",
-            "action.target_qx",
-            "action.target_qy",
-            "action.target_qz",
-            "action.target_qw",
+            "action.target_wx",
+            "action.target_wy",
+            "action.target_wz",
         ]:
             features.pop(k, None)
-        features["action.ee.desired_T"] = np.ndarray
+        features["action.ee.x"] = float
+        features["action.ee.y"] = float
+        features["action.ee.z"] = float
+        features["action.ee.wx"] = float
+        features["action.ee.wy"] = float
+        features["action.ee.wz"] = float
         return features
 
 
@@ -125,44 +135,74 @@ class EEBoundsAndSafety:
 
     Input ACTION keys:
     {
-        "action.ee.desired_T": np.ndarray,
+        "action.ee.{x,y,z,wx,wy,wz}" : float
     }
 
     Output ACTION keys:
     {
-        "action.ee.desired_T": np.ndarray,
+        "action.ee.{x,y,z,wx,wy,wz}" : float
     }
     """
 
     end_effector_bounds: dict
     max_ee_step_m: float = 0.05
+    max_ee_twist_step_rad: float = 0.20
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
+    _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         act = transition.get(TransitionKey.ACTION) or {}
-        t = act.get("action.ee.desired_T", None)
-        if t is None:
+        x = act.pop("action.ee.x", None)
+        y = act.pop("action.ee.y", None)
+        z = act.pop("action.ee.z", None)
+        wx = act.pop("action.ee.wx", None)
+        wy = act.pop("action.ee.wy", None)
+        wz = act.pop("action.ee.wz", None)
+
+        if None in (x, y, z, wx, wy, wz):
             return transition
 
-        pos = t[:3, 3]
+        pos = np.array([x, y, z], dtype=float)
+        twist = np.array([wx, wy, wz], dtype=float)
+
+        # clip position
         pos = np.clip(pos, self.end_effector_bounds["min"], self.end_effector_bounds["max"])
+
+        # check for jumps in position
         if self._last_pos is not None:
-            jump = np.linalg.norm(pos - self._last_pos)
-            if jump > self.max_ee_step_m:
-                raise ValueError(f"EE jump {jump:.3f}m > {self.max_ee_step_m}m")
-        t[:3, 3] = pos
+            dpos = pos - self._last_pos
+            n = float(np.linalg.norm(dpos))
+            if n > self.max_ee_step_m and n > 0:
+                pos = self._last_pos + dpos * (self.max_ee_step_m / n)
+                raise ValueError(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
+
+        # check for jumps in twist
+        if self._last_twist is not None:
+            dtw = twist - self._last_twist
+            n = float(np.linalg.norm(dtw))
+            if n > self.max_ee_twist_step_rad and n > 0:
+                twist = self._last_twist + dtw * (self.max_ee_twist_step_rad / n)
+                raise ValueError(f"EE twist jump {n:.3f}rad > {self.max_ee_twist_step_rad}rad")
+
         self._last_pos = pos
+        self._last_twist = twist
 
         new_act = dict(act)
-        new_act["action.ee.desired_T"] = t
+        new_act["action.ee.x"] = float(pos[0])
+        new_act["action.ee.y"] = float(pos[1])
+        new_act["action.ee.z"] = float(pos[2])
+        new_act["action.ee.wx"] = float(twist[0])
+        new_act["action.ee.wy"] = float(twist[1])
+        new_act["action.ee.wz"] = float(twist[2])
         transition[TransitionKey.ACTION] = new_act
         return transition
 
     def reset(self):
         self._last_pos = None
+        self._last_twist = None
 
-    def feature_contract(self, f: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return f
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
 
 
 @ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
@@ -173,7 +213,8 @@ class InverseKinematicsEEToJoints:
 
     Input ACTION keys:
     {
-        "action.ee.desired_T": np.ndarray,
+        "action.ee.{x,y,z,wx,wy,wz}" : float
+        "complementary_data.raw_joint_positions": dict,
     }
 
     Output ACTION keys:
@@ -189,15 +230,32 @@ class InverseKinematicsEEToJoints:
     motor_names: list[str]
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        obs = transition.get(TransitionKey.OBSERVATION) or {}
         act = transition.get(TransitionKey.ACTION) or {}
+        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
-        t = act.pop("action.ee.desired_T", None)
-        if t is None:
+        x = act.pop("action.ee.x", None)
+        y = act.pop("action.ee.y", None)
+        z = act.pop("action.ee.z", None)
+        wx = act.pop("action.ee.wx", None)
+        wy = act.pop("action.ee.wy", None)
+        wz = act.pop("action.ee.wz", None)
+
+        if None in (x, y, z, wx, wy, wz):
             return transition
 
-        q_curr = np.array([obs[f"observation.state.{n}.pos"] for n in self.motor_names], dtype=float)
-        q_target = self.kinematics.inverse_kinematics(q_curr, t)
+        # get joint positions from complimentary data
+        raw = comp.get("raw_joint_positions", None)
+        if raw is None:
+            raise ValueError(
+                "raw_joint_positions is not in complementary data and is required for EEReferenceAndDelta"
+            )
+
+        q_curr = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
+
+        q_des = np.array([x, y, z, wx, wy, wz])
+
+        # compute inverse kinematics
+        q_target = self.kinematics.inverse_kinematics(q_curr, q_des)
 
         new_act = dict(act)
         for i, name in enumerate(self.motor_names):
@@ -206,7 +264,6 @@ class InverseKinematicsEEToJoints:
         return transition
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features.pop("action.ee.desired_T", None)
         for n in self.motor_names:
             features[f"action.{n}.pos"] = float
         return features
@@ -271,18 +328,12 @@ class ForwardKinematicsJointsToEE:
 
     Input OBSERVATION keys:
     {
-        "observation.state.joint_name_1.pos": float,
+        "observation.state.{joint_name_1,joint_name_2,...,joint_name_n}.pos": float,
     }
 
     Output OBSERVATION keys:
     {
-        "observation.state.ee.x": float,
-        "observation.state.ee.y": float,
-        "observation.state.ee.z": float,
-        "observation.state.ee.qx": float,
-        "observation.state.ee.qy": float,
-        "observation.state.ee.qz": float,
-        "observation.state.ee.qw": float,
+        "observation.state.ee.{x,y,z,wx,wy,wz}" : float
     }
     """
 
@@ -297,61 +348,51 @@ class ForwardKinematicsJointsToEE:
         q = np.array([obs[f"observation.state.{n}.pos"] for n in self.motor_names], dtype=float)
         t = self.kinematics.forward_kinematics(q)
         pos = t[:3, 3]
-        quat = Rotation.from_matrix(t[:3, :3]).as_quat()  # x,y,z,w
+        tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
 
         new_obs = dict(obs)
         new_obs["observation.state.ee.x"] = float(pos[0])
         new_obs["observation.state.ee.y"] = float(pos[1])
         new_obs["observation.state.ee.z"] = float(pos[2])
-        new_obs["observation.state.ee.qx"] = float(quat[0])
-        new_obs["observation.state.ee.qy"] = float(quat[1])
-        new_obs["observation.state.ee.qz"] = float(quat[2])
-        new_obs["observation.state.ee.qw"] = float(quat[3])
+        new_obs["observation.state.ee.wx"] = float(tw[0])
+        new_obs["observation.state.ee.wy"] = float(tw[1])
+        new_obs["observation.state.ee.wz"] = float(tw[2])
         transition[TransitionKey.OBSERVATION] = new_obs
         return transition
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # add EE pose under observation.state.ee.*
-        for k in ["x", "y", "z", "qx", "qy", "qz", "qw"]:
+        for k in ["x", "y", "z", "wx", "wy", "wz"]:
             features[f"observation.state.ee.{k}"] = float
         return features
 
 
 @ProcessorStepRegistry.register("add_robot_observation")
 @dataclass
-class AddRobotObservation:
+class AddRobotObservationAsComplimentaryData:
     """
-    Read the robot's current observation and insert it into the transition.
+    Read the robot's current observation and insert it into the transition as complementary data.
 
-    - Joint positions are added under:  observation.state.<motor>.pos
-    - If include_images=True, camera frames are added under: observation.images.<camera_key>
-
-    This makes the current state available to downstream steps (e.g., IK and FK)
-    without the outer loop needing to inject or merge observations.
+    - Joint positions are added under complementary_data["raw_joint_positions"] as a dict:
+        { "<motor_name>": <float position>, ... }
     """
 
     robot: Robot
-    include_images: bool = False
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        obs_dict = transition.get(TransitionKey.OBSERVATION) or {}
-        device_obs = self.robot.get_observation()
+        obs = self.robot.get_observation()
 
-        for key, val in device_obs.items():
-            if isinstance(val, np.ndarray) and val.dtype == np.uint8 and val.ndim == 3:
-                if self.include_images:
-                    obs_dict[f"observation.images.{key}"] = val
-            else:
-                obs_dict[f"observation.state.{key}"] = float(val) if np.isscalar(val) else val
+        raw_joint_positions = {
+            k.removesuffix(".pos"): float(v)
+            for k, v in obs.items()
+            if isinstance(k, str) and k.endswith(".pos")
+        }
 
-        transition[TransitionKey.OBSERVATION] = obs_dict
+        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        new_comp = dict(comp)
+        new_comp["raw_joint_positions"] = raw_joint_positions
+        transition[TransitionKey.COMPLEMENTARY_DATA] = new_comp
         return transition
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        for key, ftype in self.robot.observation_features.items():
-            if isinstance(ftype, tuple) and len(ftype) == 3:
-                if self.include_images:
-                    features[f"observation.images.{key}"] = ftype
-            else:
-                features[f"observation.state.{key}"] = ftype
         return features

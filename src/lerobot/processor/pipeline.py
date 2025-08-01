@@ -30,7 +30,8 @@ from huggingface_hub import ModelHubMixin, hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file, save_file
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import DatasetFeatureType, PolicyFeature
+from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.utils.utils import get_safe_torch_device
 
 
@@ -875,6 +876,65 @@ class RobotProcessor(ModelHubMixin):
                 raise TypeError(f"{step.__class__.__name__}.feature_contract must return dict[str, Any]")
             features = out
         return features
+
+    def to_dataset_features(
+        self,
+        initial_features: dict[str, Any],
+        *,
+        use_videos: bool = True,
+        include: tuple[str, ...] = ("action", "observation"),
+        action_type: DatasetFeatureType | list[DatasetFeatureType] = DatasetFeatureType.JOINT,
+    ) -> dict[str, dict]:
+        """
+        Run this pipeline's feature_contract and return a READY-FOR-DATASET features dict.
+
+        - Filters to keys under the requested spaces ("action" and/or "observation").
+        - `action_type` controls which action *signals* (EE, JOINT, or both) are exported.
+        - When 'both' is selected (list containing EE and JOINT), the exported "action" vector
+          concatenates EE first, then JOINT keys, ensuring a single standard 'action' feature.
+        """
+        fc = self.feature_contract(initial_features)
+
+        action_types = [action_type] if isinstance(action_type, DatasetFeatureType) else list(action_type)
+
+        obs_hw: dict[str, Any] = {}
+        for k, v in fc.items():
+            if k.startswith("observation.state.") and "observation" in include:
+                obs_hw[k[len("observation.state.") :]] = v
+            elif k.startswith("observation.images.") and "observation" in include:
+                obs_hw[k[len("observation.images.") :]] = v
+
+        # action selection (EE / JOINT / BOTH)
+        action_hw: dict[str, Any] = {}
+        if "action" in include:
+            ee_prefixed = [
+                "action.ee.x",
+                "action.ee.y",
+                "action.ee.z",
+                "action.ee.wx",
+                "action.ee.wy",
+                "action.ee.wz",
+            ]
+            joint_prefixed = sorted(
+                k
+                for k in fc.keys()
+                if k.startswith("action.") and k.endswith(".pos") and not k.startswith("action.ee.")
+            )
+
+            if DatasetFeatureType.EE in action_types:
+                for k in ee_prefixed:
+                    if k in fc:
+                        action_hw[k[len("action.") :]] = fc[k]  # strip "action."
+            if DatasetFeatureType.JOINT in action_types:
+                for k in joint_prefixed:
+                    action_hw[k[len("action.") :]] = fc[k]  # strip "action."
+
+        out: dict[str, dict] = {}
+        if action_hw and "action" in include:
+            out.update(hw_to_dataset_features(action_hw, "action", use_videos))
+        if obs_hw and "observation" in include:
+            out.update(hw_to_dataset_features(obs_hw, "observation", use_videos))
+        return out
 
 
 class ObservationProcessor:

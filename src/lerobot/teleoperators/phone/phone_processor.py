@@ -38,13 +38,7 @@ class MapPhoneActionToRobotAction:
     Output ACTION keys:
     {
         "action.enabled": bool,
-        "action.target_x": float,
-        "action.target_y": float,
-        "action.target_z": float,
-        "action.target_qx": float,
-        "action.target_qy": float,
-        "action.target_qz": float,
-        "action.target_qw": float,
+        "action.ee.{x,y,z,wx,wy,wz}" : float
         "action.gripper": float,
         "action.x": float,
         "action.y": float,
@@ -69,9 +63,8 @@ class MapPhoneActionToRobotAction:
         if pos is None or rot is None:
             return transition
 
-        quat = rot.as_quat()
-        if quat[3] < 0:  # ensure qw >= 0
-            quat = -quat
+        # rotation vector (twist) in world frame
+        rotvec = rot.as_rotvec()
 
         # Map certain inputs to certain actions
         if self.platform == PhoneOS.IOS:
@@ -91,10 +84,9 @@ class MapPhoneActionToRobotAction:
                 "action.target_x": -pos[1] if enabled else 0.0,
                 "action.target_y": pos[0] if enabled else 0.0,
                 "action.target_z": pos[2] if enabled else 0.0,
-                "action.target_qx": quat[1] if enabled else 0.0,
-                "action.target_qy": quat[0] if enabled else 0.0,
-                "action.target_qz": -quat[2] if enabled else 0.0,
-                "action.target_qw": quat[3] if enabled else 0.0,
+                "action.target_wx": rotvec[0] if enabled else 0.0,
+                "action.target_wy": rotvec[1] if enabled else 0.0,
+                "action.target_wz": rotvec[2] if enabled else 0.0,
                 "action.gripper": gripper,  # Still send gripper action when disabled
                 "action.x": x if enabled else 0.0,
                 "action.y": y if enabled else 0.0,
@@ -116,10 +108,9 @@ class MapPhoneActionToRobotAction:
                 "action.target_x": float,
                 "action.target_y": float,
                 "action.target_z": float,
-                "action.target_qx": float,
-                "action.target_qy": float,
-                "action.target_qz": float,
-                "action.target_qw": float,
+                "action.target_wx": float,
+                "action.target_wy": float,
+                "action.target_wz": float,
                 "action.gripper": float,
                 "action.x": float,
                 "action.y": float,

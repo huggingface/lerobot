@@ -16,29 +16,18 @@
 """
 High-level dataflow
 ───────────────────
-[TELEOP] --teleop_action_to_pipeline--> Transition (ACTION: phone.*)
-  │
-  └── post_teleop_pipeline (MapPhoneToRobot, EEReferenceAndDelta, EEBoundsAndSafety)
-       (unscoped ACTION: enabled/target_*/gripper → desired_ee_pose)
-  │
-  └── pre_robot_pipeline (IK, GripperVelocityToJoint)
-       (unscoped ACTION: <joint>.pos ready for robot)
-  │
-  └── pipeline_to_robot_action → robot.send_action
-  │
-  └── robot_observation_to_pipeline → post_robot_pipeline (FK to EE fields)
-  │
-  └── transition_to_dataset_batch → dataset.add_frame(...)
+
+TODO(pepijn): add schema
 """
 
 import time
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.configs.types import PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.pipeline import RobotProcessor
 from lerobot.processor.utils import (
+    DatasetFeatureType,
     merge_transitions,
     pipeline_to_robot_action,
     prepare_robot_observation_pipeline,
@@ -47,7 +36,7 @@ from lerobot.processor.utils import (
 )
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservation,
+    AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     EEReferenceAndDelta,
     ForwardKinematicsJointsToEE,
@@ -67,7 +56,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_0"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_9"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -90,6 +79,7 @@ kinematics_solver = RobotKinematics(
 phone_to_robot_ee_pose = RobotProcessor(
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
+        AddRobotObservationAsComplimentaryData(robot=robot),
         EEReferenceAndDelta(
             kinematics=kinematics_solver,
             end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
@@ -98,6 +88,7 @@ phone_to_robot_ee_pose = RobotProcessor(
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
+            max_ee_twist_step_rad=0.20,
         ),
     ],
     name="post_teleop_pipeline",
@@ -105,7 +96,6 @@ phone_to_robot_ee_pose = RobotProcessor(
 
 robot_ee_to_joints = RobotProcessor(
     steps=[
-        AddRobotObservation(robot=robot, include_images=True),
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
@@ -125,46 +115,27 @@ robot_joints_to_ee_pose = RobotProcessor(
     name="post_robot_pipeline",
 )
 
-
-def build_dataset_features(
-    *,
-    teleop,
-    robot,
-    teleop_to_dataset_action_feature: RobotProcessor,
-    dataset_action_feature_to_robot: RobotProcessor,
-    robot_to_dataset_observation_feature: RobotProcessor,
-) -> dict[str, PolicyFeature]:
-    """
-    Build the dataset schema from device- and processor-advertised features.
-    """
-    features = {f"action.{k}": v for k, v in teleop.action_features.items()}
-    for k, v in robot.observation_features.items():
-        if isinstance(v, tuple) and len(v) == 3:
-            features[f"observation.images.{k}"] = v
-        else:
-            features[f"observation.state.{k}"] = v
-    for p in (
-        teleop_to_dataset_action_feature,
-        dataset_action_feature_to_robot,
-        robot_to_dataset_observation_feature,
-    ):
-        features = p.feature_contract(features)
-    return features
-
-
-dataset_features = build_dataset_features(
-    teleop=phone,
-    robot=robot,
-    teleop_to_dataset_action_feature=phone_to_robot_ee_pose,
-    dataset_action_feature_to_robot=robot_ee_to_joints,
-    robot_to_dataset_observation_feature=robot_joints_to_ee_pose,
+ee_action_features = phone_to_robot_ee_pose.to_dataset_features(
+    initial_features=phone.action_features,
+    use_videos=True,
+    include=("action",),
+    action_type=DatasetFeatureType.EE,
 )
+
+ee_observation_features = robot_joints_to_ee_pose.to_dataset_features(
+    initial_features=robot.observation_features,
+    use_videos=True,
+    include=("observation",),
+    action_type=DatasetFeatureType.EE,
+)
+
+print("All dataset features: ", {**ee_action_features, **ee_observation_features})
 
 # Create the dataset
 dataset = LeRobotDataset.create(
     repo_id=HF_REPO_ID,
     fps=FPS,
-    features=dataset_features,
+    features={**ee_action_features, **ee_observation_features},
     robot_type=robot.name,
     use_videos=True,
     image_writer_threads=4,
