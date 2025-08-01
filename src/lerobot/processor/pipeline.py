@@ -888,47 +888,51 @@ class RobotProcessor(ModelHubMixin):
         """
         Run this pipeline's feature_contract and return a READY-FOR-DATASET features dict.
 
-        - Filters to keys under the requested spaces ("action" and/or "observation").
-        - `action_type` controls which action *signals* (EE, JOINT, or both) are exported.
-        - When 'both' is selected (list containing EE and JOINT), the exported "action" vector
-          concatenates EE first, then JOINT keys, ensuring a single standard 'action' feature.
+        - Filters to keys under requested spaces.
+        - Adds camera keys from the *initial_features* (robot.observation_features).
+        - Filters ACTION features by `action_type` (EE, JOINT, or both).
         """
+        # Allow list or single enum
+        if not isinstance(action_type, (list, tuple, set)):
+            action_types = {action_type}
+        else:
+            action_types = set(action_type)
+
+        def _is_hw_image(v: Any) -> bool:
+            # robot.observation_features uses tuples for images: (H, W, C)
+            return isinstance(v, tuple) and len(v) == 3 and v[-1] in (1, 3)
+
         fc = self.feature_contract(initial_features)
 
-        action_types = [action_type] if isinstance(action_type, DatasetFeatureType) else list(action_type)
-
+        action_hw: dict[str, Any] = {}
         obs_hw: dict[str, Any] = {}
+
+        # Collect from feature_contract outputs
         for k, v in fc.items():
-            if k.startswith("observation.state.") and "observation" in include:
+            if k.startswith("action.") and "action" in include:
+                # Strip prefix and filter by action_type
+                subk = k[len("action.") :]
+                is_ee = subk.startswith("ee.")
+                is_joint = subk.endswith(".pos") and not subk.startswith("ee.")
+                if is_ee and DatasetFeatureType.EE in action_types:
+                    action_hw[subk] = v
+                elif is_joint and DatasetFeatureType.JOINT in action_types:
+                    action_hw[subk] = v
+
+            elif k.startswith("observation.state.") and "observation" in include:
                 obs_hw[k[len("observation.state.") :]] = v
+
             elif k.startswith("observation.images.") and "observation" in include:
                 obs_hw[k[len("observation.images.") :]] = v
 
-        # action selection (EE / JOINT / BOTH)
-        action_hw: dict[str, Any] = {}
-        if "action" in include:
-            ee_prefixed = [
-                "action.ee.x",
-                "action.ee.y",
-                "action.ee.z",
-                "action.ee.wx",
-                "action.ee.wy",
-                "action.ee.wz",
-            ]
-            joint_prefixed = sorted(
-                k
-                for k in fc.keys()
-                if k.startswith("action.") and k.endswith(".pos") and not k.startswith("action.ee.")
-            )
+        # Add cameras from *initial_features* (if observation requested)
+        if "observation" in include:
+            for k, v in (initial_features or {}).items():
+                if _is_hw_image(v):
+                    # e.g. "front": (H, W, 3)
+                    obs_hw.setdefault(k, v)
 
-            if DatasetFeatureType.EE in action_types:
-                for k in ee_prefixed:
-                    if k in fc:
-                        action_hw[k[len("action.") :]] = fc[k]  # strip "action."
-            if DatasetFeatureType.JOINT in action_types:
-                for k in joint_prefixed:
-                    action_hw[k[len("action.") :]] = fc[k]  # strip "action."
-
+        # Convert to dataset features
         out: dict[str, dict] = {}
         if action_hw and "action" in include:
             out.update(hw_to_dataset_features(action_hw, "action", use_videos))

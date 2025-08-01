@@ -56,7 +56,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_9"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_16"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -88,7 +88,7 @@ phone_to_robot_ee_pose = RobotProcessor(
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
-            max_ee_twist_step_rad=0.20,
+            max_ee_twist_step_rad=0.30,
         ),
     ],
     name="post_teleop_pipeline",
@@ -185,7 +185,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
 
         # Merge and write
         merged = merge_transitions(ee_pose_observation, ee_pose_action)
-        frame = transition_to_dataset_batch(merged)
+        frame = transition_to_dataset_batch(merged, action_type=DatasetFeatureType.EE)
         dataset.add_frame(frame, task=TASK_DESCRIPTION)
 
         dt = time.perf_counter() - loop_t

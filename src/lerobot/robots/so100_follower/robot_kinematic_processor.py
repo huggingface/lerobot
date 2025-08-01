@@ -241,9 +241,21 @@ class InverseKinematicsEEToJoints:
         wz = act.pop("action.ee.wz", None)
 
         if None in (x, y, z, wx, wy, wz):
+            # Nothing to do; restore what we popped and return
+            act.update(
+                {
+                    "action.ee.x": x,
+                    "action.ee.y": y,
+                    "action.ee.z": z,
+                    "action.ee.wx": wx,
+                    "action.ee.wy": wy,
+                    "action.ee.wz": wz,
+                }
+            )
+            transition[TransitionKey.ACTION] = act
             return transition
 
-        # get joint positions from complimentary data
+        # Get joint positions from complimentary data
         raw = comp.get("raw_joint_positions", None)
         if raw is None:
             raise ValueError(
@@ -252,10 +264,13 @@ class InverseKinematicsEEToJoints:
 
         q_curr = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
 
-        q_des = np.array([x, y, z, wx, wy, wz])
+        # Build desired 4x4 transform from pos + rotvec (twist)
+        t_des = np.eye(4, dtype=float)
+        t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+        t_des[:3, 3] = [x, y, z]
 
-        # compute inverse kinematics
-        q_target = self.kinematics.inverse_kinematics(q_curr, q_des)
+        # Compute inverse kinematics
+        q_target = self.kinematics.inverse_kinematics(q_curr, t_des)
 
         new_act = dict(act)
         for i, name in enumerate(self.motor_names):
