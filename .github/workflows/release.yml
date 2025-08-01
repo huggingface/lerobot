@@ -148,13 +148,14 @@ jobs:
           if [[ "$VERSION" == *-* ]]; then
             BASE_VERSION="${VERSION%%-*}"
             echo "Installing pre-release version $BASE_VERSION from TestPyPI..."
-            uv run pip install \
+            uv pip install \
               --index-url https://test.pypi.org/simple/ \
               --extra-index-url https://pypi.org/simple \
+              --index-strategy unsafe-best-match \
                "lerobot[all]==$BASE_VERSION"
           else
             echo "Installing release version $VERSION from PyPI..."
-            uv run pip install "lerobot[all]==$VERSION"
+            uv pip install "lerobot[all]==$VERSION"
           fi
       - name: Check lerobot version
         run: uv run python -c "import lerobot; print(lerobot.__version__)"
