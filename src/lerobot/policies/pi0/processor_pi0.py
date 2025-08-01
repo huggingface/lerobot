@@ -21,8 +21,39 @@ from lerobot.processor import (
     NormalizerProcessor,
     RobotProcessor,
     ToBatchProcessor,
+    TokenizerProcessor,
     UnnormalizerProcessor,
 )
+from lerobot.processor.pipeline import EnvTransition, ProcessorStep, ProcessorStepRegistry, TransitionKey
+
+
+@ProcessorStepRegistry.register(name="pi0_new_line_processor")
+class Pi0NewLineProcessor(ProcessorStep):
+    """Add a new line to the end of the task if it doesn't have one.
+    This is required for the PaliGemma tokenizer.
+    """
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        # Check if complementary_data exists
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None or "task" not in complementary_data:
+            return transition
+
+        task = complementary_data["task"]
+        if task is None:
+            return transition
+
+        # Handle both string and list of strings
+        if isinstance(task, str):
+            # Single string: add newline if not present
+            if not task.endswith("\n"):
+                complementary_data["task"] = f"{task}\n"
+        elif isinstance(task, list) and all(isinstance(t, str) for t in task):
+            # List of strings: add newline to each if not present
+            complementary_data["task"] = [t if t.endswith("\n") else f"{t}\n" for t in task]
+        # If task is neither string nor list of strings, leave unchanged
+
+        return transition
 
 
 def make_pi0_processor(
@@ -36,6 +67,10 @@ def make_pi0_processor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
         ToBatchProcessor(),
+        Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
+        TokenizerProcessor(
+            tokenizer_name="google/paligemma-3b-pt-224", max_length=config.tokenizer_max_length
+        ),
     ]
     output_steps = [
         UnnormalizerProcessor(

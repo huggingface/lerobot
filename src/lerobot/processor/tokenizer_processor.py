@@ -8,14 +8,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import torch
+from transformers import AutoTokenizer
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.constants import OBS_LANGUAGE
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
-
-try:
-    from transformers import AutoTokenizer
-except ImportError:
-    AutoTokenizer = None
 
 
 @dataclass
@@ -25,7 +22,7 @@ class TokenizerProcessor:
 
     This processor handles tokenization of task strings found in the complementary_data
     using a specified pretrained tokenizer from Hugging Face. It adds tokenized versions
-    alongside the original text for model processing while preserving the original task string.
+    to the observation data for model processing while preserving the original task string.
 
     The processor supports both single strings and lists of strings as task inputs.
 
@@ -38,8 +35,6 @@ class TokenizerProcessor:
             is not serialized and must be provided via overrides when loading.
         max_length: Maximum sequence length for tokenization. Defaults to 512.
         task_key: Key in complementary_data containing the task text. Defaults to "task".
-        output_key: Key where tokenized output will be stored in complementary_data.
-            Defaults to "task_tokens".
         padding: Padding strategy for tokenization. Defaults to "max_length".
         truncation: Whether to truncate sequences longer than max_length. Defaults to True.
 
@@ -59,10 +54,9 @@ class TokenizerProcessor:
     """
 
     tokenizer_name: str | None = None
-    tokenizer: Any = None
+    tokenizer: AutoTokenizer | None = None
     max_length: int = 512
     task_key: str = "task"
-    output_key: str = "task_tokens"
     padding: str = "max_length"
     truncation: bool = True
 
@@ -75,19 +69,40 @@ class TokenizerProcessor:
             # Use provided tokenizer object directly
             self._tokenizer = self.tokenizer
         elif self.tokenizer_name is not None:
-            # Load tokenizer from name
-            if AutoTokenizer is None:
-                raise ImportError(
-                    "The 'transformers' library is required to use TokenizerProcessor. "
-                    "Please install it with: pip install transformers"
-                )
-
             self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         else:
             raise ValueError(
                 "Either 'tokenizer' or 'tokenizer_name' must be provided. "
                 "Pass a tokenizer object directly or a tokenizer name to auto-load."
             )
+
+    def get_task(self, transition: EnvTransition) -> list[str] | None:
+        """Extract and normalize task from complementary data.
+
+        Args:
+            transition: Input transition containing complementary_data.
+
+        Returns:
+            List of task strings if task is present, None otherwise.
+        """
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            return None
+
+        if self.task_key not in complementary_data:
+            return None
+
+        task = complementary_data[self.task_key]
+        if task is None:
+            return None
+
+        # Convert to list of strings
+        if isinstance(task, str):
+            return [task]
+        elif isinstance(task, list) and all(isinstance(t, str) for t in task):
+            return task
+
+        return None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Process the transition by tokenizing the task text.
@@ -96,44 +111,30 @@ class TokenizerProcessor:
             transition: Input transition containing complementary_data with task text.
 
         Returns:
-            New transition with tokenized task added to complementary_data.
+            Modified transition with tokenized task added to observation.
 
         Raises:
             ValueError: If tokenizer initialization failed.
         """
-        if self._tokenizer is None:
-            raise ValueError(
-                f"Tokenizer could not be initialized from '{self.tokenizer_name}'. "
-                "Make sure the tokenizer name is valid and the transformers library is installed."
-            )
-
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
-        if complementary_data is None:
-            return transition
-
-        if self.task_key not in complementary_data:
-            return transition
-
-        task = complementary_data[self.task_key]
+        task = self.get_task(transition)
         if task is None:
             return transition
 
-        # Handle both string and list of strings
-        if isinstance(task, str):
-            tokens = self._tokenize_text(task)
-        elif isinstance(task, list) and all(isinstance(t, str) for t in task):
-            tokens = self._tokenize_text(task)
-        else:
-            # Unsupported task format, return unchanged
-            return transition
+        # Tokenize the task
+        tokenized_prompt = self._tokenize_text(task)
 
-        # Create new transition with tokens
-        new_transition = transition.copy()
-        new_complementary_data = dict(complementary_data)
-        new_complementary_data[self.output_key] = tokens
-        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
+        # Get or create observation dict
+        if TransitionKey.OBSERVATION not in transition or transition[TransitionKey.OBSERVATION] is None:
+            transition[TransitionKey.OBSERVATION] = {}
+        observation = transition[TransitionKey.OBSERVATION]
 
-        return new_transition
+        # Add tokenized data to observation
+        observation[f"{OBS_LANGUAGE}.tokens"] = tokenized_prompt["input_ids"]
+        observation[f"{OBS_LANGUAGE}.attention_mask"] = tokenized_prompt["attention_mask"].to(
+            dtype=torch.bool
+        )
+
+        return transition
 
     def _tokenize_text(self, text: str | list[str]) -> dict[str, torch.Tensor]:
         """Tokenize text using the configured tokenizer.
@@ -161,7 +162,6 @@ class TokenizerProcessor:
         config = {
             "max_length": self.max_length,
             "task_key": self.task_key,
-            "output_key": self.output_key,
             "padding": self.padding,
             "truncation": self.truncation,
         }
@@ -194,12 +194,12 @@ class TokenizerProcessor:
             Updated feature dictionary with tokenized task features added.
         """
         # Add features for tokenized output if they don't exist
-        # Standard tokenizer output includes input_ids and attention_mask
-        input_ids_key = f"{self.output_key}.input_ids"
-        attention_mask_key = f"{self.output_key}.attention_mask"
+        # Standard tokenizer output includes tokens and attention_mask
+        tokens_key = f"{OBS_LANGUAGE}.tokens"
+        attention_mask_key = f"{OBS_LANGUAGE}.attention_mask"
 
-        if input_ids_key not in features:
-            features[input_ids_key] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
+        if tokens_key not in features:
+            features[tokens_key] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
 
         if attention_mask_key not in features:
             features[attention_mask_key] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
