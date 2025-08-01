@@ -235,3 +235,67 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             action_dict["gripper"] = gripper_action
 
         return action_dict
+
+    def get_teleop_events(self) -> dict[str, Any]:
+        """
+        Get extra control events from the keyboard such as intervention status,
+        episode termination, success indicators, etc.
+
+        Keyboard mappings:
+        - Any movement keys pressed = intervention active
+        - 's' key = success (terminate episode successfully)
+        - 'r' key = rerecord episode (terminate and rerecord)
+        - 'q' key = quit episode (terminate without success)
+
+        Returns:
+            Dictionary containing:
+                - is_intervention: bool - Whether human is currently intervening
+                - terminate_episode: bool - Whether to terminate the current episode
+                - success: bool - Whether the episode was successful
+                - rerecord_episode: bool - Whether to rerecord the episode
+        """
+        if not self.is_connected:
+            return {
+                "is_intervention": False,
+                "terminate_episode": False,
+                "success": False,
+                "rerecord_episode": False,
+            }
+
+        # Check if any movement keys are currently pressed (indicates intervention)
+        movement_keys = [
+            keyboard.Key.up,
+            keyboard.Key.down,
+            keyboard.Key.left,
+            keyboard.Key.right,
+            keyboard.Key.shift,
+            keyboard.Key.shift_r,
+            keyboard.Key.ctrl_r,
+            keyboard.Key.ctrl_l,
+        ]
+        is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
+
+        # Check for episode control commands from misc_keys_queue
+        terminate_episode = False
+        success = False
+        rerecord_episode = False
+
+        # Process any pending misc keys
+        while not self.misc_keys_queue.empty():
+            key = self.misc_keys_queue.get_nowait()
+            if key == "s":
+                terminate_episode = True
+                success = True
+            elif key == "r":
+                terminate_episode = True
+                rerecord_episode = True
+            elif key == "q":
+                terminate_episode = True
+                success = False
+
+        return {
+            "is_intervention": is_intervention,
+            "terminate_episode": terminate_episode,
+            "success": success,
+            "rerecord_episode": rerecord_episode,
+        }

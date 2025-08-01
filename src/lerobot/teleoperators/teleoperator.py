@@ -161,6 +161,18 @@ class Teleoperator(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def get_teleop_events(self) -> dict[str, Any]:
+        """
+        Get extra control events from the teleoperator such as intervention status,
+        episode termination, success indicators, etc.
+        Check the implementation of the gamepad for an example.
+
+        Returns:
+            dict[str, Any]: A dictionary containing control events with keys and values that are specific to the setup.
+        """
+        pass
+
+    @abc.abstractmethod
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         """
         Send a feedback action command to the teleoperator.
