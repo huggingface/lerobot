@@ -21,21 +21,50 @@ from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, Tra
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
 
-@ProcessorStepRegistry.register("phone_axis_remap_to_action")
+@ProcessorStepRegistry.register("map_phone_action_to_robot_action")
 @dataclass
-class PhoneAxisRemapToAction:
-    """Map calibrated phone pose to the inputs for robot action"""
+class MapPhoneActionToRobotAction:
+    """
+    Map calibrated phone pose (actions) to the inputs for robot actions
+
+    Expected input ACTION keys:
+    {
+        "phone.enabled": bool,
+        "phone.pos": np.ndarray,
+        "phone.rot": Rotation,
+        "phone.raw_inputs": dict,
+    }
+
+    Output transformed ACTION keys:
+    {
+        "enabled": bool,
+        "target_x": float,
+        "target_y": float,
+        "target_z": float,
+        "target_qx": float,
+        "target_qy": float,
+        "target_qz": float,
+        "target_qw": float,
+        "gripper": float,
+        "x": float,
+        "y": float,
+        "theta": float,
+    }
+    """
 
     platform: PhoneOS
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        obs = transition.get(TransitionKey.OBSERVATION)
+        act = transition.get(TransitionKey.ACTION) or {}
 
-        # pop these from observation because only needed for this step
-        enabled = obs.pop("phone.enabled", 0)
-        pos = obs.pop("phone.pos", None)
-        rot = obs.pop("phone.rot", None)
-        inputs = obs.pop("phone.raw_inputs", {})
+        if act is None or not isinstance(act, dict):
+            return transition
+
+        # Pop them from the action
+        enabled = act.pop("phone.enabled", 0)
+        pos = act.pop("phone.pos", None)
+        rot = act.pop("phone.rot", None)
+        inputs = act.pop("phone.raw_inputs", {})
 
         if pos is None or rot is None:
             return transition
@@ -56,37 +85,44 @@ class PhoneAxisRemapToAction:
             x = y = theta = 0.0
 
         # For some actions we need to invert the axis
-        act = {
-            "enabled": enabled,
-            "target_x": -pos[1] if enabled else 0.0,
-            "target_y": pos[0] if enabled else 0.0,
-            "target_z": pos[2] if enabled else 0.0,
-            "target_qx": quat[1] if enabled else 0.0,
-            "target_qy": quat[0] if enabled else 0.0,
-            "target_qz": -quat[2] if enabled else 0.0,
-            "target_qw": quat[3] if enabled else 0.0,
-            "gripper": gripper,  # Still send gripper action when disabled
-            "x": x if enabled else 0.0,
-            "y": y if enabled else 0.0,
-            "theta": theta if enabled else 0.0,
-        }
+        act.update(
+            {
+                "enabled": enabled,
+                "target_x": -pos[1] if enabled else 0.0,
+                "target_y": pos[0] if enabled else 0.0,
+                "target_z": pos[2] if enabled else 0.0,
+                "target_qx": quat[1] if enabled else 0.0,
+                "target_qy": quat[0] if enabled else 0.0,
+                "target_qz": -quat[2] if enabled else 0.0,
+                "target_qw": quat[3] if enabled else 0.0,
+                "gripper": gripper,  # Still send gripper action when disabled
+                "x": x if enabled else 0.0,
+                "y": y if enabled else 0.0,
+                "theta": theta if enabled else 0.0,
+            }
+        )
 
         transition[TransitionKey.ACTION] = act
         return transition
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # Add new features and remove enabled from features
-        return {
-            "enabled": bool,
-            "target_x": float,
-            "target_y": float,
-            "target_z": float,
-            "target_qx": float,
-            "target_qy": float,
-            "target_qz": float,
-            "target_qw": float,
-            "gripper": float,
-            "x": float,
-            "y": float,
-            "theta": float,
-        }
+        # Accept both scoped/unscoped inputs, always emit scoped outputs
+        for k in ("phone.enabled", "phone.pos", "phone.rot", "phone.raw_inputs"):
+            features.pop(f"action.{k}", None)
+            features.pop(k, None)
+        features.update(
+            {
+                "action.enabled": bool,
+                "action.target_x": float,
+                "action.target_y": float,
+                "action.target_z": float,
+                "action.target_qx": float,
+                "action.target_qy": float,
+                "action.target_qz": float,
+                "action.target_qw": float,
+                "action.gripper": float,
+                "action.x": float,
+                "action.y": float,
+                "action.theta": float,
+            }
+        )

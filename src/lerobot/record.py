@@ -230,9 +230,6 @@ def record_loop(
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
-        for p in (post_teleop_processor, pre_robot_processor, post_robot_processor):
-            if p is not None and hasattr(p, "reset"):
-                p.reset()
 
     timestamp = 0
     start_episode_t = time.perf_counter()

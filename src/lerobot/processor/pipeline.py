@@ -52,8 +52,8 @@ class EnvTransition(TypedDict, total=False):
     All fields are optional (total=False) to allow flexible usage.
     """
 
-    observation: dict[str, Any] | None  # TODO(pepijn): Go from dict[str, Any] to dict[str, PolicyFeature] (1)
-    action: Any | torch.Tensor | None  # TODO(pepijn): Add also dict[str, PolicyFeature] type? (2)
+    observation: dict[str, Any] | torch.Tensor | None
+    action: dict[str, Any] | torch.Tensor | None
     reward: float | torch.Tensor | None
     done: bool | torch.Tensor | None
     truncated: bool | torch.Tensor | None

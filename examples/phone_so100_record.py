@@ -14,31 +14,27 @@
 # See the License for the specif
 
 """
-Pipeline schema for phone teleop:
-
-[TELEOP]
-   │
-   ▼
-post_teleop_pipeline      # (deltas → safe EE)
-   │
-   └──► Dataset Action: {ee.{x,y,z,qx,qy,qz,qw}, gripper}
-   │
-   ▼
-pre_robot_pipeline        # (IK → joints)
-   │
-   ▼
-[ROBOT] send_action(joints)
-   │
-   ▼
-post_robot_pipeline       # (FK → EE pose)
-   │
-   └──► Dataset Observation: {images, ee.{x,y,z,qx,qy,qz,qw}, gripper}
+High-level dataflow
+───────────────────
+[TELEOP] --teleop_action_to_pipeline--> Transition (ACTION: phone.*)
+  │
+  └── post_teleop_pipeline (MapPhoneToRobot, EEReferenceAndDelta, EEBoundsAndSafety)
+       (unscoped ACTION: enabled/target_*/gripper → desired_ee_pose)
+  │
+  └── pre_robot_pipeline (IK, GripperVelocityToJoint)
+       (unscoped ACTION: <joint>.pos ready for robot)
+  │
+  └── pipeline_to_robot_action → robot.send_action
+  │
+  └── robot_observation_to_pipeline → post_robot_pipeline (FK to EE fields)
+  │
+  └── transition_to_dataset_batch → dataset.add_frame(...)
 """
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotProcessor
+from lerobot.processor.pipeline import RobotProcessor
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -51,7 +47,7 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone import Phone
-from lerobot.teleoperators.phone.phone_processor import PhoneAxisRemapToAction
+from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
@@ -84,7 +80,7 @@ kinematics_solver = RobotKinematics(
 
 post_teleop = RobotProcessor(
     steps=[
-        PhoneAxisRemapToAction(platform=teleop_config.phone_os),
+        MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         EEReferenceAndDelta(
             kinematics=kinematics_solver,
             end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
@@ -119,11 +115,29 @@ post_robot = RobotProcessor(
     name="post_robot_pipeline",
 )
 
-# Configure dataset features in EE space
-ee_action_features = post_teleop.feature_contract(initial_features=phone.action_features)
-ee_obs_features = post_robot.feature_contract(initial_features=robot.observation_features)
 
-dataset_features = {ee_action_features, ee_obs_features}
+def _scoped_initial_features(robot: SO100Follower, phone: Phone) -> dict:
+    """
+    Build a minimal dataset feature contract:
+      - action.*  from phone.action_features → through post_teleop → pre_robot
+      - observation.* from robot.observation_features → through post_robot
+    """
+    # Start with ACTION: prefix 'action.' for contract
+    features = {f"action.{k}": v for k, v in phone.action_features.items()}
+    # OBSERVATION: motors to observation.state.*, cameras to observation.images.*
+    for k, v in robot.observation_features.items():
+        if isinstance(v, tuple) and len(v) == 3:
+            features[f"observation.images.{k}"] = v
+        else:
+            features[f"observation.state.{k}"] = v
+    # Apply contracts
+    features = post_teleop.feature_contract(features)
+    features = pre_robot.feature_contract(features)
+    features = post_robot.feature_contract(features)
+    return features
+
+
+dataset_features = _scoped_initial_features(robot, phone)
 
 # Create the dataset
 dataset = LeRobotDataset.create(
