@@ -1,0 +1,207 @@
+"""
+Tokenizer processor for handling text tokenization in robot transitions.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import torch
+
+from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+
+try:
+    from transformers import AutoTokenizer
+except ImportError:
+    AutoTokenizer = None
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="tokenizer_processor")
+class TokenizerProcessor:
+    """Tokenizes text tasks in complementary data using a huggingface tokenizer.
+
+    This processor handles tokenization of task strings found in the complementary_data
+    using a specified pretrained tokenizer from Hugging Face. It adds tokenized versions
+    alongside the original text for model processing while preserving the original task string.
+
+    The processor supports both single strings and lists of strings as task inputs.
+
+    Args:
+        tokenizer_name: Name of the pretrained tokenizer to load from Hugging Face Hub
+            (e.g., "bert-base-uncased", "microsoft/DialoGPT-medium"). This will be used
+            with AutoTokenizer.from_pretrained(). If tokenizer is provided, this is ignored.
+        tokenizer: A tokenizer object (e.g., from transformers library) that implements
+            the __call__ method. If provided, tokenizer_name is ignored. This parameter
+            is not serialized and must be provided via overrides when loading.
+        max_length: Maximum sequence length for tokenization. Defaults to 512.
+        task_key: Key in complementary_data containing the task text. Defaults to "task".
+        output_key: Key where tokenized output will be stored in complementary_data.
+            Defaults to "task_tokens".
+        padding: Padding strategy for tokenization. Defaults to "max_length".
+        truncation: Whether to truncate sequences longer than max_length. Defaults to True.
+
+    Examples:
+        Using tokenizer name (auto-loaded):
+        ```python
+        processor = TokenizerProcessor(tokenizer_name="bert-base-uncased", max_length=128)
+        ```
+
+        Using custom tokenizer object:
+        ```python
+        from transformers import AutoTokenizer
+
+        custom_tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        processor = TokenizerProcessor(tokenizer=custom_tokenizer, max_length=128)
+        ```
+    """
+
+    tokenizer_name: str | None = None
+    tokenizer: Any = None
+    max_length: int = 512
+    task_key: str = "task"
+    output_key: str = "task_tokens"
+    padding: str = "max_length"
+    truncation: bool = True
+
+    # Internal tokenizer instance (not serialized)
+    _tokenizer: Any = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        """Initialize the tokenizer from the provided tokenizer or tokenizer name."""
+        if self.tokenizer is not None:
+            # Use provided tokenizer object directly
+            self._tokenizer = self.tokenizer
+        elif self.tokenizer_name is not None:
+            # Load tokenizer from name
+            if AutoTokenizer is None:
+                raise ImportError(
+                    "The 'transformers' library is required to use TokenizerProcessor. "
+                    "Please install it with: pip install transformers"
+                )
+
+            self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+        else:
+            raise ValueError(
+                "Either 'tokenizer' or 'tokenizer_name' must be provided. "
+                "Pass a tokenizer object directly or a tokenizer name to auto-load."
+            )
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Process the transition by tokenizing the task text.
+
+        Args:
+            transition: Input transition containing complementary_data with task text.
+
+        Returns:
+            New transition with tokenized task added to complementary_data.
+
+        Raises:
+            ValueError: If tokenizer initialization failed.
+        """
+        if self._tokenizer is None:
+            raise ValueError(
+                f"Tokenizer could not be initialized from '{self.tokenizer_name}'. "
+                "Make sure the tokenizer name is valid and the transformers library is installed."
+            )
+
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            return transition
+
+        if self.task_key not in complementary_data:
+            return transition
+
+        task = complementary_data[self.task_key]
+        if task is None:
+            return transition
+
+        # Handle both string and list of strings
+        if isinstance(task, str):
+            tokens = self._tokenize_text(task)
+        elif isinstance(task, list) and all(isinstance(t, str) for t in task):
+            tokens = self._tokenize_text(task)
+        else:
+            # Unsupported task format, return unchanged
+            return transition
+
+        # Create new transition with tokens
+        new_transition = transition.copy()
+        new_complementary_data = dict(complementary_data)
+        new_complementary_data[self.output_key] = tokens
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
+
+        return new_transition
+
+    def _tokenize_text(self, text: str | list[str]) -> dict[str, torch.Tensor]:
+        """Tokenize text using the configured tokenizer.
+
+        Args:
+            text: Text string or list of strings to tokenize.
+
+        Returns:
+            Dictionary containing tokenized output with keys like 'input_ids', 'attention_mask'.
+        """
+        return self._tokenizer(
+            text,
+            max_length=self.max_length,
+            truncation=self.truncation,
+            padding=self.padding,
+            return_tensors="pt",
+        )
+
+    def get_config(self) -> dict[str, Any]:
+        """Return configuration for serialization.
+
+        Note: Only tokenizer_name is saved, not the tokenizer object itself.
+        When loading, provide the tokenizer via overrides if needed.
+        """
+        config = {
+            "max_length": self.max_length,
+            "task_key": self.task_key,
+            "output_key": self.output_key,
+            "padding": self.padding,
+            "truncation": self.truncation,
+        }
+
+        # Only include tokenizer_name if it was used (not when tokenizer object was provided)
+        if self.tokenizer_name is not None:
+            config["tokenizer_name"] = self.tokenizer_name
+
+        return config
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Return state dictionary (empty for this processor)."""
+        return {}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Load state dictionary (no-op for this processor)."""
+        pass
+
+    def reset(self) -> None:
+        """Reset processor state (no-op for this processor)."""
+        pass
+
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """Add tokenized task features to the feature contract.
+
+        Args:
+            features: Input feature dictionary.
+
+        Returns:
+            Updated feature dictionary with tokenized task features added.
+        """
+        # Add features for tokenized output if they don't exist
+        # Standard tokenizer output includes input_ids and attention_mask
+        input_ids_key = f"{self.output_key}.input_ids"
+        attention_mask_key = f"{self.output_key}.attention_mask"
+
+        if input_ids_key not in features:
+            features[input_ids_key] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
+
+        if attention_mask_key not in features:
+            features[attention_mask_key] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
+
+        return features
