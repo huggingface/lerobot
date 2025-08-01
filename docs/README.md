@@ -20,7 +20,7 @@ To generate the documentation, you first have to build it. Several packages are 
 you can install them with the following command, at the root of the code repository:
 
 ```bash
-pip install -e ".[docs]"
+pip install -e . -r docs-requirements.txt
 ```
 
 You will also need `nodejs`. Please refer to their [installation page](https://nodejs.org/en/download)
