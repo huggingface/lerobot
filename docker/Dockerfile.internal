@@ -74,7 +74,7 @@ RUN uv venv --python python${PYTHON_VERSION}
 # Install Python dependencies for caching
 COPY --chown=user_lerobot:user_lerobot pyproject.toml README.md MANIFEST.in ./
 COPY --chown=user_lerobot:user_lerobot src/ src/
-RUN uv pip install --no-cache ".[all]"
+RUN uv pip install --no-cache -r pyproject.toml --all-extras
 
 # Copy the rest of the application source code
 # Make sure to have the git-LFS files for testing
