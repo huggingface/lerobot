@@ -141,6 +141,8 @@ jobs:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
+      - name: Create uv virtual environment
+        run: uv venv
       - name: Install lerobot release
         # zizmor: ignore[template-injection]
         run: |
