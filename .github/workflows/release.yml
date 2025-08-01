@@ -55,6 +55,7 @@ jobs:
           VERSION_NUMBER=${VERSION#v}
           echo "tag_version=$VERSION_NUMBER" >> $GITHUB_OUTPUT
       - name: Check if version matches pyproject.toml
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
         # zizmor: ignore[template-injection]
         run: |
           TAG_VERSION=${{ steps.extract_info.outputs.tag_version }}
@@ -141,8 +142,19 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install lerobot release
-        run: uv run pip install "lerobot[all]==${{ needs.build-and-publish.outputs.version }}" # zizmor: ignore[template-injection]
-
+        # zizmor: ignore[template-injection]
+        run: |
+          VERSION="${{ needs.build-and-publish.outputs.version }}"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "Installing pre-release version $VERSION from TestPyPI..."
+            uv run pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple \
+               "lerobot[all]==$VERSION"
+          else
+            echo "Installing release version $VERSION from PyPI..."
+            uv run pip install "lerobot[all]==$VERSION"
+          fi
       - name: Check lerobot version
         run: uv run python -c "import lerobot; print(lerobot.__version__)"
 
