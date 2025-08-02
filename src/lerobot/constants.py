@@ -21,6 +21,7 @@ OBS_ENV_STATE = "observation.environment_state"
 OBS_STATE = "observation.state"
 OBS_IMAGE = "observation.image"
 OBS_IMAGES = "observation.images"
+OBS_LANGUAGE = "observation.language"
 ACTION = "action"
 REWARD = "next.reward"
 

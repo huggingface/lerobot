@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from torch import nn
 from typing_extensions import Unpack
@@ -111,6 +111,8 @@ class ProcessorConfigKwargs(TypedDict, total=False):
 
     preprocessor_config_filename: str | None
     postprocessor_config_filename: str | None
+    preprocessor_overrides: dict[str, Any] | None
+    postprocessor_overrides: dict[str, Any] | None
 
 
 def make_processor(
@@ -142,10 +144,12 @@ def make_processor(
             RobotProcessor.from_pretrained(
                 source=pretrained_path,
                 config_filename=kwargs.get("preprocessor_config_filename", "preprocessor.json"),
+                overrides=kwargs.get("preprocessor_overrides", {}),
             ),
             RobotProcessor.from_pretrained(
                 source=pretrained_path,
                 config_filename=kwargs.get("postprocessor_config_filename", "postprocessor.json"),
+                overrides=kwargs.get("postprocessor_overrides", {}),
             ),
         )
 

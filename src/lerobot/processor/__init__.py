@@ -37,6 +37,7 @@ from .pipeline import (
     TruncatedProcessor,
 )
 from .rename_processor import RenameProcessor
+from .tokenizer_processor import TokenizerProcessor
 
 __all__ = [
     "ActionProcessor",
@@ -57,6 +58,7 @@ __all__ = [
     "RobotProcessor",
     "StateProcessor",
     "ToBatchProcessor",
+    "TokenizerProcessor",
     "TransitionKey",
     "TruncatedProcessor",
     "VanillaObservationProcessor",
