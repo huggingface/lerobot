@@ -34,14 +34,14 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-# TODO(pepijn): Fix phone teleop workings with pipeline 2
+# TODO(pepijn): Fix phone teleop workings with pipeline 1
 
-# -----Monday----- (3,4,5)
-# TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline 3
-# TODO(pepijn): Ask for feedback from Adil before writing tests 4
-# TODO(pepijn): Add a bunch of tests 5
-# ----Tuesday----- (6)
-# TODO(pepijn): Add to docs with image etc 6
+# -----Monday----- (2,3,4)
+# TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline 2
+# TODO(pepijn): Ask for feedback from Adil before writing tests 3
+# TODO(pepijn): Add a bunch of tests 4
+# ----Tuesday----- (5)
+# TODO(pepijn): Add to docs with image etc 5
 
 
 class Phone(Teleoperator):

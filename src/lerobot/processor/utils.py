@@ -111,7 +111,7 @@ def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
     return out
 
 
-def make_to_output_dataset(features: dict[str, dict]):
+def to_dataset_frame(features: dict[str, dict]):
     """
     Build a to_output(...) function that returns a dataset-ready frame dict.
     The function can be called with:
