@@ -23,23 +23,23 @@ from ..config import TeleoperatorConfig
 @dataclass
 class JoystickTeleopConfig(TeleoperatorConfig):
     """Configuration for joystick-based teleoperation."""
-    
+
     device_index: int = 0  # Joystick device index (0 for first joystick)
     deadzone: float = 0.1  # Deadzone for joystick axes to prevent drift
     step_size: float = 0.05  # Step size for relative movement sensitivity
     axis_mapping: dict[int, str] | None = None  # Mapping of joystick axes to robot joints
-    
+
     def __post_init__(self):
         if self.id is None:
             self.id = "fsi6x"
-            
+
         if self.axis_mapping is None:
             # Default mapping for SO101 - can be overridden
             self.axis_mapping = {
                 0: "shoulder_pan",
-                1: "shoulder_lift", 
+                1: "shoulder_lift",
                 2: "elbow_flex",
                 3: "wrist_flex",
                 4: "wrist_roll",
-                5: "gripper"
-            } 
+                5: "gripper",
+            }
