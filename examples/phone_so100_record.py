@@ -12,14 +12,6 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specif
-
-"""
-High-level dataflow
-───────────────────
-
-TODO(pepijn): add schema
-"""
-
 import time
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
@@ -29,9 +21,9 @@ from lerobot.processor.pipeline import RobotProcessor
 from lerobot.processor.utils import (
     DatasetFeatureType,
     merge_transitions,
-    pipeline_to_robot_action,
-    prepare_robot_observation_pipeline,
-    prepare_teleop_action_pipeline,
+    to_output_robot_action,
+    to_transition_robot_observation,
+    to_transition_teleop_action,
     transition_to_dataset_batch,
 )
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
@@ -56,7 +48,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_16"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_32"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -76,6 +68,7 @@ kinematics_solver = RobotKinematics(
     urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf", target_frame_name="gripper_frame_link"
 )
 
+# Build pipeline to convert phone action to ee pose action
 phone_to_robot_ee_pose = RobotProcessor(
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
@@ -88,12 +81,14 @@ phone_to_robot_ee_pose = RobotProcessor(
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
-            max_ee_twist_step_rad=0.30,
+            max_ee_twist_step_rad=0.50,
         ),
     ],
-    name="post_teleop_pipeline",
+    to_transition=to_transition_teleop_action,
+    to_output=lambda tr: tr,
 )
 
+# Build pipeline to convert ee pose action to joint action
 robot_ee_to_joints = RobotProcessor(
     steps=[
         InverseKinematicsEEToJoints(
@@ -105,16 +100,20 @@ robot_ee_to_joints = RobotProcessor(
             speed_factor=5.0,
         ),
     ],
-    name="pre_robot_pipeline",
+    to_transition=lambda tr: tr,
+    to_output=to_output_robot_action,
 )
 
+# Build pipeline to convert joint observation to ee pose observation
 robot_joints_to_ee_pose = RobotProcessor(
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
-    name="post_robot_pipeline",
+    to_transition=to_transition_robot_observation,
+    to_output=lambda tr: tr,
 )
 
+# Build dataset action features
 ee_action_features = phone_to_robot_ee_pose.to_dataset_features(
     initial_features=phone.action_features,
     use_videos=True,
@@ -122,6 +121,7 @@ ee_action_features = phone_to_robot_ee_pose.to_dataset_features(
     action_type=DatasetFeatureType.EE,
 )
 
+# Build dataset observation features
 ee_observation_features = robot_joints_to_ee_pose.to_dataset_features(
     initial_features=robot.observation_features,
     use_videos=True,
@@ -150,7 +150,7 @@ robot.connect()
 phone.connect()
 
 episode_idx = 0
-# TODO(pepijn): add back record loop and integrate functionality below in it, so record_loop works with pipeline and without it
+
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
@@ -162,26 +162,22 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         teleop_action = phone.get_action()
         robot_observation = robot.get_observation()
 
-        # Prepare for pipeline
-        teleop_action_tr = prepare_teleop_action_pipeline(
-            teleop_action
-        )  # TODO(pepijn): replace with to transition of Pipeline
-        robot_observation_tr = prepare_robot_observation_pipeline(
-            robot_observation
-        )  # TODO(pepijn): replace with to transition of Pipeline
+        # Run pipelines to get ee pose action
+        ee_pose_action = phone_to_robot_ee_pose(teleop_action)
 
-        # Run pipelines to get ee pose and corresponding joints action
-        ee_pose_action = phone_to_robot_ee_pose(teleop_action_tr)
-        joints_action = robot_ee_to_joints(ee_pose_action)
+        print("ee_pose_action", ee_pose_action)
 
-        # Send to robot
-        robot_action = pipeline_to_robot_action(
-            joints_action
-        )  # TODO(pepijn): replace with from transition of Pipeline
-        robot.send_action(robot_action)
+        # Convert to joint action and send to robot
+        joints_transition = robot_ee_to_joints(ee_pose_action)
+        joints_action = robot_ee_to_joints.to_output(joints_transition)  # Call to_output to get action dict
+        robot.send_action(joints_action)
+
+        print("joints_action", joints_action)
 
         # Run pipeline to get ee pose observation
-        ee_pose_observation = robot_joints_to_ee_pose(robot_observation_tr)
+        ee_pose_observation = robot_joints_to_ee_pose(robot_observation)
+
+        print("ee_pose_observation", ee_pose_observation)
 
         # Merge and write
         merged = merge_transitions(ee_pose_observation, ee_pose_action)

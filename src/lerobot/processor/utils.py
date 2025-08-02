@@ -67,30 +67,47 @@ def make_transition(*, obs: dict | None = None, act: dict | None = None) -> EnvT
     }
 
 
-def prepare_teleop_action_pipeline(teleop_action: dict) -> EnvTransition:
-    act_dict = {}
-    for k, v in teleop_action.items():
+def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
+    """
+    Convert a raw teleop action dict (provided under 'teleop_action') into an EnvTransition:
+        ACTION -> {f"action.{k}": tensor(v)}
+    """
+    act_dict: dict[str, Any] = {}
+    for k, v in action.items():
         arr = np.array(v) if np.isscalar(v) else v
         act_dict[f"action.{k}"] = _to_tensor(arr)
+
     return make_transition(act=act_dict)
 
 
-def prepare_robot_observation_pipeline(robot_obs: dict) -> EnvTransition:
-    state, images = _split_obs_to_state_and_images(robot_obs)
-    obs_dict = {}
+def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransition:
+    """
+    Convert a raw robot observation dict (provided under 'robot_observation') into an EnvTransition:
+        OBSERVATION.state  -> scalars/tensors
+        OBSERVATION.images -> pass-through uint8 HWC images
+    """
+    state, images = _split_obs_to_state_and_images(observation)
+
+    obs_dict: dict[str, Any] = {}
     for k, v in state.items():
         arr = np.array(v) if np.isscalar(v) else v
         obs_dict[f"observation.state.{k}"] = _to_tensor(arr)
+
     for cam, img in images.items():
-        obs_dict[f"observation.images.{cam}"] = img
+        obs_dict[f"observation.images.{cam}"] = img  # keep raw uint8 HWC
+
     return make_transition(obs=obs_dict)
 
 
-def pipeline_to_robot_action(transition: EnvTransition) -> dict[str, Any]:
-    """Strip 'action.' for Robot.send_action"""
-    out = {}
+def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
+    """
+    Strip 'action.' so the result can be passed straight into Robot.send_action().
+    """
+    out: dict[str, Any] = {}
     for k, v in (transition.get(TransitionKey.ACTION) or {}).items():
         if isinstance(k, str) and k.startswith("action."):
+            from lerobot.processor.utils import _from_tensor
+
             out[k[len("action.") :]] = _from_tensor(v)
     return out
 

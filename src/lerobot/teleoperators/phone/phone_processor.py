@@ -14,7 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+import numpy as np
+from scipy.spatial.transform import Rotation
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
@@ -47,12 +50,11 @@ class MapPhoneActionToRobotAction:
     """
 
     platform: PhoneOS
+    _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
+    _last_rot: Rotation | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         act = transition.get(TransitionKey.ACTION) or {}
-
-        if act is None or not isinstance(act, dict):
-            return transition
 
         # Pop them from the action
         enabled = act.pop("action.phone.enabled", 0)
@@ -63,8 +65,17 @@ class MapPhoneActionToRobotAction:
         if pos is None or rot is None:
             return transition
 
-        # rotation vector (twist) in world frame
-        rotvec = rot.as_rotvec()
+        # compute per-frame deltas in the phone frame
+        if self._last_pos is None or self._last_rot is None:
+            dpos = np.zeros(3)
+            drot = Rotation.identity()
+        else:
+            dpos = pos - self._last_pos
+            drot = self._last_rot.inv() * rot
+
+        self._last_pos, self._last_rot = pos, rot
+
+        rotvec = drot.as_rotvec()
 
         # Map certain inputs to certain actions
         if self.platform == PhoneOS.IOS:
@@ -81,9 +92,9 @@ class MapPhoneActionToRobotAction:
         act.update(
             {
                 "action.enabled": enabled,
-                "action.target_x": -pos[1] if enabled else 0.0,
-                "action.target_y": pos[0] if enabled else 0.0,
-                "action.target_z": pos[2] if enabled else 0.0,
+                "action.target_x": -dpos[1] if enabled else 0.0,
+                "action.target_y": dpos[0] if enabled else 0.0,
+                "action.target_z": dpos[2] if enabled else 0.0,
                 "action.target_wx": rotvec[0] if enabled else 0.0,
                 "action.target_wy": rotvec[1] if enabled else 0.0,
                 "action.target_wz": rotvec[2] if enabled else 0.0,
@@ -96,6 +107,10 @@ class MapPhoneActionToRobotAction:
 
         transition[TransitionKey.ACTION] = act
         return transition
+
+    def reset(self):
+        self._last_pos = None
+        self._last_rot = None
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # Accept both scoped/unscoped inputs, always emit scoped outputs

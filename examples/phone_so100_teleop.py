@@ -31,8 +31,6 @@ from lerobot.teleoperators.phone.phone_processor import PhoneAxisRemapToAction
 robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem58760434471", id="my_phone_teleop_follower_arm")
 robot = SO100Follower(robot_config)
 
-# TODO(pepijn): Add LeKiwi example
-
 teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)
 teleop_device = Phone(teleop_config)
 

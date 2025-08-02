@@ -863,6 +863,7 @@ class RobotProcessor(ModelHubMixin):
                     f"Step {i} ({type(step).__name__}) must define feature_contract(features) -> dict[str, Any]"
                 )
 
+    # TODO(pepijn): rename to dataset_features
     def feature_contract(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """
         Apply ALL steps in order. Each step must implement
@@ -877,6 +878,7 @@ class RobotProcessor(ModelHubMixin):
             features = out
         return features
 
+    # TODO(pepijn): rename to aggregate_dataset_features
     def to_dataset_features(
         self,
         initial_features: dict[str, Any],
