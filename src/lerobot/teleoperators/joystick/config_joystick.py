@@ -28,6 +28,9 @@ class JoystickTeleopConfig(TeleoperatorConfig):
     # Deadzone for joystick axes to prevent drift
     deadzone: float = 0.1
     
+    # Step size for relative movement sensitivity
+    step_size: float = 0.05
+    
     # Mapping of joystick axes to robot joints
     # Format: {"axis_index": "joint_name"}
     axis_mapping: dict[int, str] = None
@@ -38,12 +41,12 @@ class JoystickTeleopConfig(TeleoperatorConfig):
             self.id = "fsi6x"
             
         if self.axis_mapping is None:
-            # Default mapping - can be overridden
+            # Default mapping for SO101 - can be overridden
             self.axis_mapping = {
                 0: "shoulder_pan",
                 1: "shoulder_lift", 
-                2: "elbow",
-                3: "wrist_1",
-                4: "wrist_2",
-                5: "wrist_3"
+                2: "elbow_flex",
+                3: "wrist_flex",
+                4: "wrist_roll",
+                5: "gripper"
             } 

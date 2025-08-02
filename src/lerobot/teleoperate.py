@@ -143,6 +143,11 @@ def teleoperate(cfg: TeleoperateConfig):
     robot.connect()
 
     try:
+        # Initialize joystick with robot's current position if using joystick
+        if hasattr(teleop, 'initialize_robot_positions'):
+            observation = robot.get_observation()
+            teleop.initialize_robot_positions(observation)
+            
         teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)
     except KeyboardInterrupt:
         pass

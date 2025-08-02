@@ -41,6 +41,9 @@ class JoystickTeleop(Teleoperator):
         self.joystick = None
         self.axis_ranges = {}  # Stores min/max values for each axis
         self.is_initialized = False
+        self.center_positions = {}  # Joystick center positions on startup
+        self.robot_positions = {}  # Track current robot positions for integration
+        self.position_initialized = False
         
         # Load calibration if available
         if self.calibration_fpath.is_file():
@@ -191,9 +194,19 @@ class JoystickTeleop(Teleoperator):
     def configure(self) -> None:
         """Configure the joystick (no special configuration needed)."""
         pass
+    
+    def initialize_robot_positions(self, robot_observation: dict[str, Any]) -> None:
+        """Initialize robot position tracking from current robot state."""
+        for joint_name in self.config.axis_mapping.values():
+            joint_key = f"{joint_name}.pos"
+            if joint_key in robot_observation:
+                self.robot_positions[joint_name] = robot_observation[joint_key]
+                logger.info(f"Initialized {joint_name} position: {robot_observation[joint_key]:.1f}")
+
+ 
 
     def get_action(self) -> dict[str, Any]:
-        """Get current joystick action mapped to robot joints."""
+        """Get current joystick action using relative control from center positions."""
         if not self.is_connected:
             raise RuntimeError("Joystick not connected")
         
@@ -203,33 +216,79 @@ class JoystickTeleop(Teleoperator):
         
         pygame.event.pump()
         
-        action = {}
+        # Initialize center positions and robot positions on first call
+        if not self.position_initialized:
+            # Record current joystick positions as center
+            for axis_idx in self.config.axis_mapping.keys():
+                if axis_idx < self.joystick.get_numaxes():
+                    self.center_positions[axis_idx] = self.joystick.get_axis(axis_idx)
+            
+            # Initialize robot positions to current values (will be set by teleoperate.py)
+            # For now, use middle of range as fallback
+            for joint_name in self.config.axis_mapping.values():
+                if joint_name == "gripper":
+                    self.robot_positions[joint_name] = 50.0  # Middle of 0-100 range
+                else:
+                    self.robot_positions[joint_name] = 0.0   # Middle of -100 to +100 range
+            
+            self.position_initialized = True
+            logger.info("Initialized joystick center positions for relative control")
+        
+        # Calculate deltas from center positions and apply to robot positions
+        any_movement = False
         for axis_idx, joint_name in self.config.axis_mapping.items():
             if axis_idx < self.joystick.get_numaxes():
-                # Get raw axis value
-                raw_value = self.joystick.get_axis(axis_idx)
+                # Get current axis value
+                current_value = self.joystick.get_axis(axis_idx)
+                center_value = self.center_positions.get(axis_idx, 0.0)
+                
+                # Calculate delta from center
+                delta_raw = current_value - center_value
                 
                 # Apply deadzone
-                if abs(raw_value) < self.config.deadzone:
-                    raw_value = 0.0
+                if abs(delta_raw) < self.config.deadzone:
+                    delta_raw = 0.0
+                else:
+                    any_movement = True
                 
-                # Normalize to 0-1 range using calibration data
+                # Convert delta to motor space with step size
                 if axis_idx in self.axis_ranges:
                     ranges = self.axis_ranges[axis_idx]
                     min_val = ranges['min']
                     max_val = ranges['max']
                     
-                    # Normalize to 0-1 range
+                    # Normalize delta to range scale
                     if max_val > min_val:
-                        normalized = (raw_value - min_val) / (max_val - min_val)
-                        normalized = max(0.0, min(1.0, normalized))  # Clamp to 0-1
+                        range_scale = max_val - min_val
+                        normalized_delta = delta_raw / range_scale
                     else:
-                        normalized = 0.5  # Default to middle if no range
+                        normalized_delta = delta_raw  # Fallback
                 else:
-                    # If not calibrated, use raw value directly
-                    normalized = (raw_value + 1.0) / 2.0  # Convert from -1,1 to 0,1
+                    # Raw joystick range is typically -1 to +1, so delta range is -2 to +2
+                    normalized_delta = delta_raw / 2.0
                 
-                action[f"{joint_name}.pos"] = normalized
+                # Apply step size and convert to appropriate motor range
+                step_size = self.config.step_size  # Use configurable step size
+                if joint_name == "gripper":
+                    # Gripper uses RANGE_0_100
+                    delta_motor = normalized_delta * step_size * 50.0  # Half range for sensitivity
+                else:
+                    # Body joints use RANGE_M100_100  
+                    delta_motor = normalized_delta * step_size * 100.0  # Full range for sensitivity
+                
+                # Integrate delta into robot position
+                self.robot_positions[joint_name] += delta_motor
+                
+                # Clamp to valid ranges
+                if joint_name == "gripper":
+                    self.robot_positions[joint_name] = max(0.0, min(100.0, self.robot_positions[joint_name]))
+                else:
+                    self.robot_positions[joint_name] = max(-100.0, min(100.0, self.robot_positions[joint_name]))
+        
+        # Return current robot positions as action
+        action = {}
+        for joint_name in self.config.axis_mapping.values():
+            action[f"{joint_name}.pos"] = self.robot_positions[joint_name]
         
         return action
 
