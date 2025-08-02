@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+# !/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,20 +11,21 @@
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specif
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import time
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.configs.types import DatasetFeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.pipeline import RobotProcessor
 from lerobot.processor.utils import (
-    DatasetFeatureType,
-    merge_transitions,
+    make_to_output_dataset,
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
-    transition_to_dataset_batch,
 )
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -48,7 +49,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_34"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_37"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -131,6 +132,7 @@ ee_observation_features = robot_joints_to_ee_pose.aggregate_dataset_features(
 
 print("All dataset features: ", {**ee_action_features, **ee_observation_features})
 
+
 # Create the dataset
 dataset = LeRobotDataset.create(
     repo_id=HF_REPO_ID,
@@ -140,6 +142,9 @@ dataset = LeRobotDataset.create(
     use_videos=True,
     image_writer_threads=4,
 )
+
+# Create a function to convert the pipelines output to the dataset format using the expected features
+to_dataset_features = make_to_output_dataset(dataset.features)
 
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
@@ -180,8 +185,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         print("ee_pose_observation", ee_pose_observation)
 
         # Merge and write
-        merged = merge_transitions(ee_pose_observation, ee_pose_action)
-        frame = transition_to_dataset_batch(merged, action_type=DatasetFeatureType.EE)
+        frame = to_dataset_features([ee_pose_action, ee_pose_observation])
         dataset.add_frame(frame, task=TASK_DESCRIPTION)
 
         dt = time.perf_counter() - loop_t

@@ -19,13 +19,13 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
 
 @ProcessorStepRegistry.register("map_phone_action_to_robot_action")
 @dataclass
-class MapPhoneActionToRobotAction:
+class MapPhoneActionToRobotAction(ActionProcessor):
     """
     Map calibrated phone pose (actions) to the inputs for robot actions
 
@@ -52,9 +52,7 @@ class MapPhoneActionToRobotAction:
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
     _last_rot: Rotation | None = field(default=None, init=False, repr=False)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        act = transition.get(TransitionKey.ACTION) or {}
-
+    def action(self, act: dict | None) -> dict:
         # Pop them from the action
         enabled = act.pop("action.phone.enabled", 0)
         pos = act.pop("action.phone.pos", None)
@@ -62,9 +60,9 @@ class MapPhoneActionToRobotAction:
         inputs = act.pop("action.phone.raw_inputs", {})
 
         if pos is None or rot is None:
-            return transition
+            return act
 
-        # compute per-frame deltas in the phone frame
+        # Compute per-frame deltas in the phone frame
         if self._last_pos is None or self._last_rot is None:
             dpos = np.zeros(3)
             drot = Rotation.identity()
@@ -103,9 +101,7 @@ class MapPhoneActionToRobotAction:
                 "action.theta": theta if enabled else 0.0,
             }
         )
-
-        transition[TransitionKey.ACTION] = act
-        return transition
+        return act
 
     def reset(self):
         self._last_pos = None

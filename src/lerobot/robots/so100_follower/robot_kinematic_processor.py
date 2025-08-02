@@ -21,7 +21,14 @@ from scipy.spatial.transform import Rotation
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import (
+    ActionProcessor,
+    ComplementaryDataProcessor,
+    EnvTransition,
+    ObservationProcessor,
+    ProcessorStepRegistry,
+    TransitionKey,
+)
 from lerobot.robots.robot import Robot
 
 
@@ -109,7 +116,7 @@ class EEReferenceAndDelta:
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
 @dataclass
-class EEBoundsAndSafety:
+class EEBoundsAndSafety(ActionProcessor):
     """
     Clip the end-effector pose to the bounds and check for jumps.
 
@@ -130,8 +137,7 @@ class EEBoundsAndSafety:
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
     _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        act = transition.get(TransitionKey.ACTION) or {}
+    def action(self, act: dict | None) -> dict:
         x = act.pop("action.ee.x", None)
         y = act.pop("action.ee.y", None)
         z = act.pop("action.ee.z", None)
@@ -140,7 +146,7 @@ class EEBoundsAndSafety:
         wz = act.pop("action.ee.wz", None)
 
         if None in (x, y, z, wx, wy, wz):
-            return transition
+            return act
 
         pos = np.array([x, y, z], dtype=float)
         twist = np.array([wx, wy, wz], dtype=float)
@@ -167,15 +173,17 @@ class EEBoundsAndSafety:
         self._last_pos = pos
         self._last_twist = twist
 
-        new_act = dict(act)
-        new_act["action.ee.x"] = float(pos[0])
-        new_act["action.ee.y"] = float(pos[1])
-        new_act["action.ee.z"] = float(pos[2])
-        new_act["action.ee.wx"] = float(twist[0])
-        new_act["action.ee.wy"] = float(twist[1])
-        new_act["action.ee.wz"] = float(twist[2])
-        transition[TransitionKey.ACTION] = new_act
-        return transition
+        act.update(
+            {
+                "action.ee.x": float(pos[0]),
+                "action.ee.y": float(pos[1]),
+                "action.ee.z": float(pos[2]),
+                "action.ee.wx": float(twist[0]),
+                "action.ee.wy": float(twist[1]),
+                "action.ee.wz": float(twist[2]),
+            }
+        )
+        return act
 
     def reset(self):
         self._last_pos = None
@@ -325,7 +333,7 @@ class GripperVelocityToJoint:
 
 @ProcessorStepRegistry.register("forward_kinematics_joints_to_ee")
 @dataclass
-class ForwardKinematicsJointsToEE:
+class ForwardKinematicsJointsToEE(ObservationProcessor):
     """
     Compute the end-effector pose from the joint positions.
 
@@ -343,25 +351,26 @@ class ForwardKinematicsJointsToEE:
     kinematics: RobotKinematics
     motor_names: list[str]
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        obs = transition.get(TransitionKey.OBSERVATION) or {}
+    def observation(self, obs: dict | None) -> dict:
         if not all(f"observation.state.{n}.pos" in obs for n in self.motor_names):
-            return transition
+            return obs
 
         q = np.array([obs[f"observation.state.{n}.pos"] for n in self.motor_names], dtype=float)
         t = self.kinematics.forward_kinematics(q)
         pos = t[:3, 3]
         tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
 
-        new_obs = dict(obs)
-        new_obs["observation.state.ee.x"] = float(pos[0])
-        new_obs["observation.state.ee.y"] = float(pos[1])
-        new_obs["observation.state.ee.z"] = float(pos[2])
-        new_obs["observation.state.ee.wx"] = float(tw[0])
-        new_obs["observation.state.ee.wy"] = float(tw[1])
-        new_obs["observation.state.ee.wz"] = float(tw[2])
-        transition[TransitionKey.OBSERVATION] = new_obs
-        return transition
+        obs.update(
+            {
+                "observation.state.ee.x": float(pos[0]),
+                "observation.state.ee.y": float(pos[1]),
+                "observation.state.ee.z": float(pos[2]),
+                "observation.state.ee.wx": float(tw[0]),
+                "observation.state.ee.wy": float(tw[1]),
+                "observation.state.ee.wz": float(tw[2]),
+            }
+        )
+        return obs
 
     def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We specify the dataset features of this step that we want to be stored in the dataset
@@ -372,7 +381,7 @@ class ForwardKinematicsJointsToEE:
 
 @ProcessorStepRegistry.register("add_robot_observation")
 @dataclass
-class AddRobotObservationAsComplimentaryData:
+class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessor):
     """
     Read the robot's current observation and insert it into the transition as complementary data.
 
@@ -382,17 +391,13 @@ class AddRobotObservationAsComplimentaryData:
 
     robot: Robot
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def complementary_data(self, comp: dict | None) -> dict:
+        comp = {} if comp is None else dict(comp)
         obs = self.robot.get_observation()
 
-        raw_joint_positions = {
+        comp["raw_joint_positions"] = {
             k.removesuffix(".pos"): float(v)
             for k, v in obs.items()
             if isinstance(k, str) and k.endswith(".pos")
         }
-
-        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-        new_comp = dict(comp)
-        new_comp["raw_joint_positions"] = raw_joint_positions
-        transition[TransitionKey.COMPLEMENTARY_DATA] = new_comp
-        return transition
+        return comp

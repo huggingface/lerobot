@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
 from typing import Any
 
 import numpy as np
 import torch
-
-from lerobot.configs.types import DatasetFeatureType
 
 from .pipeline import EnvTransition, TransitionKey
 
@@ -112,111 +111,97 @@ def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
     return out
 
 
-def transition_to_dataset_batch(
-    transition: EnvTransition,
-    action_type: DatasetFeatureType | list[DatasetFeatureType] = DatasetFeatureType.JOINT,
-) -> dict[str, Any]:
+def make_to_output_dataset(features: dict[str, dict]):
     """
-    Build a dataset-ready frame.
-
-    - observation.images.* : pass-through
-    - observation.state    : 6-dim EE [x,y,z,wx,wy,wz] (if present)
-    - action               : depends on action_type (EE, JOINT, or BOTH -> EE then JOINT)
-    - keep next.*, info, *_is_pad, task
+    Build a to_output(...) function that returns a dataset-ready frame dict.
+    The function can be called with:
+      - a single EnvTransition, or
+      - an iterable of EnvTransitions (which will be merged).
+    The packing order of vectors is taken from features['...']['names'].
     """
-    batch: dict[str, Any] = {}
+    # Ordered names for vectors
+    action_names = (features.get("action", {}) or {}).get("names", [])
+    obs_state_names = (features.get("observation.state", {}) or {}).get("names", [])
 
-    obs = transition.get(TransitionKey.OBSERVATION) or {}
-    act = transition.get(TransitionKey.ACTION) or {}
+    # All image keys that should be copied through if present in the observation
+    image_keys = [k for k, ft in features.items() if k.startswith("observation.images.")]
 
-    def _g(d: dict, key: str, default=0.0):
-        val = d.get(key, default)
-        return _from_tensor(val)
-
-    # images passthrough
-    if isinstance(obs, dict):
-        for k, v in obs.items():
-            if isinstance(k, str) and k.startswith("observation.images."):
-                batch[k] = v
-
-    # pack observation.state (EE 6D if available)
-    if isinstance(obs, dict):
-        ee_obs_keys = [
-            "observation.state.ee.x",
-            "observation.state.ee.y",
-            "observation.state.ee.z",
-            "observation.state.ee.wx",
-            "observation.state.ee.wy",
-            "observation.state.ee.wz",
-        ]
-        if all(k in obs for k in ee_obs_keys):
-            batch["observation.state"] = np.asarray([_g(obs, k) for k in ee_obs_keys], dtype=np.float32)
-
-    # pack action according to action_type
-    action_types = [action_type] if isinstance(action_type, DatasetFeatureType) else list(action_type)
-
-    ee_act_keys = [
-        "action.ee.x",
-        "action.ee.y",
-        "action.ee.z",
-        "action.ee.wx",
-        "action.ee.wy",
-        "action.ee.wz",
-    ]
-    joint_act_keys = sorted(
-        k
-        for k in act.keys()
-        if isinstance(k, str)
-        and k.startswith("action.")
-        and k.endswith(".pos")
-        and not k.startswith("action.ee.")
-    )
-
-    ordered_keys: list[str] = []
-    if DatasetFeatureType.EE in action_types:
-        ordered_keys.extend(ee_act_keys)
-    if DatasetFeatureType.JOINT in action_types:
-        ordered_keys.extend(joint_act_keys)
-
-    if ordered_keys:
-        batch["action"] = np.asarray([_g(act, k, 0.0) for k in ordered_keys], dtype=np.float32)
-
-    # reward/done/truncated/info
-    if TransitionKey.REWARD in transition:
-        batch["next.reward"] = _from_tensor(transition[TransitionKey.REWARD])
-    if TransitionKey.DONE in transition:
-        batch["next.done"] = _from_tensor(transition[TransitionKey.DONE])
-    if TransitionKey.TRUNCATED in transition:
-        batch["next.truncated"] = _from_tensor(transition[TransitionKey.TRUNCATED])
-    if TransitionKey.INFO in transition:
-        batch["info"] = transition[TransitionKey.INFO] or {}
-
-    # complementary data: keep *_is_pad and task
-    comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-    for k, v in comp.items():
-        if k.endswith("_is_pad"):
-            batch[k] = v
-    if "task" in comp:
-        batch["task"] = comp["task"]
-
-    return batch
-
-
-def merge_transitions(base: EnvTransition, *others: EnvTransition) -> EnvTransition:
-    out = deepcopy(base)
-    for tr in others:
-        if tr.get(TransitionKey.OBSERVATION):
-            out.setdefault(TransitionKey.OBSERVATION, {}).update(deepcopy(tr[TransitionKey.OBSERVATION]))
-        if tr.get(TransitionKey.ACTION):
-            out.setdefault(TransitionKey.ACTION, {}).update(deepcopy(tr[TransitionKey.ACTION]))
-        if tr.get(TransitionKey.INFO):
-            out.setdefault(TransitionKey.INFO, {}).update(deepcopy(tr[TransitionKey.INFO]))
-        if tr.get(TransitionKey.COMPLEMENTARY_DATA):
-            out.setdefault(TransitionKey.COMPLEMENTARY_DATA, {}).update(
-                deepcopy(tr[TransitionKey.COMPLEMENTARY_DATA])
-            )
+    def _merge(base: EnvTransition, other: EnvTransition) -> EnvTransition:
+        out = deepcopy(base)
+        for key in (
+            TransitionKey.OBSERVATION,
+            TransitionKey.ACTION,
+            TransitionKey.INFO,
+            TransitionKey.COMPLEMENTARY_DATA,
+        ):
+            if other.get(key):
+                out.setdefault(key, {}).update(deepcopy(other[key]))
         # reward/done/truncated: last writer wins
         for k in (TransitionKey.REWARD, TransitionKey.DONE, TransitionKey.TRUNCATED):
-            if k in tr:
-                out[k] = tr[k]
-    return out
+            if k in other:
+                out[k] = other[k]
+        return out
+
+    def _ensure_transition(obj) -> EnvTransition:
+        # Accept either a single transition or a list/tuple of them
+        if isinstance(obj, dict) and any(isinstance(k, TransitionKey) for k in obj.keys()):
+            return obj
+        if isinstance(obj, Iterable):
+            it = list(obj)
+            if not it:
+                return {}
+            acc = it[0]
+            for t in it[1:]:
+                acc = _merge(acc, t)
+            return acc
+        raise TypeError("to_output expected an EnvTransition or an iterable of EnvTransitions")
+
+    def to_output(transitions_or_transition) -> dict[str, any]:
+        tr = _ensure_transition(transitions_or_transition)
+        obs = tr.get(TransitionKey.OBSERVATION) or {}
+        act = tr.get(TransitionKey.ACTION) or {}
+
+        batch: dict[str, any] = {}
+
+        # Images passthrough (only the ones declared in features)
+        for k in image_keys:
+            if k in obs:
+                batch[k] = obs[k]
+
+        # observation.state vector according to feature order
+        if obs_state_names:
+            vals = []
+            for name in obs_state_names:
+                key = f"observation.state.{name}"
+                vals.append(_from_tensor(obs.get(key, 0.0)))
+            batch["observation.state"] = np.asarray(vals, dtype=np.float32)
+
+        # action vector according to feature order
+        if action_names:
+            vals = []
+            for name in action_names:
+                key = f"action.{name}"
+                vals.append(_from_tensor(act.get(key, 0.0)))
+            batch["action"] = np.asarray(vals, dtype=np.float32)
+
+        # reward/done/truncated/info
+        if TransitionKey.REWARD in tr:
+            batch["next.reward"] = _from_tensor(tr[TransitionKey.REWARD])
+        if TransitionKey.DONE in tr:
+            batch["next.done"] = _from_tensor(tr[TransitionKey.DONE])
+        if TransitionKey.TRUNCATED in tr:
+            batch["next.truncated"] = _from_tensor(tr[TransitionKey.TRUNCATED])
+        if TransitionKey.INFO in tr:
+            batch["info"] = tr[TransitionKey.INFO] or {}
+
+        # complementary data: keep *_is_pad and task
+        comp = tr.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        for k, v in comp.items():
+            if k.endswith("_is_pad"):
+                batch[k] = v
+        if "task" in comp:
+            batch["task"] = comp["task"]
+
+        return batch
+
+    return to_output
