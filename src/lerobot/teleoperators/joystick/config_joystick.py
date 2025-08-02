@@ -22,21 +22,14 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("joystick")
 @dataclass
 class JoystickTeleopConfig(TeleoperatorConfig):
-    # Joystick device index (0 for first joystick)
-    device_index: int = 0
+    """Configuration for joystick-based teleoperation."""
     
-    # Deadzone for joystick axes to prevent drift
-    deadzone: float = 0.1
-    
-    # Step size for relative movement sensitivity
-    step_size: float = 0.05
-    
-    # Mapping of joystick axes to robot joints
-    # Format: {"axis_index": "joint_name"}
-    axis_mapping: dict[int, str] = None
+    device_index: int = 0  # Joystick device index (0 for first joystick)
+    deadzone: float = 0.1  # Deadzone for joystick axes to prevent drift
+    step_size: float = 0.05  # Step size for relative movement sensitivity
+    axis_mapping: dict[int, str] | None = None  # Mapping of joystick axes to robot joints
     
     def __post_init__(self):
-        # Set default id if not provided
         if self.id is None:
             self.id = "fsi6x"
             

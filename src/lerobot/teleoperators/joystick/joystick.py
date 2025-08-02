@@ -15,12 +15,14 @@
 # limitations under the License.
 
 import logging
-import pygame
 from pathlib import Path
 from typing import Any
 
-from ..teleoperator import Teleoperator
+import pygame
+
 from lerobot.utils.utils import enter_pressed, move_cursor_up
+
+from ..teleoperator import Teleoperator
 from .config_joystick import JoystickTeleopConfig
 
 logger = logging.getLogger(__name__)
@@ -28,8 +30,10 @@ logger = logging.getLogger(__name__)
 
 class JoystickTeleop(Teleoperator):
     """
-    Teleop class to use joystick inputs for control.
-    Supports any joystick device with calibration for consistent behavior.
+    Joystick-based teleoperator for robot control.
+    
+    Supports any joystick device compatible with pygame, with calibration 
+    for consistent behavior and relative position control.
     """
 
     config_class = JoystickTeleopConfig
@@ -39,20 +43,18 @@ class JoystickTeleop(Teleoperator):
         super().__init__(config)
         self.config = config
         self.joystick = None
-        self.axis_ranges = {}  # Stores min/max values for each axis
+        self.axis_ranges = {}
         self.is_initialized = False
-        self.center_positions = {}  # Joystick center positions on startup
-        self.robot_positions = {}  # Track current robot positions for integration
+        self.center_positions = {}
+        self.robot_positions = {}
         self.position_initialized = False
         
-        # Load calibration if available
         if self.calibration_fpath.is_file():
             self._load_calibration()
 
     @property
     def action_features(self) -> dict[str, type]:
         """Return the action features for this teleoperator."""
-        # Return features for all mapped joints
         features = {}
         for joint_name in self.config.axis_mapping.values():
             features[f"{joint_name}.pos"] = float
@@ -103,7 +105,6 @@ class JoystickTeleop(Teleoperator):
         if not self.is_connected:
             raise RuntimeError("Joystick not connected")
         
-        # Check if calibration file exists
         if self.calibration_fpath.is_file():
             user_input = input(
                 f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
@@ -115,7 +116,6 @@ class JoystickTeleop(Teleoperator):
         
         logger.info(f"\nRunning calibration of {self}")
         
-        # Initialize calibration data
         axis_count = self.joystick.get_numaxes()
         mins = {i: 0.0 for i in range(axis_count)}
         maxes = {i: 0.0 for i in range(axis_count)}
@@ -153,7 +153,6 @@ class JoystickTeleop(Teleoperator):
                 user_pressed_enter = True
             
             if not user_pressed_enter:
-                # Move cursor up to overwrite the previous output
                 move_cursor_up(axis_count + 3)
         
         # Validate calibration
@@ -170,7 +169,6 @@ class JoystickTeleop(Teleoperator):
             }
             logger.info(f"Axis {i}: min={mins[i]:.3f}, max={maxes[i]:.3f}")
         
-        # Save calibration
         self.calibration = self.axis_ranges
         self._save_calibration()
         logger.info(f"Calibration saved to {self.calibration_fpath}")
@@ -203,14 +201,11 @@ class JoystickTeleop(Teleoperator):
                 self.robot_positions[joint_name] = robot_observation[joint_key]
                 logger.info(f"Initialized {joint_name} position: {robot_observation[joint_key]:.1f}")
 
- 
-
     def get_action(self) -> dict[str, Any]:
         """Get current joystick action using relative control from center positions."""
         if not self.is_connected:
             raise RuntimeError("Joystick not connected")
         
-        # Load calibration if not loaded
         if not self.axis_ranges and self.calibration:
             self.axis_ranges = self.calibration
         
@@ -235,10 +230,8 @@ class JoystickTeleop(Teleoperator):
             logger.info("Initialized joystick center positions for relative control")
         
         # Calculate deltas from center positions and apply to robot positions
-        any_movement = False
         for axis_idx, joint_name in self.config.axis_mapping.items():
             if axis_idx < self.joystick.get_numaxes():
-                # Get current axis value
                 current_value = self.joystick.get_axis(axis_idx)
                 center_value = self.center_positions.get(axis_idx, 0.0)
                 
@@ -248,8 +241,6 @@ class JoystickTeleop(Teleoperator):
                 # Apply deadzone
                 if abs(delta_raw) < self.config.deadzone:
                     delta_raw = 0.0
-                else:
-                    any_movement = True
                 
                 # Convert delta to motor space with step size
                 if axis_idx in self.axis_ranges:
@@ -262,19 +253,19 @@ class JoystickTeleop(Teleoperator):
                         range_scale = max_val - min_val
                         normalized_delta = delta_raw / range_scale
                     else:
-                        normalized_delta = delta_raw  # Fallback
+                        normalized_delta = delta_raw
                 else:
                     # Raw joystick range is typically -1 to +1, so delta range is -2 to +2
                     normalized_delta = delta_raw / 2.0
                 
                 # Apply step size and convert to appropriate motor range
-                step_size = self.config.step_size  # Use configurable step size
+                step_size = self.config.step_size
                 if joint_name == "gripper":
                     # Gripper uses RANGE_0_100
-                    delta_motor = normalized_delta * step_size * 50.0  # Half range for sensitivity
+                    delta_motor = normalized_delta * step_size * 50.0
                 else:
                     # Body joints use RANGE_M100_100  
-                    delta_motor = normalized_delta * step_size * 100.0  # Full range for sensitivity
+                    delta_motor = normalized_delta * step_size * 100.0
                 
                 # Integrate delta into robot position
                 self.robot_positions[joint_name] += delta_motor
