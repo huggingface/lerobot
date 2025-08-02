@@ -425,13 +425,13 @@ def test_equivalent_with_image_dict():
         torch.testing.assert_close(original_result[key], processor_result[key])
 
 
-def test_image_processor_feature_contract_pixels_to_image(policy_feature_factory):
+def test_image_processor_dataset_features_pixels_to_image(policy_feature_factory):
     processor = ImageProcessor()
     features = {
         "pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
     }
-    out = processor.feature_contract(features.copy())
+    out = processor.dataset_features(features.copy())
 
     assert OBS_IMAGE in out and out[OBS_IMAGE] == features["pixels"]
     assert "pixels" not in out
@@ -439,13 +439,13 @@ def test_image_processor_feature_contract_pixels_to_image(policy_feature_factory
     assert_contract_is_typed(out)
 
 
-def test_image_processor_feature_contract_observation_pixels_to_image(policy_feature_factory):
+def test_image_processor_dataset_features_observation_pixels_to_image(policy_feature_factory):
     processor = ImageProcessor()
     features = {
         "observation.pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
     }
-    out = processor.feature_contract(features.copy())
+    out = processor.dataset_features(features.copy())
 
     assert OBS_IMAGE in out and out[OBS_IMAGE] == features["observation.pixels"]
     assert "observation.pixels" not in out
@@ -453,7 +453,7 @@ def test_image_processor_feature_contract_observation_pixels_to_image(policy_fea
     assert_contract_is_typed(out)
 
 
-def test_image_processor_feature_contract_multi_camera_and_prefixed(policy_feature_factory):
+def test_image_processor_dataset_features_multi_camera_and_prefixed(policy_feature_factory):
     processor = ImageProcessor()
     features = {
         "pixels.front": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
@@ -461,7 +461,7 @@ def test_image_processor_feature_contract_multi_camera_and_prefixed(policy_featu
         "observation.pixels.rear": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "keep": policy_feature_factory(FeatureType.ENV, (7,)),
     }
-    out = processor.feature_contract(features.copy())
+    out = processor.dataset_features(features.copy())
 
     assert f"{OBS_IMAGES}.front" in out and out[f"{OBS_IMAGES}.front"] == features["pixels.front"]
     assert f"{OBS_IMAGES}.wrist" in out and out[f"{OBS_IMAGES}.wrist"] == features["pixels.wrist"]
@@ -471,14 +471,14 @@ def test_image_processor_feature_contract_multi_camera_and_prefixed(policy_featu
     assert_contract_is_typed(out)
 
 
-def test_state_processor_feature_contract_environment_and_agent_pos(policy_feature_factory):
+def test_state_processor_dataset_features_environment_and_agent_pos(policy_feature_factory):
     processor = StateProcessor()
     features = {
         "environment_state": policy_feature_factory(FeatureType.STATE, (3,)),
         "agent_pos": policy_feature_factory(FeatureType.STATE, (7,)),
         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
     }
-    out = processor.feature_contract(features.copy())
+    out = processor.dataset_features(features.copy())
 
     assert OBS_ENV_STATE in out and out[OBS_ENV_STATE] == features["environment_state"]
     assert OBS_STATE in out and out[OBS_STATE] == features["agent_pos"]
@@ -487,13 +487,13 @@ def test_state_processor_feature_contract_environment_and_agent_pos(policy_featu
     assert_contract_is_typed(out)
 
 
-def test_state_processor_feature_contract_prefixed_inputs(policy_feature_factory):
+def test_state_processor_dataset_features_prefixed_inputs(policy_feature_factory):
     proc = StateProcessor()
     features = {
         "observation.environment_state": policy_feature_factory(FeatureType.STATE, (2,)),
         "observation.agent_pos": policy_feature_factory(FeatureType.STATE, (4,)),
     }
-    out = proc.feature_contract(features.copy())
+    out = proc.dataset_features(features.copy())
 
     assert OBS_ENV_STATE in out and out[OBS_ENV_STATE] == features["observation.environment_state"]
     assert OBS_STATE in out and out[OBS_STATE] == features["observation.agent_pos"]

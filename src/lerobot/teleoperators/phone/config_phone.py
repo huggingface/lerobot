@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,5 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_so100_follower import SO100FollowerConfig
-from .so100_follower import SO100Follower
+from dataclasses import dataclass
+from enum import Enum
+
+import numpy as np
+
+from ..config import TeleoperatorConfig
+
+
+class PhoneOS(Enum):
+    ANDROID = "android"
+    IOS = "ios"
+
+
+@TeleoperatorConfig.register_subclass("phone")
+@dataclass
+class PhoneConfig(TeleoperatorConfig):
+    phone_os: PhoneOS = PhoneOS.IOS
+    camera_offset = np.array(
+        [0.0, -0.02, 0.04]
+    )  # iPhone 14 Pro camera is 2cm off center and 4cm above center
