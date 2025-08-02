@@ -443,8 +443,8 @@ def test_complementary_data_preserved():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_policy_processor_integration():
     """Test integration with policy processors - input on GPU, output on CPU."""
-    from lerobot.processor import ToBatchProcessor, NormalizerProcessor, UnnormalizerProcessor
-    from lerobot.configs.types import FeatureType, PolicyFeature, NormalizationMode
+    from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+    from lerobot.processor import NormalizerProcessor, ToBatchProcessor, UnnormalizerProcessor
 
     # Create features and stats
     features = {
