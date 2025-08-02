@@ -1,0 +1,503 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import tempfile
+
+import pytest
+import torch
+
+from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.processor import DeviceProcessor, RobotProcessor
+from lerobot.processor.pipeline import TransitionKey
+
+
+def create_transition(
+    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
+):
+    """Helper function to create a transition dictionary."""
+    transition = {}
+    if observation is not None:
+        transition[TransitionKey.OBSERVATION] = observation
+    if action is not None:
+        transition[TransitionKey.ACTION] = action
+    if reward is not None:
+        transition[TransitionKey.REWARD] = reward
+    if done is not None:
+        transition[TransitionKey.DONE] = done
+    if truncated is not None:
+        transition[TransitionKey.TRUNCATED] = truncated
+    if info is not None:
+        transition[TransitionKey.INFO] = info
+    if complementary_data is not None:
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
+    return transition
+
+
+def test_basic_functionality():
+    """Test basic device processor functionality on CPU."""
+    processor = DeviceProcessor(device="cpu")
+
+    # Create a transition with CPU tensors
+    observation = {"observation.state": torch.randn(10), "observation.image": torch.randn(3, 224, 224)}
+    action = torch.randn(5)
+    reward = torch.tensor(1.0)
+    done = torch.tensor(False)
+    truncated = torch.tensor(False)
+
+    transition = create_transition(
+        observation=observation, action=action, reward=reward, done=done, truncated=truncated
+    )
+
+    result = processor(transition)
+
+    # Check that all tensors are on CPU
+    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cpu"
+    assert result[TransitionKey.OBSERVATION]["observation.image"].device.type == "cpu"
+    assert result[TransitionKey.ACTION].device.type == "cpu"
+    assert result[TransitionKey.REWARD].device.type == "cpu"
+    assert result[TransitionKey.DONE].device.type == "cpu"
+    assert result[TransitionKey.TRUNCATED].device.type == "cpu"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_cuda_functionality():
+    """Test device processor functionality on CUDA."""
+    processor = DeviceProcessor(device="cuda")
+
+    # Create a transition with CPU tensors
+    observation = {"observation.state": torch.randn(10), "observation.image": torch.randn(3, 224, 224)}
+    action = torch.randn(5)
+    reward = torch.tensor(1.0)
+    done = torch.tensor(False)
+    truncated = torch.tensor(False)
+
+    transition = create_transition(
+        observation=observation, action=action, reward=reward, done=done, truncated=truncated
+    )
+
+    result = processor(transition)
+
+    # Check that all tensors are on CUDA
+    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION]["observation.image"].device.type == "cuda"
+    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.REWARD].device.type == "cuda"
+    assert result[TransitionKey.DONE].device.type == "cuda"
+    assert result[TransitionKey.TRUNCATED].device.type == "cuda"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_specific_cuda_device():
+    """Test device processor with specific CUDA device."""
+    processor = DeviceProcessor(device="cuda:0")
+
+    observation = {"observation.state": torch.randn(10)}
+    action = torch.randn(5)
+
+    transition = create_transition(observation=observation, action=action)
+    result = processor(transition)
+
+    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION]["observation.state"].device.index == 0
+    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.ACTION].device.index == 0
+
+
+def test_non_tensor_values():
+    """Test that non-tensor values are preserved."""
+    processor = DeviceProcessor(device="cpu")
+
+    observation = {
+        "observation.state": torch.randn(10),
+        "observation.metadata": {"key": "value"},  # Non-tensor data
+        "observation.list": [1, 2, 3],  # Non-tensor data
+    }
+    action = torch.randn(5)
+    info = {"episode": 1, "step": 42}
+
+    transition = create_transition(observation=observation, action=action, info=info)
+
+    result = processor(transition)
+
+    # Check tensors are processed
+    assert isinstance(result[TransitionKey.OBSERVATION]["observation.state"], torch.Tensor)
+    assert isinstance(result[TransitionKey.ACTION], torch.Tensor)
+
+    # Check non-tensor values are preserved
+    assert result[TransitionKey.OBSERVATION]["observation.metadata"] == {"key": "value"}
+    assert result[TransitionKey.OBSERVATION]["observation.list"] == [1, 2, 3]
+    assert result[TransitionKey.INFO] == {"episode": 1, "step": 42}
+
+
+def test_none_values():
+    """Test handling of None values."""
+    processor = DeviceProcessor(device="cpu")
+
+    # Test with None observation
+    transition = create_transition(observation=None, action=torch.randn(5))
+    result = processor(transition)
+    assert TransitionKey.OBSERVATION not in result
+    assert result[TransitionKey.ACTION].device.type == "cpu"
+
+    # Test with None action
+    transition = create_transition(observation={"observation.state": torch.randn(10)}, action=None)
+    result = processor(transition)
+    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cpu"
+    assert TransitionKey.ACTION not in result
+
+
+def test_empty_observation():
+    """Test handling of empty observation dictionary."""
+    processor = DeviceProcessor(device="cpu")
+
+    transition = create_transition(observation={}, action=torch.randn(5))
+    result = processor(transition)
+
+    assert result[TransitionKey.OBSERVATION] == {}
+    assert result[TransitionKey.ACTION].device.type == "cpu"
+
+
+def test_scalar_tensors():
+    """Test handling of scalar tensors."""
+    processor = DeviceProcessor(device="cpu")
+
+    observation = {"observation.scalar": torch.tensor(1.5)}
+    action = torch.tensor(2.0)
+    reward = torch.tensor(0.5)
+
+    transition = create_transition(observation=observation, action=action, reward=reward)
+
+    result = processor(transition)
+
+    assert result[TransitionKey.OBSERVATION]["observation.scalar"].item() == 1.5
+    assert result[TransitionKey.ACTION].item() == 2.0
+    assert result[TransitionKey.REWARD].item() == 0.5
+
+
+def test_dtype_preservation():
+    """Test that tensor dtypes are preserved."""
+    processor = DeviceProcessor(device="cpu")
+
+    observation = {
+        "observation.float32": torch.randn(5, dtype=torch.float32),
+        "observation.float64": torch.randn(5, dtype=torch.float64),
+        "observation.int32": torch.randint(0, 10, (5,), dtype=torch.int32),
+        "observation.bool": torch.tensor([True, False, True], dtype=torch.bool),
+    }
+    action = torch.randn(3, dtype=torch.float16)
+
+    transition = create_transition(observation=observation, action=action)
+    result = processor(transition)
+
+    assert result[TransitionKey.OBSERVATION]["observation.float32"].dtype == torch.float32
+    assert result[TransitionKey.OBSERVATION]["observation.float64"].dtype == torch.float64
+    assert result[TransitionKey.OBSERVATION]["observation.int32"].dtype == torch.int32
+    assert result[TransitionKey.OBSERVATION]["observation.bool"].dtype == torch.bool
+    assert result[TransitionKey.ACTION].dtype == torch.float16
+
+
+def test_shape_preservation():
+    """Test that tensor shapes are preserved."""
+    processor = DeviceProcessor(device="cpu")
+
+    observation = {
+        "observation.1d": torch.randn(10),
+        "observation.2d": torch.randn(5, 10),
+        "observation.3d": torch.randn(3, 224, 224),
+        "observation.4d": torch.randn(2, 3, 224, 224),
+    }
+    action = torch.randn(2, 5, 3)
+
+    transition = create_transition(observation=observation, action=action)
+    result = processor(transition)
+
+    assert result[TransitionKey.OBSERVATION]["observation.1d"].shape == (10,)
+    assert result[TransitionKey.OBSERVATION]["observation.2d"].shape == (5, 10)
+    assert result[TransitionKey.OBSERVATION]["observation.3d"].shape == (3, 224, 224)
+    assert result[TransitionKey.OBSERVATION]["observation.4d"].shape == (2, 3, 224, 224)
+    assert result[TransitionKey.ACTION].shape == (2, 5, 3)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_mixed_devices():
+    """Test handling of tensors already on different devices."""
+    processor = DeviceProcessor(device="cuda")
+
+    # Create tensors on different devices
+    observation = {
+        "observation.cpu": torch.randn(5),  # CPU
+        "observation.cuda": torch.randn(5).cuda(),  # Already on CUDA
+    }
+    action = torch.randn(3).cuda()  # Already on CUDA
+
+    transition = create_transition(observation=observation, action=action)
+    result = processor(transition)
+
+    # All should be on CUDA
+    assert result[TransitionKey.OBSERVATION]["observation.cpu"].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION]["observation.cuda"].device.type == "cuda"
+    assert result[TransitionKey.ACTION].device.type == "cuda"
+
+
+def test_non_blocking_flag():
+    """Test that non_blocking flag is set correctly."""
+    # CPU processor should have non_blocking=False
+    cpu_processor = DeviceProcessor(device="cpu")
+    assert cpu_processor.non_blocking is False
+
+    # CUDA processor should have non_blocking=True
+    cuda_processor = DeviceProcessor(device="cuda")
+    assert cuda_processor.non_blocking is True
+
+    cuda_0_processor = DeviceProcessor(device="cuda:0")
+    assert cuda_0_processor.non_blocking is True
+
+
+def test_serialization_methods():
+    """Test get_config, state_dict, and load_state_dict methods."""
+    processor = DeviceProcessor(device="cuda")
+
+    # Test get_config
+    config = processor.get_config()
+    assert config == {"device": "cuda"}
+
+    # Test state_dict (should be empty)
+    state = processor.state_dict()
+    assert state == {}
+
+    # Test load_state_dict (should be no-op)
+    processor.load_state_dict({})
+    assert processor.device == "cuda"
+
+    # Test reset (should be no-op)
+    processor.reset()
+    assert processor.device == "cuda"
+
+
+def test_feature_contract():
+    """Test that feature_contract returns features unchanged."""
+    processor = DeviceProcessor(device="cpu")
+
+    features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,)),
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
+    }
+
+    result = processor.feature_contract(features)
+    assert result == features
+    assert result is features  # Should return the same object
+
+
+def test_integration_with_robot_processor():
+    """Test integration with RobotProcessor."""
+    from lerobot.processor import ToBatchProcessor
+
+    # Create a pipeline with DeviceProcessor
+    device_processor = DeviceProcessor(device="cpu")
+    batch_processor = ToBatchProcessor()
+
+    processor = RobotProcessor(steps=[batch_processor, device_processor], name="test_pipeline")
+
+    # Create test data
+    observation = {"observation.state": torch.randn(10)}
+    action = torch.randn(5)
+
+    transition = create_transition(observation=observation, action=action)
+    result = processor(transition)
+
+    # Check that tensors are batched and on correct device
+    assert result[TransitionKey.OBSERVATION]["observation.state"].shape[0] == 1  # Batched
+    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cpu"
+    assert result[TransitionKey.ACTION].shape[0] == 1  # Batched
+    assert result[TransitionKey.ACTION].device.type == "cpu"
+
+
+def test_save_and_load_pretrained():
+    """Test saving and loading processor with DeviceProcessor."""
+    processor = DeviceProcessor(device="cuda:0")
+    robot_processor = RobotProcessor(steps=[processor], name="device_test_processor")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Save
+        robot_processor.save_pretrained(tmpdir)
+
+        # Load
+        loaded_processor = RobotProcessor.from_pretrained(tmpdir)
+
+        assert len(loaded_processor.steps) == 1
+        loaded_device_processor = loaded_processor.steps[0]
+        assert isinstance(loaded_device_processor, DeviceProcessor)
+        assert loaded_device_processor.device == "cuda:0"
+
+
+def test_registry_functionality():
+    """Test that DeviceProcessor is properly registered."""
+    from lerobot.processor.pipeline import ProcessorStepRegistry
+
+    # Check that DeviceProcessor is registered
+    registered_class = ProcessorStepRegistry.get("device_processor")
+    assert registered_class is DeviceProcessor
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_performance_with_large_tensors():
+    """Test performance with large tensors and non_blocking flag."""
+    processor = DeviceProcessor(device="cuda")
+
+    # Create large tensors
+    observation = {
+        "observation.large_image": torch.randn(10, 3, 512, 512),  # Large image batch
+        "observation.features": torch.randn(10, 2048),  # Large feature vector
+    }
+    action = torch.randn(10, 100)  # Large action space
+
+    transition = create_transition(observation=observation, action=action)
+
+    # Process should not raise any errors
+    result = processor(transition)
+
+    # Verify all tensors are on CUDA
+    assert result[TransitionKey.OBSERVATION]["observation.large_image"].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION]["observation.features"].device.type == "cuda"
+    assert result[TransitionKey.ACTION].device.type == "cuda"
+
+
+def test_reward_done_truncated_types():
+    """Test handling of different types for reward, done, and truncated."""
+    processor = DeviceProcessor(device="cpu")
+
+    # Test with scalar values (not tensors)
+    transition = create_transition(
+        observation={"observation.state": torch.randn(5)},
+        action=torch.randn(3),
+        reward=1.0,  # float
+        done=False,  # bool
+        truncated=True,  # bool
+    )
+
+    result = processor(transition)
+
+    # Non-tensor values should be preserved as-is
+    assert result[TransitionKey.REWARD] == 1.0
+    assert result[TransitionKey.DONE] is False
+    assert result[TransitionKey.TRUNCATED] is True
+
+    # Test with tensor values
+    transition = create_transition(
+        observation={"observation.state": torch.randn(5)},
+        action=torch.randn(3),
+        reward=torch.tensor(1.0),
+        done=torch.tensor(False),
+        truncated=torch.tensor(True),
+    )
+
+    result = processor(transition)
+
+    # Tensor values should be moved to device
+    assert isinstance(result[TransitionKey.REWARD], torch.Tensor)
+    assert isinstance(result[TransitionKey.DONE], torch.Tensor)
+    assert isinstance(result[TransitionKey.TRUNCATED], torch.Tensor)
+    assert result[TransitionKey.REWARD].device.type == "cpu"
+    assert result[TransitionKey.DONE].device.type == "cpu"
+    assert result[TransitionKey.TRUNCATED].device.type == "cpu"
+
+
+def test_complementary_data_preserved():
+    """Test that complementary_data is preserved unchanged."""
+    processor = DeviceProcessor(device="cpu")
+
+    complementary_data = {
+        "task": "pick_object",
+        "episode_id": 42,
+        "metadata": {"sensor": "camera_1"},
+        "observation_is_pad": torch.tensor([False, False, True]),  # This should be moved to device
+    }
+
+    transition = create_transition(
+        observation={"observation.state": torch.randn(5)}, complementary_data=complementary_data
+    )
+
+    result = processor(transition)
+
+    # Check that complementary_data is preserved
+    assert TransitionKey.COMPLEMENTARY_DATA in result
+    assert result[TransitionKey.COMPLEMENTARY_DATA]["task"] == "pick_object"
+    assert result[TransitionKey.COMPLEMENTARY_DATA]["episode_id"] == 42
+    assert result[TransitionKey.COMPLEMENTARY_DATA]["metadata"] == {"sensor": "camera_1"}
+    # Note: Currently DeviceProcessor doesn't process tensors in complementary_data
+    # This is intentional as complementary_data is typically metadata
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_policy_processor_integration():
+    """Test integration with policy processors - input on GPU, output on CPU."""
+    from lerobot.processor import ToBatchProcessor, NormalizerProcessor, UnnormalizerProcessor
+    from lerobot.configs.types import FeatureType, PolicyFeature, NormalizationMode
+
+    # Create features and stats
+    features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,)),
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
+    }
+
+    stats = {
+        "observation.state": {"mean": torch.zeros(10), "std": torch.ones(10)},
+        "action": {"mean": torch.zeros(5), "std": torch.ones(5)},
+    }
+
+    norm_map = {FeatureType.STATE: NormalizationMode.MEAN_STD, FeatureType.ACTION: NormalizationMode.MEAN_STD}
+
+    # Create input processor (preprocessor) that moves to GPU
+    input_processor = RobotProcessor(
+        steps=[
+            NormalizerProcessor(features=features, norm_map=norm_map, stats=stats),
+            ToBatchProcessor(),
+            DeviceProcessor(device="cuda"),
+        ],
+        name="test_preprocessor",
+    )
+
+    # Create output processor (postprocessor) that moves to CPU
+    output_processor = RobotProcessor(
+        steps=[
+            DeviceProcessor(device="cpu"),
+            UnnormalizerProcessor(features={"action": features["action"]}, norm_map=norm_map, stats=stats),
+        ],
+        name="test_postprocessor",
+    )
+
+    # Test data on CPU
+    observation = {"observation.state": torch.randn(10)}
+    action = torch.randn(5)
+    transition = create_transition(observation=observation, action=action)
+
+    # Process through input processor
+    input_result = input_processor(transition)
+
+    # Verify tensors are on GPU and batched
+    assert input_result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
+    assert input_result[TransitionKey.OBSERVATION]["observation.state"].shape[0] == 1
+    assert input_result[TransitionKey.ACTION].device.type == "cuda"
+    assert input_result[TransitionKey.ACTION].shape[0] == 1
+
+    # Simulate model output on GPU
+    model_output = create_transition(action=torch.randn(1, 5).cuda())
+
+    # Process through output processor
+    output_result = output_processor(model_output)
+
+    # Verify action is back on CPU and unnormalized
+    assert output_result[TransitionKey.ACTION].device.type == "cpu"
+    assert output_result[TransitionKey.ACTION].shape == (1, 5)
