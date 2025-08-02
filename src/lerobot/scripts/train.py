@@ -286,6 +286,10 @@ def train(cfg: TrainPipelineConfig):
         policy.push_model_to_hub(cfg)
 
 
-if __name__ == "__main__":
+def main():
     init_logging()
     train()
+
+
+if __name__ == "__main__":
+    main()
