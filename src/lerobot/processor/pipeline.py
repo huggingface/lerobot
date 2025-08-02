@@ -147,7 +147,6 @@ class ProcessorStep(Protocol):
 
     **Required**:
         - ``__call__(transition: EnvTransition) -> EnvTransition``
-        - ``feature_contract(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
 
     Optional helper protocol:
     * ``get_config() -> dict[str, Any]`` – User-defined JSON-serializable
@@ -160,6 +159,8 @@ class ProcessorStep(Protocol):
     * ``load_state_dict(state)`` – Inverse of ``state_dict``. Receives a dict
       containing torch tensors only.
     * ``reset()`` – Clear internal buffers at episode boundaries.
+    * ``dataset_features(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
+    If present, this method will be called to aggregate the dataset features of all steps.
 
     Example separation:
     - get_config(): {"name": "my_step", "learning_rate": 0.01, "window_size": 10}
@@ -176,7 +177,7 @@ class ProcessorStep(Protocol):
 
     def reset(self) -> None: ...
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
+    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
 
 
 def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
@@ -857,29 +858,22 @@ class RobotProcessor(ModelHubMixin):
                     f"Step {i} ({type(step).__name__}) must define __call__(transition) -> EnvTransition"
                 )
 
-            fc = getattr(step, "feature_contract", None)
-            if not callable(fc):
-                raise TypeError(
-                    f"Step {i} ({type(step).__name__}) must define feature_contract(features) -> dict[str, Any]"
-                )
-
-    # TODO(pepijn): rename to dataset_features
-    def feature_contract(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def dataset_features(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """
-        Apply ALL steps in order. Each step must implement
-        feature_contract(features) and return a dict (full or incremental schema).
+        Apply ALL steps in order. Only if a step has a dataset_features method, it will be called.
+        We aggregate the dataset features of all steps.
         """
         features: dict[str, PolicyFeature] = deepcopy(initial_features)
 
         for _, step in enumerate(self.steps):
-            out = step.feature_contract(features)
-            if not isinstance(out, dict):
-                raise TypeError(f"{step.__class__.__name__}.feature_contract must return dict[str, Any]")
-            features = out
+            if hasattr(step, "dataset_features"):
+                out = step.dataset_features(features)
+                if not isinstance(out, dict):
+                    raise TypeError(f"{step.__class__.__name__}.dataset_features must return dict[str, Any]")
+                features = out
         return features
 
-    # TODO(pepijn): rename to aggregate_dataset_features
-    def to_dataset_features(
+    def aggregate_dataset_features(
         self,
         initial_features: dict[str, Any],
         *,
@@ -888,10 +882,10 @@ class RobotProcessor(ModelHubMixin):
         action_type: DatasetFeatureType | list[DatasetFeatureType] = DatasetFeatureType.JOINT,
     ) -> dict[str, dict]:
         """
-        Run this pipeline's feature_contract and return a READY-FOR-DATASET features dict.
+        Aggregates the pipeline's dataset_features and returns a features dict that is ready to be stored in the dataset.
 
         - Filters to keys under requested spaces.
-        - Adds camera keys from the *initial_features* (robot.observation_features).
+        - Adds camera keys from the initial_features (robot.observation_features).
         - Filters ACTION features by `action_type` (EE, JOINT, or both).
         """
         # Allow list or single enum
@@ -904,12 +898,12 @@ class RobotProcessor(ModelHubMixin):
             # robot.observation_features uses tuples for images: (H, W, C)
             return isinstance(v, tuple) and len(v) == 3 and v[-1] in (1, 3)
 
-        fc = self.feature_contract(initial_features)
+        fc = self.dataset_features(initial_features)
 
         action_hw: dict[str, Any] = {}
         obs_hw: dict[str, Any] = {}
 
-        # Collect from feature_contract outputs
+        # Collect from dataset_features outputs
         for k, v in fc.items():
             if k.startswith("action.") and "action" in include:
                 # Strip prefix and filter by action_type
@@ -927,7 +921,7 @@ class RobotProcessor(ModelHubMixin):
             elif k.startswith("observation.images.") and "observation" in include:
                 obs_hw[k[len("observation.images.") :]] = v
 
-        # Add cameras from *initial_features* (if observation requested)
+        # Add cameras from initial_features (if observation requested)
         if "observation" in include:
             for k, v in (initial_features or {}).items():
                 if _is_hw_image(v):
@@ -1248,5 +1242,5 @@ class IdentityProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features

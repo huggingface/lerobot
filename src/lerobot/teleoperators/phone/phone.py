@@ -34,8 +34,6 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-# TODO(pepijn): Discuss and propose with Adil, instead of having a feature contract, add to feature contract only the features that are going to be stored or needed in dataset. not the intermediate features. ?
-# And then add all feature contracts to get the full dataset feature contract? Because that is for now the only use case for feature contract. Maybe also call it select_dataset_features? 2
 # TODO(pepijn): Fix phone teleop workings with pipeline 3
 # TODO(Pepijn): Use default ObservationStep etc as much as possible in phone teleop to reduce boilerplate 4
 # TODO(pepijn): add back record loop functionality with pipeline integration 5

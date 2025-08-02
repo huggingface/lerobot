@@ -106,26 +106,6 @@ class EEReferenceAndDelta:
         transition[TransitionKey.ACTION] = new_act
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # remove consumed fields; add desired pose
-        for k in [
-            "action.enabled",
-            "action.target_x",
-            "action.target_y",
-            "action.target_z",
-            "action.target_wx",
-            "action.target_wy",
-            "action.target_wz",
-        ]:
-            features.pop(k, None)
-        features["action.ee.x"] = float
-        features["action.ee.y"] = float
-        features["action.ee.z"] = float
-        features["action.ee.wx"] = float
-        features["action.ee.wy"] = float
-        features["action.ee.wz"] = float
-        return features
-
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
 @dataclass
@@ -201,7 +181,14 @@ class EEBoundsAndSafety:
         self._last_pos = None
         self._last_twist = None
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # Because this is last step we specify the dataset features of this step that we want to be stored in the dataset
+        features["action.ee.x"] = float
+        features["action.ee.y"] = float
+        features["action.ee.z"] = float
+        features["action.ee.wx"] = float
+        features["action.ee.wy"] = float
+        features["action.ee.wz"] = float
         return features
 
 
@@ -278,7 +265,8 @@ class InverseKinematicsEEToJoints:
         transition[TransitionKey.ACTION] = new_act
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We specify the dataset features of this step that we want to be stored in the dataset
         for n in self.motor_names:
             features[f"action.{n}.pos"] = float
         return features
@@ -329,9 +317,9 @@ class GripperVelocityToJoint:
         transition[TransitionKey.ACTION] = new_act
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We specify the dataset features of this step that we want to be stored in the dataset
         features["action.gripper.pos"] = float
-        features.pop("action.gripper", None)
         return features
 
 
@@ -375,8 +363,8 @@ class ForwardKinematicsJointsToEE:
         transition[TransitionKey.OBSERVATION] = new_obs
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # add EE pose under observation.state.ee.*
+    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
             features[f"observation.state.ee.{k}"] = float
         return features
@@ -408,6 +396,3 @@ class AddRobotObservationAsComplimentaryData:
         new_comp["raw_joint_positions"] = raw_joint_positions
         transition[TransitionKey.COMPLEMENTARY_DATA] = new_comp
         return transition
-
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features

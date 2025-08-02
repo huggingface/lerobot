@@ -239,9 +239,6 @@ class NormalizerProcessor:
     def reset(self):
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
 
 @dataclass
 @ProcessorStepRegistry.register(name="unnormalizer_processor")
@@ -403,6 +400,3 @@ class UnnormalizerProcessor:
 
     def reset(self):
         pass
-
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features

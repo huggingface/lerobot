@@ -48,7 +48,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_32"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_34"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -114,7 +114,7 @@ robot_joints_to_ee_pose = RobotProcessor(
 )
 
 # Build dataset action features
-ee_action_features = phone_to_robot_ee_pose.to_dataset_features(
+ee_action_features = phone_to_robot_ee_pose.aggregate_dataset_features(
     initial_features=phone.action_features,
     use_videos=True,
     include=("action",),
@@ -122,7 +122,7 @@ ee_action_features = phone_to_robot_ee_pose.to_dataset_features(
 )
 
 # Build dataset observation features
-ee_observation_features = robot_joints_to_ee_pose.to_dataset_features(
+ee_observation_features = robot_joints_to_ee_pose.aggregate_dataset_features(
     initial_features=robot.observation_features,
     use_videos=True,
     include=("observation",),

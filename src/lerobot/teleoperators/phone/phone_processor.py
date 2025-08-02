@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
@@ -111,25 +110,3 @@ class MapPhoneActionToRobotAction:
     def reset(self):
         self._last_pos = None
         self._last_rot = None
-
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # Accept both scoped/unscoped inputs, always emit scoped outputs
-        for k in ("phone.enabled", "phone.pos", "phone.rot", "phone.raw_inputs"):
-            features.pop(f"action.{k}", None)
-            features.pop(k, None)
-        features.update(
-            {
-                "action.enabled": bool,
-                "action.target_x": float,
-                "action.target_y": float,
-                "action.target_z": float,
-                "action.target_wx": float,
-                "action.target_wy": float,
-                "action.target_wz": float,
-                "action.gripper": float,
-                "action.x": float,
-                "action.y": float,
-                "action.theta": float,
-            }
-        )
-        return features
