@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,7 +11,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, RobotProcessor, TransitionKey
 
 
 def _convert_stats_to_tensors(stats: dict[str, dict[str, Any]]) -> dict[str, dict[str, Tensor]]:
@@ -400,3 +401,13 @@ class UnnormalizerProcessor:
 
     def reset(self):
         pass
+
+
+def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, Any]]) -> RobotProcessor:
+    robot_processor = deepcopy(robot_processor)
+    for step in robot_processor.steps:
+        if isinstance(step, NormalizerProcessor) or isinstance(step, UnnormalizerProcessor):
+            step: NormalizerProcessor | UnnormalizerProcessor
+            step.stats = stats
+            step._tensor_stats = _convert_stats_to_tensors(stats)
+    return robot_processor

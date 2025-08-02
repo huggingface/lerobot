@@ -268,14 +268,25 @@ def test_step_through_with_dict():
 
     assert len(results) == 3  # Original + 2 steps
 
-    # Ensure all results are dicts (same format as input)
+    # Ensure all results are EnvTransition dicts (regardless of input format)
     for result in results:
         assert isinstance(result, dict)
+        # Check that keys are TransitionKey enums or at least valid transition keys
+        for key in result:
+            assert key in [
+                TransitionKey.OBSERVATION,
+                TransitionKey.ACTION,
+                TransitionKey.REWARD,
+                TransitionKey.DONE,
+                TransitionKey.TRUNCATED,
+                TransitionKey.INFO,
+                TransitionKey.COMPLEMENTARY_DATA,
+            ]
 
-    # Check that the processing worked - the complementary data from steps
-    # should show up in the info or complementary_data fields when converted back to dict
-    # Note: This depends on how _default_transition_to_batch handles complementary_data
-    # For now, just check that we get dict outputs
+    # Check that the processing worked - verify step counters in complementary_data
+    assert results[1].get(TransitionKey.COMPLEMENTARY_DATA, {}).get("step1_counter") == 0
+    assert results[2].get(TransitionKey.COMPLEMENTARY_DATA, {}).get("step1_counter") == 0
+    assert results[2].get(TransitionKey.COMPLEMENTARY_DATA, {}).get("step2_counter") == 0
 
 
 def test_step_through_no_hooks():

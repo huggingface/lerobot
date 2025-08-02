@@ -69,7 +69,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         raise ValueError(config.type)
 
 
-# TODO: Move to pipeline step ?
+# TODO(pepijn): Move to pipeline step to make sure we don't have to do this in the robot code and send action to robot is clean for use in dataset
 def ensure_safe_goal_position(
     goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[float]
 ) -> dict[str, float]:

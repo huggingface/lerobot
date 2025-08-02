@@ -16,7 +16,7 @@
 
 from .batch_processor import ToBatchProcessor
 from .device_processor import DeviceProcessor
-from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor
+from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import (
     ImageProcessor,
     StateProcessor,
@@ -48,6 +48,7 @@ __all__ = [
     "InfoProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
+    "hotswap_stats",
     "ObservationProcessor",
     "ProcessorStep",
     "ProcessorStepRegistry",

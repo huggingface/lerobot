@@ -307,6 +307,8 @@ def record_loop(
             robot_action_to_send = robot_action_processor.to_output(joints_transition)
 
         if robot_action_to_send:
+            # Action can eventually be clipped using `max_relative_target`,
+            # so action actually sent is saved in the dataset. action = postprocessor.process(action)
             sent_action = robot.send_action(robot_action_to_send)
         else:
             sent_action = None
