@@ -34,7 +34,6 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-# TODO(pepijn): use build_dataset_frame in make_to_output_dataset ?
 # TODO(pepijn): Fix phone teleop workings with pipeline 2
 
 # -----Monday----- (3,4,5)
