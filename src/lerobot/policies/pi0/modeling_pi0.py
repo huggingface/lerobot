@@ -59,15 +59,13 @@ from torch import Tensor, nn
 from transformers import AutoTokenizer
 
 from lerobot.constants import ACTION, OBS_STATE
-from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0.paligemma_with_expert import (
     PaliGemmaWithExpertConfig,
     PaliGemmaWithExpertModel,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import log_model_loading_keys
-from lerobot.utils.utils import get_safe_dtype, init_logging
+from lerobot.utils.utils import get_safe_dtype
 
 
 def create_sinusoidal_pos_embedding(
@@ -223,7 +221,6 @@ class PI0Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0Config,
-        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
         Args:
@@ -236,14 +233,8 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
 
+        # TODO(azouitine): Add tokenizer to pipeline
         self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
         self.model = PI0FlowMatching(config)
 
@@ -252,99 +243,6 @@ class PI0Policy(PreTrainedPolicy):
     def reset(self):
         """This should be called whenever the environment is reset."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
-
-    @classmethod
-    def _transform_state_dict_keys(cls, state_dict: dict) -> dict:
-        """
-        Transform state dict keys to match expected model structure.
-
-        Transformations:
-        - model.paligemma_with_expert.paligemma.language_model.lm_head ->
-          model.paligemma_with_expert.paligemma.lm_head
-        - model.paligemma_with_expert.paligemma.language_model.model ->
-          model.paligemma_with_expert.paligemma.model.language_model
-        - model.paligemma_with_expert.paligemma.vision_tower ->
-          model.paligemma_with_expert.paligemma.model.vision_tower
-        - model.paligemma_with_expert.paligemma.multi_modal_projector ->
-          model.paligemma_with_expert.paligemma.model.multi_modal_projector
-
-        Also handles tied weights between lm_head.weight and
-        embed_tokens.weight.
-        """
-        import re
-
-        transformed_dict = {}
-
-        transformations = [
-            (
-                re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.lm_head"),
-                ".paligemma_with_expert.paligemma.lm_head",
-            ),
-            (
-                re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.model"),
-                ".paligemma_with_expert.paligemma.model.language_model",
-            ),
-            (
-                re.compile(r"\.paligemma_with_expert\.paligemma\.vision_tower"),
-                ".paligemma_with_expert.paligemma.model.vision_tower",
-            ),
-            (
-                re.compile(r"\.paligemma_with_expert\.paligemma\.multi_modal_projector"),
-                ".paligemma_with_expert.paligemma.model.multi_modal_projector",
-            ),
-        ]
-
-        for key, value in state_dict.items():
-            new_key = key
-            for pattern, replacement in transformations:
-                new_key = pattern.sub(replacement, new_key)
-            transformed_dict[new_key] = value
-
-        # Handle tied weights: lm_head.weight and embed_tokens.weight share memory
-        lm_head_key = None
-        embed_tokens_key = None
-
-        for key in transformed_dict:
-            if key.endswith(".paligemma_with_expert.paligemma.lm_head.weight"):
-                lm_head_key = key
-            elif key.endswith(".paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"):
-                embed_tokens_key = key
-            if lm_head_key and embed_tokens_key:
-                break
-
-        if lm_head_key and not embed_tokens_key:
-            embed_tokens_key = lm_head_key.replace(
-                ".lm_head.weight", ".model.language_model.embed_tokens.weight"
-            )
-            transformed_dict[embed_tokens_key] = transformed_dict[lm_head_key]
-        elif embed_tokens_key and not lm_head_key:
-            lm_head_key = embed_tokens_key.replace(
-                ".model.language_model.embed_tokens.weight", ".lm_head.weight"
-            )
-            transformed_dict[lm_head_key] = transformed_dict[embed_tokens_key]
-
-        return transformed_dict
-
-    @classmethod
-    def _load_as_safetensor(
-        cls, model: "PI0Policy", model_file: str, map_location: str, strict: bool
-    ) -> "PI0Policy":
-        """Override to apply key transformations before loading."""
-        from safetensors.torch import load_file
-
-        init_logging()
-        # Load the state dict from file safely
-        state_dict = load_file(model_file, device=map_location)
-
-        # Apply key transformations
-        transformed_state_dict = cls._transform_state_dict_keys(state_dict)
-
-        # Load the transformed state dict
-        msg = model.load_state_dict(transformed_state_dict, strict=strict)
-
-        # Log message
-        log_model_loading_keys(msg.missing_keys, msg.unexpected_keys)
-        return model
 
     def get_optim_params(self) -> dict:
         return self.parameters()
@@ -377,8 +275,6 @@ class PI0Policy(PreTrainedPolicy):
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
-        batch = self.normalize_inputs(batch)
-
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
@@ -394,8 +290,6 @@ class PI0Policy(PreTrainedPolicy):
             original_action_dim = self.config.action_feature.shape[0]
             actions = actions[:, :, :original_action_dim]
 
-            actions = self.unnormalize_outputs({"action": actions})["action"]
-
             if self.config.adapt_to_pi_aloha:
                 actions = self._pi_aloha_encode_actions(actions)
 
@@ -409,9 +303,6 @@ class PI0Policy(PreTrainedPolicy):
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
-
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
 
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
