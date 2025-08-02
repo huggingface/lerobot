@@ -107,6 +107,45 @@ class GamepadTeleop(Teleoperator):
 
         return action_dict
 
+    def get_teleop_events(self) -> dict[str, Any]:
+        """
+        Get extra control events from the gamepad such as intervention status,
+        episode termination, success indicators, etc.
+
+        Returns:
+            Dictionary containing:
+                - is_intervention: bool - Whether human is currently intervening
+                - terminate_episode: bool - Whether to terminate the current episode
+                - success: bool - Whether the episode was successful
+                - rerecord_episode: bool - Whether to rerecord the episode
+        """
+        if self.gamepad is None:
+            return {
+                "is_intervention": False,
+                "terminate_episode": False,
+                "success": False,
+                "rerecord_episode": False,
+            }
+
+        # Update gamepad state to get fresh inputs
+        self.gamepad.update()
+
+        # Check if intervention is active
+        is_intervention = self.gamepad.should_intervene()
+
+        # Get episode end status
+        episode_end_status = self.gamepad.get_episode_end_status()
+        terminate_episode = episode_end_status is not None
+        success = episode_end_status == "success"
+        rerecord_episode = episode_end_status == "rerecord_episode"
+
+        return {
+            "is_intervention": is_intervention,
+            "terminate_episode": terminate_episode,
+            "success": success,
+            "rerecord_episode": rerecord_episode,
+        }
+
     def disconnect(self) -> None:
         """Disconnect from the gamepad."""
         if self.gamepad is not None:
