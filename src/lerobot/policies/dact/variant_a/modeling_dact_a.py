@@ -28,6 +28,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
+from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 
 # Diffusion imports
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
@@ -35,11 +36,12 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from lerobot.constants import ACTION, OBS_IMAGES
+from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.policies.dact.variant_a.configuration_dact_a import DACTConfigA
-from lerobot.policies.diffusion.modeling_diffusion import DiffusionConditionalUnet1d, DiffusionRgbEncoder
+from lerobot.policies.diffusion.modeling_diffusion import DiffusionConditionalUnet1d
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import get_device_from_parameters, get_dtype_from_parameters
 
 
 class DACTPolicyA(PreTrainedPolicy):
@@ -157,27 +159,36 @@ class DACTPolicyA(PreTrainedPolicy):
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
         batch = self.normalize_targets(batch)
-        actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
-        l1_loss = (
-            F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
-        ).mean()
+        # Get actions and latent parameters from model
+        # Model now ALWAYS returns actual actions (semantic consistency)
+        actions, (mu, log_sigma_x2) = self.model(batch)
 
-        loss_dict = {"l1_loss": l1_loss.item()}
-        if self.config.use_vae:
-            # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
-            # each dimension independently, we sum over the latent dimension to get the total
-            # KL-divergence per batch element, then take the mean over the batch.
-            # (See App. B of https://huggingface.co/papers/1312.6114 for more details).
-            mean_kld = (
-                (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
-            )
-            loss_dict["kld_loss"] = mean_kld.item()
-            loss = l1_loss + mean_kld * self.config.kl_weight
+        if self.training:
+            # Model computed diffusion loss internally
+            training_info = self.model._training_info
+            diffusion_loss = training_info['diffusion_loss']
+
+            # Build detailed loss dictionary with sanity check info
+            loss_dict = {
+                "diffusion_loss": diffusion_loss.item(),
+                "predicted_noise_std": training_info['predicted_noise_std'],
+                "target_noise_std": training_info['target_noise_std'],
+            }
+
+            # Add VAE KL loss if using VAE
+            if self.config.use_vae and mu is not None:
+                kl_loss = (-0.5 * (1 + log_sigma_x2 - mu.pow(2) - log_sigma_x2.exp())).sum(-1).mean()
+                total_loss = diffusion_loss + self.config.kl_weight * kl_loss
+                loss_dict["kl_loss"] = kl_loss.item()
+            else:
+                total_loss = diffusion_loss
+
+            return total_loss, loss_dict
         else:
-            loss = l1_loss
-
-        return loss, loss_dict
+            # For inference, unnormalize and return actions
+            actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
+            return actions, {}
 
 
 class ACTTemporalEnsembler:
@@ -270,6 +281,17 @@ class ACTTemporalEnsembler:
         )
         return action
 
+def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
+    """
+    Factory for noise scheduler instances of the requested type. All kwargs are passed
+    to the scheduler.
+    """
+    if name == "DDPM":
+        return DDPMScheduler(**kwargs)
+    elif name == "DDIM":
+        return DDIMScheduler(**kwargs)
+    else:
+        raise ValueError(f"Unsupported noise scheduler type {name}")
 
 class ACT(nn.Module):
     """Action Chunking Transformer: The underlying neural network for ACTPolicy.
@@ -349,11 +371,9 @@ class ACT(nn.Module):
             # Note: The forward method of this returns a dict: {"feature_map": output}.
             self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
-        # Transformer encoder for observation encoding (keep as-is)
+        # Transformer encoder for observation encoding
         self.encoder = ACTEncoder(config)
         # Replace transformer decoder with diffusion model for Variant A
-        # TODO: Replace with proper diffusion model - placeholder for now
-        self.decoder = None  # Will be replaced with diffusion denoiser
 
         # Transformer encoder input projections. The tokens will be structured like
         # [latent, (robot_state), (env_state), (image_feature_map_pixels)].
@@ -380,35 +400,104 @@ class ACT(nn.Module):
         if self.config.image_features:
             self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
-        # Attention pooler for transformer encoder summary
-        self.attention_pooler = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout, batch_first=False)
-        self.pool_query = nn.Parameter(torch.randn(1, 1, config.dim_model))
+        # Attention pooler for extracting summary from transformer encoder
+        self.attention_pooler = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
 
-        # Diffusion components (replace transformer decoder + action head)
-        # TODO: Add proper diffusion model initialization
-        # For now, add noise scheduler which we'll definitely need
-        self.noise_scheduler = DDPMScheduler(
-            num_train_timesteps=1000,
-            beta_schedule="squaredcos_cap_v2",
-            clip_sample=True,
-            prediction_type="epsilon"
+        # Learnable query for attention pooling
+        self.pool_query = nn.Parameter(data=torch.randn(1, 1, config.dim_model))
+
+        # Diffusion noise scheduler
+        self.noise_scheduler = _make_noise_scheduler(
+            config.noise_scheduler_type,
+            num_train_timesteps=config.num_train_timesteps,
+            beta_start=config.beta_start,
+            beta_end=config.beta_end,
+            beta_schedule=config.beta_schedule,
+            clip_sample=config.clip_sample,
+            clip_sample_range=config.clip_sample_range,
+            prediction_type=config.prediction_type,
         )
 
-        global_cond_dim = config.dim_model
+        if config.num_inference_steps is None:
+            self.num_inference_steps = self.noise_scheduler.config.num_train_timesteps
+        else:
+            self.num_inference_steps = config.num_inference_steps
+
+        # Global conditioning will use transformer encoder summary + direct state features
+        # This replaces the diffusion-style RGB encoder approach
+        global_cond_dim = self.config.dim_model
+        if self.config.latent_dim:
+            global_cond_dim += self.config.latent_dim
         if self.config.robot_state_feature:
             global_cond_dim += self.config.robot_state_feature.shape[0]
         if self.config.env_state_feature:
             global_cond_dim += self.config.env_state_feature.shape[0]
 
+        # Diffusion model
+        self.unet = DiffusionConditionalUnet1d(
+            config=self.config,
+            global_cond_dim=global_cond_dim,
+        )
+
         self._reset_parameters()
+
+    def conditional_sample(
+        self, batch_size: int, global_cond: Tensor | None = None, generator: torch.Generator | None = None
+    ) -> Tensor:
+        """Sample actions using the diffusion model with global conditioning."""
+        device = get_device_from_parameters(self)
+        dtype = get_dtype_from_parameters(self)
+
+        # Sample prior.
+        sample = torch.randn(
+            size=(batch_size, self.config.horizon, self.config.action_feature.shape[0]),
+            dtype=dtype,
+            device=device,
+            generator=generator,
+        )
+
+        self.noise_scheduler.set_timesteps(self.num_inference_steps)
+
+        for t in self.noise_scheduler.timesteps:
+            # Predict model output.
+            model_output = self.unet(
+                sample,
+                torch.full(sample.shape[:1], t, dtype=torch.long, device=sample.device),
+                global_cond=global_cond,
+            )
+            # Compute previous image: x_t -> x_t-1
+            sample = self.noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
+
+        return sample
 
     def _reset_parameters(self):
         """Xavier-uniform initialization of the transformer encoder parameters."""
-        # Only initialize encoder parameters (decoder replaced with diffusion)
+        # Initialize transformer encoder parameters
         for p in self.encoder.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
-        # Note: Diffusion model will initialize its own parameters when implemented
+        # Initialize attention pooling parameters
+        # Attention pooler: converts variable-length encoder output to fixed summary
+        # Query attends to all encoder tokens to extract action-relevant information
+        nn.init.xavier_uniform_(self.pool_query)
+
+    def generate_actions(self, batch: dict[str, Tensor]) -> Tensor:
+        """
+        This function expects `batch` to have:
+        {
+            "observation.state": (B, state_dim)
+
+            "observation.images": [list of (B, C, H, W) tensors]
+                AND/OR
+            "observation.environment_state": (B, environment_dim)
+        }
+        """
+        # Call forward in inference mode to get actions
+        self.eval()
+        with torch.no_grad():
+            actions, _ = self.forward(batch)
+        return actions
+
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         """A forward pass through the Action Chunking Transformer (with optional VAE encoder).
@@ -435,10 +524,12 @@ class ACT(nn.Module):
                 "actions must be provided when using the variational objective in training mode."
             )
 
-        if "observation.images" in batch:
-            batch_size = batch["observation.images"][0].shape[0]
+        if OBS_IMAGES in batch:
+            batch_size = batch[OBS_IMAGES][0].shape[0]
+        elif OBS_STATE in batch:
+            batch_size = batch[OBS_STATE].shape[0]
         else:
-            batch_size = batch["observation.environment_state"].shape[0]
+            batch_size = batch[OBS_ENV_STATE].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and "action" in batch and self.training:
@@ -447,7 +538,7 @@ class ACT(nn.Module):
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
             )  # (B, 1, D)
             if self.config.robot_state_feature:
-                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch["observation.state"])
+                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch[OBS_STATE])
                 robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
             action_embed = self.vae_encoder_action_input_proj(batch["action"])  # (B, S, D)
 
@@ -467,11 +558,19 @@ class ACT(nn.Module):
             cls_joint_is_pad = torch.full(
                 (batch_size, 2 if self.config.robot_state_feature else 1),
                 False,
-                device=batch["observation.state"].device,
+                device=batch[OBS_STATE].device,
             )
-            key_padding_mask = torch.cat(
-                [cls_joint_is_pad, batch["action_is_pad"]], axis=1
-            )  # (bs, seq+1 or 2)
+            if "action_is_pad" in batch:
+                key_padding_mask = torch.cat(
+                    [cls_joint_is_pad, batch["action_is_pad"]], axis=1
+                )  # (bs, seq+1 or 2)
+            else:
+                # Create dummy padding mask for actions (all False = no padding)
+                action_seq_len = batch["action"].shape[1]
+                action_is_pad = torch.full(
+                    (batch_size, action_seq_len), False, device=cls_joint_is_pad.device
+                )
+                key_padding_mask = torch.cat([cls_joint_is_pad, action_is_pad], axis=1)
 
             # Forward pass through VAE encoder to get the latent PDF parameters.
             cls_token_out = self.vae_encoder(
@@ -490,9 +589,8 @@ class ACT(nn.Module):
             # When not using the VAE encoder, we set the latent to be all zeros.
             mu = log_sigma_x2 = None
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
-            latent_sample = torch.zeros([batch_size, self.config.latent_dim], dtype=torch.float32).to(
-                batch["observation.state"].device
-            )
+            device = batch[OBS_STATE].device if OBS_STATE in batch else batch[OBS_ENV_STATE].device
+            latent_sample = torch.zeros([batch_size, self.config.latent_dim], dtype=torch.float32).to(device)
 
         # PART 2: Transformer encoder
         # Prepare transformer encoder inputs.
@@ -500,18 +598,18 @@ class ACT(nn.Module):
         encoder_in_pos_embed = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
         # Robot state token.
         if self.config.robot_state_feature:
-            encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch["observation.state"]))
+            encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch[OBS_STATE]))
         # Environment state token.
         if self.config.env_state_feature:
             encoder_in_tokens.append(
-                self.encoder_env_state_input_proj(batch["observation.environment_state"])
+                self.encoder_env_state_input_proj(batch[OBS_ENV_STATE])
             )
 
         if self.config.image_features:
             # For a list of images, the H and W may vary but H*W is constant.
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
-            for img in batch["observation.images"]:
+            for img in batch[OBS_IMAGES]:
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
@@ -533,37 +631,65 @@ class ACT(nn.Module):
         encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
 
         # PART 3: Attention pooling
-        batch_size = encoder_out.shape[1]
-        query = self.pool_query.repeat(1, batch_size, -1) # (1, B, D)
-        obs_summary = self.attention_pooler(query, encoder_out, encoder_out) # (1, B, D)
+        batch_size = encoder_out.shape[1] # (S, B, D)
+        query = self.pool_query.expand(1, batch_size, -1) # (1, B, D)
+        obs_summary, _ = self.attention_pooler( # Get attention output
+            query=query,
+            key=encoder_out,
+            value=encoder_out,
+        )
         obs_summary = obs_summary.squeeze(0) # (B, D)
 
         # PART 4: Global conditioning
-        global_cond_feats = [obs_summary]
+        global_cond_feats = [obs_summary] # Start with transformer encoder summary from attention pooling
+
+        # Add direct state features
+        global_cond_feats.append(latent_sample)
         if self.config.robot_state_feature:
-            global_cond_feats.append(batch["observation.state"])
+            global_cond_feats.append(batch[OBS_STATE])
         if self.config.env_state_feature:
-            global_cond_feats.append(batch["observation.environment_state"])
+            global_cond_feats.append(batch[OBS_ENV_STATE])
+
+        # Concatenate all features to form global conditioning
         global_cond = torch.cat(global_cond_feats, dim=-1) # (B, global_cond_dim)
 
-        decoder_in = torch.zeros(
-            (self.config.chunk_size, batch_size, self.config.dim_model),
-            dtype=encoder_in_pos_embed.dtype,
-            device=encoder_in_pos_embed.device,
-        )
-        decoder_out = self.decoder(
-            decoder_in,
-            encoder_out,
-            encoder_pos_embed=encoder_in_pos_embed,
-            decoder_pos_embed=self.decoder_pos_embed.weight.unsqueeze(1),
-        )
+        # PART 5: Diffusion training vs inference
+        if self.training:
+            # Training path: compute diffusion loss internally, return actual actions
+            target_actions = batch["action"]  # (B, chunk_size, action_dim)
 
-        # Move back to (B, S, C).
-        decoder_out = decoder_out.transpose(0, 1)
+            # Sample random timesteps for each batch element
+            timesteps = torch.randint(
+                0, self.noise_scheduler.config.num_train_timesteps,
+                (batch_size,),
+                device=target_actions.device
+            )
 
-        actions = self.action_head(decoder_out)
+            # Sample noise and create noisy actions
+            noise = torch.randn_like(target_actions)
+            noisy_actions = self.noise_scheduler.add_noise(target_actions, noise, timesteps)
 
-        return actions, (mu, log_sigma_x2)
+            # Predict the noise using the UNet
+            predicted_noise = self.unet(noisy_actions, timesteps, global_cond=global_cond)
+
+            # Compute diffusion loss internally
+            diffusion_loss = F.mse_loss(predicted_noise, noise)
+
+            # Store training info for policy to access
+            self._training_info = {
+                'diffusion_loss': diffusion_loss,
+                'predicted_noise_std': predicted_noise.std().item(),
+                'target_noise_std': noise.std().item(),
+                'timesteps': timesteps
+            }
+
+            # For training, return target actions since we're learning to reconstruct them
+            return target_actions, (mu, log_sigma_x2)
+        else:
+            # Inference path: sample clean actions using diffusion
+            actions = self.conditional_sample(batch_size, global_cond=global_cond)
+            return actions, (mu, log_sigma_x2)
+
 
 
 class ACTEncoder(nn.Module):
