@@ -27,7 +27,13 @@ from lerobot.processor import (
     TokenizerProcessor,
     UnnormalizerProcessor,
 )
-from lerobot.processor.pipeline import EnvTransition, ProcessorStep, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import (
+    EnvTransition,
+    ProcessorStep,
+    ProcessorStepRegistry,
+    TransitionKey,
+)
+from lerobot.processor.rename_processor import RenameProcessor
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")
@@ -82,12 +88,13 @@ class Pi0NewLineProcessor(ProcessorStep):
 def make_pi0_processor(
     config: PI0Config, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
-    input_steps = [
+    # Add remaining processors
+    input_steps: list[ProcessorStep] = [
+        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
         NormalizerProcessor(
-            features=config.input_features, norm_map=config.normalization_mapping, stats=dataset_stats
-        ),
-        NormalizerProcessor(
-            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
         ),
         ToBatchProcessor(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
@@ -98,11 +105,13 @@ def make_pi0_processor(
             padding="max_length",
         ),
     ]
-    output_steps = [
+
+    output_steps: list[ProcessorStep] = [
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
+
     return RobotProcessor(steps=input_steps, name="pi0_preprocessor"), RobotProcessor(
         steps=output_steps, name="pi0_postprocessor"
     )
