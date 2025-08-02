@@ -783,11 +783,11 @@ def make_robot_env(cfg: EnvConfig) -> tuple[gym.Env, Any]:
 def make_processors(env, cfg):
     """
     Factory function to create environment and action processors.
-    
+
     Args:
         env: The robot environment
         cfg: Configuration object containing processor parameters
-    
+
     Returns:
         tuple: (env_processor, action_processor)
     """
@@ -797,13 +797,11 @@ def make_processors(env, cfg):
         JointVelocityProcessor(dt=1.0 / cfg.fps),
         MotorCurrentProcessor(env=env),
         ImageCropResizeProcessor(
-            crop_params_dict=cfg.processor.crop_params_dict, 
-            resize_size=cfg.processor.resize_size
+            crop_params_dict=cfg.processor.crop_params_dict, resize_size=cfg.processor.resize_size
         ),
         TimeLimitProcessor(max_episode_steps=int(cfg.processor.control_time_s * cfg.fps)),
         GripperPenaltyProcessor(
-            penalty=cfg.processor.gripper_penalty, 
-            max_gripper_pos=cfg.processor.max_gripper_pos
+            penalty=cfg.processor.gripper_penalty, max_gripper_pos=cfg.processor.max_gripper_pos
         ),
         DeviceProcessor(device=cfg.device),
     ]
@@ -823,21 +821,21 @@ def make_processors(env, cfg):
         ),
     ]
     action_processor = RobotProcessor(steps=action_pipeline_steps)
-    
+
     return env_processor, action_processor
 
 
 def step_env_and_process_transition(
-    env, 
-    transition, 
-    action, 
-    teleop_device, 
-    env_processor, 
-    action_processor, 
+    env,
+    transition,
+    action,
+    teleop_device,
+    env_processor,
+    action_processor,
 ):
     """
     Execute one step with processors handling intervention and observation processing.
-    
+
     Args:
         env: The robot environment
         transition: Current transition state
@@ -845,7 +843,7 @@ def step_env_and_process_transition(
         teleop_device: Teleoperator device for getting intervention signals
         env_processor: Environment processor for observations
         action_processor: Action processor for handling interventions
-    
+
     Returns:
         tuple: (new_transition, terminate_episode)
     """
@@ -893,7 +891,7 @@ def step_env_and_process_transition(
         complementary_data=complementary_data,
     )
     new_transition = env_processor(new_transition)
-    
+
     return new_transition, terminate_episode
 
 
