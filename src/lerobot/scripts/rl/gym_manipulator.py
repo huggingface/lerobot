@@ -404,6 +404,9 @@ class ImageCropResizeProcessor:
         if observation is None:
             return transition
 
+        if self.resize_size is None and not self.crop_params_dict:
+            return transition
+
         new_observation = dict(observation)
 
         # Process all image keys in the observation
@@ -777,6 +780,123 @@ def make_robot_env(cfg: EnvConfig) -> tuple[gym.Env, Any]:
     return env, teleop_device
 
 
+def make_processors(env, cfg):
+    """
+    Factory function to create environment and action processors.
+    
+    Args:
+        env: The robot environment
+        cfg: Configuration object containing processor parameters
+    
+    Returns:
+        tuple: (env_processor, action_processor)
+    """
+    env_pipeline_steps = [
+        ImageProcessor(),
+        StateProcessor(),
+        JointVelocityProcessor(dt=1.0 / cfg.fps),
+        MotorCurrentProcessor(env=env),
+        ImageCropResizeProcessor(
+            crop_params_dict=cfg.processor.crop_params_dict, 
+            resize_size=cfg.processor.resize_size
+        ),
+        TimeLimitProcessor(max_episode_steps=int(cfg.processor.control_time_s * cfg.fps)),
+        GripperPenaltyProcessor(
+            penalty=cfg.processor.gripper_penalty, 
+            max_gripper_pos=cfg.processor.max_gripper_pos
+        ),
+        DeviceProcessor(device=cfg.device),
+    ]
+    env_processor = RobotProcessor(steps=env_pipeline_steps)
+
+    action_pipeline_steps = [
+        InterventionActionProcessor(
+            use_gripper=cfg.processor.use_gripper,
+        ),
+        InverseKinematicsProcessor(
+            urdf_path=cfg.processor.urdf_path,
+            target_frame_name=cfg.processor.target_frame_name,
+            end_effector_step_sizes=cfg.processor.end_effector_step_sizes,
+            end_effector_bounds=cfg.processor.end_effector_bounds,
+            max_gripper_pos=cfg.processor.max_gripper_pos,
+            env=env,
+        ),
+    ]
+    action_processor = RobotProcessor(steps=action_pipeline_steps)
+    
+    return env_processor, action_processor
+
+
+def step_env_and_process_transition(
+    env, 
+    transition, 
+    action, 
+    teleop_device, 
+    env_processor, 
+    action_processor, 
+):
+    """
+    Execute one step with processors handling intervention and observation processing.
+    
+    Args:
+        env: The robot environment
+        transition: Current transition state
+        action: Action to execute (will be replaced by neutral action in gym_manipulator mode)
+        teleop_device: Teleoperator device for getting intervention signals
+        env_processor: Environment processor for observations
+        action_processor: Action processor for handling interventions
+    
+    Returns:
+        tuple: (new_transition, terminate_episode)
+    """
+    # Get teleoperation action and events
+    teleop_action = teleop_device.get_action()
+    teleop_events = teleop_device.get_teleop_events()
+
+    # Create action transition
+    action_transition = dict(transition)
+    action_transition[TransitionKey.ACTION] = action
+
+    # Add teleoperation data to complementary data
+    action_complementary_data = action_transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).copy()
+    action_complementary_data["teleop_action"] = teleop_action
+    action_complementary_data.update(teleop_events)
+    action_transition[TransitionKey.COMPLEMENTARY_DATA] = action_complementary_data
+
+    # Process action through action pipeline (handles intervention)
+    processed_action_transition = action_processor(action_transition)
+
+    # Extract processed action and metadata
+    processed_action = processed_action_transition[TransitionKey.ACTION]
+    terminate_episode = processed_action_transition.get(TransitionKey.DONE, False)
+
+    # Step environment with processed action
+    obs, reward, terminated, truncated, info = env.step(processed_action)
+
+    # Combine rewards from environment and action processor
+    reward = reward + processed_action_transition[TransitionKey.REWARD]
+
+    # Process new observation
+    complementary_data = {
+        "raw_joint_positions": info.pop("raw_joint_positions"),
+        **processed_action_transition[TransitionKey.COMPLEMENTARY_DATA],
+    }
+    info.update(processed_action_transition[TransitionKey.INFO])
+
+    new_transition = create_transition(
+        observation=obs,
+        action=processed_action,
+        reward=reward,
+        done=terminated or terminate_episode,
+        truncated=truncated,
+        info=info,
+        complementary_data=complementary_data,
+    )
+    new_transition = env_processor(new_transition)
+    
+    return new_transition, terminate_episode
+
+
 def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvConfig):
     dt = 1.0 / cfg.fps
 
@@ -841,54 +961,20 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
     while episode_idx < cfg.num_episodes:
         step_start_time = time.perf_counter()
 
-        # Get teleoperation action and extra signals
-        teleop_action = teleop_device.get_action()
-        teleop_events = teleop_device.get_teleop_events()
-
         # Create a neutral action (no movement)
         neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
         if hasattr(env, "use_gripper") and env.use_gripper:
             neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
 
-        # Create action transition
-        action_transition = dict(transition)
-        action_transition[TransitionKey.ACTION] = neutral_action
-
-        # Add teleoperation data to complementary data
-        action_complementary_data = action_transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).copy()
-        action_complementary_data["teleop_action"] = teleop_action
-        action_complementary_data.update(teleop_events)
-        action_transition[TransitionKey.COMPLEMENTARY_DATA] = action_complementary_data
-
-        # Process action through action pipeline (handles intervention)
-        processed_action_transition = action_processor(action_transition)
-
-        # Extract processed action and metadata
-        processed_action = processed_action_transition[TransitionKey.ACTION]
-        terminate_episode = processed_action_transition.get(TransitionKey.DONE, False)
-
-        # Step environment with processed action
-        obs, reward, terminated, truncated, info = env.step(processed_action)
-
-        reward = reward + processed_action_transition[TransitionKey.REWARD]
-
-        # Process new observation
-        complementary_data = {
-            "raw_joint_positions": info.pop("raw_joint_positions"),
-            **processed_action_transition[TransitionKey.COMPLEMENTARY_DATA],
-        }
-        info.update(processed_action_transition[TransitionKey.INFO])
-
-        transition = create_transition(
-            observation=obs,
-            action=processed_action,
-            reward=reward,
-            done=terminated or terminate_episode,
-            truncated=truncated,
-            info=info,
-            complementary_data=complementary_data,
+        # Use the new step function
+        transition, terminate_episode = step_env_and_process_transition(
+            env=env,
+            transition=transition,
+            action=neutral_action,
+            teleop_device=teleop_device,
+            env_processor=env_processor,
+            action_processor=action_processor,
         )
-        transition = env_processor(transition)
         terminated = transition.get(TransitionKey.DONE, False)
         truncated = transition.get(TransitionKey.TRUNCATED, False)
 
@@ -963,38 +1049,7 @@ def replay_trajectory(env, action_processor, cfg):
 @parser.wrap()
 def main(cfg: EnvConfig):
     env, teleop_device = make_robot_env(cfg)
-    env_pipeline_steps = [
-        ImageProcessor(),
-        StateProcessor(),
-        JointVelocityProcessor(dt=1.0 / cfg.fps),
-        MotorCurrentProcessor(env=env),
-        ImageCropResizeProcessor(
-            crop_params_dict=cfg.processor.crop_params_dict, resize_size=cfg.processor.resize_size
-        ),
-        TimeLimitProcessor(max_episode_steps=int(cfg.processor.control_time_s * cfg.fps)),
-        GripperPenaltyProcessor(
-            penalty=cfg.processor.gripper_penalty, max_gripper_pos=cfg.processor.max_gripper_pos
-        ),
-        DeviceProcessor(device=cfg.device),
-    ]
-
-    env_processor = RobotProcessor(steps=env_pipeline_steps)
-
-    action_pipeline_steps = [
-        InterventionActionProcessor(
-            use_gripper=cfg.processor.use_gripper,
-        ),
-        InverseKinematicsProcessor(
-            urdf_path=cfg.processor.urdf_path,
-            target_frame_name=cfg.processor.target_frame_name,
-            end_effector_step_sizes=cfg.processor.end_effector_step_sizes,
-            end_effector_bounds=cfg.processor.end_effector_bounds,
-            max_gripper_pos=cfg.processor.max_gripper_pos,
-            env=env,
-        ),
-    ]
-
-    action_processor = RobotProcessor(steps=action_pipeline_steps)
+    env_processor, action_processor = make_processors(env, cfg)
 
     print("Environment observation space:", env.observation_space)
     print("Environment action space:", env.action_space)
