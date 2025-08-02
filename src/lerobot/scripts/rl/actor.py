@@ -62,8 +62,14 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.processor.pipeline import TransitionKey
 from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.scripts.rl.gym_manipulator import make_robot_env
+from lerobot.scripts.rl.gym_manipulator import (
+    create_transition,
+    make_processors,
+    make_robot_env,
+    step_env_and_process_transition,
+)
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import (
@@ -82,13 +88,6 @@ from lerobot.utils.transition import (
     Transition,
     move_state_dict_to_device,
     move_transition_to_device,
-)
-
-from lerobot.processor.pipeline import EnvTransition, TransitionKey
-from lerobot.scripts.rl.gym_manipulator import (
-    create_transition,
-    make_processors,
-    step_env_and_process_transition,
 )
 from lerobot.utils.utils import (
     TimerManager,
@@ -311,13 +310,13 @@ def act_with_policy(
             env_processor=env_processor,
             action_processor=action_processor,
         )
-        
+
         # Extract values from processed transition
         reward = new_transition[TransitionKey.REWARD]
         done = new_transition.get(TransitionKey.DONE, False)
         truncated = new_transition.get(TransitionKey.TRUNCATED, False)
         processed_action = new_transition[TransitionKey.ACTION]
-        
+
         sum_reward_episode += float(reward)
         episode_total_steps += 1
 
@@ -381,7 +380,7 @@ def act_with_policy(
             episode_intervention = False
             episode_intervention_steps = 0
             episode_total_steps = 0
-            
+
             # Reset environment and processors
             obs, info = online_env.reset()
             complementary_data = {"raw_joint_positions": info.pop("raw_joint_positions")}
