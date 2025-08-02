@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import DatasetFeatureType
@@ -27,6 +26,7 @@ from lerobot.processor.utils import (
     to_transition_robot_observation,
     to_transition_teleop_action,
 )
+from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
@@ -49,7 +49,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_37"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_38"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -130,7 +130,7 @@ ee_observation_features = robot_joints_to_ee_pose.aggregate_dataset_features(
     action_type=DatasetFeatureType.EE,
 )
 
-print("All dataset features: ", {**ee_action_features, **ee_observation_features})
+print("All dataset features: ", {**ee_action_features, **ee_observation_features})  # TODO(pepijn): remove
 
 
 # Create the dataset
@@ -159,37 +159,38 @@ episode_idx = 0
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
-    start_t = time.perf_counter()
-    while time.perf_counter() - start_t < EPISODE_TIME_SEC and not events["exit_early"]:
-        loop_t = time.perf_counter()
+    record_loop(
+        robot=robot,
+        events=events,
+        fps=FPS,
+        teleop=phone,
+        dataset=dataset,
+        control_time_s=EPISODE_TIME_SEC,
+        single_task=TASK_DESCRIPTION,
+        display_data=False,
+        teleop_action_processor=phone_to_robot_ee_pose,
+        robot_action_processor=robot_ee_to_joints,
+        robot_observation_processor=robot_joints_to_ee_pose,
+        to_dataset_features=to_dataset_features,
+    )
 
-        # Read
-        teleop_action = phone.get_action()
-        robot_observation = robot.get_observation()
-
-        # Run pipelines to get ee pose action
-        ee_pose_action = phone_to_robot_ee_pose(teleop_action)
-
-        print("ee_pose_action", ee_pose_action)
-
-        # Convert to joint action and send to robot
-        joints_transition = robot_ee_to_joints(ee_pose_action)
-        joints_action = robot_ee_to_joints.to_output(joints_transition)  # Call to_output to get action dict
-        robot.send_action(joints_action)
-
-        print("joints_action", joints_action)
-
-        # Run pipeline to get ee pose observation
-        ee_pose_observation = robot_joints_to_ee_pose(robot_observation)
-
-        print("ee_pose_observation", ee_pose_observation)
-
-        # Merge and write
-        frame = to_dataset_features([ee_pose_action, ee_pose_observation])
-        dataset.add_frame(frame, task=TASK_DESCRIPTION)
-
-        dt = time.perf_counter() - loop_t
-        time.sleep(max(0.0, 1.0 / FPS - dt))
+    # Reset the environment if not stopping or re-recording
+    if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
+        log_say("Reset the environment")
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=FPS,
+            teleop=phone,
+            dataset=dataset,
+            control_time_s=EPISODE_TIME_SEC,
+            single_task=TASK_DESCRIPTION,
+            display_data=False,
+            teleop_action_processor=phone_to_robot_ee_pose,
+            robot_action_processor=robot_ee_to_joints,
+            robot_observation_processor=robot_joints_to_ee_pose,
+            to_dataset_features=to_dataset_features,
+        )
 
     if events["rerecord_episode"]:
         log_say("Re-recording episode")

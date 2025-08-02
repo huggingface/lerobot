@@ -34,13 +34,15 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-# TODO(pepijn): add back record loop functionality with pipeline integration 4
-# TODO(pepijn): Fix phone teleop workings with pipeline 5
+# TODO(pepijn): use build_dataset_frame in make_to_output_dataset ?
+# TODO(pepijn): Fix phone teleop workings with pipeline 2
 
-# -----Monday----- (6,7,8)
-# TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline 6
-# TODO(pepijn): Add a bunch of tests 7
-# TODO(pepijn): Add to docs with image etc 8
+# -----Monday----- (3,4,5)
+# TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline 3
+# TODO(pepijn): Ask for feedback from Adil before writing tests 4
+# TODO(pepijn): Add a bunch of tests 5
+# ----Tuesday----- (6)
+# TODO(pepijn): Add to docs with image etc 6
 
 
 class Phone(Teleoperator):
