@@ -19,7 +19,7 @@ Provides the RealSenseCamera class for capturing frames from Intel RealSense cam
 import logging
 import time
 from threading import Event, Lock, Thread
-from typing import Any, Tuple
+from typing import Any
 
 import cv2
 import numpy as np
@@ -128,7 +128,7 @@ class RealSenseCamera(Camera):
 
         self.rs_pipeline: rs.pipeline | None = None
         self.rs_profile: rs.pipeline_profile | None = None
-        
+
         # Smart defaults: Always align depth to color, no complex filter configuration
         self.align: rs.align | None = None
 
@@ -155,12 +155,12 @@ class RealSenseCamera(Camera):
     def is_connected(self) -> bool:
         """Checks if the camera pipeline is started and streams are active."""
         return self.rs_pipeline is not None and self.rs_profile is not None
-    
+
     @property
     def depth_scale(self) -> float:
         """RealSense depth scale (millimeters)."""
         return 1.0  # RealSense provides depth in millimeters by default
-    
+
     @property
     def is_depth_aligned(self) -> bool:
         """Whether depth is aligned to color frame."""
@@ -197,7 +197,7 @@ class RealSenseCamera(Camera):
             ) from e
 
         self._configure_capture_settings()
-        
+
         # Setup depth processing if enabled (smart defaults)
         if self.use_depth:
             self._setup_depth_processing()
@@ -368,7 +368,7 @@ class RealSenseCamera(Camera):
         if not ret or frames is None:
             raise RuntimeError(f"{self} read_depth failed (status={ret}).")
 
-        # Apply alignment if enabled  
+        # Apply alignment if enabled
         if self.align:
             frames = self.align.process(frames)
 
@@ -491,28 +491,28 @@ class RealSenseCamera(Camera):
         while not self.stop_event.is_set():
             try:
                 start_time = time.perf_counter()
-                
+
                 # SINGLE hardware call for both color and depth streams
                 ret, frames = self.rs_pipeline.try_wait_for_frames(timeout_ms=500)
-                
+
                 if not ret or frames is None:
                     # No frames available - continue without error logging (normal under load)
                     continue
-                
+
                 # Apply alignment if enabled (align depth to color)
                 if self.align:
                     frames = self.align.process(frames)
-                
+
                 # Extract color frame (always present)
                 color_frame = frames.get_color_frame()
                 if not color_frame:
                     logger.debug(f"{self} no color frame in frameset")
                     continue
-                
+
                 # Process color frame using existing pipeline
                 color_image_raw = np.asanyarray(color_frame.get_data())
                 color_image = self._postprocess_image(color_image_raw)
-                
+
                 # Extract depth frame if enabled
                 depth_image = None
                 if self.use_depth:
@@ -523,15 +523,15 @@ class RealSenseCamera(Camera):
                         depth_image = self._postprocess_image(depth_image_raw, depth_frame=True)
                     else:
                         logger.debug(f"{self} no depth frame in frameset")
-                
+
                 # Thread-safe storage (atomic update of both streams)
                 with self.frame_lock:
                     self.latest_frame = color_image
                     if depth_image is not None:
                         self.latest_depth_frame = depth_image
-                
+
                 self.new_frame_event.set()
-                
+
                 # Performance monitoring
                 loop_duration_ms = (time.perf_counter() - start_time) * 1e3
                 logger.debug(f"{self} read loop: {loop_duration_ms:.1f}ms")
@@ -616,18 +616,18 @@ class RealSenseCamera(Camera):
     def async_read_rgb_and_depth(self, timeout_ms: float = 200) -> tuple[np.ndarray, np.ndarray]:
         """
         Reads both RGB and depth frames atomically from background thread.
-        
+
         This is the recommended method for depth cameras - gets both streams
         in one atomic operation following LeRobot's reliability-first approach.
-        
+
         Args:
             timeout_ms: Maximum time in milliseconds to wait for frames.
-            
+
         Returns:
             tuple[np.ndarray, np.ndarray]: (rgb_image, raw_depth)
-                - rgb_image: RGB as uint8, shape (H, W, 3) 
+                - rgb_image: RGB as uint8, shape (H, W, 3)
                 - raw_depth: Depth as uint16 millimeters, shape (H, W)
-                
+
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If depth is not enabled in configuration or frames unavailable.
@@ -635,7 +635,7 @@ class RealSenseCamera(Camera):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-            
+
         if not self.use_depth:
             raise RuntimeError(f"{self} depth not enabled in configuration. Set use_depth=True.")
 
@@ -656,36 +656,34 @@ class RealSenseCamera(Camera):
             if self.latest_frame is None:
                 self.new_frame_event.clear()
                 raise RuntimeError(f"RGB frame data not available for {self}")
-                
+
             if self.latest_depth_frame is None:
                 self.new_frame_event.clear()
                 raise RuntimeError(f"Depth frame data not available for {self}")
-            
+
             # Copy both frames atomically
             color_frame = self.latest_frame.copy()
             depth_frame = self.latest_depth_frame.copy()
-            
+
             # Clear event after successful read
             self.new_frame_event.clear()
-        
+
         return color_frame, depth_frame
 
     def async_read_depth(self, timeout_ms: float = 200) -> np.ndarray:
         """
         Convenience method for depth-only reads.
-        
+
         For efficiency, use async_read_rgb_and_depth() when both streams are needed.
-        
+
         Args:
             timeout_ms: Maximum time in milliseconds to wait for a frame.
-            
+
         Returns:
             np.ndarray: Raw depth as uint16 millimeters, shape (H, W).
         """
         _, depth = self.async_read_rgb_and_depth(timeout_ms)
         return depth
-
-
 
     def disconnect(self):
         """

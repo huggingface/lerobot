@@ -107,7 +107,7 @@ class BiSO101Leader(Teleoperator):
         # Optimized feedback parsing - single pass through dictionary
         left_feedback = {}
         right_feedback = {}
-        
+
         for key, value in feedback.items():
             if key.startswith("left_"):
                 left_feedback[key[5:]] = value  # Remove "left_" prefix (5 chars)

@@ -138,7 +138,7 @@ class Stretch3Robot(Robot):
         camera_obs = self.camera_manager.read_all(timeout_ms=200)
         for cam_key, image in camera_obs.items():
             obs_dict[f"{OBS_IMAGES}.{cam_key}"] = image
-        self.logs[f"async_read_cameras_dt_s"] = time.perf_counter() - before_camread_t
+        self.logs["async_read_cameras_dt_s"] = time.perf_counter() - before_camread_t
 
         return obs_dict
 

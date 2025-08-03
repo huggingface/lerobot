@@ -57,15 +57,15 @@ case $choice in
             --robot.id=my_bimanual \
             --robot.cameras='{
               "left_cam": {
-                "type": "intelrealsense", 
-                "serial_number_or_name": "218622270973", 
-                "width": 848, "height": 480, "fps": 30, 
+                "type": "intelrealsense",
+                "serial_number_or_name": "218622270973",
+                "width": 848, "height": 480, "fps": 30,
                 "use_depth": true
               },
               "right_cam": {
-                "type": "intelrealsense", 
-                "serial_number_or_name": "218622278797", 
-                "width": 848, "height": 480, "fps": 30, 
+                "type": "intelrealsense",
+                "serial_number_or_name": "218622278797",
+                "width": 848, "height": 480, "fps": 30,
                 "use_depth": true
               }
             }' \

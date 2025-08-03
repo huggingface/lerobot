@@ -32,7 +32,7 @@ def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
 
 def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
     """Enhanced logging with optimized depth visualization.
-    
+
     Handles:
     - Raw depth: Native rr.DepthImage() for 3D visualization
     - RGB images: Standard rr.Image() logging
@@ -49,7 +49,7 @@ def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
                 # Enhanced multi-dimensional array handling with depth support
                 if obs.endswith("_depth_raw") and is_raw_depth(val):
                     # Raw depth data - use native Rerun depth visualization
-                    rr.log(f"observation.{obs}", rr.DepthImage(val, meter=1.0/1000.0), static=True)
+                    rr.log(f"observation.{obs}", rr.DepthImage(val, meter=1.0 / 1000.0), static=True)
                 elif obs.endswith("_depth"):
                     # Skip colorized depth images to reduce clutter and improve performance
                     continue

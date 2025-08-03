@@ -18,8 +18,8 @@ import logging
 from functools import cached_property
 from typing import Any
 
-from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.cameras.camera_manager import CameraManager
+from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.robots.so101_follower import SO101Follower
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 
@@ -65,7 +65,7 @@ class BiSO101Follower(Robot):
         self.left_arm = SO101Follower(left_arm_config)
         self.right_arm = SO101Follower(right_arm_config)
         self.cameras = make_cameras_from_configs(config.cameras)
-        
+
         # Ultimate simplification - all camera complexity handled by manager
         self.camera_manager = CameraManager(self.cameras, config.cameras)
 
@@ -133,14 +133,12 @@ class BiSO101Follower(Robot):
         obs_dict.update(self.camera_manager.read_all(timeout_ms=200))
 
         return obs_dict
-    
-
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         # Optimized action parsing - avoid multiple dictionary iterations
         left_action = {}
         right_action = {}
-        
+
         for key, value in action.items():
             if key.startswith("left_"):
                 left_action[key[5:]] = value  # Remove "left_" prefix (5 chars)

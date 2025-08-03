@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def detect_realsense_cameras() -> List[str]:
+def detect_realsense_cameras() -> list[str]:
     """Detect available RealSense cameras and return their serial numbers."""
     try:
         import pyrealsense2 as rs
@@ -73,8 +73,8 @@ def detect_realsense_cameras() -> List[str]:
 
 
 def create_camera_configs(
-    serial_numbers: List[str], width: int, height: int, fps: int, use_depth: bool
-) -> Dict[str, RealSenseCameraConfig]:
+    serial_numbers: list[str], width: int, height: int, fps: int, use_depth: bool
+) -> dict[str, RealSenseCameraConfig]:
     """Create camera configurations from serial numbers."""
     configs = {}
 
@@ -100,7 +100,7 @@ class DepthCameraBenchmark:
 
         logger.info(f"Available cameras: {len(self.available_cameras)}")
 
-    def setup_cameras(self, config_subset: Dict, test_name: str) -> Tuple[Dict, CameraManager]:
+    def setup_cameras(self, config_subset: dict, test_name: str) -> tuple[dict, CameraManager]:
         """Setup cameras for testing with proper error handling."""
         try:
             logger.info(f"Setting up cameras for: {test_name}")
@@ -135,7 +135,7 @@ class DepthCameraBenchmark:
             logger.error(f"Camera setup failed for {test_name}: {e}")
             raise
 
-    def cleanup_cameras(self, camera_system: Optional[CameraManager]):
+    def cleanup_cameras(self, camera_system: CameraManager | None):
         """Safely disconnect all cameras."""
         if camera_system:
             try:
@@ -152,7 +152,7 @@ class DepthCameraBenchmark:
         test_name: str,
         timeout_ms: int = 150,
         processing_mode: str = "standard",
-    ) -> Dict:
+    ) -> dict:
         """Measure camera system performance."""
         logger.info(f"Measuring performance: {test_name} (timeout: {timeout_ms}ms)")
 
@@ -231,7 +231,7 @@ class DepthCameraBenchmark:
         logger.info(f"Results: {result['avg_fps']:.1f} Hz avg, {result['success_rate']:.1f}% success")
         return result
 
-    def _raw_camera_reads(self, camera_system: CameraManager, timeout_ms: int) -> Dict:
+    def _raw_camera_reads(self, camera_system: CameraManager, timeout_ms: int) -> dict:
         """Direct camera reads bypassing CameraManager processing."""
         observation = {}
 
@@ -246,7 +246,7 @@ class DepthCameraBenchmark:
 
         return observation
 
-    def _read_with_colorization(self, camera_system: CameraManager, timeout_ms: int) -> Dict:
+    def _read_with_colorization(self, camera_system: CameraManager, timeout_ms: int) -> dict:
         """Camera reads with depth colorization processing."""
         observation = {}
 
@@ -264,7 +264,7 @@ class DepthCameraBenchmark:
 
         return observation
 
-    def _read_with_rerun(self, camera_system: CameraManager, timeout_ms: int) -> Dict:
+    def _read_with_rerun(self, camera_system: CameraManager, timeout_ms: int) -> dict:
         """Camera reads with Rerun logging overhead."""
         try:
             import rerun as rr
