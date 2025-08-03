@@ -800,11 +800,15 @@ def make_processors(env, cfg):
             crop_params_dict=cfg.processor.crop_params_dict, resize_size=cfg.processor.resize_size
         ),
         TimeLimitProcessor(max_episode_steps=int(cfg.processor.control_time_s * cfg.fps)),
-        GripperPenaltyProcessor(
-            penalty=cfg.processor.gripper_penalty, max_gripper_pos=cfg.processor.max_gripper_pos
-        ),
-        DeviceProcessor(device=cfg.device),
     ]
+    if cfg.processor.use_gripper:
+        env_pipeline_steps.append(
+            GripperPenaltyProcessor(
+                penalty=cfg.processor.gripper_penalty, max_gripper_pos=cfg.processor.max_gripper_pos
+            )
+        )
+    env_pipeline_steps.append(DeviceProcessor(device=cfg.device))
+
     env_processor = RobotProcessor(steps=env_pipeline_steps)
 
     action_pipeline_steps = [
@@ -920,12 +924,13 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
             "action": action_features,
             "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
             "next.done": {"dtype": "bool", "shape": (1,), "names": None},
-            "complementary_info.discrete_penalty": {
+        }
+        if cfg.processor.use_gripper:
+            features["complementary_info.discrete_penalty"] = {
                 "dtype": "float32",
                 "shape": (1,),
                 "names": ["discrete_penalty"],
-            },
-        }
+            }
 
         for key, value in transition[TransitionKey.OBSERVATION].items():
             if key == "observation.state":
@@ -977,16 +982,17 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
         truncated = transition.get(TransitionKey.TRUNCATED, False)
 
         if cfg.mode == "record":
-            observations = {k: v.squeeze(0) for k, v in transition[TransitionKey.OBSERVATION].items()}
+            observations = {k: v.squeeze(0).cpu() for k, v in transition[TransitionKey.OBSERVATION].items()}
             frame = {
                 **observations,
-                "action": transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"],
+                "action": transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"].cpu(),
                 "next.reward": np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
                 "next.done": np.array([terminated or truncated], dtype=bool),
-                "complementary_info.discrete_penalty": np.array(
-                    [transition[TransitionKey.COMPLEMENTARY_DATA]["discrete_penalty"]], dtype=np.float32
-                ),
             }
+            if cfg.processor.use_gripper:
+                frame["complementary_info.discrete_penalty"] = np.array(
+                    [transition[TransitionKey.COMPLEMENTARY_DATA]["discrete_penalty"]], dtype=np.float32
+                )
             dataset.add_frame(frame, task=cfg.task)
 
         episode_step += 1
@@ -997,16 +1003,6 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
             logging.info(
                 f"Episode ended after {episode_step} steps in {episode_time:.1f}s with reward {transition[TransitionKey.REWARD]}"
             )
-
-            # Reset for new episode
-            obs, info = env.reset()
-            complementary_data = {"raw_joint_positions": info.pop("raw_joint_positions")}
-            env_processor.reset()
-            action_processor.reset()
-
-            transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
-            transition = env_processor(transition)
-
             episode_step = 0
             episode_idx += 1
 
@@ -1018,6 +1014,15 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
                 else:
                     logging.info(f"Saving episode {episode_idx}")
                     dataset.save_episode()
+
+            # Reset for new episode
+            obs, info = env.reset()
+            complementary_data = {"raw_joint_positions": info.pop("raw_joint_positions")}
+            env_processor.reset()
+            action_processor.reset()
+
+            transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
+            transition = env_processor(transition)
 
         # Maintain fps timing
         busy_wait(dt - (time.perf_counter() - step_start_time))
