@@ -27,7 +27,7 @@ Provides a single interface for robots to handle all camera complexity:
 Design principle: ANY robot gets full depth support with 1 line of code.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from .depth_utils import colorize_depth_frame
 

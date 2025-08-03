@@ -22,7 +22,7 @@ This separation allows any depth camera to use the same processing pipeline.
 """
 
 from enum import Enum
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import cv2
 import numpy as np
