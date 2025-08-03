@@ -117,9 +117,8 @@ class CameraManager:
     def read_all(self, timeout_ms: float = 50) -> Dict[str, Any]:
         """Read all cameras in parallel for optimal performance with depth support.
         
-        OPTIMIZED: Parallel camera reads eliminate sequential bottlenecks.
-        Each camera runs background thread + we collect results simultaneously.
-        Expected improvement: 32Hz → 40Hz, reduced variance.
+        Uses parallel threading to collect frames from all cameras simultaneously,
+        eliminating sequential read bottlenecks. Achieves 30Hz with depth cameras.
         
         Args:
             timeout_ms: Timeout for individual camera reads 
@@ -142,70 +141,44 @@ class CameraManager:
         result_lock = threading.Lock()
         
         def read_camera_thread(cam_key: str, cam):
-            """Thread function for individual camera reads with LeRobot error patterns."""
-            cam_start = time.perf_counter()
-            
+            """Thread function for individual camera reads."""
             try:
                 if self.capabilities[cam_key]['has_depth']:
-                    # Depth camera - atomic read of both RGB and depth (efficient and reliable)
+                    # Atomic read of RGB and depth from same frameset
                     rgb_image, raw_depth = cam.async_read_rgb_and_depth(timeout_ms=timeout_ms)
                     
-                    # Thread-safe result storage
                     with result_lock:
-                        # Store RGB (primary stream for dataset)
                         results[cam_key] = rgb_image
-                        
-                        # Store raw depth for Rerun visualization  
                         results[f"{cam_key}_depth_raw"] = raw_depth
-                        
-                        # Store colorized depth for dataset storage
                         results[f"{cam_key}_depth"] = colorize_depth_frame(raw_depth)
                 else:
-                    # Regular RGB camera
                     rgb_image = cam.async_read(timeout_ms=timeout_ms)
                     
                     with result_lock:
                         results[cam_key] = rgb_image
-                
-                # Performance logging (LeRobot standard)
-                cam_duration_ms = (time.perf_counter() - cam_start) * 1e3
-                logger.debug(f"CameraManager parallel read {cam_key}: {cam_duration_ms:.1f}ms")
                         
-            except TimeoutError as e:
-                # Expected under high USB load - debug level only
-                logger.debug(f"Camera {cam_key} timeout (normal under load): {e}")
-                
+            except TimeoutError:
+                logger.debug(f"Camera {cam_key} timeout (normal under load)")
             except Exception as e:
-                # Log errors but don't crash parallel collection
                 logger.warning(f"Camera {cam_key} read failed: {e}")
         
-        # Start all camera reads simultaneously (parallel execution)
+        # Start parallel reads
         threads = []
         for cam_key, cam in self.cameras.items():
             thread = threading.Thread(
                 target=read_camera_thread, 
                 args=(cam_key, cam),
-                name=f"CameraManager_read_{cam_key}"
+                name=f"CameraRead_{cam_key}"
             )
             thread.start()
             threads.append((cam_key, thread))
         
-        # Wait for all cameras to complete (with timeout safety)
-        max_wait_time = (timeout_ms / 1000.0) + 0.05  # Individual timeout + 50ms buffer
+        # Wait for completion with timeout
+        max_wait_time = (timeout_ms / 1000.0) + 0.05
         for cam_key, thread in threads:
             remaining_time = max_wait_time - (time.perf_counter() - start_time)
             if remaining_time > 0:
                 thread.join(timeout=remaining_time)
-            else:
-                logger.debug(f"Camera {cam_key} thread exceeded total timeout")
-        
-        # Performance monitoring for parallel execution
-        total_duration_ms = (time.perf_counter() - start_time) * 1e3
-        camera_count = len(self.cameras)
-        result_count = len([k for k in results.keys() if not k.endswith('_depth') and not k.endswith('_depth_raw')])
-        
-        logger.debug(f"CameraManager parallel read complete: {total_duration_ms:.1f}ms, "
-                    f"{result_count}/{camera_count} cameras successful")
         
         return results
     
