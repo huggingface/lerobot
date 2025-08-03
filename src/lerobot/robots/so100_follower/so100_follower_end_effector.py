@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.cameras import make_cameras_from_configs
+from lerobot.cameras.camera_manager import create_camera_system
 from lerobot.errors import DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.motors import Motor, MotorNormMode
@@ -58,7 +58,7 @@ class SO100FollowerEndEffector(SO100Follower):
             calibration=self.calibration,
         )
 
-        self.cameras = make_cameras_from_configs(config.cameras)
+        self.camera_manager = create_camera_system(config.cameras)
 
         self.config = config
 
@@ -186,12 +186,8 @@ class SO100FollowerEndEffector(SO100Follower):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
-        # Capture images from cameras
-        for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+        # Capture images from cameras with depth support
+        obs_dict.update(self.camera_manager.read_all(timeout_ms=200))
 
         return obs_dict
 

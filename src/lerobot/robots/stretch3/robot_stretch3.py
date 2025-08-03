@@ -21,7 +21,7 @@ from stretch_body.gamepad_teleop import GamePadTeleop
 from stretch_body.robot import Robot as StretchAPI
 from stretch_body.robot_params import RobotParams
 
-from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.cameras.camera_manager import create_camera_system
 from lerobot.constants import OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import get_nested_item
 
@@ -58,7 +58,7 @@ class Stretch3Robot(Robot):
         self.robot_type = self.config.type
 
         self.api = StretchAPI()
-        self.cameras = make_cameras_from_configs(config.cameras)
+        self.camera_manager = create_camera_system(config.cameras)
 
         self.is_connected = False
         self.logs = {}
@@ -87,9 +87,10 @@ class Stretch3Robot(Robot):
     @property
     def camera_features(self) -> dict[str, dict]:
         cam_ft = {}
-        for cam_key, cam in self.cameras.items():
+        features = self.camera_manager.get_features()
+        for cam_key, shape in features.items():
             cam_ft[cam_key] = {
-                "shape": (cam.height, cam.width, cam.channels),
+                "shape": shape,
                 "names": ["height", "width", "channels"],
                 "info": None,
             }
@@ -101,9 +102,8 @@ class Stretch3Robot(Robot):
             print("Another process is already using Stretch. Try running 'stretch_free_robot_process.py'")
             raise ConnectionError()
 
-        for cam in self.cameras.values():
-            cam.connect()
-            self.is_connected = self.is_connected and cam.is_connected
+        self.camera_manager.connect_all()
+        self.is_connected = self.is_connected and self.camera_manager.is_all_connected
 
         if not self.is_connected:
             print("Could not connect to the cameras, check that all cameras are plugged-in.")
@@ -133,12 +133,12 @@ class Stretch3Robot(Robot):
         state = np.asarray(list(state.values()))
         obs_dict[OBS_STATE] = state
 
-        # Capture images from cameras
-        for cam_key, cam in self.cameras.items():
-            before_camread_t = time.perf_counter()
-            obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
-            self.logs[f"read_camera_{cam_key}_dt_s"] = cam.logs["delta_timestamp_s"]
-            self.logs[f"async_read_camera_{cam_key}_dt_s"] = time.perf_counter() - before_camread_t
+        # Capture images from cameras with depth support
+        before_camread_t = time.perf_counter()
+        camera_obs = self.camera_manager.read_all(timeout_ms=200)
+        for cam_key, image in camera_obs.items():
+            obs_dict[f"{OBS_IMAGES}.{cam_key}"] = image
+        self.logs[f"async_read_cameras_dt_s"] = time.perf_counter() - before_camread_t
 
         return obs_dict
 
@@ -178,7 +178,6 @@ class Stretch3Robot(Robot):
             self.teleop.gamepad_controller.stop()
             self.teleop.stop()
 
-        for cam in self.cameras.values():
-            cam.disconnect()
+        self.camera_manager.disconnect_all()
 
         self.is_connected = False

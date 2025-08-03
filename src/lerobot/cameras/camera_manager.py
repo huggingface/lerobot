@@ -287,14 +287,30 @@ class FutureRawDepthConfig:
         return observation
 
 
-def create_camera_manager(cameras: dict, camera_configs: dict) -> CameraManager:
-    """Factory function for creating camera managers.
+def create_camera_system(camera_configs: dict):
+    """Factory function to create a complete camera system.
+    
+    Convenience function that handles camera creation and manager setup.
+    Equivalent to:
+        cameras = make_cameras_from_configs(camera_configs)
+        return CameraManager(cameras, camera_configs)
     
     Args:
-        cameras: Dictionary of camera instances
-        camera_configs: Dictionary of camera configurations
+        camera_configs: Dictionary mapping camera names to configurations
         
     Returns:
-        Configured CameraManager instance
+        CameraManager: Configured camera management system with depth support
+        
+    Example:
+        camera_system = create_camera_system({
+            "left_cam": RealSenseCameraConfig(use_depth=True),
+            "right_cam": OpenCVCameraConfig()
+        })
+        
+        # Use in robot:
+        obs_dict.update(camera_system.read_all())
     """
+    from .utils import make_cameras_from_configs
+    
+    cameras = make_cameras_from_configs(camera_configs)
     return CameraManager(cameras, camera_configs)

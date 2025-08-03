@@ -19,7 +19,7 @@ import time
 from functools import cached_property
 from typing import Any
 
-from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.cameras.camera_manager import create_camera_system
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -58,7 +58,7 @@ class SO101Follower(Robot):
             },
             calibration=self.calibration,
         )
-        self.cameras = make_cameras_from_configs(config.cameras)
+        self.camera_manager = create_camera_system(config.cameras)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -66,9 +66,7 @@ class SO101Follower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
+        return self.camera_manager.get_features()
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -80,7 +78,7 @@ class SO101Follower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
+        return self.bus.is_connected and self.camera_manager.is_all_connected
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -97,8 +95,7 @@ class SO101Follower(Robot):
             )
             self.calibrate()
 
-        for cam in self.cameras.values():
-            cam.connect()
+        self.camera_manager.connect_all()
 
         self.configure()
         logger.info(f"{self} connected.")
@@ -177,12 +174,8 @@ class SO101Follower(Robot):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
-        # Capture images from cameras
-        for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+        # Capture images from cameras with depth support
+        obs_dict.update(self.camera_manager.read_all(timeout_ms=200))
 
         return obs_dict
 
@@ -224,7 +217,6 @@ class SO101Follower(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
-        for cam in self.cameras.values():
-            cam.disconnect()
+        self.camera_manager.disconnect_all()
 
         logger.info(f"{self} disconnected.")
