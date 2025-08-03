@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
-from lerobot.cameras import CameraConfig, make_cameras_from_configs
+from lerobot.cameras import CameraConfig
+from lerobot.cameras.camera_manager import create_camera_system
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.robots import Robot, RobotConfig
 
@@ -43,9 +44,6 @@ class MockRobotConfig(RobotConfig):
         if self.static_values is not None and len(self.static_values) != self.n_motors:
             raise ValueError("Specify the same number of static values as motors")
 
-        if len(self.cameras) > 0:
-            raise NotImplementedError  # TODO with the cameras refactor
-
 
 class MockRobot(Robot):
     """Mock Robot to be used for testing."""
@@ -59,7 +57,10 @@ class MockRobot(Robot):
         self._is_connected = False
         self._is_calibrated = config.calibrated
         self.motors = [f"motor_{i + 1}" for i in range(config.n_motors)]
-        self.cameras = make_cameras_from_configs(config.cameras)
+        if config.cameras:
+            self.camera_manager = create_camera_system(config.cameras)
+        else:
+            self.camera_manager = None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -67,8 +68,11 @@ class MockRobot(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
+        if self.camera_manager is None:
+            return {}
         return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
+            for cam in self.camera_manager.cameras
         }
 
     @cached_property

@@ -104,15 +104,101 @@ def test_read():
     assert isinstance(img, np.ndarray)
 
 
-# TODO(Steven): Fix this test for the latest version of pyrealsense2.
-@pytest.mark.skip("Skipping test: pyrealsense2 version > 2.55.1.6486")
 def test_read_depth():
     config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, use_depth=True)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
-    img = camera.read_depth(timeout_ms=2000)  # NOTE(Steven): Reading depth takes longer in CI environments.
-    assert isinstance(img, np.ndarray)
+    try:
+        depth = camera.read_depth(
+            timeout_ms=2000
+        )  # NOTE(Steven): Reading depth takes longer in CI environments.
+        assert isinstance(depth, np.ndarray)
+        assert depth.dtype == np.uint16  # Depth should be uint16 millimeters
+        assert depth.shape[:2] == (480, 640)  # Should match camera resolution
+    finally:
+        if camera.is_connected:
+            camera.disconnect()
+
+
+def test_async_read_rgb_and_depth():
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, use_depth=True)
+    camera = RealSenseCamera(config)
+    camera.connect(warmup=False)
+
+    try:
+        rgb, depth = camera.async_read_rgb_and_depth(timeout_ms=2000)
+
+        assert isinstance(rgb, np.ndarray)
+        assert isinstance(depth, np.ndarray)
+
+        # Check RGB properties
+        assert rgb.dtype == np.uint8
+        assert rgb.shape == (480, 640, 3)
+
+        # Check depth properties
+        assert depth.dtype == np.uint16  # Depth in millimeters
+        assert depth.shape == (480, 640)
+    finally:
+        if camera.is_connected:
+            camera.disconnect()
+
+
+def test_depth_configuration_disabled():
+    """Test that depth methods fail when use_depth=False."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", use_depth=False)
+    camera = RealSenseCamera(config)
+    camera.connect(warmup=False)
+
+    try:
+        with pytest.raises(RuntimeError, match="depth not enabled in configuration"):
+            camera.async_read_rgb_and_depth()
+
+        with pytest.raises(RuntimeError, match="depth not enabled in configuration"):
+            camera.read_depth()
+    finally:
+        if camera.is_connected:
+            camera.disconnect()
+
+
+def test_depth_properties():
+    """Test depth-related properties."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", use_depth=True)
+    camera = RealSenseCamera(config)
+    camera.connect(warmup=False)
+
+    try:
+        # Test depth scale (should be 1.0 for millimeters)
+        assert camera.depth_scale == 1.0
+
+        # Test depth alignment (should be True when depth is enabled)
+        assert camera.is_depth_aligned is True
+
+        # Test use_depth property
+        assert camera.use_depth is True
+    finally:
+        if camera.is_connected:
+            camera.disconnect()
+
+
+def test_depth_properties_disabled():
+    """Test depth properties when depth is disabled."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", use_depth=False)
+    camera = RealSenseCamera(config)
+    camera.connect(warmup=False)
+
+    try:
+        # Test use_depth property
+        assert camera.use_depth is False
+
+        # Depth scale should still be available
+        assert camera.depth_scale == 1.0
+
+        # Alignment should be False when depth is disabled
+        assert camera.is_depth_aligned is False
+    finally:
+        if camera.is_connected:
+            camera.disconnect()
 
 
 def test_read_before_connect():
