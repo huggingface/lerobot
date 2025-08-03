@@ -16,9 +16,6 @@
 
 from dataclasses import dataclass, field
 
-import numpy as np
-from scipy.spatial.transform import Rotation
-
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
@@ -49,8 +46,7 @@ class MapPhoneActionToRobotAction(ActionProcessor):
     """
 
     platform: PhoneOS
-    _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
-    _last_rot: Rotation | None = field(default=None, init=False, repr=False)
+    _enabled_prev: bool = field(default=False, init=False, repr=False)
 
     def action(self, act: dict | None) -> dict:
         # Pop them from the action
@@ -62,17 +58,7 @@ class MapPhoneActionToRobotAction(ActionProcessor):
         if pos is None or rot is None:
             return act
 
-        # Compute per-frame deltas in the phone frame
-        if self._last_pos is None or self._last_rot is None:
-            dpos = np.zeros(3)
-            drot = Rotation.identity()
-        else:
-            dpos = pos - self._last_pos
-            drot = self._last_rot.inv() * rot
-
-        self._last_pos, self._last_rot = pos, rot
-
-        rotvec = drot.as_rotvec()
+        rotvec = rot.as_rotvec()  # Absolute orientation as rotvec
 
         # Map certain inputs to certain actions
         if self.platform == PhoneOS.IOS:
@@ -89,12 +75,12 @@ class MapPhoneActionToRobotAction(ActionProcessor):
         act.update(
             {
                 "action.enabled": enabled,
-                "action.target_x": -dpos[1] if enabled else 0.0,
-                "action.target_y": dpos[0] if enabled else 0.0,
-                "action.target_z": dpos[2] if enabled else 0.0,
-                "action.target_wx": rotvec[0] if enabled else 0.0,
-                "action.target_wy": rotvec[1] if enabled else 0.0,
-                "action.target_wz": rotvec[2] if enabled else 0.0,
+                "action.target_x": -pos[1] if enabled else 0.0,
+                "action.target_y": pos[0] if enabled else 0.0,
+                "action.target_z": pos[2] if enabled else 0.0,
+                "action.target_wx": rotvec[1] if enabled else 0.0,
+                "action.target_wy": rotvec[0] if enabled else 0.0,
+                "action.target_wz": -rotvec[2] if enabled else 0.0,
                 "action.gripper": gripper,  # Still send gripper action when disabled
                 "action.x": x if enabled else 0.0,
                 "action.y": y if enabled else 0.0,
@@ -102,7 +88,3 @@ class MapPhoneActionToRobotAction(ActionProcessor):
             }
         )
         return act
-
-    def reset(self):
-        self._last_pos = None
-        self._last_rot = None

@@ -49,7 +49,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_40"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_55"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -167,7 +167,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
-        display_data=False,
+        display_data=True,
         teleop_action_processor=phone_to_robot_ee_pose,
         robot_action_processor=robot_ee_to_joints,
         robot_observation_processor=robot_joints_to_ee_pose,
@@ -183,9 +183,9 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             fps=FPS,
             teleop=phone,
             dataset=dataset,
-            control_time_s=EPISODE_TIME_SEC,
+            control_time_s=RESET_TIME_SEC,
             single_task=TASK_DESCRIPTION,
-            display_data=False,
+            display_data=True,
             teleop_action_processor=phone_to_robot_ee_pose,
             robot_action_processor=robot_ee_to_joints,
             robot_observation_processor=robot_joints_to_ee_pose,

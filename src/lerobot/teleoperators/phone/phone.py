@@ -34,7 +34,8 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-# TODO(pepijn): Fix phone teleop workings with pipeline 1
+# TODO(pepijn): Fix rerun visualization 1
+# TODO(pepijn): Make gripper work for Android and Ios 1
 
 # -----Monday----- (2,3,4)
 # TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline 2

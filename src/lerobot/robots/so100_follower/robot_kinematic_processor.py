@@ -54,11 +54,14 @@ class EEReferenceAndDelta:
     end_effector_step_sizes: dict
     motor_names: list[str]
 
+    reference_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
+    _prev_enabled: bool = field(default=False, init=False, repr=False)
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         act = transition.get(TransitionKey.ACTION) or {}
         comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
-        # get joint positions from complimentary data
+        # Get joint positions from complimentary data
         raw = comp.get("raw_joint_positions", None)
         if raw is None:
             raise ValueError(
@@ -67,7 +70,7 @@ class EEReferenceAndDelta:
 
         q = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
 
-        # current pose from FK on measured joints
+        # Current pose from FK on measured joints
         t_curr = self.kinematics.forward_kinematics(q)
 
         enabled = bool(act.pop("action.enabled", 0))
@@ -78,8 +81,13 @@ class EEReferenceAndDelta:
         wy = float(act.pop("action.target_wy", 0.0))
         wz = float(act.pop("action.target_wz", 0.0))
 
-        new_act = dict(act)
         if enabled:
+            # Latch reference on first enabled frame
+            if not self._prev_enabled:
+                self.reference_ee_pose = t_curr.copy()
+
+            ref = self.reference_ee_pose
+
             delta_p = np.array(
                 [
                     tx * self.end_effector_step_sizes["x"],
@@ -87,30 +95,41 @@ class EEReferenceAndDelta:
                     tz * self.end_effector_step_sizes["z"],
                 ]
             )
-            r_delta = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+            r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
 
-            t_des = np.eye(4)
-            t_des[:3, :3] = t_curr[:3, :3] @ r_delta
-            t_des[:3, 3] = t_curr[:3, 3] + delta_p
+            # Desired pose relative to the reference (anchored) pose
+            t_des = np.eye(4, dtype=float)
+            t_des[:3, :3] = ref[:3, :3] @ r_abs
+            t_des[:3, 3] = ref[:3, 3] + delta_p
 
             # Add as absolute desired pose as scalars (pos + twist)
             pos = t_des[:3, 3]
             tw = Rotation.from_matrix(t_des[:3, :3]).as_rotvec()
-            new_act["action.ee.x"] = float(pos[0])
-            new_act["action.ee.y"] = float(pos[1])
-            new_act["action.ee.z"] = float(pos[2])
-            new_act["action.ee.wx"] = float(tw[0])
-            new_act["action.ee.wy"] = float(tw[1])
-            new_act["action.ee.wz"] = float(tw[2])
-        else:
-            new_act["action.ee.x"] = None
-            new_act["action.ee.y"] = None
-            new_act["action.ee.z"] = None
-            new_act["action.ee.wx"] = None
-            new_act["action.ee.wy"] = None
-            new_act["action.ee.wz"] = None
 
-        transition[TransitionKey.ACTION] = new_act
+            act.update(
+                {
+                    "action.ee.x": float(pos[0]),
+                    "action.ee.y": float(pos[1]),
+                    "action.ee.z": float(pos[2]),
+                    "action.ee.wx": float(tw[0]),
+                    "action.ee.wy": float(tw[1]),
+                    "action.ee.wz": float(tw[2]),
+                }
+            )
+        else:
+            act.update(
+                {
+                    "action.ee.x": None,
+                    "action.ee.y": None,
+                    "action.ee.z": None,
+                    "action.ee.wx": None,
+                    "action.ee.wy": None,
+                    "action.ee.wz": None,
+                }
+            )
+
+        self._prev_enabled = enabled
+        transition[TransitionKey.ACTION] = act
         return transition
 
 
@@ -135,7 +154,6 @@ class EEBoundsAndSafety(ActionProcessor):
     max_ee_step_m: float = 0.05
     max_ee_twist_step_rad: float = 0.20
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
-    _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def action(self, act: dict | None) -> dict:
         x = act.pop("action.ee.x", None)
@@ -154,21 +172,13 @@ class EEBoundsAndSafety(ActionProcessor):
         # clip position
         pos = np.clip(pos, self.end_effector_bounds["min"], self.end_effector_bounds["max"])
 
-        # check for jumps in position
+        # Check for jumps in position
         if self._last_pos is not None:
             dpos = pos - self._last_pos
             n = float(np.linalg.norm(dpos))
             if n > self.max_ee_step_m and n > 0:
                 pos = self._last_pos + dpos * (self.max_ee_step_m / n)
                 raise ValueError(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
-
-        # check for jumps in twist
-        if self._last_twist is not None:
-            dtw = twist - self._last_twist
-            n = float(np.linalg.norm(dtw))
-            if n > self.max_ee_twist_step_rad and n > 0:
-                twist = self._last_twist + dtw * (self.max_ee_twist_step_rad / n)
-                raise ValueError(f"EE twist jump {n:.3f}rad > {self.max_ee_twist_step_rad}rad")
 
         self._last_pos = pos
         self._last_twist = twist
@@ -187,7 +197,6 @@ class EEBoundsAndSafety(ActionProcessor):
 
     def reset(self):
         self._last_pos = None
-        self._last_twist = None
 
     def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # Because this is last step we specify the dataset features of this step that we want to be stored in the dataset
