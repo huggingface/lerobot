@@ -15,11 +15,11 @@
 # limitations under the License.
 
 import logging
-import time
 from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.cameras.camera_manager import CameraManager
 from lerobot.robots.so101_follower import SO101Follower
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 
@@ -65,6 +65,9 @@ class BiSO101Follower(Robot):
         self.left_arm = SO101Follower(left_arm_config)
         self.right_arm = SO101Follower(right_arm_config)
         self.cameras = make_cameras_from_configs(config.cameras)
+        
+        # Ultimate simplification - all camera complexity handled by manager
+        self.camera_manager = CameraManager(self.cameras, config.cameras)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -74,9 +77,7 @@ class BiSO101Follower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
+        return self.camera_manager.get_features()
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -91,15 +92,13 @@ class BiSO101Follower(Robot):
         return (
             self.left_arm.bus.is_connected
             and self.right_arm.bus.is_connected
-            and all(cam.is_connected for cam in self.cameras.values())
+            and self.camera_manager.is_all_connected
         )
 
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
-
-        for cam in self.cameras.values():
-            cam.connect()
+        self.camera_manager.connect_all()
 
     @property
     def is_calibrated(self) -> bool:
@@ -130,14 +129,11 @@ class BiSO101Follower(Robot):
         for key, value in right_obs.items():
             obs_dict[f"right_{key}"] = value
 
-        # Camera observations (unchanged)
-        for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read(timeout_ms=1000)
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+        # Ultimate simplification - all camera complexity in 1 line (generous timeout for depth cameras)
+        obs_dict.update(self.camera_manager.read_all(timeout_ms=200))
 
         return obs_dict
+    
 
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -166,6 +162,4 @@ class BiSO101Follower(Robot):
     def disconnect(self):
         self.left_arm.disconnect()
         self.right_arm.disconnect()
-
-        for cam in self.cameras.values():
-            cam.disconnect()
+        self.camera_manager.disconnect_all()

@@ -58,6 +58,12 @@ class RealSenseCameraConfig(CameraConfig):
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
+    
+    # TODO: Future raw depth storage configuration
+    # store_colorized_depth: bool = True  # For future raw depth dataset support
+    
+    # Smart defaults: Always align depth, use global colorization (JET, 200-5000mm)
+    # No configuration options - consistent behavior across all cameras
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
