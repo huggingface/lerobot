@@ -78,7 +78,7 @@ from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
-from lerobot.processor.utils import make_to_output_dataset
+from lerobot.processor.utils import to_dataset_frame
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -243,7 +243,7 @@ def record_loop(
         robot_observation_processor.reset()
 
     if dataset is not None and to_dataset_features is None:
-        to_dataset_features = make_to_output_dataset(dataset.features)
+        to_dataset_features = to_dataset_frame(dataset.features)
 
     timestamp = 0
     start_episode_t = time.perf_counter()

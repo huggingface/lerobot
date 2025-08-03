@@ -21,7 +21,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.pipeline import RobotProcessor
 from lerobot.processor.utils import (
-    make_to_output_dataset,
+    to_dataset_frame,
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
@@ -49,7 +49,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_38"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_40"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -144,7 +144,7 @@ dataset = LeRobotDataset.create(
 )
 
 # Create a function to convert the pipelines output to the dataset format using the expected features
-to_dataset_features = make_to_output_dataset(dataset.features)
+to_dataset_features = to_dataset_frame(dataset.features)
 
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
