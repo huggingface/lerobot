@@ -102,7 +102,7 @@ class CameraManager:
         """
         features = {}
 
-        for cam_name, cam in self.cameras.items():
+        for cam_name, _cam in self.cameras.items():
             cam_config = self.camera_configs[cam_name]
 
             # RGB stream (always present)
@@ -173,7 +173,7 @@ class CameraManager:
 
         # Wait for completion with timeout
         max_wait_time = (timeout_ms / 1000.0) + 0.05
-        for cam_key, thread in threads:
+        for _cam_key, thread in threads:
             remaining_time = max_wait_time - (time.perf_counter() - start_time)
             if remaining_time > 0:
                 thread.join(timeout=remaining_time)
