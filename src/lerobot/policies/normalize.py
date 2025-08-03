@@ -24,6 +24,7 @@ def create_stats_buffers(
     features: dict[str, PolicyFeature],
     norm_map: dict[str, NormalizationMode],
     stats: dict[str, dict[str, Tensor]] | None = None,
+    dtype: torch.dtype = torch.float32,
 ) -> dict[str, dict[str, nn.ParameterDict]]:
     """
     Create buffers per modality (e.g. "observation.image", "action") containing their mean, std, min, max
@@ -60,8 +61,8 @@ def create_stats_buffers(
 
         buffer = {}
         if norm_mode is NormalizationMode.MEAN_STD:
-            mean = torch.ones(shape, dtype=torch.float32) * torch.inf
-            std = torch.ones(shape, dtype=torch.float32) * torch.inf
+            mean = torch.ones(shape, dtype=dtype) * torch.inf
+            std = torch.ones(shape, dtype=dtype) * torch.inf
             buffer = nn.ParameterDict(
                 {
                     "mean": nn.Parameter(mean, requires_grad=False),
@@ -69,8 +70,8 @@ def create_stats_buffers(
                 }
             )
         elif norm_mode is NormalizationMode.MIN_MAX:
-            min = torch.ones(shape, dtype=torch.float32) * torch.inf
-            max = torch.ones(shape, dtype=torch.float32) * torch.inf
+            min = torch.ones(shape, dtype=dtype) * torch.inf
+            max = torch.ones(shape, dtype=dtype) * torch.inf
             buffer = nn.ParameterDict(
                 {
                     "min": nn.Parameter(min, requires_grad=False),
@@ -82,22 +83,22 @@ def create_stats_buffers(
         if stats:
             if isinstance(stats[key]["mean"], np.ndarray):
                 if norm_mode is NormalizationMode.MEAN_STD:
-                    buffer["mean"].data = torch.from_numpy(stats[key]["mean"]).to(dtype=torch.float32)
-                    buffer["std"].data = torch.from_numpy(stats[key]["std"]).to(dtype=torch.float32)
+                    buffer["mean"].data = torch.from_numpy(stats[key]["mean"]).to(dtype=dtype)
+                    buffer["std"].data = torch.from_numpy(stats[key]["std"]).to(dtype=dtype)
                 elif norm_mode is NormalizationMode.MIN_MAX:
-                    buffer["min"].data = torch.from_numpy(stats[key]["min"]).to(dtype=torch.float32)
-                    buffer["max"].data = torch.from_numpy(stats[key]["max"]).to(dtype=torch.float32)
+                    buffer["min"].data = torch.from_numpy(stats[key]["min"]).to(dtype=dtype)
+                    buffer["max"].data = torch.from_numpy(stats[key]["max"]).to(dtype=dtype)
             elif isinstance(stats[key]["mean"], torch.Tensor):
                 # Note: The clone is needed to make sure that the logic in save_pretrained doesn't see duplicated
                 # tensors anywhere (for example, when we use the same stats for normalization and
                 # unnormalization). See the logic here
                 # https://github.com/huggingface/safetensors/blob/079781fd0dc455ba0fe851e2b4507c33d0c0d407/bindings/python/py_src/safetensors/torch.py#L97.
                 if norm_mode is NormalizationMode.MEAN_STD:
-                    buffer["mean"].data = stats[key]["mean"].clone().to(dtype=torch.float32)
-                    buffer["std"].data = stats[key]["std"].clone().to(dtype=torch.float32)
+                    buffer["mean"].data = stats[key]["mean"].clone().to(dtype=dtype)
+                    buffer["std"].data = stats[key]["std"].clone().to(dtype=dtype)
                 elif norm_mode is NormalizationMode.MIN_MAX:
-                    buffer["min"].data = stats[key]["min"].clone().to(dtype=torch.float32)
-                    buffer["max"].data = stats[key]["max"].clone().to(dtype=torch.float32)
+                    buffer["min"].data = stats[key]["min"].clone().to(dtype=dtype)
+                    buffer["max"].data = stats[key]["max"].clone().to(dtype=dtype)
             else:
                 type_ = type(stats[key]["mean"])
                 raise ValueError(f"np.ndarray or torch.Tensor expected, but type is '{type_}' instead.")
@@ -121,6 +122,7 @@ class Normalize(nn.Module):
         features: dict[str, PolicyFeature],
         norm_map: dict[str, NormalizationMode],
         stats: dict[str, dict[str, Tensor]] | None = None,
+        dtype: torch.dtype = torch.float32,
     ):
         """
         Args:
@@ -144,7 +146,7 @@ class Normalize(nn.Module):
         self.features = features
         self.norm_map = norm_map
         self.stats = stats
-        stats_buffers = create_stats_buffers(features, norm_map, stats)
+        stats_buffers = create_stats_buffers(features, norm_map, stats, dtype)
         for key, buffer in stats_buffers.items():
             setattr(self, "buffer_" + key.replace(".", "_"), buffer)
 
@@ -195,6 +197,7 @@ class Unnormalize(nn.Module):
         features: dict[str, PolicyFeature],
         norm_map: dict[str, NormalizationMode],
         stats: dict[str, dict[str, Tensor]] | None = None,
+        dtype: torch.dtype = torch.float32,
     ):
         """
         Args:
@@ -219,7 +222,7 @@ class Unnormalize(nn.Module):
         self.norm_map = norm_map
         self.stats = stats
         # `self.buffer_observation_state["mean"]` contains `torch.tensor(state_dim)`
-        stats_buffers = create_stats_buffers(features, norm_map, stats)
+        stats_buffers = create_stats_buffers(features, norm_map, stats, dtype)
         for key, buffer in stats_buffers.items():
             setattr(self, "buffer_" + key.replace(".", "_"), buffer)
 
@@ -262,6 +265,7 @@ def _initialize_stats_buffers(
     features: dict[str, PolicyFeature],
     norm_map: dict[str, NormalizationMode],
     stats: dict[str, dict[str, Tensor]] | None = None,
+    dtype: torch.dtype = torch.float32,
 ) -> None:
     """Register statistics buffers (mean/std or min/max) on the given *module*.
 
@@ -282,8 +286,8 @@ def _initialize_stats_buffers(
         prefix = key.replace(".", "_")
 
         if norm_mode is NormalizationMode.MEAN_STD:
-            mean = torch.full(shape, torch.inf, dtype=torch.float32)
-            std = torch.full(shape, torch.inf, dtype=torch.float32)
+            mean = torch.full(shape, torch.inf, dtype=dtype)
+            std = torch.full(shape, torch.inf, dtype=dtype)
 
             if stats and key in stats and "mean" in stats[key] and "std" in stats[key]:
                 mean_data = stats[key]["mean"]
@@ -293,8 +297,8 @@ def _initialize_stats_buffers(
                     # tensors anywhere (for example, when we use the same stats for normalization and
                     # unnormalization). See the logic here
                     # https://github.com/huggingface/safetensors/blob/079781fd0dc455ba0fe851e2b4507c33d0c0d407/bindings/python/py_src/safetensors/torch.py#L97.
-                    mean = mean_data.clone().to(dtype=torch.float32)
-                    std = std_data.clone().to(dtype=torch.float32)
+                    mean = mean_data.clone().to(dtype=dtype)
+                    std = std_data.clone().to(dtype=dtype)
                 else:
                     raise ValueError(f"Unsupported stats type for key '{key}' (expected ndarray or Tensor).")
 
@@ -303,15 +307,15 @@ def _initialize_stats_buffers(
             continue
 
         if norm_mode is NormalizationMode.MIN_MAX:
-            min_val = torch.full(shape, torch.inf, dtype=torch.float32)
-            max_val = torch.full(shape, torch.inf, dtype=torch.float32)
+            min_val = torch.full(shape, torch.inf, dtype=dtype)
+            max_val = torch.full(shape, torch.inf, dtype=dtype)
 
             if stats and key in stats and "min" in stats[key] and "max" in stats[key]:
                 min_data = stats[key]["min"]
                 max_data = stats[key]["max"]
                 if isinstance(min_data, torch.Tensor):
-                    min_val = min_data.clone().to(dtype=torch.float32)
-                    max_val = max_data.clone().to(dtype=torch.float32)
+                    min_val = min_data.clone().to(dtype=dtype)
+                    max_val = max_data.clone().to(dtype=dtype)
                 else:
                     raise ValueError(f"Unsupported stats type for key '{key}' (expected ndarray or Tensor).")
 
@@ -330,12 +334,13 @@ class NormalizeBuffer(nn.Module):
         features: dict[str, PolicyFeature],
         norm_map: dict[str, NormalizationMode],
         stats: dict[str, dict[str, Tensor]] | None = None,
+        dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
         self.features = features
         self.norm_map = norm_map
 
-        _initialize_stats_buffers(self, features, norm_map, stats)
+        _initialize_stats_buffers(self, features, norm_map, stats, dtype)
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)
@@ -379,12 +384,13 @@ class UnnormalizeBuffer(nn.Module):
         features: dict[str, PolicyFeature],
         norm_map: dict[str, NormalizationMode],
         stats: dict[str, dict[str, Tensor]] | None = None,
+        dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
         self.features = features
         self.norm_map = norm_map
 
-        _initialize_stats_buffers(self, features, norm_map, stats)
+        _initialize_stats_buffers(self, features, norm_map, stats, dtype)
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         # batch = dict(batch)

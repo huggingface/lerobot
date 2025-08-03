@@ -673,19 +673,19 @@ class VLAFlowMatching(nn.Module):
         for params in self.state_proj.parameters():
             params.requires_grad = self.config.train_state_proj
 
-    def sample_noise(self, shape, device):
+    def sample_noise(self, shape, device, dtype):
         noise = torch.normal(
             mean=0.0,
             std=1.0,
             size=shape,
-            dtype=torch.float32,
+            dtype=dtype,
             device=device,
         )
         return noise
 
-    def sample_time(self, bsize, device):
+    def sample_time(self, bsize, device, dtype):
         beta_dist = torch.distributions.Beta(concentration1=1.5, concentration0=1.0)
-        time_beta = beta_dist.sample((bsize,)).to(device=device, dtype=torch.float32)
+        time_beta = beta_dist.sample((bsize,)).to(device=device, dtype=dtype)
         time = time_beta * 0.999 + 0.001
         return time
 
@@ -831,10 +831,10 @@ class VLAFlowMatching(nn.Module):
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         if noise is None:
-            noise = self.sample_noise(actions.shape, actions.device)
+            noise = self.sample_noise(actions.shape, actions.device, actions.dtype)
 
         if time is None:
-            time = self.sample_time(actions.shape[0], actions.device)
+            time = self.sample_time(actions.shape[0], actions.device, actions.dtype)
 
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
@@ -868,10 +868,11 @@ class VLAFlowMatching(nn.Module):
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]
         device = state.device
+        dtype = state.dtype
 
         if noise is None:
             actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
-            noise = self.sample_noise(actions_shape, device)
+            noise = self.sample_noise(actions_shape, device, dtype)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, state=state
@@ -888,18 +889,13 @@ class VLAFlowMatching(nn.Module):
             fill_kv_cache=True,
         )
         dt = -1.0 / self.config.num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+        dt = torch.tensor(dt, dtype=dtype, device=device)
 
         x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        time = torch.tensor(1.0, dtype=dtype, device=device)
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
-            )
+            v_t = self.denoise_step(prefix_pad_masks, past_key_values, x_t, expanded_time, dtype)
             # Euler step
             x_t += dt * v_t
             time += dt
@@ -911,6 +907,7 @@ class VLAFlowMatching(nn.Module):
         past_key_values,
         x_t,
         timestep,
+        dtype,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, timestep)
@@ -936,6 +933,6 @@ class VLAFlowMatching(nn.Module):
         )
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
+        suffix_out = suffix_out.to(dtype=dtype)
         v_t = self.action_out_proj(suffix_out)
         return v_t
