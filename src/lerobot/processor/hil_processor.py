@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -228,6 +229,93 @@ class InterventionActionProcessor:
     def get_config(self) -> dict[str, Any]:
         return {
             "use_gripper": self.use_gripper,
+        }
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        return {}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        pass
+
+    def reset(self) -> None:
+        pass
+
+    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
+
+
+@dataclass
+@ProcessorStepRegistry.register("reward_classifier_processor")
+class RewardClassifierProcessor:
+    """Apply reward classification to image observations.
+
+    This processor runs a trained reward classifier on image observations
+    to predict rewards and success states, potentially terminating episodes
+    when success is achieved.
+    """
+
+    pretrained_path: str = None
+    device: str = "cpu"
+    success_threshold: float = 0.5
+    success_reward: float = 1.0
+    terminate_on_success: bool = True
+
+    reward_classifier: Any = None
+
+    def __post_init__(self):
+        """Initialize the reward classifier after dataclass initialization."""
+        if self.pretrained_path is not None:
+            from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
+
+            self.reward_classifier = Classifier.from_pretrained(self.pretrained_path)
+            self.reward_classifier.to(self.device)
+            self.reward_classifier.eval()
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION)
+        if observation is None or self.reward_classifier is None:
+            return transition
+
+        # Extract images from observation
+        images = {key: value for key, value in observation.items() if "image" in key}
+
+        if not images:
+            return transition
+
+        # Run reward classifier
+        start_time = time.perf_counter()
+        with torch.inference_mode():
+            success = self.reward_classifier.predict_reward(images, threshold=self.success_threshold)
+
+        classifier_frequency = 1 / (time.perf_counter() - start_time)
+
+        # Calculate reward and termination
+        reward = transition.get(TransitionKey.REWARD, 0.0)
+        terminated = transition.get(TransitionKey.DONE, False)
+
+        if success == 1.0:
+            reward = self.success_reward
+            if self.terminate_on_success:
+                terminated = True
+
+        # Update transition
+        new_transition = transition.copy()
+        new_transition[TransitionKey.REWARD] = reward
+        new_transition[TransitionKey.DONE] = terminated
+
+        # Update info with classifier frequency
+        info = new_transition.get(TransitionKey.INFO, {})
+        info["reward_classifier_frequency"] = classifier_frequency
+        new_transition[TransitionKey.INFO] = info
+
+        return new_transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "device": self.device,
+            "success_threshold": self.success_threshold,
+            "success_reward": self.success_reward,
+            "terminate_on_success": self.terminate_on_success,
         }
 
     def state_dict(self) -> dict[str, torch.Tensor]:

@@ -36,6 +36,7 @@ from lerobot.processor.hil_processor import (
     GripperPenaltyProcessor,
     ImageCropResizeProcessor,
     InterventionActionProcessor,
+    RewardClassifierProcessor,
     TimeLimitProcessor,
 )
 from lerobot.processor.pipeline import TransitionKey
@@ -308,9 +309,9 @@ def make_robot_env(cfg: EnvConfig) -> tuple[gym.Env, Any]:
     # Create base environment
     env = RobotEnv(
         robot=robot,
-        use_gripper=cfg.processor.use_gripper,
-        display_cameras=cfg.processor.display_cameras,
-        reset_pose=cfg.processor.fixed_reset_joint_positions,
+        use_gripper=cfg.processor.gripper.use_gripper,
+        display_cameras=cfg.processor.observation.display_cameras,
+        reset_pose=cfg.processor.reset.fixed_reset_joint_positions,
     )
 
     return env, teleop_device
@@ -330,33 +331,48 @@ def make_processors(env, cfg):
     env_pipeline_steps = [
         ImageProcessor(),
         StateProcessor(),
-        JointVelocityProcessor(dt=1.0 / cfg.fps),
+        JointVelocityProcessor(dt=1.0 / cfg.dataset.fps),
         MotorCurrentProcessor(env=env),
         ImageCropResizeProcessor(
-            crop_params_dict=cfg.processor.crop_params_dict, resize_size=cfg.processor.resize_size
+            crop_params_dict=cfg.processor.image_preprocessing.crop_params_dict,
+            resize_size=cfg.processor.image_preprocessing.resize_size,
         ),
-        TimeLimitProcessor(max_episode_steps=int(cfg.processor.control_time_s * cfg.fps)),
+        TimeLimitProcessor(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.dataset.fps)),
     ]
-    if cfg.processor.use_gripper:
+    if cfg.processor.gripper.use_gripper:
         env_pipeline_steps.append(
             GripperPenaltyProcessor(
-                penalty=cfg.processor.gripper_penalty, max_gripper_pos=cfg.processor.max_gripper_pos
+                penalty=cfg.processor.gripper.gripper_penalty,
+                max_gripper_pos=cfg.processor.inverse_kinematics.max_gripper_pos,
             )
         )
+
+    # Add reward classifier processor if configured
+    if cfg.processor.reward_classifier.pretrained_path is not None:
+        env_pipeline_steps.append(
+            RewardClassifierProcessor(
+                pretrained_path=cfg.processor.reward_classifier.pretrained_path,
+                device=cfg.device,
+                success_threshold=cfg.processor.reward_classifier.success_threshold,
+                success_reward=cfg.processor.reward_classifier.success_reward,
+                terminate_on_success=cfg.processor.reward_classifier.terminate_on_success,
+            )
+        )
+
     env_pipeline_steps.append(DeviceProcessor(device=cfg.device))
 
     env_processor = RobotProcessor(steps=env_pipeline_steps)
 
     action_pipeline_steps = [
         InterventionActionProcessor(
-            use_gripper=cfg.processor.use_gripper,
+            use_gripper=cfg.processor.gripper.use_gripper,
         ),
         InverseKinematicsProcessor(
-            urdf_path=cfg.processor.urdf_path,
-            target_frame_name=cfg.processor.target_frame_name,
-            end_effector_step_sizes=cfg.processor.end_effector_step_sizes,
-            end_effector_bounds=cfg.processor.end_effector_bounds,
-            max_gripper_pos=cfg.processor.max_gripper_pos,
+            urdf_path=cfg.processor.inverse_kinematics.urdf_path,
+            target_frame_name=cfg.processor.inverse_kinematics.target_frame_name,
+            end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
+            end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
+            max_gripper_pos=cfg.processor.inverse_kinematics.max_gripper_pos,
         ),
     ]
     action_processor = RobotProcessor(steps=action_pipeline_steps)
@@ -435,9 +451,9 @@ def step_env_and_process_transition(
 
 
 def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvConfig):
-    dt = 1.0 / cfg.fps
+    dt = 1.0 / cfg.dataset.fps
 
-    print(f"Starting control loop at {cfg.fps} FPS")
+    print(f"Starting control loop at {cfg.dataset.fps} FPS")
     print("Controls:")
     print("- Use gamepad/teleop device for intervention")
     print("- When not intervening, robot will stay still")
@@ -460,7 +476,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
             "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
             "next.done": {"dtype": "bool", "shape": (1,), "names": None},
         }
-        if cfg.processor.use_gripper:
+        if cfg.processor.gripper.use_gripper:
             features["complementary_info.discrete_penalty"] = {
                 "dtype": "float32",
                 "shape": (1,),
@@ -483,9 +499,9 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
 
         # Create dataset
         dataset = LeRobotDataset.create(
-            cfg.repo_id,
-            cfg.fps,
-            root=cfg.dataset_root,
+            cfg.dataset.repo_id,
+            cfg.dataset.fps,
+            root=cfg.dataset.dataset_root,
             use_videos=True,
             image_writer_threads=4,
             image_writer_processes=0,
@@ -496,12 +512,12 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
     episode_step = 0
     episode_start_time = time.perf_counter()
 
-    while episode_idx < cfg.num_episodes:
+    while episode_idx < cfg.dataset.num_episodes:
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
         neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
-        if hasattr(env, "use_gripper") and env.use_gripper:
+        if cfg.processor.gripper.use_gripper:
             neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
 
         # Use the new step function
@@ -524,11 +540,11 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
                 "next.reward": np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
                 "next.done": np.array([terminated or truncated], dtype=bool),
             }
-            if cfg.processor.use_gripper:
+            if cfg.processor.gripper.use_gripper:
                 frame["complementary_info.discrete_penalty"] = np.array(
                     [transition[TransitionKey.COMPLEMENTARY_DATA]["discrete_penalty"]], dtype=np.float32
                 )
-            dataset.add_frame(frame, task=cfg.task)
+            dataset.add_frame(frame, task=cfg.dataset.task)
 
         episode_step += 1
 
@@ -562,14 +578,17 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
         # Maintain fps timing
         busy_wait(dt - (time.perf_counter() - step_start_time))
 
-    if cfg.mode == "record" and cfg.push_to_hub:
+    if cfg.mode == "record" and cfg.dataset.push_to_hub:
         logging.info("Pushing dataset to hub")
         dataset.push_to_hub()
 
 
 def replay_trajectory(env, action_processor, cfg):
     dataset = LeRobotDataset(
-        cfg.repo_id, root=cfg.dataset_root, episodes=[cfg.episode], download_videos=False
+        cfg.dataset.repo_id,
+        root=cfg.dataset.dataset_root,
+        episodes=[cfg.dataset.episode],
+        download_videos=False,
     )
     dataset_actions = dataset.hf_dataset.select_columns(["action"])
     _, info = env.reset()
@@ -581,7 +600,7 @@ def replay_trajectory(env, action_processor, cfg):
         )
         transition = action_processor(transition)
         env.step(transition[TransitionKey.ACTION])
-        busy_wait(1 / cfg.fps - (time.perf_counter() - start_time))
+        busy_wait(1 / cfg.dataset.fps - (time.perf_counter() - start_time))
 
 
 @parser.wrap()
