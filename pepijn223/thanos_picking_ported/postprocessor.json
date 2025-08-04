@@ -1,0 +1,32 @@
+{
+  "name": "postprocessor",
+  "seed": null,
+  "steps": [
+    {
+      "class": "lerobot.processor.device_processor.DeviceProcessor",
+      "config": {
+        "device": "cpu"
+      }
+    },
+    {
+      "registry_name": "unnormalizer_processor",
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "type": "ACTION",
+            "shape": [
+              6
+            ]
+          }
+        },
+        "norm_map": {
+          "STATE": "MEAN_STD",
+          "ACTION": "MEAN_STD",
+          "VISUAL": "MEAN_STD"
+        }
+      },
+      "state_file": "postprocessor_step_1_unnormalizer_processor.safetensors"
+    }
+  ]
+}

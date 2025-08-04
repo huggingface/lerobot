@@ -32,7 +32,6 @@ from safetensors.torch import load_file, save_file
 
 from lerobot.configs.types import DatasetFeatureType, PolicyFeature
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.utils.utils import get_safe_torch_device
 
 
 class TransitionKey(str, Enum):
@@ -505,24 +504,6 @@ class RobotProcessor(ModelHubMixin):
 
         # Generate README.md from template
         self._generate_model_card(destination_path)
-
-    def to(self, device: str | torch.device):
-        """Move all tensor states inside each step to device and return self.
-
-        Uses a generic mechanism: fetch each step's state dict, move every tensor
-        to the target device, and reload it. Only works for steps that implement
-        both state_dict() and load_state_dict() methods.
-        """
-        device = get_safe_torch_device(device)
-
-        for step in self.steps:
-            if hasattr(step, "state_dict") and hasattr(step, "load_state_dict"):
-                state = step.state_dict()
-                if state:  # Only process if there's actual state
-                    moved_state = {k: v.to(device) for k, v in state.items()}
-                    step.load_state_dict(moved_state)
-
-        return self
 
     @classmethod
     def from_pretrained(

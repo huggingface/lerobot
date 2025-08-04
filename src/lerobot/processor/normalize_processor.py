@@ -116,7 +116,7 @@ class NormalizerProcessor:
         if self.normalize_keys is not None and not isinstance(self.normalize_keys, set):
             self.normalize_keys = set(self.normalize_keys)
 
-    def _normalize_obs(self, observation):
+    def _normalize_obs(self, observation, normalized_info):
         if observation is None:
             return None
 
@@ -138,6 +138,7 @@ class NormalizerProcessor:
 
             # Skip normalization if mode is IDENTITY
             if norm_mode is NormalizationMode.IDENTITY:
+                normalized_info[key] = "IDENTITY"
                 continue
 
             # Skip if no stats available for this key
@@ -156,16 +157,18 @@ class NormalizerProcessor:
                 if "mean" in stats and "std" in stats:
                     mean, std = stats["mean"], stats["std"]
                     processed[key] = (tensor - mean) / (std + self.eps)
+                    normalized_info[key] = "MEAN_STD"
             elif norm_mode is NormalizationMode.MIN_MAX:
                 if "min" in stats and "max" in stats:
                     min_val, max_val = stats["min"], stats["max"]
                     processed[key] = 2 * (tensor - min_val) / (max_val - min_val + self.eps) - 1
+                    normalized_info[key] = "MIN_MAX"
             else:
                 raise ValueError(f"Unsupported normalization mode: {norm_mode}")
 
         return processed
 
-    def _normalize_action(self, action):
+    def _normalize_action(self, action, normalized_info):
         if action is None:
             return action
 
@@ -174,6 +177,7 @@ class NormalizerProcessor:
 
         # Skip normalization if mode is IDENTITY
         if norm_mode is NormalizationMode.IDENTITY:
+            normalized_info["action"] = "IDENTITY"
             return action
 
         # Skip if no stats available for actions
@@ -190,10 +194,12 @@ class NormalizerProcessor:
         if norm_mode is NormalizationMode.MEAN_STD:
             if "mean" in stats and "std" in stats:
                 mean, std = stats["mean"], stats["std"]
+                normalized_info["action"] = "MEAN_STD"
                 return (tensor - mean) / (std + self.eps)
         elif norm_mode is NormalizationMode.MIN_MAX:
             if "min" in stats and "max" in stats:
                 min_val, max_val = stats["min"], stats["max"]
+                normalized_info["action"] = "MIN_MAX"
                 return 2 * (tensor - min_val) / (max_val - min_val + self.eps) - 1
         else:
             raise ValueError(f"Unsupported normalization mode: {norm_mode}")
@@ -202,13 +208,24 @@ class NormalizerProcessor:
         raise ValueError(f"Action stats must contain appropriate values for {norm_mode} normalization")
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = self._normalize_obs(transition.get(TransitionKey.OBSERVATION))
-        action = self._normalize_action(transition.get(TransitionKey.ACTION))
+        # Track what was normalized
+        normalized_info = {}
+
+        observation = self._normalize_obs(transition.get(TransitionKey.OBSERVATION), normalized_info)
+        action = self._normalize_action(transition.get(TransitionKey.ACTION), normalized_info)
 
         # Create a new transition with normalized values
         new_transition = transition.copy()
         new_transition[TransitionKey.OBSERVATION] = observation
         new_transition[TransitionKey.ACTION] = action
+
+        # Add normalization info to complementary data
+        if normalized_info:
+            comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+            comp_data = {} if comp_data is None else dict(comp_data)
+            comp_data["normalized_keys"] = normalized_info
+            new_transition[TransitionKey.COMPLEMENTARY_DATA] = comp_data
+
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
@@ -289,7 +306,7 @@ class UnnormalizerProcessor:
         self.stats = self.stats or {}
         self._tensor_stats = _convert_stats_to_tensors(self.stats)
 
-    def _unnormalize_obs(self, observation):
+    def _unnormalize_obs(self, observation, unnormalized_info):
         if observation is None:
             return None
         keys = [k for k, ft in self.features.items() if ft.type is not FeatureType.ACTION]
@@ -304,6 +321,7 @@ class UnnormalizerProcessor:
 
             # Skip unnormalization if mode is IDENTITY
             if norm_mode is NormalizationMode.IDENTITY:
+                unnormalized_info[key] = "IDENTITY"
                 continue
 
             # Skip if no stats available for this key
@@ -322,16 +340,18 @@ class UnnormalizerProcessor:
                 if "mean" in stats and "std" in stats:
                     mean, std = stats["mean"], stats["std"]
                     processed[key] = tensor * std + mean
+                    unnormalized_info[key] = "MEAN_STD"
             elif norm_mode is NormalizationMode.MIN_MAX:
                 if "min" in stats and "max" in stats:
                     min_val, max_val = stats["min"], stats["max"]
                     processed[key] = (tensor + 1) / 2 * (max_val - min_val) + min_val
+                    unnormalized_info[key] = "MIN_MAX"
             else:
                 raise ValueError(f"Unsupported normalization mode: {norm_mode}")
 
         return processed
 
-    def _unnormalize_action(self, action):
+    def _unnormalize_action(self, action, unnormalized_info):
         if action is None:
             return action
 
@@ -340,6 +360,7 @@ class UnnormalizerProcessor:
 
         # Skip unnormalization if mode is IDENTITY
         if norm_mode is NormalizationMode.IDENTITY:
+            unnormalized_info["action"] = "IDENTITY"
             return action
 
         # Skip if no stats available for actions
@@ -356,10 +377,12 @@ class UnnormalizerProcessor:
         if norm_mode is NormalizationMode.MEAN_STD:
             if "mean" in stats and "std" in stats:
                 mean, std = stats["mean"], stats["std"]
+                unnormalized_info["action"] = "MEAN_STD"
                 return tensor * std + mean
         elif norm_mode is NormalizationMode.MIN_MAX:
             if "min" in stats and "max" in stats:
                 min_val, max_val = stats["min"], stats["max"]
+                unnormalized_info["action"] = "MIN_MAX"
                 return (tensor + 1) / 2 * (max_val - min_val) + min_val
         else:
             raise ValueError(f"Unsupported normalization mode: {norm_mode}")
@@ -368,13 +391,24 @@ class UnnormalizerProcessor:
         raise ValueError(f"Action stats must contain appropriate values for {norm_mode} normalization")
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = self._unnormalize_obs(transition.get(TransitionKey.OBSERVATION))
-        action = self._unnormalize_action(transition.get(TransitionKey.ACTION))
+        # Track what was unnormalized
+        unnormalized_info = {}
+
+        observation = self._unnormalize_obs(transition.get(TransitionKey.OBSERVATION), unnormalized_info)
+        action = self._unnormalize_action(transition.get(TransitionKey.ACTION), unnormalized_info)
 
         # Create a new transition with unnormalized values
         new_transition = transition.copy()
         new_transition[TransitionKey.OBSERVATION] = observation
         new_transition[TransitionKey.ACTION] = action
+
+        # Add unnormalization info to complementary data
+        if unnormalized_info:
+            comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+            comp_data = {} if comp_data is None else dict(comp_data)
+            comp_data["unnormalized_keys"] = unnormalized_info
+            new_transition[TransitionKey.COMPLEMENTARY_DATA] = comp_data
+
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
@@ -411,3 +445,29 @@ def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, An
             step.stats = stats
             step._tensor_stats = _convert_stats_to_tensors(stats)
     return robot_processor
+
+
+def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -> dict[str, dict[str, Any]]:
+    """Rename keys in the stats dictionary according to the provided mapping.
+
+    Args:
+        stats: The statistics dictionary with structure {feature_key: {stat_name: value}}
+        rename_map: Dictionary mapping old key names to new key names
+
+    Returns:
+        A new stats dictionary with renamed keys
+
+    Example:
+        >>> stats = {"observation.state": {"mean": 0.0, "std": 1.0}, "action": {"mean": 0.5, "std": 0.5}}
+        >>> rename_map = {"observation.state": "observation.robot_state"}
+        >>> new_stats = rename_stats(stats, rename_map)
+        >>> # new_stats will have "observation.robot_state" instead of "observation.state"
+    """
+    renamed_stats = {}
+
+    for old_key, sub_stats in stats.items():
+        # Use the new key if it exists in the rename map, otherwise keep the old key
+        new_key = rename_map.get(old_key, old_key)
+        renamed_stats[new_key] = deepcopy(sub_stats)
+
+    return renamed_stats
