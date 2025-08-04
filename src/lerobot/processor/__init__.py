@@ -16,6 +16,12 @@
 
 from .batch_processor import ToBatchProcessor
 from .device_processor import DeviceProcessor
+from .hil_processor import (
+    GripperPenaltyProcessor,
+    ImageCropResizeProcessor,
+    InterventionActionProcessor,
+    TimeLimitProcessor,
+)
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
@@ -33,6 +39,11 @@ from .pipeline import (
     TruncatedProcessor,
 )
 from .rename_processor import RenameProcessor
+from .robot_processor import (
+    InverseKinematicsProcessor,
+    JointVelocityProcessor,
+    MotorCurrentProcessor,
+)
 from .tokenizer_processor import TokenizerProcessor
 
 __all__ = [
@@ -40,8 +51,15 @@ __all__ = [
     "DeviceProcessor",
     "DoneProcessor",
     "EnvTransition",
+    "GripperPenaltyProcessor",
     "IdentityProcessor",
+    "ImageCropResizeProcessor",
+    "ImageProcessor",
     "InfoProcessor",
+    "InterventionActionProcessor",
+    "InverseKinematicsProcessor",
+    "JointVelocityProcessor",
+    "MotorCurrentProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
     "hotswap_stats",
@@ -53,6 +71,7 @@ __all__ = [
     "RobotProcessor",
     "ToBatchProcessor",
     "TokenizerProcessor",
+    "TimeLimitProcessor",
     "TransitionKey",
     "TruncatedProcessor",
     "VanillaObservationProcessor",
