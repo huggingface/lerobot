@@ -22,6 +22,7 @@ import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+import concurrent.futures
 
 import numpy as np
 import torch
@@ -104,6 +105,7 @@ def predict_action(
     use_amp: bool,
     task: str | None = None,
     robot_type: str | None = None,
+    num_workers: int = 4,
 ):
     observation = copy(observation)
     with (
@@ -111,13 +113,22 @@ def predict_action(
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
-        for name in observation:
-            observation[name] = torch.from_numpy(observation[name])
+        def convert_to_torch(name, data):
+            """Convert single observation to torch tensor."""
             if "image" in name:
-                observation[name] = observation[name].type(torch.float32) / 255
-                observation[name] = observation[name].permute(2, 0, 1).contiguous()
-            observation[name] = observation[name].unsqueeze(0)
-            observation[name] = observation[name].to(device)
+                tensor = torch.from_numpy(data).to(torch.float32)
+                tensor = tensor.mul(1.0 / 255.0)
+                tensor = tensor.permute(2, 0, 1).contiguous()
+                tensor = tensor.to(device)
+            else:
+                tensor = torch.from_numpy(data).to(torch.float32)
+            return tensor
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = [executor.submit(convert_to_torch, name, observation[name]) for name in observation]
+            for future in concurrent.futures.as_completed(futures):
+                name, tensor = future.result()
+                observation[name] = tensor
 
         observation["task"] = task if task else ""
         observation["robot_type"] = robot_type if robot_type else ""
