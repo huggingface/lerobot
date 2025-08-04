@@ -20,6 +20,7 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
+from lerobot.policies.rtc_config import RTCConfig
 
 
 @PreTrainedConfig.register_subclass("smolvla")
@@ -100,6 +101,9 @@ class SmolVLAConfig(PreTrainedConfig):
 
     min_period: float = 4e-3  # sensitivity range for the timestep used in sine-cosine positional encoding
     max_period: float = 4.0
+
+    # Real Time Chunking configuration
+    rtc_config: RTCConfig = RTCConfig()
 
     def __post_init__(self):
         super().__post_init__()

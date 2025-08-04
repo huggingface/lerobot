@@ -21,10 +21,9 @@ Based on Physical Intelligence's Kinetix implementation:
 https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L214
 """
 
-from typing import Any
-
-import torch
 from torch import Tensor
+
+from lerobot.policies.rtc_config import RTCConfig
 
 
 class RTCProcessor:
@@ -36,11 +35,7 @@ class RTCProcessor:
 
     def __init__(
         self,
-        chunk_size: int,
-        soft_mask_length: int = 5,
-        beta: float = 1.0,
-        prefix_attention_schedule: str = "linear",
-        device: torch.device | None = None,
+        rtc_config: RTCConfig,
     ):
         """Initialize RTC processor.
 
@@ -51,237 +46,102 @@ class RTCProcessor:
             prefix_attention_schedule: Schedule for prefix attention weights ("linear", "exp", "constant")
             device: PyTorch device for computations
         """
-        self.chunk_size = chunk_size
-        self.soft_mask_length = soft_mask_length
-        self.beta = beta
-        self.prefix_attention_schedule = prefix_attention_schedule
-        self.device = device or torch.device("cpu")
+        self.rtc_config = rtc_config
 
         # Cache for previous chunk
         self.previous_chunk: Tensor | None = None
         self.chunk_step = 0
 
-    def reset(self):
-        """Reset the RTC processor state."""
-        self.previous_chunk = None
-        self.chunk_step = 0
+    def denoise_step(self, noise, prev_action, latency_delay) -> Tensor:
+        """Denoise the noise to get the next action.
+        Real-time chunking (RTC) denoising.
 
-    def calculate_velocity(self, actions: Tensor, dt: float = 0.1, method: str = "finite_diff") -> Tensor:
-        """Calculate velocity from action sequences.
-
-        Args:
-            actions: Action tensor of shape (batch_size, sequence_length, action_dim)
-            dt: Time step between actions in seconds
-            method: Velocity calculation method ("finite_diff", "central_diff")
-
-        Returns:
-            Velocity tensor of shape (batch_size, sequence_length-1, action_dim)
+        Reference:
+        https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
-        if actions.dim() != 3:
-            raise ValueError(f"Expected 3D actions tensor, got {actions.dim()}D")
+        # if self.prev_chunk is None:
+        #     # First step, no guidance
+        #     x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
+        #     self.prev_chunk = x_t
+        #     return x_t
 
-        if actions.size(1) < 2:
-            raise ValueError(f"Need at least 2 timesteps, got {actions.size(1)}")
+        # if rtc_t is None or rtc_d is None or rtc_soft_mask_length is None:
+        #     raise ValueError(
+        #         f"rtc_t, rtc_d and rtc_soft_mask_length must be provided for RTC denoising (current {rtc_t=}, {rtc_d=}, {rtc_soft_mask_length=})."
+        #     )
 
-        actions = actions.to(self.device)
+        # # Prepare the previous chunk for guidance.
+        # # Rotate the second (time) dimension left by `t` steps and pad the right with zeros.
+        # # Keep the unexecuted part, pad the remainder with zeros.
+        # pad = torch.zeros_like(self.prev_chunk[:, :rtc_t])
+        # A_prev = torch.cat([self.prev_chunk[:, rtc_t:], pad], dim=1)  # noqa: N806
 
-        if method == "finite_diff":
-            velocities = (actions[:, 1:, :] - actions[:, :-1, :]) / dt
-        elif method == "central_diff":
-            if actions.size(1) < 3:
-                raise ValueError("Central difference requires at least 3 timesteps")
-            velocities = (actions[:, 2:, :] - actions[:, :-2, :]) / (2 * dt)
-        else:
-            raise ValueError(f"Unknown velocity calculation method: {method}")
+        # H = self.config.chunk_size  # noqa: N806
 
-        return velocities
+        # total_start = time.perf_counter()
+        # denoise_time = 0
+        # grad_time = 0
 
-    def get_prefix_attention_weights(self, length: int) -> Tensor:
-        """Generate prefix attention weights based on schedule.
+        # # s is the number of steps in the end to not blend with the previous chunk
+        # if rtc_soft_mask_length == -1:
+        #     rtc_s = rtc_t
+        # else:
+        #     rtc_s = max(0, H - rtc_d - rtc_soft_mask_length)
 
-        Args:
-            length: Number of timesteps to generate weights for
+        # # Prepare the guidance mask
+        # W = make_soft_mask(rtc_d, rtc_s, H, device)  # noqa: N806
+        # # broadcast to (B,H,M)
+        # W_row = W[None, :, None]  # noqa: N806
 
-        Returns:
-            Tensor of attention weights
-        """
-        if self.prefix_attention_schedule == "linear":
-            # Linearly decreasing weights
-            weights = torch.linspace(self.beta, 0, length, device=self.device)
-        elif self.prefix_attention_schedule == "exp":
-            # Exponentially decreasing weights
-            x = torch.linspace(0, 1, length, device=self.device)
-            weights = self.beta * torch.exp(-5 * x)  # -5 controls decay rate
-        elif self.prefix_attention_schedule == "constant":
-            # Uniform weights
-            weights = torch.full((length,), self.beta / length, device=self.device)
-        else:
-            raise ValueError(f"Unknown prefix attention schedule: {self.prefix_attention_schedule}")
+        # # A^0  ~ 𝒩(0,I)
+        # A_tau = noise  # noqa: N806
+        # t = torch.tensor(1.0, device=device)
 
-        return weights
+        # while t >= -dt / 2:
+        #     tau = 1 - t  # tau goes from 0 to 1, to be consistent with the paper
+        #     # ΠGDM guidance
+        #     denoise_start = time.perf_counter()
+        #     v_pi = -self.denoise_step(prefix_pad_masks, past_key_values, A_tau, t.expand(bsize))
+        #     denoise_time += time.perf_counter() - denoise_start
 
-    def apply_rtc_masking(self, current_chunk: Tensor, overlap_length: int | None = None) -> Tensor:
-        """Apply RTC soft masking to action chunk with previous chunk overlap.
+        #     grad_start = time.perf_counter()
+        #     A_tau.requires_grad_(True)
+        #     with torch.enable_grad():
+        #         # Â¹_tau   Eq. 3
+        #         A_hat = A_tau + (1 - tau) * v_pi  # noqa: N806
+        #         err = (A_prev - A_hat) * W_row
+        #         grad_outputs = err.clone().detach()
+        #         g = torch.autograd.grad(A_hat, A_tau, grad_outputs, retain_graph=True)[0]
+        #     grad_time += time.perf_counter() - grad_start
 
-        Args:
-            current_chunk: Current action chunk (batch_size, chunk_size, action_dim)
-            overlap_length: Number of overlapping timesteps (defaults to soft_mask_length)
+        #     r_sq = (1 - tau) ** 2 / (tau**2 + (1 - tau) ** 2)  # Eq. 4
+        #     scale = min(self.config.inference_rtc_beta, (1 - tau) / (tau * r_sq))  # Eq.2
+        #     # integration step  Eq. 1
+        #     A_tau = A_tau - dt * (v_pi + scale * g)  # noqa: N806
+        #     # stop grads before next step
+        #     A_tau = A_tau.detach()  # noqa: N806
 
-        Returns:
-            Masked action chunk with prefix attention applied
-        """
-        if self.previous_chunk is None:
-            # No previous chunk, return current as-is
-            self.previous_chunk = current_chunk.clone()
-            return current_chunk
+        #     if self.config.inference_rtc_debug:
+        #         # For debugging. This makes the code slower
+        #         A_tau_d_err = (A_prev[:, :rtc_d] - A_tau[:, :rtc_d]).norm()  # noqa: N806
+        #         print(
+        #             f"[RTC Debug] t={t.item():.2f} tau={tau.item():.2f} err[:,:rtc_d].norm()={err[:, :rtc_d].norm().item():.2f} A_tau_d_err={A_tau_d_err.item():.2f} scale={scale:.2f} g.norm()={g.norm().item():.2f}"
+        #         )
 
-        overlap_length = overlap_length or self.soft_mask_length
-        overlap_length = min(overlap_length, current_chunk.size(1), self.previous_chunk.size(1))
+        #     t += dt
 
-        if overlap_length <= 0:
-            self.previous_chunk = current_chunk.clone()
-            return current_chunk
+        # # sanity check: the first d steps of A_prev should be the similar to the first d steps of A_tau because of masking
+        # A_tau_d_err = (A_prev[:, :rtc_d] - A_tau[:, :rtc_d]).norm()  # noqa: N806
+        # if A_tau_d_err > 0.5:
+        #     print(
+        #         f"WARNING: [RTC] The first {rtc_d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}"
+        #     )
 
-        # Get prefix attention weights
-        weights = self.get_prefix_attention_weights(overlap_length)
-        weights = weights.view(1, -1, 1)  # Shape for broadcasting
+        # total_time = time.perf_counter() - total_start
+        # if self.config.inference_rtc_debug:
+        #     print(
+        #         f"[RTC Debug] Denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s | {rtc_t=} {rtc_d=} {rtc_s=}"
+        #     )
 
-        # Apply weighted combination in overlap region
-        masked_chunk = current_chunk.clone()
-        masked_chunk[:, :overlap_length] = (
-            weights * self.previous_chunk[:, -overlap_length:]
-            + (1 - weights) * current_chunk[:, :overlap_length]
-        )
-
-        # Update previous chunk cache
-        self.previous_chunk = masked_chunk.clone()
-
-        return masked_chunk
-
-    def compute_velocity_penalty(
-        self, actions: Tensor, dt: float = 0.1, target_smoothness: float = 1.0
-    ) -> Tensor:
-        """Compute velocity-based penalty for action smoothness.
-
-        Args:
-            actions: Action sequence tensor
-            dt: Time step between actions
-            target_smoothness: Target smoothness level (lower is smoother)
-
-        Returns:
-            Scalar penalty value
-        """
-        velocities = self.calculate_velocity(actions, dt)
-
-        # Calculate velocity magnitude variation
-        velocity_magnitudes = torch.norm(velocities, dim=-1)
-
-        # Compute smoothness metric (coefficient of variation)
-        mean_vel = velocity_magnitudes.mean(dim=1)
-        std_vel = velocity_magnitudes.std(dim=1)
-
-        smoothness = torch.where(mean_vel > 1e-8, std_vel / mean_vel, torch.zeros_like(mean_vel))
-
-        # Compute penalty
-        penalty = torch.mean(torch.relu(smoothness - target_smoothness))
-
-        return penalty
-
-    def process_action_chunk(
-        self,
-        action_chunk: Tensor,
-        apply_masking: bool = True,
-        compute_velocity: bool = False,
-        dt: float = 0.1,
-    ) -> dict[str, Any]:
-        """Process an action chunk with RTC techniques.
-
-        Args:
-            action_chunk: Raw action chunk from policy
-            apply_masking: Whether to apply RTC masking
-            compute_velocity: Whether to compute velocity information
-            dt: Time step for velocity calculation
-
-        Returns:
-            Dictionary containing:
-            - "actions": Processed action chunk
-            - "velocities": (optional) Computed velocities
-            - "smoothness": (optional) Smoothness metric
-        """
-        result = {}
-
-        # Apply RTC masking if enabled
-        if apply_masking:
-            action_chunk = self.apply_rtc_masking(action_chunk)
-
-        result["actions"] = action_chunk
-
-        # Compute velocity information if requested
-        if compute_velocity and action_chunk.size(1) > 1:
-            velocities = self.calculate_velocity(action_chunk, dt)
-            result["velocities"] = velocities
-
-            # Compute smoothness metric
-            velocity_magnitudes = torch.norm(velocities, dim=-1)
-            mean_vel = velocity_magnitudes.mean(dim=1)
-            std_vel = velocity_magnitudes.std(dim=1)
-            smoothness = torch.where(mean_vel > 1e-8, std_vel / mean_vel, torch.zeros_like(mean_vel))
-            result["smoothness"] = smoothness
-
-        self.chunk_step += 1
-
-        return result
-
-    def apply_velocity_smoothing(
-        self, velocities: Tensor, window_size: int = 5, method: str = "moving_average"
-    ) -> Tensor:
-        """Apply smoothing to velocity profiles.
-
-        Args:
-            velocities: Velocity tensor to smooth
-            window_size: Size of smoothing window (must be odd)
-            method: Smoothing method ("moving_average", "gaussian")
-
-        Returns:
-            Smoothed velocity tensor of same shape
-        """
-        if window_size % 2 == 0:
-            raise ValueError(f"Window size must be odd, got {window_size}")
-
-        if window_size >= velocities.size(1):
-            raise ValueError(f"Window size {window_size} too large for sequence length {velocities.size(1)}")
-
-        velocities = velocities.to(self.device)
-
-        if method == "moving_average":
-            padding = window_size // 2
-            kernel = torch.ones(1, 1, window_size, device=self.device) / window_size
-
-            batch_size, seq_len, action_dim = velocities.shape
-            velocities_reshaped = velocities.transpose(1, 2).reshape(-1, 1, seq_len)
-
-            smoothed = torch.nn.functional.conv1d(velocities_reshaped, kernel, padding=padding)
-
-            smoothed = smoothed.reshape(batch_size, action_dim, seq_len).transpose(1, 2)
-
-        elif method == "gaussian":
-            padding = window_size // 2
-            sigma = window_size / 6.0
-
-            x = torch.arange(window_size, device=self.device, dtype=torch.float32)
-            x = x - window_size // 2
-            kernel = torch.exp(-0.5 * (x / sigma) ** 2)
-            kernel = kernel / kernel.sum()
-            kernel = kernel.view(1, 1, window_size)
-
-            batch_size, seq_len, action_dim = velocities.shape
-            velocities_reshaped = velocities.transpose(1, 2).reshape(-1, 1, seq_len)
-
-            smoothed = torch.nn.functional.conv1d(velocities_reshaped, kernel, padding=padding)
-
-            smoothed = smoothed.reshape(batch_size, action_dim, seq_len).transpose(1, 2)
-
-        else:
-            raise ValueError(f"Unknown smoothing method: {method}")
-
-        return smoothed
+        # self.prev_chunk = A_tau
+        # return A_tau

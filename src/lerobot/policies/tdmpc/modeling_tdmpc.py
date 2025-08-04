@@ -111,7 +111,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         self._prev_mean: torch.Tensor | None = None
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
 
@@ -141,7 +141,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """Select a single action given environment observations."""
         # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
         if ACTION in batch:
