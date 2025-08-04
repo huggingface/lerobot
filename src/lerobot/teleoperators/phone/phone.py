@@ -35,7 +35,7 @@ from .config_phone import PhoneConfig, PhoneOS
 logger = logging.getLogger(__name__)
 
 # -----Monday----- (2,3,4)
-# TODO(pepijn):  Do write replay, do eval/inference 19:00
+# TODO(pepijn): Do write replay, do eval/inference 19:00
 # TODO(pepijn): Fix android reset of Teleop lib and gripper 20:00
 # TODO(pepijn): Ask for feedback from Adil before writing tests 3 20:30
 
