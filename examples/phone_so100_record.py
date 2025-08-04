@@ -45,14 +45,14 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
 
-NUM_EPISODES = 5
+NUM_EPISODES = 15
 FPS = 30
 EPISODE_TIME_SEC = 60
-RESET_TIME_SEC = 10
-TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_91"
+RESET_TIME_SEC = 30
+TASK_DESCRIPTION = "Pickup the blue block"  # TODO(pepijn): Add back default task description
+HF_REPO_ID = "pepijn223/phone_pipeline_pickup1"
 
-# Create the robot and teleoperator configurations
+# Initialize the robot and teleoperator
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
 robot_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem58760434471",
@@ -196,7 +196,6 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             events=events,
             fps=FPS,
             teleop=phone,
-            dataset=dataset,
             control_time_s=RESET_TIME_SEC,
             single_task=TASK_DESCRIPTION,
             display_data=True,

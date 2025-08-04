@@ -35,19 +35,15 @@ from .config_phone import PhoneConfig, PhoneOS
 logger = logging.getLogger(__name__)
 
 # -----Monday----- (2,3,4)
-# TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline 2
-# - Record dataset 16:00
-# - Start training 16:00
-# TODO(pepijn): Make replay example and test eval/inference 3
-# - Do write replat, do eval/inference 18:00
-# TODO(pepijn): Ask for feedback from Adil before writing tests 3
-# - Ask for feedback from Adil 18:30
-# TODO(pepijn): Add a bunch of tests 4 20:00
+# TODO(pepijn):  Do write replay, do eval/inference 19:00
+# TODO(pepijn): Fix android reset of Teleop lib and gripper 20:00
+# TODO(pepijn): Ask for feedback from Adil before writing tests 3 20:30
+
 # ----Tuesday----- (5,6,7)
-# TODO(pepijn): Fix android reset of Teleop lib
-# TODO(pepijn): Add to docs with image etc 5
-# TODO(pepijn): Clean up and make PR 6
-# TODO(pepijn): Create release video 7
+# TODO(pepijn): Add a bunch of tests 4 9:00
+# TODO(pepijn): Add to docs with image etc 5 11:00
+# TODO(pepijn): Clean up and make PR 6 14:00
+# TODO(pepijn): Create release video 7 17:00
 
 
 class Phone(Teleoperator):
@@ -106,7 +102,9 @@ class Phone(Teleoperator):
         self.calibrate()
 
     def calibrate(self) -> None:
-        print("Hold the phone so that: top edge points forward (robot +x) and screen points up (robot +z)")
+        print(
+            "Hold the phone so that: top edge points forward in same direction as the robot (robot +x) and screen points up (robot +z)"
+        )
         if self.config.phone_os == PhoneOS.IOS:
             print("Press and hold B1 in the HEBI Mobile I/O app to capture this pose...\n")
         else:

@@ -56,6 +56,7 @@ class EEReferenceAndDelta:
 
     reference_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
     _prev_enabled: bool = field(default=False, init=False, repr=False)
+    _command_when_disabled: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         act = transition.get(TransitionKey.ACTION) or {}
@@ -81,52 +82,50 @@ class EEReferenceAndDelta:
         wy = float(act.pop("action.target_wy", 0.0))
         wz = float(act.pop("action.target_wz", 0.0))
 
+        desired = None
+
         if enabled:
-            # Latch reference on first enabled frame
-            if not self._prev_enabled:
+            # Latch a reference at the rising edge; also be defensive if None
+            if not self._prev_enabled or self.reference_ee_pose is None:
                 self.reference_ee_pose = t_curr.copy()
 
-            ref = self.reference_ee_pose
+            ref = self.reference_ee_pose if self.reference_ee_pose is not None else t_curr
 
             delta_p = np.array(
                 [
                     tx * self.end_effector_step_sizes["x"],
                     ty * self.end_effector_step_sizes["y"],
                     tz * self.end_effector_step_sizes["z"],
-                ]
+                ],
+                dtype=float,
             )
             r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
 
-            # Desired pose relative to the reference (anchored) pose
-            t_des = np.eye(4, dtype=float)
-            t_des[:3, :3] = ref[:3, :3] @ r_abs
-            t_des[:3, 3] = ref[:3, 3] + delta_p
+            desired = np.eye(4, dtype=float)
+            desired[:3, :3] = ref[:3, :3] @ r_abs
+            desired[:3, 3] = ref[:3, 3] + delta_p
 
-            # Add as absolute desired pose as scalars (pos + twist)
-            pos = t_des[:3, 3]
-            tw = Rotation.from_matrix(t_des[:3, :3]).as_rotvec()
-
-            act.update(
-                {
-                    "action.ee.x": float(pos[0]),
-                    "action.ee.y": float(pos[1]),
-                    "action.ee.z": float(pos[2]),
-                    "action.ee.wx": float(tw[0]),
-                    "action.ee.wy": float(tw[1]),
-                    "action.ee.wz": float(tw[2]),
-                }
-            )
+            self._command_when_disabled = desired.copy()
         else:
-            act.update(
-                {
-                    "action.ee.x": None,
-                    "action.ee.y": None,
-                    "action.ee.z": None,
-                    "action.ee.wx": None,
-                    "action.ee.wy": None,
-                    "action.ee.wz": None,
-                }
-            )
+            # While disabled, keep sending the same command to avoid drift.
+            if self._command_when_disabled is None:
+                # If we've never had an enabled command yet, freeze current FK pose once.
+                self._command_when_disabled = t_curr.copy()
+            desired = self._command_when_disabled.copy()
+
+        # Write action fields
+        pos = desired[:3, 3]
+        tw = Rotation.from_matrix(desired[:3, :3]).as_rotvec()
+        act.update(
+            {
+                "action.ee.x": float(pos[0]),
+                "action.ee.y": float(pos[1]),
+                "action.ee.z": float(pos[2]),
+                "action.ee.wx": float(tw[0]),
+                "action.ee.wy": float(tw[1]),
+                "action.ee.wz": float(tw[2]),
+            }
+        )
 
         self._prev_enabled = enabled
         transition[TransitionKey.ACTION] = act
