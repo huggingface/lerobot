@@ -15,6 +15,12 @@
 # limitations under the License.
 
 from .device_processor import DeviceProcessor
+from .hil_processor import (
+    GripperPenaltyProcessor,
+    ImageCropResizeProcessor,
+    InterventionActionProcessor,
+    TimeLimitProcessor,
+)
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor
 from .observation_processor import (
     ImageProcessor,
@@ -36,15 +42,26 @@ from .pipeline import (
     TruncatedProcessor,
 )
 from .rename_processor import RenameProcessor
+from .robot_processor import (
+    InverseKinematicsProcessor,
+    JointVelocityProcessor,
+    MotorCurrentProcessor,
+)
 
 __all__ = [
     "ActionProcessor",
     "DeviceProcessor",
     "DoneProcessor",
     "EnvTransition",
+    "GripperPenaltyProcessor",
     "IdentityProcessor",
+    "ImageCropResizeProcessor",
     "ImageProcessor",
     "InfoProcessor",
+    "InterventionActionProcessor",
+    "InverseKinematicsProcessor",
+    "JointVelocityProcessor",
+    "MotorCurrentProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
     "ObservationProcessor",
@@ -54,6 +71,7 @@ __all__ = [
     "RewardProcessor",
     "RobotProcessor",
     "StateProcessor",
+    "TimeLimitProcessor",
     "TransitionKey",
     "TruncatedProcessor",
     "VanillaObservationProcessor",
