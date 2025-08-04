@@ -161,39 +161,86 @@ class XarmEnv(EnvConfig):
 
 
 @dataclass
-class VideoRecordConfig:
-    """Configuration for video recording in ManiSkill environments."""
-
-    enabled: bool = False
-    record_dir: str = "videos"
-    trajectory_name: str = "trajectory"
+class ImagePreprocessingConfig:
+    crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
+    resize_size: tuple[int, int] | None = None
 
 
 @dataclass
-class HILSerlProcessorConfig:
-    """Configuration for environment wrappers."""
+class DatasetConfig:
+    """Configuration for dataset recording and replay."""
 
-    # ee_action_space_params: EEActionSpaceConfig = field(default_factory=EEActionSpaceConfig)
-    control_mode: str = "gamepad"
-    display_cameras: bool = False
-    add_joint_velocity_to_observation: bool = False
-    add_current_to_observation: bool = False
-    add_ee_pose_to_observation: bool = False
-    crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
-    resize_size: tuple[int, int] | None = None
-    control_time_s: float = 20.0
-    fixed_reset_joint_positions: Any | None = None
-    reset_time_s: float = 5.0
-    use_gripper: bool = True
-    gripper_quantization_threshold: float | None = 0.8
-    gripper_penalty: float = 0.0
-    gripper_penalty_in_reward: bool = False
+    repo_id: str | None = None
+    dataset_root: str | None = None
+    task: str | None = ""
+    num_episodes: int = 10
+    episode: int = 0  # for replay mode
+    push_to_hub: bool = True
+    fps: int = 10
+
+
+@dataclass
+class RewardClassifierConfig:
+    """Configuration for reward classification."""
+
+    pretrained_path: str | None = None
+    success_threshold: float = 0.5
+    success_reward: float = 1.0
+
+
+@dataclass
+class InverseKinematicsConfig:
+    """Configuration for inverse kinematics processing."""
 
     urdf_path: str | None = None
     target_frame_name: str | None = None
     end_effector_bounds: dict[str, list[float]] | None = None
     end_effector_step_sizes: dict[str, float] | None = None
     max_gripper_pos: float | None = None
+
+
+@dataclass
+class ObservationConfig:
+    """Configuration for observation processing."""
+
+    add_joint_velocity_to_observation: bool = False
+    add_current_to_observation: bool = False
+    add_ee_pose_to_observation: bool = False
+    display_cameras: bool = False
+
+
+@dataclass
+class GripperConfig:
+    """Configuration for gripper control and penalties."""
+
+    use_gripper: bool = True
+    gripper_quantization_threshold: float | None = 0.8
+    gripper_penalty: float = 0.0
+    gripper_penalty_in_reward: bool = False
+
+
+@dataclass
+class ResetConfig:
+    """Configuration for environment reset behavior."""
+
+    fixed_reset_joint_positions: Any | None = None
+    reset_time_s: float = 5.0
+    control_time_s: float = 20.0
+    terminate_on_success: bool = True
+    number_of_steps_after_success: int = 0
+
+
+@dataclass
+class HILSerlProcessorConfig:
+    """Configuration for environment processing pipeline."""
+
+    control_mode: str = "gamepad"
+    observation: ObservationConfig = field(default_factory=ObservationConfig)
+    image_preprocessing: ImagePreprocessingConfig = field(default_factory=ImagePreprocessingConfig)
+    gripper: GripperConfig = field(default_factory=GripperConfig)
+    reset: ResetConfig = field(default_factory=ResetConfig)
+    inverse_kinematics: InverseKinematicsConfig = field(default_factory=InverseKinematicsConfig)
+    reward_classifier: RewardClassifierConfig = field(default_factory=RewardClassifierConfig)
 
 
 @EnvConfig.register_subclass(name="gym_manipulator")
@@ -203,21 +250,12 @@ class HILSerlRobotEnvConfig(EnvConfig):
 
     robot: RobotConfig | None = None
     teleop: TeleoperatorConfig | None = None
-    processor: HILSerlProcessorConfig | None = None
-    fps: int = 10
+    processor: HILSerlProcessorConfig = field(default_factory=HILSerlProcessorConfig)
+    dataset: DatasetConfig = field(default_factory=DatasetConfig)
+
     name: str = "real_robot"
     mode: str | None = None  # Either "record", "replay", None
-    repo_id: str | None = None
-    dataset_root: str | None = None
-    task: str | None = ""
-    num_episodes: int = 10  # only for record mode
-    episode: int = 0
     device: str = "cuda"
-    push_to_hub: bool = True
-    pretrained_policy_name_or_path: str | None = None
-    reward_classifier_pretrained_path: str | None = None
-    # For the reward classifier, to record more positive examples after a success
-    number_of_steps_after_success: int = 0
 
     @property
     def gym_kwargs(self) -> dict:
