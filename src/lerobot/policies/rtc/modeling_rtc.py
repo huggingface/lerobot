@@ -1,0 +1,180 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Real-Time Chunking (RTC) implementation for LeRobot.
+
+Based on Physical Intelligence's Kinetix implementation:
+https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L214
+"""
+
+import math
+
+import torch
+from torch import Tensor
+
+from lerobot.configs.types import RTCAttentionSchedule
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+
+class RTCProcessor:
+    """Real-Time Chunking processor for action chunking policies.
+
+    This class implements RTC techniques including velocity calculation,
+    prefix attention, and adaptive chunk processing.
+    """
+
+    def __init__(
+        self,
+        rtc_config: RTCConfig,
+    ):
+        """Initialize RTC processor.
+
+        Args:
+            chunk_size: Size of action chunks
+            soft_mask_length: Number of actions to soft mask in overlap regions
+            beta: Maximum guidance weight for prefix attention
+            prefix_attention_schedule: Schedule for prefix attention weights ("linear", "exp", "constant")
+            device: PyTorch device for computations
+        """
+        self.rtc_config = rtc_config
+
+    def denoise_step(
+        self, noise, prev_chunk_left_over, inference_delay, time, v_t, execution_horizon=None
+    ) -> Tensor:
+        """Denoise the noise to get the next action.
+        Real-time chunking (RTC) denoising.
+
+        Reference:
+        https://www.physicalintelligence.company/download/real_time_chunking.pdf
+        """
+        if prev_chunk_left_over is None:
+            # First step, no guidance
+            return v_t
+
+        squeezed = False
+        if len(noise.shape) < 3:
+            # Add batch dimension
+            noise = noise.unsqueeze(0)
+            squeezed = True
+
+        if len(v_t.shape) < 3:
+            # Add batch dimension
+            v_t = v_t.unsqueeze(0)
+
+        if len(prev_chunk_left_over.shape) < 3:
+            # Add batch dimension
+            prev_chunk_left_over = prev_chunk_left_over.unsqueeze(0)
+
+        if execution_horizon is None:
+            execution_horizon = self.rtc_config.execution_horizon
+
+        batch_size = noise.shape[0]
+        action_chunk_size = noise.shape[1]
+        action_dim = noise.shape[2]
+
+        if prev_chunk_left_over.shape[1] < action_chunk_size:
+            # We need to pad the left over chunk with zeros
+            pad = torch.zeros(batch_size, action_chunk_size - prev_chunk_left_over.shape[1], action_dim)
+            prev_chunk_left_over = torch.cat([prev_chunk_left_over, pad], dim=1)
+
+        assert prev_chunk_left_over.shape[1] == action_chunk_size, (
+            "The padded previous chunk must be the same size as the action chunk size"
+        )
+
+        noise_with_grad = noise.clone().detach()
+        noise_with_grad.requires_grad = True
+
+        v_t_with_grad = v_t.clone().detach()
+
+        weights = self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
+
+        # Reshape weights to match the tensor dimensions (batch, time, action_dim)
+        # weights is shape (action_chunk_size,) and needs to be (1, action_chunk_size, 1)
+        weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
+
+        with torch.enable_grad():
+            # In the original implementation, the time goes from 0 to 1 and x_1t calculates
+            # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
+            # Here is the logic is inverted
+            x1_t = noise_with_grad + time * v_t_with_grad
+
+            error = (prev_chunk_left_over - x1_t) * weights
+            correction = torch.autograd.grad(x1_t, noise_with_grad, error, retain_graph=False)[0]
+
+        max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
+
+        squared_time = time**2
+        inv_r2 = (squared_time + (1 - time) ** 2) / (squared_time)
+        c = torch.nan_to_num(time / (1 - time), posinf=max_guidance_weight)
+        guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
+        guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
+
+        result = v_t + guidance_weight * correction
+
+        # Remove the batch dimension if it was added
+        if squeezed:
+            result = result.squeeze(0)
+
+        return result
+
+    def get_prefix_weights(self, start, end, total):
+        start = min(start, end)
+
+        if self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.ZEROS:
+            weights = torch.zeros(total)
+            weights[:start] = 1.0
+        elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.ONES:
+            weights = torch.ones(total)
+        elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR:
+            lin_weights = self._linweights(start, end, total)
+            weights = self._add_trailing_zeros(lin_weights, total, end)
+            weights = self._add_leading_ones(weights, start, total)
+        elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.EXP:
+            lin_weights = self._linweights(start, end, total)
+            lin_weights = lin_weights * torch.expm1(lin_weights).div(math.e - 1)
+            weights = self._add_trailing_zeros(lin_weights, total, end)
+            weights = self._add_leading_ones(weights, start, total)
+
+        return weights
+
+    def _linweights(self, start, end, total):
+        skip_steps_at_end = max(total - end, 0)
+
+        linspace_steps = total - skip_steps_at_end - start
+
+        if end <= start or linspace_steps <= 0:
+            return torch.tensor([])
+
+        return torch.linspace(1, 0, linspace_steps + 2)[1:-1]
+
+    def _add_trailing_zeros(self, weights, total, end):
+        zeros_len = total - end
+
+        if zeros_len <= 0:
+            return weights
+
+        zeros = torch.zeros(zeros_len)
+        return torch.cat([weights, zeros])
+
+    def _add_leading_ones(self, weights, start, total):
+        ones_len = min(start, total)
+
+        if ones_len <= 0:
+            return weights
+
+        ones = torch.ones(ones_len)
+        return torch.cat([ones, weights])

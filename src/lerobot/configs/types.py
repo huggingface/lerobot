@@ -40,3 +40,10 @@ class DictLike(Protocol):
 class PolicyFeature:
     type: FeatureType
     shape: tuple
+
+
+class RTCAttentionSchedule(str, Enum):
+    ZEROS = "ZEROS"
+    ONES = "ONES"
+    LINEAR = "LINEAR"
+    EXP = "EXP"
