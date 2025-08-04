@@ -17,12 +17,12 @@
 ########################################################################################
 
 
+import concurrent.futures
 import logging
 import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
-import concurrent.futures
 
 import numpy as np
 import torch
