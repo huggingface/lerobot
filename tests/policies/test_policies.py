@@ -409,7 +409,7 @@ def test_multikey_construction(multikey: bool):
         f"Discrepancy detected. Robot state feature is {config.robot_state_feature} but policy expects {input_features[OBS_STATE]}"
     )
     assert action_condition, (
-        f"Discrepancy detected. Action feature is {config.action_feature} but policy expects {input_features[ACTION]}"
+        f"Discrepancy detected. Action feature is {config.action_feature} but policy expects {output_features[ACTION]}"
     )
 
 
