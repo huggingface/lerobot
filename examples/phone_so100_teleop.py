@@ -16,22 +16,27 @@
 import time
 
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotProcessor, TransitionKey
+from lerobot.processor import RobotProcessor
+from lerobot.processor.utils import to_output_robot_action, to_transition_teleop_action
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
+    AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     EEReferenceAndDelta,
-    InverseKinematics,
+    GripperVelocityToJoint,
+    InverseKinematicsEEToJoints,
 )
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone import Phone
-from lerobot.teleoperators.phone.phone_processor import PhoneAxisRemapToAction
+from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
 
+# Initialize the robot and teleoperator
 robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem58760434471", id="my_phone_teleop_follower_arm")
-robot = SO100Follower(robot_config)
+teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # or PhoneOS.ANDROID
 
-teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)
+# Initialize the robot and teleoperator
+robot = SO100Follower(robot_config)
 teleop_device = Phone(teleop_config)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
@@ -39,27 +44,40 @@ kinematics_solver = RobotKinematics(
     urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf", target_frame_name="gripper_frame_link"
 )
 
-ee_ref = EEReferenceAndDelta(
-    kinematics=kinematics_solver,
-    end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
-    motor_names=list(robot.bus.motors.keys()),
-)
-ee_safety = EEBoundsAndSafety(
-    end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
-    max_ee_step_m=0.1,
-)
-ik_step = InverseKinematics(
-    kinematics=kinematics_solver,
-    motor_names=list(robot.bus.motors.keys()),
-    gripper_speed_factor=5.0,
+# Build pipeline to convert phone action to ee pose action
+phone_to_robot_ee_pose = RobotProcessor(
+    steps=[
+        MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
+        AddRobotObservationAsComplimentaryData(robot=robot),
+        EEReferenceAndDelta(
+            kinematics=kinematics_solver,
+            end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
+            motor_names=list(robot.bus.motors.keys()),
+        ),
+        EEBoundsAndSafety(
+            end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+            max_ee_step_m=0.10,
+            max_ee_twist_step_rad=0.50,
+        ),
+    ],
+    to_transition=to_transition_teleop_action,
+    to_output=lambda tr: tr,
 )
 
-# Create the robot pipeline
-robot_preprocessor = RobotProcessor(steps=[ee_ref, ee_safety, ik_step], name="so100_phone_teleop_pipeline")
-
-phone_postprocessor = RobotProcessor(
-    steps=[PhoneAxisRemapToAction(platform=teleop_config.phone_os)],
-    name="phone_mapping_pipeline",
+# Build pipeline to convert ee pose action to joint action
+robot_ee_to_joints = RobotProcessor(
+    steps=[
+        InverseKinematicsEEToJoints(
+            kinematics=kinematics_solver,
+            motor_names=list(robot.bus.motors.keys()),
+        ),
+        GripperVelocityToJoint(
+            motor_names=list(robot.bus.motors.keys()),
+            speed_factor=20.0,
+        ),
+    ],
+    to_transition=lambda tr: tr,
+    to_output=to_output_robot_action,
 )
 
 robot.connect()
@@ -73,19 +91,17 @@ while True:
         time.sleep(0.01)
         continue
 
-    # Map phone obs -> end-effector action
-    transition_phone = {TransitionKey.OBSERVATION: phone_obs}
-    transition_phone = phone_postprocessor(transition_phone)
-    ee_action = transition_phone.get(TransitionKey.ACTION, {})
+    # Get teleop observation
+    phone_obs = teleop_device.get_action()
 
-    # Get robot obs and convert EE action -> joint action
-    robot_obs = robot.get_observation()
-    transition_robot = {
-        TransitionKey.OBSERVATION: robot_obs,
-        TransitionKey.ACTION: ee_action,
-    }
-    transition_robot = robot_preprocessor(transition_robot)
-    joint_action = transition_robot.get(TransitionKey.ACTION, {})
+    # Phone to EE pose transition
+    ee_transition = phone_to_robot_ee_pose(phone_obs)
+
+    # EE pose to Joints transition
+    joints_transition = robot_ee_to_joints(ee_transition)
+
+    # Transition to action dict expected by the robot
+    joint_action = robot_ee_to_joints.to_output(joints_transition)
 
     if joint_action:
         robot.send_action(joint_action)

@@ -35,15 +35,14 @@ from .config_phone import PhoneConfig, PhoneOS
 logger = logging.getLogger(__name__)
 
 # -----Monday----- (2,3,4)
-# TODO(pepijn): Do normal teleop, record, eval
 # TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline 2
-# - Record dataset 15:00
-# - Start training 15:00
+# - Record dataset 16:00
+# - Start training 16:00
 # TODO(pepijn): Make replay example and test eval/inference 3
-# - Do write replat, do eval/inference 16:00
+# - Do write replat, do eval/inference 18:00
 # TODO(pepijn): Ask for feedback from Adil before writing tests 3
-# - Ask for feedback from Adil 16:30
-# TODO(pepijn): Add a bunch of tests 4 18:00
+# - Ask for feedback from Adil 18:30
+# TODO(pepijn): Add a bunch of tests 4 20:00
 # ----Tuesday----- (5,6,7)
 # TODO(pepijn): Fix android reset of Teleop lib
 # TODO(pepijn): Add to docs with image etc 5

@@ -20,16 +20,16 @@ with updated input/output features configuration and option to push to hub.
 
 Usage:
     # Basic migration (saves locally)
-    python migrate.py
+    python migrate.py --source-repo-id lerobot/smolvla_base
 
     # Migrate and push to hub
-    python migrate.py --push-to-hub --repo-id username/my-pi0-model
+    python migrate.py --push-to-hub --source-repo-id lerobot/smolvla_base --repo-id username/my-pi0-model
 
     # Push to specific branch
-    python migrate.py --push-to-hub --repo-id username/my-pi0-model --branch dev
+    python migrate.py --push-to-hub --source-repo-id lerobot/smolvla_base --repo-id username/my-pi0-model --branch dev
 
     # Push to same repo with different branch
-    python migrate.py --push-to-hub --repo-id lerobot/pi0 --branch migrated-v2
+    python migrate.py --push-to-hub --source-repo-id lerobot/smolvla_base --repo-id lerobot/pi0 --branch migrated-v2
 """
 
 import argparse
@@ -267,7 +267,7 @@ def migrate_smolvla_model(
 
         # Push processors
         api.upload_file(
-            path_or_fileobj=os.path.join(save_directory, "preprocessor.json"),
+            path_or_fileobj=os.path.join(save_directory, "robot_preprocessor.json"),
             path_in_repo="preprocessor.json",
             repo_id=hub_repo_id,
             repo_type="model",
@@ -288,7 +288,7 @@ def migrate_smolvla_model(
                 )
 
         api.upload_file(
-            path_or_fileobj=os.path.join(save_directory, "postprocessor.json"),
+            path_or_fileobj=os.path.join(save_directory, "robot_postprocessor.json"),
             path_in_repo="postprocessor.json",
             repo_id=hub_repo_id,
             repo_type="model",
