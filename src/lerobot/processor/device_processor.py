@@ -105,6 +105,20 @@ class DeviceProcessor:
         if truncated is not None and isinstance(truncated, torch.Tensor):
             new_transition[TransitionKey.TRUNCATED] = self._process_tensor(truncated)
 
+        # Process complementary data tensors
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is not None:
+            new_complementary_data = {}
+
+            # Process all items in complementary_data
+            for key, value in complementary_data.items():
+                if isinstance(value, torch.Tensor):
+                    new_complementary_data[key] = self._process_tensor(value)
+                else:
+                    new_complementary_data[key] = value
+
+            new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
+
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
