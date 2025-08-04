@@ -7,17 +7,25 @@ from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
 from lerobot.record import record_loop
 
-NUM_EPISODES = 2
-FPS = 30
-EPISODE_TIME_SEC = 5
+import time
+
+NUM_EPISODES = 35
+FPS = 20
+EPISODE_TIME_SEC = 10
 RESET_TIME_SEC = 5
-TASK_DESCRIPTION = "My task description"
+TASK_DESCRIPTION = "Grab a cube in Mujoco simulation"
 
 # Create the robot and teleoperator configurations
 robot_config = Reachy2RobotConfig(
-    id="test_reachy"
+    # ip_address="localhost",
+    # ip_address="172.18.131.66",
+    ip_address="192.168.0.200",
+    id="test_reachy",
 )
-teleop_config = Reachy2FakeTeleoperatorConfig()
+teleop_config = Reachy2FakeTeleoperatorConfig(
+    # ip_address="172.18.131.66",
+    ip_address="192.168.0.200",
+)
 
 # Initialize the robot and teleoperator
 robot = Reachy2Robot(robot_config)
@@ -30,7 +38,7 @@ dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
 dataset = LeRobotDataset.create(
-    repo_id="test/repo_test",
+    repo_id="glannuzel/grab_cube",
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,
@@ -40,7 +48,7 @@ dataset = LeRobotDataset.create(
 
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
-_init_rerun(session_name="recording")
+# _init_rerun(session_name="recording")
 
 # Connect the robot and teleoperator
 robot.connect()
@@ -48,7 +56,10 @@ teleop.connect()
 
 episode_idx = 0
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
+    start_time = time.time()
     log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
+
+    print("########### RECORDING ###########")
 
     record_loop(
         robot=robot,
@@ -58,12 +69,14 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
-        display_data=True,
+        display_data=False,
     )
 
     # Reset the environment if not stopping or re-recording
     if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
         log_say("Reset the environment")
+
+        print("------------- RESETTING -------------")
         record_loop(
             robot=robot,
             events=events,
@@ -71,7 +84,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             teleop=teleop,
             control_time_s=RESET_TIME_SEC,
             single_task=TASK_DESCRIPTION,
-            display_data=True,
+            display_data=False,
         )
 
     if events["rerecord_episode"]:
@@ -81,10 +94,12 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         dataset.clear_episode_buffer()
         continue
 
+    # episode_idx = NUM_EPISODES
     dataset.save_episode()
     episode_idx += 1
+    print(time.time()-start_time)
 
 # Clean up
 log_say("Stop recording")
 robot.disconnect()
-# dataset.push_to_hub()
+dataset.push_to_hub()
