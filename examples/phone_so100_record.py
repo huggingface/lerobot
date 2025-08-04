@@ -18,6 +18,7 @@
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import DatasetFeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import merge_grouped_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.pipeline import RobotProcessor
 from lerobot.processor.utils import (
@@ -49,7 +50,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "pepijn223/phone_teleop_pipeline_55"
+HF_REPO_ID = "pepijn223/phone_teleop_pipeline_91"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -98,7 +99,7 @@ robot_ee_to_joints = RobotProcessor(
         ),
         GripperVelocityToJoint(
             motor_names=list(robot.bus.motors.keys()),
-            speed_factor=5.0,
+            speed_factor=20.0,
         ),
     ],
     to_transition=lambda tr: tr,
@@ -115,29 +116,42 @@ robot_joints_to_ee_pose = RobotProcessor(
 )
 
 # Build dataset action features
-ee_action_features = phone_to_robot_ee_pose.aggregate_dataset_features(
+action_ee = phone_to_robot_ee_pose.aggregate_dataset_features(
     initial_features=phone.action_features,
     use_videos=True,
     include=("action",),
     action_type=DatasetFeatureType.EE,
-)
+)  # Get all ee action features
+action_joint = robot_ee_to_joints.aggregate_dataset_features(
+    initial_features={},
+    use_videos=True,
+    include=("action",),
+    action_type=DatasetFeatureType.JOINT,
+)  # Get gripper pos action features
+action_features = merge_grouped_features(action_ee, action_joint)
 
 # Build dataset observation features
-ee_observation_features = robot_joints_to_ee_pose.aggregate_dataset_features(
+obs_ee = robot_joints_to_ee_pose.aggregate_dataset_features(
     initial_features=robot.observation_features,
     use_videos=True,
     include=("observation",),
     action_type=DatasetFeatureType.EE,
-)
+)  # Get all ee observation features
+obs_joint = robot_ee_to_joints.aggregate_dataset_features(
+    initial_features={},
+    use_videos=True,
+    include=("observation",),
+    action_type=DatasetFeatureType.JOINT,
+)  # Get gripper pos observation features
+observation_features = merge_grouped_features(obs_ee, obs_joint)
 
-print("All dataset features: ", {**ee_action_features, **ee_observation_features})  # TODO(pepijn): remove
-
+print("All dataset features: ", {**action_features, **observation_features})  # TODO(pepijn): remove
 
 # Create the dataset
 dataset = LeRobotDataset.create(
     repo_id=HF_REPO_ID,
     fps=FPS,
-    features={**ee_action_features, **ee_observation_features},
+    features={**action_features, **observation_features},
     robot_type=robot.name,
     use_videos=True,
     image_writer_threads=4,

@@ -470,6 +470,47 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
     return policy_features
 
 
+def merge_grouped_features(*groups: dict) -> dict:
+    """
+    Merge LeRobot grouped feature dicts (e.g. outputs of aggregate_dataset_features).
+
+    - For 1D numeric specs (dtype not image/video/string) with "names": merge names and recompute shape.
+    - For others (e.g. observation.images.*), last one wins (they should be identical).
+    """
+    out: dict = {}
+    for g in groups:
+        for k, spec in g.items():
+            if not isinstance(spec, dict):
+                out[k] = spec
+                continue
+
+            dtype = spec.get("dtype")
+            shape = spec.get("shape")
+            is_vector = (
+                dtype not in ("image", "video", "string")
+                and isinstance(shape, tuple)
+                and len(shape) == 1
+                and "names" in spec
+            )
+
+            if is_vector:
+                tgt = out.setdefault(k, {"dtype": dtype, "names": [], "shape": (0,)})
+                if "dtype" in tgt and dtype != tgt["dtype"]:
+                    raise ValueError(f"dtype mismatch for '{k}': {tgt['dtype']} vs {dtype}")
+
+                # merge names (keep order, no dups)
+                seen = set(tgt["names"])
+                for n in spec["names"]:
+                    if n not in seen:
+                        tgt["names"].append(n)
+                        seen.add(n)
+                tgt["shape"] = (len(tgt["names"]),)
+            else:
+                # Images/videos and any non-1D entries: copy over (identical expected)
+                out[k] = spec
+    return out
+
+
 def create_empty_dataset_info(
     codebase_version: str,
     fps: int,

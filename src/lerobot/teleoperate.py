@@ -109,7 +109,7 @@ def teleop_loop(
         action = teleop.get_action()
         if display_data:
             observation = robot.get_observation()
-            log_rerun_data(observation, action)
+            log_rerun_data(observation=observation, action=action)
 
         robot.send_action(action)
         dt_s = time.perf_counter() - loop_start

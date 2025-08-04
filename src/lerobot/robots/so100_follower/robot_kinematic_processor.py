@@ -237,12 +237,12 @@ class InverseKinematicsEEToJoints:
         act = transition.get(TransitionKey.ACTION) or {}
         comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
-        x = act.pop("action.ee.x", None)
-        y = act.pop("action.ee.y", None)
-        z = act.pop("action.ee.z", None)
-        wx = act.pop("action.ee.wx", None)
-        wy = act.pop("action.ee.wy", None)
-        wz = act.pop("action.ee.wz", None)
+        x = act.get("action.ee.x", None)
+        y = act.get("action.ee.y", None)
+        z = act.get("action.ee.z", None)
+        wx = act.get("action.ee.wx", None)
+        wy = act.get("action.ee.wy", None)
+        wz = act.get("action.ee.wz", None)
 
         if None in (x, y, z, wx, wy, wz):
             # Nothing to do; restore what we popped and return
@@ -284,8 +284,12 @@ class InverseKinematicsEEToJoints:
 
     def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We specify the dataset features of this step that we want to be stored in the dataset
-        for n in self.motor_names:
-            features[f"action.{n}.pos"] = float
+        features["action.ee.x"] = float
+        features["action.ee.y"] = float
+        features["action.ee.z"] = float
+        features["action.ee.wx"] = float
+        features["action.ee.wy"] = float
+        features["action.ee.wz"] = float
         return features
 
 
@@ -307,13 +311,14 @@ class GripperVelocityToJoint:
     """
 
     motor_names: list[str]
-    speed_factor: float = 5.0
+    speed_factor: float = 20.0
     clip_min: float = 0.0
     clip_max: float = 100.0
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         obs = transition.get(TransitionKey.OBSERVATION) or {}
         act = transition.get(TransitionKey.ACTION) or {}
+        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
         if "action.gripper" not in act:
             return transition
@@ -324,18 +329,27 @@ class GripperVelocityToJoint:
             transition[TransitionKey.ACTION] = new_act
             return transition
 
-        curr = float(obs.get("observation.state.gripper.pos", 0.0))
-        delta = float(act.get("action.gripper", 0.0)) * float(self.speed_factor)
-        tgt = float(np.clip(curr + delta, self.clip_min, self.clip_max))
+        # Get current gripper position from complementary data
+        raw = comp.get("raw_joint_positions") or {}
+        curr_pos = float(raw.get("gripper"))
+
+        # Compute desired gripper velocity
+        u = float(act.get("action.gripper", 0.0))
+        delta = u * float(self.speed_factor)
+        gripper_pos = float(np.clip(curr_pos + delta, self.clip_min, self.clip_max))
 
         new_act = dict(act)
-        new_act["action.gripper.pos"] = tgt
+        new_act["action.gripper.pos"] = gripper_pos
         new_act.pop("action.gripper", None)
         transition[TransitionKey.ACTION] = new_act
+
+        obs.update({"observation.state.gripper.pos": curr_pos})
+        transition[TransitionKey.OBSERVATION] = obs
         return transition
 
     def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We specify the dataset features of this step that we want to be stored in the dataset
+        features["observation.state.gripper.pos"] = float
         features["action.gripper.pos"] = float
         return features
 

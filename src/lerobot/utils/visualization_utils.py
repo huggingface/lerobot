@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numbers
 import os
 from typing import Any
 
 import numpy as np
 import rerun as rr
+
+from lerobot.processor.pipeline import EnvTransition, TransitionKey
 
 
 def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
@@ -28,19 +31,92 @@ def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
     rr.spawn(memory_limit=memory_limit)
 
 
-def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
-    for obs, val in observation.items():
-        if isinstance(val, float):
-            rr.log(f"observation.{obs}", rr.Scalar(val))
-        elif isinstance(val, np.ndarray):
-            if val.ndim == 1:
-                for i, v in enumerate(val):
-                    rr.log(f"observation.{obs}_{i}", rr.Scalar(float(v)))
+def _is_scalar(x):
+    return (
+        isinstance(x, numbers.Real)
+        or isinstance(x, (np.integer, np.floating))
+        or (isinstance(x, np.ndarray) and x.ndim == 0)
+    )
+
+
+def log_rerun_data(
+    data: list[dict[str | Any] | EnvTransition] | dict[str | Any] | EnvTransition | None = None,
+    *,
+    observation: dict[str, Any] | None = None,
+    action: dict[str, Any] | None = None,
+) -> None:
+    # Normalize "data" to a list for uniform parsing
+    items = data if isinstance(data, list) else ([data] if data is not None else [])
+
+    # Seed with explicit kwargs (if provided)
+    obs = {} if observation is None else dict(observation)
+    act = {} if action is None else dict(action)
+
+    # Parse list/dict/EnvTransition inputs
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+
+        # EnvTransition-like (TransitionKey keys)
+        if any(isinstance(k, TransitionKey) for k in item.keys()):
+            o = item.get(TransitionKey.OBSERVATION) or {}
+            a = item.get(TransitionKey.ACTION) or {}
+            if isinstance(o, dict):
+                obs.update(o)
+            if isinstance(a, dict):
+                act.update(a)
+            continue
+
+        # Plain dict: check for prefixes
+        keys = list(item.keys())
+        has_obs = any(str(k).startswith("observation.") for k in keys)
+        has_act = any(str(k).startswith("action.") for k in keys)
+
+        if has_obs or has_act:
+            if has_obs:
+                obs.update(item)
+            if has_act:
+                act.update(item)
+        else:
+            # No prefixes: assume first is observation, second is action, others -> observation
+            if idx == 0:
+                obs.update(item)
+            elif idx == 1:
+                act.update(item)
             else:
-                rr.log(f"observation.{obs}", rr.Image(val), static=True)
-    for act, val in action.items():
-        if isinstance(val, float):
-            rr.log(f"action.{act}", rr.Scalar(val))
-        elif isinstance(val, np.ndarray):
-            for i, v in enumerate(val):
-                rr.log(f"action.{act}_{i}", rr.Scalar(float(v)))
+                obs.update(item)
+
+    for k, v in obs.items():
+        if v is None:
+            continue
+        key = k if str(k).startswith("observation.") else f"observation.{k}"
+
+        if _is_scalar(v):
+            rr.log(key, rr.Scalar(float(v)))
+        elif isinstance(v, np.ndarray):
+            arr = v
+            # Convert CHW -> HWC when needed
+            if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+                arr = np.transpose(arr, (1, 2, 0))
+            if arr.ndim == 1:
+                for i, vi in enumerate(arr):
+                    rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
+            else:
+                rr.log(key, rr.Image(arr), static=True)
+
+    for k, v in act.items():
+        if v is None:
+            continue
+        key = k if str(k).startswith("action.") else f"action.{k}"
+
+        if _is_scalar(v):
+            rr.log(key, rr.Scalar(float(v)))
+        elif isinstance(v, np.ndarray):
+            if v.ndim == 1:
+                for i, vi in enumerate(v):
+                    rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
+            else:
+                # Fall back to flattening higher-d arrays
+                flat = v.flatten()
+                for i, vi in enumerate(flat):
+                    rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
