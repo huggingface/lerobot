@@ -20,7 +20,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import datasets
 import numpy as np
