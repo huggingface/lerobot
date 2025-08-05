@@ -17,6 +17,7 @@ import torch
 
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.processor import (
+    DeviceProcessor,
     NormalizerProcessor,
     RenameProcessor,
     RobotProcessor,
@@ -36,8 +37,10 @@ def make_act_processor(
             stats=dataset_stats,
         ),
         ToBatchProcessor(),
+        DeviceProcessor(device=config.device),
     ]
     output_steps = [
+        DeviceProcessor(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),

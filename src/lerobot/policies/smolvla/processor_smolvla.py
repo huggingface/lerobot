@@ -20,6 +20,7 @@ import torch
 from lerobot.configs.types import PolicyFeature
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
+    DeviceProcessor,
     NormalizerProcessor,
     RenameProcessor,
     RobotProcessor,
@@ -48,8 +49,10 @@ def make_smolvla_processor(
             padding_side="right",
             max_length=config.tokenizer_max_length,
         ),
+        DeviceProcessor(device=config.device),
     ]
     output_steps = [
+        DeviceProcessor(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),

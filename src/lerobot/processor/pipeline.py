@@ -31,7 +31,6 @@ from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file, save_file
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.utils.utils import get_safe_torch_device
 
 
 class TransitionKey(str, Enum):
@@ -202,10 +201,16 @@ def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noq
     observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
     observation = observation_keys if observation_keys else None
 
-    # Extract padding and task keys for complementary data
+    # Extract padding, task, index, and task_index keys for complementary data
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
     task_key = {"task": batch["task"]} if "task" in batch else {}
-    complementary_data = {**pad_keys, **task_key} if pad_keys or task_key else {}
+    index_key = {"index": batch["index"]} if "index" in batch else {}
+    task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
+    complementary_data = (
+        {**pad_keys, **task_key, **index_key, **task_index_key}
+        if pad_keys or task_key or index_key or task_index_key
+        else {}
+    )
 
     transition: EnvTransition = {
         TransitionKey.OBSERVATION: observation,
@@ -232,7 +237,7 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
         "info": transition.get(TransitionKey.INFO, {}),
     }
 
-    # Add padding and task data from complementary_data
+    # Add padding, task, index, and task_index data from complementary_data
     complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
     if complementary_data:
         pad_data = {k: v for k, v in complementary_data.items() if "_is_pad" in k}
@@ -240,6 +245,12 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
 
         if "task" in complementary_data:
             batch["task"] = complementary_data["task"]
+
+        if "index" in complementary_data:
+            batch["index"] = complementary_data["index"]
+
+        if "task_index" in complementary_data:
+            batch["task_index"] = complementary_data["task_index"]
 
     # Handle observation - flatten dict to observation.* keys if it's a dict
     observation = transition.get(TransitionKey.OBSERVATION)
@@ -503,24 +514,6 @@ class RobotProcessor(ModelHubMixin):
 
         # Generate README.md from template
         self._generate_model_card(destination_path)
-
-    def to(self, device: str | torch.device):
-        """Move all tensor states inside each step to device and return self.
-
-        Uses a generic mechanism: fetch each step's state dict, move every tensor
-        to the target device, and reload it. Only works for steps that implement
-        both state_dict() and load_state_dict() methods.
-        """
-        device = get_safe_torch_device(device)
-
-        for step in self.steps:
-            if hasattr(step, "state_dict") and hasattr(step, "load_state_dict"):
-                state = step.state_dict()
-                if state:  # Only process if there's actual state
-                    moved_state = {k: v.to(device) for k, v in state.items()}
-                    step.load_state_dict(moved_state)
-
-        return self
 
     @classmethod
     def from_pretrained(

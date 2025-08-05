@@ -21,6 +21,7 @@ import torch
 from lerobot.configs.types import PolicyFeature
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
+    DeviceProcessor,
     NormalizerProcessor,
     RobotProcessor,
     ToBatchProcessor,
@@ -104,9 +105,11 @@ def make_pi0_processor(
             padding_side="right",
             padding="max_length",
         ),
+        DeviceProcessor(device=config.device),
     ]
 
     output_steps: list[ProcessorStep] = [
+        DeviceProcessor(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
