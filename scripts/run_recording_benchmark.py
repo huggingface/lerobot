@@ -24,6 +24,7 @@ of different components in the recording pipeline.
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 
 # Add src to path for imports
@@ -56,6 +57,9 @@ def create_mock_config(
     image_writer_threads: int = 4,
     image_writer_processes: int = 0,
     video_encoding_batch_size: int = 1,
+    async_video_encoding: bool = False,
+    video_encoding_workers: int = 2,
+    video_encoding_queue_size: int = 100,
 ) -> RecordConfig:
     """Create a mock recording configuration for benchmarking."""
     
@@ -89,6 +93,9 @@ def create_mock_config(
         num_image_writer_threads_per_camera=image_writer_threads,
         num_image_writer_processes=image_writer_processes,
         video_encoding_batch_size=video_encoding_batch_size,
+        async_video_encoding=async_video_encoding,
+        video_encoding_workers=video_encoding_workers,
+        video_encoding_queue_size=video_encoding_queue_size,
         root="./benchmark_data"  # Local storage for benchmarking
     )
     
@@ -126,7 +133,9 @@ def run_synthetic_benchmark(
     episode_time_s: int = 30,
     fps: int = 30,
     num_cameras: int = 1,
-    output_dir: str = "./benchmark_results"
+    output_dir: str = "./benchmark_results",
+    async_encoding: bool = False,
+    video_encoding_workers: int = 2
 ) -> None:
     """Run a synthetic benchmark without requiring real hardware."""
     
@@ -173,15 +182,186 @@ def run_synthetic_benchmark(
             benchmark.episode_saving.add_measurement(saving_time)
             
             # Simulate video encoding (5-15 seconds)
-            encoding_time = random.uniform(5.0, 15.0)
-            time.sleep(encoding_time)
-            benchmark.video_encoding.add_measurement(encoding_time)
+            if async_encoding:
+                # For async encoding, the encoding happens in background
+                # So we only measure the time to submit the task (very fast)
+                submission_time = random.uniform(0.001, 0.005)  # 1-5ms
+                time.sleep(submission_time)
+                benchmark.video_encoding.add_measurement(submission_time)
+                
+                # Track the actual encoding time separately (simulated)
+                actual_encoding_time = random.uniform(5.0, 15.0)
+                # In real async encoding, this would happen in background
+                # For simulation, we just track it
+                if not hasattr(benchmark, 'async_encoding_times'):
+                    benchmark.async_encoding_times = []
+                benchmark.async_encoding_times.append(actual_encoding_time)
+            else:
+                # Synchronous encoding blocks the main thread
+                encoding_time = random.uniform(5.0, 15.0)
+                time.sleep(encoding_time)
+                benchmark.video_encoding.add_measurement(encoding_time)
             
             benchmark.end_episode(episode)
         
         # Save results
         benchmark.save_results(output_path / f"synthetic_benchmark_{int(time.time())}.json")
+        # Add async encoding summary if applicable
+        if async_encoding and hasattr(benchmark, 'async_encoding_times'):
+            total_async_time = sum(benchmark.async_encoding_times)
+            print(f"\nASYNC ENCODING SUMMARY:")
+            print(f"Total async encoding time (background): {total_async_time:.2f}s")
+            print(f"Average async encoding time per episode: {total_async_time/len(benchmark.async_encoding_times):.2f}s")
+        
         benchmark.print_summary()
+
+
+def run_comparison_benchmark(
+    num_episodes: int = 2,
+    episode_time_s: int = 30,
+    fps: int = 30,
+    num_cameras: int = 1,
+    output_dir: str = "./benchmark_results",
+    video_encoding_workers: int = 2
+) -> None:
+    """Run both sync and async benchmarks for comparison."""
+    
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+    
+    print("=" * 80)
+    print("RECORDING ENCODING PERFORMANCE COMPARISON")
+    print("=" * 80)
+    
+    # Run synchronous benchmark
+    print("\n1. RUNNING SYNCHRONOUS ENCODING BENCHMARK")
+    print("-" * 50)
+    sync_start = time.time()
+    
+    with RecordingBenchmark() as sync_benchmark:
+        for episode in range(num_episodes):
+            sync_benchmark.start_episode(episode)
+            
+            # Simulate frames
+            num_frames = episode_time_s * fps
+            for frame in range(num_frames):
+                import random
+                
+                # Frame capture simulation
+                capture_time = random.uniform(0.001, 0.005)
+                time.sleep(capture_time)
+                sync_benchmark.frame_capture.add_measurement(capture_time)
+                
+                # Frame processing simulation
+                processing_time = random.uniform(0.002, 0.008)
+                time.sleep(processing_time)
+                sync_benchmark.frame_processing.add_measurement(processing_time)
+                
+                # Image writing simulation
+                writing_time = random.uniform(0.005, 0.015)
+                time.sleep(writing_time)
+                sync_benchmark.image_writing.add_measurement(writing_time)
+                
+                sync_benchmark.increment_frame_count()
+            
+            # Synchronous episode saving
+            saving_time = random.uniform(1.0, 3.0)
+            time.sleep(saving_time)
+            sync_benchmark.episode_saving.add_measurement(saving_time)
+            
+            # Synchronous video encoding (blocks main thread)
+            encoding_time = random.uniform(5.0, 15.0)
+            time.sleep(encoding_time)
+            sync_benchmark.video_encoding.add_measurement(encoding_time)
+            
+            sync_benchmark.end_episode(episode)
+    
+    sync_total_time = time.time() - sync_start
+    sync_encoding_time = sync_benchmark.video_encoding.total_time
+    
+    # Run asynchronous benchmark
+    print("\n2. RUNNING ASYNCHRONOUS ENCODING BENCHMARK")
+    print("-" * 50)
+    async_start = time.time()
+    
+    with RecordingBenchmark() as async_benchmark:
+        async_benchmark.async_encoding_times = []
+        
+        for episode in range(num_episodes):
+            async_benchmark.start_episode(episode)
+            
+            # Simulate frames
+            num_frames = episode_time_s * fps
+            for frame in range(num_frames):
+                import random
+                
+                # Frame capture simulation
+                capture_time = random.uniform(0.001, 0.005)
+                time.sleep(capture_time)
+                async_benchmark.frame_capture.add_measurement(capture_time)
+                
+                # Frame processing simulation
+                processing_time = random.uniform(0.002, 0.008)
+                time.sleep(processing_time)
+                async_benchmark.frame_processing.add_measurement(processing_time)
+                
+                # Image writing simulation
+                writing_time = random.uniform(0.005, 0.015)
+                time.sleep(writing_time)
+                async_benchmark.image_writing.add_measurement(writing_time)
+                
+                async_benchmark.increment_frame_count()
+            
+            # Asynchronous episode saving (encoding happens in background)
+            saving_time = random.uniform(1.0, 3.0)
+            time.sleep(saving_time)
+            async_benchmark.episode_saving.add_measurement(saving_time)
+            
+            # Asynchronous video encoding (non-blocking)
+            submission_time = random.uniform(0.001, 0.005)
+            time.sleep(submission_time)
+            async_benchmark.video_encoding.add_measurement(submission_time)
+            
+            # Track actual encoding time (simulated background processing)
+            actual_encoding_time = random.uniform(5.0, 15.0)
+            async_benchmark.async_encoding_times.append(actual_encoding_time)
+            
+            async_benchmark.end_episode(episode)
+    
+    async_total_time = time.time() - async_start
+    async_encoding_time = sum(async_benchmark.async_encoding_times)
+    
+    # Save results
+    sync_benchmark.save_results(output_path / f"sync_benchmark_{int(time.time())}.json")
+    async_benchmark.save_results(output_path / f"async_benchmark_{int(time.time())}.json")
+    
+    # Print comparison
+    print("\n" + "=" * 80)
+    print("PERFORMANCE COMPARISON RESULTS")
+    print("=" * 80)
+    
+    print(f"\nSYNCHRONOUS ENCODING:")
+    print(f"  Total recording time: {sync_total_time:.2f}s")
+    print(f"  Video encoding time: {sync_encoding_time:.2f}s")
+    print(f"  Encoding percentage: {(sync_encoding_time/sync_total_time)*100:.1f}%")
+    
+    print(f"\nASYNCHRONOUS ENCODING:")
+    print(f"  Total recording time: {async_total_time:.2f}s")
+    print(f"  Video encoding time (background): {async_encoding_time:.2f}s")
+    print(f"  Task submission time: {async_benchmark.video_encoding.total_time:.2f}s")
+    print(f"  Submission percentage: {(async_benchmark.video_encoding.total_time/async_total_time)*100:.1f}%")
+    
+    print(f"\nPERFORMANCE IMPROVEMENTS:")
+    time_saved = sync_total_time - async_total_time
+    speedup = sync_total_time / async_total_time
+    print(f"  Time saved: {time_saved:.2f}s")
+    print(f"  Speedup: {speedup:.2f}x")
+    print(f"  Improvement: {((sync_total_time - async_total_time) / sync_total_time) * 100:.1f}%")
+    
+    print(f"\nENCODING EFFICIENCY:")
+    print(f"  Sync encoding blocks recording for: {sync_encoding_time:.2f}s")
+    print(f"  Async encoding blocks recording for: {async_benchmark.video_encoding.total_time:.2f}s")
+    print(f"  Blocking time reduction: {((sync_encoding_time - async_benchmark.video_encoding.total_time) / sync_encoding_time) * 100:.1f}%")
 
 
 def main():
@@ -247,6 +427,28 @@ def main():
         default=1,
         help="Video encoding batch size"
     )
+    parser.add_argument(
+        "--async-encoding",
+        action="store_true",
+        help="Enable asynchronous video encoding"
+    )
+    parser.add_argument(
+        "--video-encoding-workers",
+        type=int,
+        default=2,
+        help="Number of worker threads for async video encoding"
+    )
+    parser.add_argument(
+        "--video-encoding-queue-size",
+        type=int,
+        default=100,
+        help="Maximum queue size for async video encoding"
+    )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="Run both sync and async benchmarks for comparison"
+    )
     
     args = parser.parse_args()
     
@@ -256,13 +458,25 @@ def main():
     logging.info(f"Starting recording benchmark in {args.mode} mode")
     logging.info(f"Configuration: {args.episodes} episodes, {args.episode_time}s each, {args.fps} FPS")
     
-    if args.mode == "synthetic":
+    if args.compare:
+        # Run comparison benchmark
+        run_comparison_benchmark(
+            num_episodes=args.episodes,
+            episode_time_s=args.episode_time,
+            fps=args.fps,
+            num_cameras=args.cameras,
+            output_dir=args.output_dir,
+            video_encoding_workers=args.video_encoding_workers
+        )
+    elif args.mode == "synthetic":
         run_synthetic_benchmark(
             num_episodes=args.episodes,
             episode_time_s=args.episode_time,
             fps=args.fps,
             num_cameras=args.cameras,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            async_encoding=args.async_encoding,
+            video_encoding_workers=args.video_encoding_workers
         )
     else:
         # Real recording mode
@@ -273,7 +487,10 @@ def main():
             num_cameras=args.cameras,
             image_writer_threads=args.image_writer_threads,
             image_writer_processes=args.image_writer_processes,
-            video_encoding_batch_size=args.video_encoding_batch_size
+            video_encoding_batch_size=args.video_encoding_batch_size,
+            async_video_encoding=args.async_encoding,
+            video_encoding_workers=args.video_encoding_workers,
+            video_encoding_queue_size=args.video_encoding_queue_size
         )
         
         run_benchmark_recording(cfg)
