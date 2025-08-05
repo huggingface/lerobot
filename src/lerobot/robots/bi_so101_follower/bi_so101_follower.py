@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import logging
-import time
 from functools import cached_property
 from typing import Any
 
@@ -141,7 +140,7 @@ class BiSO101Follower(Robot):
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
         for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
+            # start = time.perf_counter()
 
             # Check if this camera has depth enabled
             if hasattr(cam, "use_depth") and cam.use_depth and hasattr(cam, "async_read_all"):
@@ -156,13 +155,13 @@ class BiSO101Follower(Robot):
                     obs_dict[f"{cam_key}_depth"] = all_frames["depth_rgb"]
                 else:
                     # Log as warning, not error, since this can happen during startup
-                    logger.warning(f"{self} depth frame missing or None for {cam_key}_depth")
+                    pass  # logger.warning(f"{self} depth frame missing or None for {cam_key}_depth")
             else:
                 # Regular camera without depth
                 obs_dict[cam_key] = cam.async_read(timeout_ms=1000)
 
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            # dt_ms = (time.perf_counter() - start) * 1e3
+            # logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 

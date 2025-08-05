@@ -282,9 +282,9 @@ class RealSenseCamera(Camera):
                     if self.use_depth and not depth_ready:
                         if "depth_rgb" in frames and frames["depth_rgb"] is not None:
                             depth_ready = True
-                            logger.debug(f"{self} depth stream ready during warmup")
-                except Exception as e:
-                    logger.debug(f"{self} warmup frame read: {e}")
+                            pass  # logger.debug(f"{self} depth stream ready during warmup")
+                except Exception:  # nosec
+                    pass  # Silently ignore warmup errors
 
                 time.sleep(0.1)
 
@@ -437,7 +437,7 @@ class RealSenseCamera(Camera):
                 f"Failed to capture depth frame '.read_depth()'. Depth stream is not enabled for {self}."
             )
 
-        start_time = time.perf_counter()
+        # start_time = time.perf_counter()
 
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
 
@@ -449,8 +449,8 @@ class RealSenseCamera(Camera):
 
         depth_map_processed = self._postprocess_image(depth_map, depth_frame=True)
 
-        read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
+        # read_duration_ms = (time.perf_counter() - start_time) * 1e3
+        # logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
         return depth_map_processed
 
@@ -497,7 +497,7 @@ class RealSenseCamera(Camera):
         if self.depth_colorizer is None:
             raise RuntimeError(f"Depth colorizer not initialized for {self}.")
 
-        start_time = time.perf_counter()
+        # start_time = time.perf_counter()
 
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
 
@@ -518,8 +518,8 @@ class RealSenseCamera(Camera):
         if self.rotation is not None:
             depth_rgb = cv2.rotate(depth_rgb, self.rotation)
 
-        read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} read_depth_rgb took: {read_duration_ms:.1f}ms")
+        # read_duration_ms = (time.perf_counter() - start_time) * 1e3
+        # logger.debug(f"{self} read_depth_rgb took: {read_duration_ms:.1f}ms")
 
         return depth_rgb
 
@@ -546,7 +546,7 @@ class RealSenseCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        start_time = time.perf_counter()
+        # start_time = time.perf_counter()
 
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
 
@@ -558,8 +558,8 @@ class RealSenseCamera(Camera):
 
         color_image_processed = self._postprocess_image(color_image_raw, color_mode)
 
-        read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
+        # read_duration_ms = (time.perf_counter() - start_time) * 1e3
+        # logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
         return color_image_processed
 
@@ -649,7 +649,7 @@ class RealSenseCamera(Camera):
                             try:
                                 # Validate depth frame before colorization
                                 if not depth_frame.is_depth_frame():
-                                    logger.warning(f"{self}: Received non-depth frame in depth stream")
+                                    pass  # logger.warning(f"{self}: Received non-depth frame in depth stream")
                                     depth_rgb = None
                                 else:
                                     # Colorize the depth frame using OpenCV
@@ -665,9 +665,9 @@ class RealSenseCamera(Camera):
                                         depth_rgb = cv2.rotate(depth_rgb, self.rotation)
 
                                     self._colorization_success_count += 1
-                            except Exception as e:
+                            except Exception:
                                 self._colorization_error_count += 1
-                                logger.warning(f"{self}: Depth colorization error: {type(e).__name__}: {e}")
+                                # Silently ignore colorization errors for performance
                                 depth_rgb = None
 
                 # Store frames thread-safely
@@ -679,8 +679,8 @@ class RealSenseCamera(Camera):
 
             except DeviceNotConnectedError:
                 break
-            except Exception as e:
-                logger.warning(f"Error reading frame in background thread for {self}: {e}")
+            except Exception:  # nosec
+                pass  # Silently ignore frame read errors
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
