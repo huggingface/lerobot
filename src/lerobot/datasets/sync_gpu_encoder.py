@@ -10,7 +10,6 @@ the same synchronous interface.
 import logging
 import time
 from pathlib import Path
-from typing import Optional
 
 from .gpu_video_encoder import GPUVideoEncoder, create_gpu_encoder_config
 from .video_utils import encode_video_frames
