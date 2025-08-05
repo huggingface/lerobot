@@ -899,3 +899,231 @@ def test_task_preserves_other_keys():
     assert processed_comp_data["motor_id"] == "motor_456"
     assert processed_comp_data["config"] == {"speed": "slow", "precision": "high"}
     assert processed_comp_data["metrics"] == [1.0, 2.0, 3.0]
+
+
+# Index and task_index specific tests
+def test_index_scalar_to_1d():
+    """Test that 0D index tensor gets unsqueezed to 1D."""
+    processor = ToBatchProcessor()
+
+    # Create 0D index tensor (scalar)
+    index_0d = torch.tensor(42, dtype=torch.int64)
+    complementary_data = {"index": index_0d}
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert processed_comp_data["index"].shape == (1,)
+    assert processed_comp_data["index"].dtype == torch.int64
+    assert processed_comp_data["index"][0] == 42
+
+
+def test_task_index_scalar_to_1d():
+    """Test that 0D task_index tensor gets unsqueezed to 1D."""
+    processor = ToBatchProcessor()
+
+    # Create 0D task_index tensor (scalar)
+    task_index_0d = torch.tensor(7, dtype=torch.int64)
+    complementary_data = {"task_index": task_index_0d}
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert processed_comp_data["task_index"].shape == (1,)
+    assert processed_comp_data["task_index"].dtype == torch.int64
+    assert processed_comp_data["task_index"][0] == 7
+
+
+def test_index_and_task_index_together():
+    """Test processing both index and task_index together."""
+    processor = ToBatchProcessor()
+
+    # Create 0D tensors for both
+    index_0d = torch.tensor(100, dtype=torch.int64)
+    task_index_0d = torch.tensor(3, dtype=torch.int64)
+    complementary_data = {
+        "index": index_0d,
+        "task_index": task_index_0d,
+        "task": "pick_object",
+    }
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+
+    # Check index
+    assert processed_comp_data["index"].shape == (1,)
+    assert processed_comp_data["index"][0] == 100
+
+    # Check task_index
+    assert processed_comp_data["task_index"].shape == (1,)
+    assert processed_comp_data["task_index"][0] == 3
+
+    # Check task is also processed
+    assert processed_comp_data["task"] == ["pick_object"]
+
+
+def test_index_already_batched():
+    """Test that already batched index tensors remain unchanged."""
+    processor = ToBatchProcessor()
+
+    # Create already batched tensors
+    index_1d = torch.tensor([42], dtype=torch.int64)
+    index_2d = torch.tensor([[42, 43]], dtype=torch.int64)
+
+    # Test 1D (already batched)
+    complementary_data = {"index": index_1d}
+    transition = create_transition(complementary_data=complementary_data)
+    result = processor(transition)
+    assert torch.equal(result[TransitionKey.COMPLEMENTARY_DATA]["index"], index_1d)
+
+    # Test 2D
+    complementary_data = {"index": index_2d}
+    transition = create_transition(complementary_data=complementary_data)
+    result = processor(transition)
+    assert torch.equal(result[TransitionKey.COMPLEMENTARY_DATA]["index"], index_2d)
+
+
+def test_task_index_already_batched():
+    """Test that already batched task_index tensors remain unchanged."""
+    processor = ToBatchProcessor()
+
+    # Create already batched tensors
+    task_index_1d = torch.tensor([7], dtype=torch.int64)
+    task_index_2d = torch.tensor([[7, 8]], dtype=torch.int64)
+
+    # Test 1D (already batched)
+    complementary_data = {"task_index": task_index_1d}
+    transition = create_transition(complementary_data=complementary_data)
+    result = processor(transition)
+    assert torch.equal(result[TransitionKey.COMPLEMENTARY_DATA]["task_index"], task_index_1d)
+
+    # Test 2D
+    complementary_data = {"task_index": task_index_2d}
+    transition = create_transition(complementary_data=complementary_data)
+    result = processor(transition)
+    assert torch.equal(result[TransitionKey.COMPLEMENTARY_DATA]["task_index"], task_index_2d)
+
+
+def test_index_non_tensor_unchanged():
+    """Test that non-tensor index values remain unchanged."""
+    processor = ToBatchProcessor()
+
+    complementary_data = {
+        "index": 42,  # Plain int, not tensor
+        "task_index": [1, 2, 3],  # List, not tensor
+    }
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert processed_comp_data["index"] == 42
+    assert processed_comp_data["task_index"] == [1, 2, 3]
+
+
+def test_index_dtype_preservation():
+    """Test that index and task_index dtype is preserved during processing."""
+    processor = ToBatchProcessor()
+
+    # Test different dtypes
+    dtypes = [torch.int32, torch.int64, torch.long]
+
+    for dtype in dtypes:
+        index_0d = torch.tensor(42, dtype=dtype)
+        task_index_0d = torch.tensor(7, dtype=dtype)
+        complementary_data = {
+            "index": index_0d,
+            "task_index": task_index_0d,
+        }
+        transition = create_transition(complementary_data=complementary_data)
+
+        result = processor(transition)
+
+        processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+        assert processed_comp_data["index"].dtype == dtype
+        assert processed_comp_data["task_index"].dtype == dtype
+
+
+def test_index_with_full_transition():
+    """Test index/task_index processing with full transition data."""
+    processor = ToBatchProcessor()
+
+    # Create full transition with all components
+    observation = {
+        OBS_STATE: torch.randn(7),
+        OBS_IMAGE: torch.randn(64, 64, 3),
+    }
+    action = torch.randn(4)
+    complementary_data = {
+        "task": "navigate_to_goal",
+        "index": torch.tensor(1000, dtype=torch.int64),
+        "task_index": torch.tensor(5, dtype=torch.int64),
+        "episode_id": 123,
+    }
+
+    transition = create_transition(
+        observation=observation,
+        action=action,
+        reward=0.5,
+        done=False,
+        complementary_data=complementary_data,
+    )
+
+    result = processor(transition)
+
+    # Check all components are processed correctly
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 7)
+    assert result[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (1, 64, 64, 3)
+    assert result[TransitionKey.ACTION].shape == (1, 4)
+
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert processed_comp_data["task"] == ["navigate_to_goal"]
+    assert processed_comp_data["index"].shape == (1,)
+    assert processed_comp_data["index"][0] == 1000
+    assert processed_comp_data["task_index"].shape == (1,)
+    assert processed_comp_data["task_index"][0] == 5
+    assert processed_comp_data["episode_id"] == 123  # Non-tensor field unchanged
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_index_device_compatibility():
+    """Test processor works with index/task_index tensors on different devices."""
+    processor = ToBatchProcessor()
+
+    # Create tensors on GPU
+    index_0d = torch.tensor(42, dtype=torch.int64, device="cuda")
+    task_index_0d = torch.tensor(7, dtype=torch.int64, device="cuda")
+
+    complementary_data = {
+        "index": index_0d,
+        "task_index": task_index_0d,
+    }
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+
+    # Check shapes and that tensors stayed on GPU
+    assert processed_comp_data["index"].shape == (1,)
+    assert processed_comp_data["task_index"].shape == (1,)
+    assert processed_comp_data["index"].device.type == "cuda"
+    assert processed_comp_data["task_index"].device.type == "cuda"
+
+
+def test_empty_index_tensor():
+    """Test handling of empty index tensors."""
+    processor = ToBatchProcessor()
+
+    # Empty 0D tensor doesn't make sense, but test empty 1D
+    index_empty = torch.tensor([], dtype=torch.int64)
+    complementary_data = {"index": index_empty}
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+
+    # Should remain unchanged (already 1D)
+    assert result[TransitionKey.COMPLEMENTARY_DATA]["index"].shape == (0,)

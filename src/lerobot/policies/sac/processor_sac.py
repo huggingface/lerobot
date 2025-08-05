@@ -19,7 +19,9 @@ import torch
 
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.processor import (
+    DeviceProcessor,
     NormalizerProcessor,
+    RenameProcessor,
     RobotProcessor,
     ToBatchProcessor,
     UnnormalizerProcessor,
@@ -30,15 +32,17 @@ def make_sac_processor(
     config: SACConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [
+        RenameProcessor(rename_map={}),
         NormalizerProcessor(
-            features=config.input_features, norm_map=config.normalization_mapping, stats=dataset_stats
-        ),
-        NormalizerProcessor(
-            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
         ),
         ToBatchProcessor(),
+        DeviceProcessor(device=config.device),
     ]
     output_steps = [
+        DeviceProcessor(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),

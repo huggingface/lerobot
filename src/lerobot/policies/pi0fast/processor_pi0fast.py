@@ -18,7 +18,9 @@ import torch
 
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
+    DeviceProcessor,
     NormalizerProcessor,
+    RenameProcessor,
     RobotProcessor,
     ToBatchProcessor,
     UnnormalizerProcessor,
@@ -29,15 +31,17 @@ def make_pi0_processor(
     config: PI0Config, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [
+        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
         NormalizerProcessor(
-            features=config.input_features, norm_map=config.normalization_mapping, stats=dataset_stats
-        ),
-        NormalizerProcessor(
-            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
         ),
         ToBatchProcessor(),
+        DeviceProcessor(device=config.device),
     ]
     output_steps = [
+        DeviceProcessor(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
