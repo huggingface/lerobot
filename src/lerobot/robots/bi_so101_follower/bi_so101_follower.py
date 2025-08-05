@@ -152,8 +152,11 @@ class BiSO101Follower(Robot):
                 obs_dict[cam_key] = all_frames.get("color")
 
                 # Add depth frame with "_depth" suffix
-                if "depth_rgb" in all_frames:
+                if "depth_rgb" in all_frames and all_frames["depth_rgb"] is not None:
                     obs_dict[f"{cam_key}_depth"] = all_frames["depth_rgb"]
+                else:
+                    # Log as warning, not error, since this can happen during startup
+                    logger.warning(f"{self} depth frame missing or None for {cam_key}_depth")
             else:
                 # Regular camera without depth
                 obs_dict[cam_key] = cam.async_read(timeout_ms=1000)

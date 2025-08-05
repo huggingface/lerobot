@@ -171,6 +171,8 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Enable verbose camera debug logging
+    verbose_camera_logs: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -283,6 +285,26 @@ def record_loop(
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
 
+        # Calculate and display FPS
+        loop_time = time.perf_counter() - start_loop_t
+        actual_fps = 1 / loop_time if loop_time > 0 else 0
+
+        # Display FPS info every 10 frames
+        if int(timestamp * fps) % 10 == 0:
+            fps_info = (
+                f"Target FPS: {fps} | Actual FPS: {actual_fps:.1f} | Loop time: {loop_time * 1000:.1f}ms"
+            )
+            if hasattr(robot, "cameras") and len(robot.cameras) > 0:
+                fps_info += f" | Cameras: {len(robot.cameras)}"
+                # Check for RealSense cameras with depth colorization stats
+                for cam_name, cam in robot.cameras.items():
+                    if hasattr(cam, "_colorization_error_count"):
+                        total = cam._colorization_success_count + cam._colorization_error_count
+                        if total > 0:
+                            error_rate = (cam._colorization_error_count / total) * 100
+                            fps_info += f" | {cam_name} depth errors: {error_rate:.1f}%"
+            print(f"\r{fps_info}", end="", flush=True)
+
         timestamp = time.perf_counter() - start_episode_t
 
 
@@ -290,6 +312,13 @@ def record_loop(
 def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
+
+    # Enable verbose camera logging if requested
+    if cfg.verbose_camera_logs:
+        camera_logger = logging.getLogger("lerobot.cameras")
+        camera_logger.setLevel(logging.DEBUG)
+        logging.info("Verbose camera logging enabled")
+
     if cfg.display_data:
         _init_rerun(session_name="recording")
 
@@ -378,6 +407,23 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
             dataset.save_episode()
             recorded_episodes += 1
+
+            # Print performance summary for the episode
+            print("\n\nEpisode Performance Summary:")
+            print(f"Episode {dataset.num_episodes - 1} completed")
+
+            # Print camera statistics if available
+            if hasattr(robot, "cameras") and len(robot.cameras) > 0:
+                for cam_name, cam in robot.cameras.items():
+                    print(f"\nCamera '{cam_name}':")
+                    if hasattr(cam, "_colorization_error_count"):
+                        total = cam._colorization_success_count + cam._colorization_error_count
+                        if total > 0:
+                            error_rate = (cam._colorization_error_count / total) * 100
+                            print(
+                                f"  Depth colorization: {cam._colorization_success_count} successes, {cam._colorization_error_count} errors ({error_rate:.1f}% error rate)"
+                            )
+            print("-" * 60)
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 

@@ -65,7 +65,7 @@ class RealSenseCameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
-    warmup_s: int = 1
+    warmup_s: int = 3  # Increased to ensure depth stream is ready
     # Depth colorization settings
     depth_colormap: str = "jet"
     depth_min_meters: float = 0.3

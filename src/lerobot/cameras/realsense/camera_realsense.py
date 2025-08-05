@@ -41,28 +41,42 @@ logger = logging.getLogger(__name__)
 
 class RealSenseDepthColorizer:
     """
-    Simple RealSense depth colorizer using rs.colorizer() with default settings.
+    Depth colorizer using OpenCV for thread-safe, stateless colorization.
+    Matches the Kinect implementation to avoid RealSense colorizer memory issues.
     """
 
     def __init__(self, colormap: str = "jet", min_depth_m: float = 0.3, max_depth_m: float = 10.0):
         """
-        Initialize the RealSense depth colorizer with default settings.
+        Initialize the depth colorizer with OpenCV colormap.
 
         Args:
-            colormap: Ignored - uses RealSense default
-            min_depth_m: Stored for reference but not used
-            max_depth_m: Stored for reference but not used
+            colormap: Color scheme for depth visualization (default: "jet")
+            min_depth_m: Minimum depth in meters for colorization range
+            max_depth_m: Maximum depth in meters for colorization range
         """
-        # Create colorizer with default settings
-        self.colorizer = rs.colorizer()
+        # Map colormap names to OpenCV constants
+        self.colormap_dict = {
+            "jet": cv2.COLORMAP_JET,
+            "hot": cv2.COLORMAP_HOT,
+            "cool": cv2.COLORMAP_COOL,
+            "viridis": cv2.COLORMAP_VIRIDIS,
+            "plasma": cv2.COLORMAP_PLASMA,
+            "inferno": cv2.COLORMAP_INFERNO,
+            "rainbow": cv2.COLORMAP_RAINBOW,
+            "hsv": cv2.COLORMAP_HSV,
+        }
 
-        # Store parameters for reference
+        self.colormap = self.colormap_dict.get(colormap.lower(), cv2.COLORMAP_JET)
         self.min_depth_m = min_depth_m
         self.max_depth_m = max_depth_m
 
+        # Convert to millimeters for uint16 depth
+        self.min_depth_mm = int(min_depth_m * 1000)
+        self.max_depth_mm = int(max_depth_m * 1000)
+
     def colorize(self, depth_frame) -> np.ndarray:
         """
-        Convert RealSense depth frame to colorized RGB using native colorizer.
+        Convert RealSense depth frame to colorized RGB using OpenCV.
 
         Args:
             depth_frame: RealSense depth frame object
@@ -70,13 +84,24 @@ class RealSenseDepthColorizer:
         Returns:
             Colorized depth as RGB numpy array
         """
-        # Use native RealSense colorizer with default settings
-        colorized_frame = self.colorizer.colorize(depth_frame)
+        # Convert RealSense frame to numpy array
+        depth_array = np.asanyarray(depth_frame.get_data())
 
-        # Convert to numpy array
-        colorized_array = np.asanyarray(colorized_frame.get_data())
+        # Clip depth values to the specified range
+        depth_clipped = np.clip(depth_array, self.min_depth_mm, self.max_depth_mm)
 
-        return colorized_array
+        # Normalize to 0-255 range for colormap
+        depth_normalized = (
+            (depth_clipped - self.min_depth_mm) / (self.max_depth_mm - self.min_depth_mm) * 255
+        ).astype(np.uint8)
+
+        # Apply colormap
+        depth_colorized = cv2.applyColorMap(depth_normalized, self.colormap)
+
+        # Convert BGR to RGB (OpenCV uses BGR by default)
+        depth_rgb = cv2.cvtColor(depth_colorized, cv2.COLOR_BGR2RGB)
+
+        return depth_rgb
 
 
 class RealSenseCamera(Camera):
@@ -166,7 +191,7 @@ class RealSenseCamera(Camera):
         self.use_depth = config.use_depth
         self.warmup_s = config.warmup_s
 
-        # Initialize depth colorizer if depth is enabled
+        # Initialize depth colorizer if depth is enabled (OpenCV is thread-safe)
         self.depth_colorizer: RealSenseDepthColorizer | None = None
         if self.use_depth:
             self.depth_colorizer = RealSenseDepthColorizer(
@@ -193,6 +218,10 @@ class RealSenseCamera(Camera):
             self.capture_width, self.capture_height = self.width, self.height
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.capture_width, self.capture_height = self.height, self.width
+
+        # Error tracking for diagnostics
+        self._colorization_error_count = 0
+        self._colorization_success_count = 0
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.serial_number})"
@@ -234,14 +263,35 @@ class RealSenseCamera(Camera):
 
         self._configure_capture_settings()
 
+        # Start background thread BEFORE warmup (like Kinect does)
+        self._start_read_thread()
+
         if warmup:
             time.sleep(
                 1
             )  # NOTE(Steven): RS cameras need a bit of time to warm up before the first read. If we don't wait, the first read from the warmup will raise.
             start_time = time.time()
+            depth_ready = not self.use_depth  # If no depth, consider it ready
+
             while time.time() - start_time < self.warmup_s:
-                self.read()
+                try:
+                    # Use async_read_all during warmup to populate the buffer
+                    frames = self.async_read_all(timeout_ms=1000)
+
+                    # Verify we have all expected streams
+                    if self.use_depth and not depth_ready:
+                        if "depth_rgb" in frames and frames["depth_rgb"] is not None:
+                            depth_ready = True
+                            logger.debug(f"{self} depth stream ready during warmup")
+                except Exception as e:
+                    logger.debug(f"{self} warmup frame read: {e}")
+
                 time.sleep(0.1)
+
+            if self.use_depth and not depth_ready:
+                logger.warning(
+                    f"{self} depth stream not fully ready after warmup, may cause initial frame drops"
+                )
 
         logger.info(f"{self} connected.")
 
@@ -456,15 +506,12 @@ class RealSenseCamera(Camera):
 
         depth_frame = frame.get_depth_frame()
 
-        # Skip depth clipping for now to avoid option errors
-        # Just use the raw depth frame
-
-        # Colorize the depth frame using native RealSense colorizer
+        # Colorize the depth frame using OpenCV
         depth_rgb = self.depth_colorizer.colorize(depth_frame)
 
         # Convert to appropriate color mode if needed
         if self.color_mode == ColorMode.BGR:
-            # RealSense colorizer outputs RGB, convert to BGR
+            # OpenCV colorizer outputs RGB, convert to BGR
             depth_rgb = cv2.cvtColor(depth_rgb, cv2.COLOR_RGB2BGR)
 
         # Apply rotation if configured
@@ -599,20 +646,29 @@ class RealSenseCamera(Camera):
 
                         # Colorize depth if colorizer is available
                         if self.depth_colorizer is not None:
-                            # Skip depth clipping for now to avoid option errors
-                            # Just use the raw depth frame
+                            try:
+                                # Validate depth frame before colorization
+                                if not depth_frame.is_depth_frame():
+                                    logger.warning(f"{self}: Received non-depth frame in depth stream")
+                                    depth_rgb = None
+                                else:
+                                    # Colorize the depth frame using OpenCV
+                                    depth_rgb = self.depth_colorizer.colorize(depth_frame)
 
-                            # Colorize the depth frame
-                            depth_rgb = self.depth_colorizer.colorize(depth_frame)
+                                    # Convert to appropriate color mode if needed
+                                    if self.color_mode == ColorMode.BGR:
+                                        # OpenCV colorizer outputs RGB, convert to BGR
+                                        depth_rgb = cv2.cvtColor(depth_rgb, cv2.COLOR_RGB2BGR)
 
-                            # Convert to appropriate color mode if needed
-                            if self.color_mode == ColorMode.BGR:
-                                # RealSense colorizer outputs RGB, convert to BGR
-                                depth_rgb = cv2.cvtColor(depth_rgb, cv2.COLOR_RGB2BGR)
+                                    # Apply rotation if configured
+                                    if self.rotation is not None:
+                                        depth_rgb = cv2.rotate(depth_rgb, self.rotation)
 
-                            # Apply rotation if configured
-                            if self.rotation is not None:
-                                depth_rgb = cv2.rotate(depth_rgb, self.rotation)
+                                    self._colorization_success_count += 1
+                            except Exception as e:
+                                self._colorization_error_count += 1
+                                logger.warning(f"{self}: Depth colorization error: {type(e).__name__}: {e}")
+                                depth_rgb = None
 
                 # Store frames thread-safely
                 with self.frame_lock:
@@ -673,8 +729,9 @@ class RealSenseCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        # Thread should already be running from connect()
         if self.thread is None or not self.thread.is_alive():
-            self._start_read_thread()
+            raise RuntimeError(f"{self} background thread is not running. This is a bug.")
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
@@ -733,8 +790,9 @@ class RealSenseCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        # Thread should already be running from connect()
         if self.thread is None or not self.thread.is_alive():
-            self._start_read_thread()
+            raise RuntimeError(f"{self} background thread is not running. This is a bug.")
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
@@ -747,8 +805,9 @@ class RealSenseCamera(Camera):
             # Always include color frame
             frames = {"color": self.latest_frame}
 
-            # Add colorized depth if available
-            if self.use_depth and self.latest_depth_rgb is not None:
+            # Always include depth_rgb key if depth is enabled
+            # This ensures the robot's observation dict has all expected keys
+            if self.use_depth:
                 frames["depth_rgb"] = self.latest_depth_rgb
 
             self.new_frame_event.clear()
@@ -781,5 +840,17 @@ class RealSenseCamera(Camera):
             self.rs_pipeline.stop()
             self.rs_pipeline = None
             self.rs_profile = None
+
+        # Report colorization statistics if depth was used
+        if self.use_depth and self._colorization_error_count > 0:
+            total_attempts = self._colorization_success_count + self._colorization_error_count
+            error_rate = (self._colorization_error_count / total_attempts * 100) if total_attempts > 0 else 0
+            logger.info(
+                f"{self} colorization stats: {self._colorization_success_count} successes, "
+                f"{self._colorization_error_count} errors ({error_rate:.1f}% error rate)"
+            )
+
+        # Clean up colorizer
+        self.depth_colorizer = None
 
         logger.info(f"{self} disconnected.")
