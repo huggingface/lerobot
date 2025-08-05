@@ -10,12 +10,12 @@ It's useful when video files are missing or corrupted.
 import sys
 import time
 from pathlib import Path
-from typing import List, Dict
+from typing import List
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from lerobot.datasets.gpu_video_encoder import create_gpu_encoder_config, GPUVideoEncoder
+from lerobot.datasets.gpu_video_encoder import GPUVideoEncoder, create_gpu_encoder_config
 from lerobot.datasets.video_utils import encode_video_frames
 
 
@@ -113,13 +113,13 @@ def regenerate_video(
     # Remove existing video file if it exists
     if video_path.exists():
         video_path.unlink()
-        print(f"   Removed existing video file")
+        print("   Removed existing video file")
 
     # Encode video
     start_time = time.time()
 
     if use_gpu and gpu_encoder:
-        print(f"   Using GPU encoding...")
+        print("   Using GPU encoding...")
         success = gpu_encoder.encode_video(
             input_dir=images_dir,
             output_path=video_path,
@@ -128,12 +128,12 @@ def regenerate_video(
         )
 
         if not success:
-            print(f"   ⚠️  GPU encoding failed, falling back to CPU...")
+            print("   ⚠️  GPU encoding failed, falling back to CPU...")
             # Fallback to CPU encoding
             encode_video_frames(imgs_dir=images_dir, video_path=video_path, fps=fps, overwrite=True)
             success = True
     else:
-        print(f"   Using CPU encoding...")
+        print("   Using CPU encoding...")
         encode_video_frames(imgs_dir=images_dir, video_path=video_path, fps=fps, overwrite=True)
         success = True
 
@@ -264,7 +264,7 @@ def main():
         print(f"\n⚠️  {failed_videos} videos failed to regenerate")
         return 1
     else:
-        print(f"\n✅ All videos regenerated successfully!")
+        print("\n✅ All videos regenerated successfully!")
         return 0
 
 

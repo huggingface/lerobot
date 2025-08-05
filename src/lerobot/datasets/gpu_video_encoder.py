@@ -11,7 +11,6 @@ This module provides GPU-accelerated video encoding capabilities using:
 import logging
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -131,7 +130,7 @@ class GPUVideoEncoder:
                 return self.config.encoder_type, "h264"
 
         # Final fallback to software H.264
-        logger.warning(f"No suitable encoder found, falling back to software H.264")
+        logger.warning("No suitable encoder found, falling back to software H.264")
         return "software", "h264"
 
     def _build_ffmpeg_command(
