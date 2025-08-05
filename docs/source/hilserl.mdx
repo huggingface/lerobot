@@ -154,20 +154,20 @@ Example configuration section:
 
 ```json
 {
-    "env": {
-        "type": "gym_manipulator",
-        "fps": 10,
-        // ... robot, teleop, processor configs ...
-    },
-    "dataset": {
-        "repo_id": "username/pick_lift_cube",
-        "dataset_root": null,
-        "task": "pick_and_lift",
-        "num_episodes": 15,
-        "episode": 0,
-        "push_to_hub": true
-    },
-    "mode": "record"
+  "env": {
+    "type": "gym_manipulator",
+    "fps": 10
+    // ... robot, teleop, processor configs ...
+  },
+  "dataset": {
+    "repo_id": "username/pick_lift_cube",
+    "dataset_root": null,
+    "task": "pick_and_lift",
+    "num_episodes": 15,
+    "episode": 0,
+    "push_to_hub": true
+  },
+  "mode": "record"
 }
 ```
 
@@ -215,15 +215,15 @@ To setup the gamepad, you need to set the `control_mode` to `"gamepad"` and defi
 
 ```json
 {
-    "env": {
-        "teleop": {
-            "type": "gamepad",
-            "use_gripper": true
-        },
-        "processor": {
-            "control_mode": "gamepad"
-        }
+  "env": {
+    "teleop": {
+      "type": "gamepad",
+      "use_gripper": true
+    },
+    "processor": {
+      "control_mode": "gamepad"
     }
+  }
 }
 ```
 
@@ -247,16 +247,16 @@ To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and 
 
 ```json
 {
-    "env": {
-        "teleop": {
-            "type": "so101_leader",
-            "port": "/dev/tty.usbmodem585A0077921",
-            "use_degrees": true
-        },
-        "processor": {
-            "control_mode": "leader"
-        }
+  "env": {
+    "teleop": {
+      "type": "so101_leader",
+      "port": "/dev/tty.usbmodem585A0077921",
+      "use_degrees": true
+    },
+    "processor": {
+      "control_mode": "leader"
     }
+  }
 }
 ```
 
@@ -348,17 +348,17 @@ Add these crop parameters to your training configuration:
 
 ```json
 {
-    "env": {
-        "processor": {
-            "image_preprocessing": {
-                "crop_params_dict": {
-                    "observation.images.side": [180, 207, 180, 200],
-                    "observation.images.front": [180, 250, 120, 150]
-                },
-                "resize_size": [128, 128]
-            }
-        }
+  "env": {
+    "processor": {
+      "image_preprocessing": {
+        "crop_params_dict": {
+          "observation.images.side": [180, 207, 180, 200],
+          "observation.images.front": [180, 250, 120, 150]
+        },
+        "resize_size": [128, 128]
+      }
     }
+  }
 }
 ```
 
