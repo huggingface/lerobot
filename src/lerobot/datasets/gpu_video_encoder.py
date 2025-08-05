@@ -226,7 +226,8 @@ class GPUVideoEncoder:
         self,
         input_dir: Path,
         output_path: Path,
-        fps: int
+        fps: int,
+        timeout: int = 300
     ) -> bool:
         """
         Encode a video using GPU acceleration.
@@ -274,7 +275,8 @@ class GPUVideoEncoder:
                 cmd,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                timeout=timeout
             )
             
             if self.config.enable_logging:
@@ -282,6 +284,9 @@ class GPUVideoEncoder:
             
             return True
             
+        except subprocess.TimeoutExpired:
+            logger.error(f"FFmpeg encoding timed out after {timeout} seconds")
+            return False
         except subprocess.CalledProcessError as e:
             logger.error(f"FFmpeg encoding failed: {e}")
             if e.stderr:
