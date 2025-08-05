@@ -1497,12 +1497,61 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
         since video encoding with ffmpeg is already using multithreading.
+        - Video encoding via ffmpeg (with optional GPU acceleration)
         """
-        temp_path = Path(tempfile.mkdtemp(dir=self.root)) / f"{video_key}_{episode_index:03d}.mp4"
-        img_dir = self._get_image_file_dir(episode_index, video_key)
-        encode_video_frames(img_dir, temp_path, self.fps, overwrite=True)
-        shutil.rmtree(img_dir)
+        # Initialize sync GPU encoder if needed
+        if self.gpu_video_encoding and self.sync_gpu_encoder is None:
+            from .sync_gpu_encoder import create_sync_gpu_encoder
+            self.sync_gpu_encoder = create_sync_gpu_encoder(
+                gpu_encoding=self.gpu_video_encoding,
+                gpu_encoder_config=self.gpu_encoder_config,
+                enable_logging=True
+            )
+        
+        # Use GPU-accelerated encoding if enabled
+        if self.gpu_video_encoding and self.sync_gpu_encoder:
+            self.sync_gpu_encoder.encode_episode_videos(
+                episode_index=episode_index,
+                video_keys=self.meta.video_keys,
+                fps=self.fps,
+                root_path=self.root
+            )
+        else:
+            # Use traditional CPU encoding
+            for key in self.meta.video_keys:
+                video_path = self.root / self.meta.get_video_file_path(episode_index, key)
+                if video_path.is_file():
+                    # Skip if video is already encoded. Could be the case when resuming data recording.
+                    continue
+                img_dir = self._get_image_file_path(
+                    episode_index=episode_index, image_key=key, frame_index=0
+                ).parent
+                encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
+                shutil.rmtree(img_dir)
         return temp_path
+        # Initialize sync GPU encoder if needed
+        if self.gpu_video_encoding and self.sync_gpu_encoder is None:
+            from .sync_gpu_encoder import create_sync_gpu_encoder
+            self.sync_gpu_encoder = create_sync_gpu_encoder(
+                gpu_encoding=self.gpu_video_encoding,
+                gpu_encoder_config=self.gpu_encoder_config,
+                enable_logging=True
+            )
+        
+        # Use GPU-accelerated batch encoding if enabled
+        if self.gpu_video_encoding and self.sync_gpu_encoder:
+            self.sync_gpu_encoder.batch_encode_videos(
+                start_episode=start_episode,
+                end_episode=end_episode,
+                video_keys=self.meta.video_keys,
+                fps=self.fps,
+                root_path=self.root
+            )
+        else:
+            # Use traditional CPU batch encoding
+            for ep_idx in range(start_episode, end_episode):
+                logging.info(f"Encoding videos for episode {ep_idx}")
+                self.encode_episode_videos(ep_idx)
 
     @classmethod
     def create(
@@ -1548,9 +1597,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.video_encoding_queue_size = video_encoding_queue_size
         obj.async_video_encoder = None
         
-        # GPU video encoding configuration
+        # GPU video encoding configuration (independent of async encoding)
         obj.gpu_video_encoding = gpu_video_encoding
         obj.gpu_encoder_config = gpu_encoder_config
+        obj.sync_gpu_encoder = None
 
         if image_writer_processes or image_writer_threads:
             obj.start_image_writer(image_writer_processes, image_writer_threads)
