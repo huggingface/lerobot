@@ -56,9 +56,8 @@ from collections import deque
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers import AutoTokenizer
 
-from lerobot.constants import ACTION, OBS_STATE
+from lerobot.constants import ACTION, OBS_LANGUAGE, OBS_STATE
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0.paligemma_with_expert import (
     PaliGemmaWithExpertConfig,
@@ -226,16 +225,12 @@ class PI0Policy(PreTrainedPolicy):
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
                     the configuration class is used.
-            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
-                that they will be passed with a call to `load_state_dict` before the policy is used.
         """
 
         super().__init__(config)
         config.validate_features()
         self.config = config
 
-        # TODO(azouitine): Add tokenizer to pipeline
-        self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
         self.model = PI0FlowMatching(config)
 
         self.reset()
@@ -280,7 +275,8 @@ class PI0Policy(PreTrainedPolicy):
         if len(self._action_queue) == 0:
             images, img_masks = self.prepare_images(batch)
             state = self.prepare_state(batch)
-            lang_tokens, lang_masks = self.prepare_language(batch)
+            lang_tokens = batch[f"{OBS_LANGUAGE}.tokens"]
+            lang_masks = batch[f"{OBS_LANGUAGE}.attention_mask"]
 
             actions = self.model.sample_actions(
                 images, img_masks, lang_tokens, lang_masks, state, noise=noise
@@ -306,7 +302,8 @@ class PI0Policy(PreTrainedPolicy):
 
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-        lang_tokens, lang_masks = self.prepare_language(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE}.tokens"]
+        lang_masks = batch[f"{OBS_LANGUAGE}.attention_mask"]
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
@@ -373,26 +370,6 @@ class PI0Policy(PreTrainedPolicy):
 
         return images, img_masks
 
-    def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
-        """Tokenize the text input"""
-        device = batch[OBS_STATE].device
-        tasks = batch["task"]
-
-        # PaliGemma prompt has to end with a new line
-        tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
-
-        tokenized_prompt = self.language_tokenizer.__call__(
-            tasks,
-            padding="max_length",
-            padding_side="right",
-            max_length=self.config.tokenizer_max_length,
-            return_tensors="pt",
-        )
-        lang_tokens = tokenized_prompt["input_ids"].to(device=device)
-        lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
-
-        return lang_tokens, lang_masks
-
     def _pi_aloha_decode_state(self, state):
         # Flip the joints.
         for motor_idx in [1, 2, 8, 9]:
@@ -458,7 +435,7 @@ class PI0FlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config):
+    def __init__(self, config: PI0Config):
         super().__init__()
         self.config = config
 
