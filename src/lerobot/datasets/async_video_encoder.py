@@ -171,7 +171,7 @@ class AsyncVideoEncoder:
         # Shutdown executor
         if self.executor:
             if wait:
-                self.executor.shutdown(wait=True, timeout=timeout)
+                self.executor.shutdown(wait=True)
             else:
                 self.executor.shutdown(wait=False)
         
