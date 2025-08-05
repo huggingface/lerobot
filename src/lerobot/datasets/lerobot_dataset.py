@@ -1015,15 +1015,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 # Submit encoding task to async encoder
                 if self.async_video_encoder is None:
                     self.start_async_video_encoder()
-                
+
                 success = self.async_video_encoder.submit_encoding_task(
                     episode_index=episode_index,
                     video_keys=self.meta.video_keys,
                     fps=self.fps,
                     root_path=self.root,
-                    priority=0  # Default priority
+                    priority=0,  # Default priority
                 )
-                
+
                 if not success:
                     logging.warning(f"Failed to submit async encoding task for episode {episode_index}")
                     # Fallback to synchronous encoding
@@ -1042,26 +1042,28 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 start_ep = self.num_episodes - self.batch_encoding_size
                 end_ep = self.num_episodes
                 self._batch_save_episode_video(start_ep, end_ep)
-                
+
                 if self.async_video_encoding:
                     # Submit batch encoding tasks to async encoder
                     if self.async_video_encoder is None:
                         self.start_async_video_encoder()
-                    
+
                     for ep_idx in range(start_ep, end_ep):
                         success = self.async_video_encoder.submit_encoding_task(
                             episode_index=ep_idx,
                             video_keys=self.meta.video_keys,
                             fps=self.fps,
                             root_path=self.root,
-                            priority=1  # Higher priority for batch encoding
+                            priority=1,  # Higher priority for batch encoding
                         )
                         if not success:
-                            logging.warning(f"Failed to submit async batch encoding task for episode {ep_idx}")
+                            logging.warning(
+                                f"Failed to submit async batch encoding task for episode {ep_idx}"
+                            )
                 else:
                     # Synchronous batch encoding
                     self.batch_encode_videos(start_ep, end_ep)
-                
+
                 self.episodes_since_last_encoding = 0
 
         if not episode_data:
@@ -1086,7 +1088,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Verify that we have one parquet file per episode
         file_idx = self.meta.episodes[start_episode]["data/file_index"]
         episode_df_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-        
+
         # Video file verification - skip if using async encoding since videos may not be encoded yet
         if not self.async_video_encoding:
             video_files = list(self.root.rglob("*.mp4"))
@@ -1298,7 +1300,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Wait for asynchronous image writer to finish."""
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
-    
+
     def start_async_video_encoder(self) -> None:
         """Start the async video encoder."""
         if self.async_video_encoding and self.async_video_encoder is None:
@@ -1307,18 +1309,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 max_queue_size=self.video_encoding_queue_size,
                 enable_logging=True,
                 gpu_encoding=self.gpu_video_encoding,
-                gpu_encoder_config=self.gpu_encoder_config
+                gpu_encoder_config=self.gpu_encoder_config,
             )
             self.async_video_encoder.start()
             logging.info(f"Started async video encoder with {self.video_encoding_workers} workers")
-    
+
     def stop_async_video_encoder(self, wait: bool = True) -> None:
         """Stop the async video encoder."""
         if self.async_video_encoder is not None:
             self.async_video_encoder.stop(wait=wait)
             self.async_video_encoder = None
             logging.info("Stopped async video encoder")
-    
+
     def wait_for_async_encoding(self, timeout: float | None = None) -> bool:
         """Wait for all async encoding tasks to complete."""
         if self.async_video_encoder is not None:
@@ -1334,19 +1336,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Initialize sync GPU encoder if needed
         if self.gpu_video_encoding and self.sync_gpu_encoder is None:
             from .sync_gpu_encoder import create_sync_gpu_encoder
+
             self.sync_gpu_encoder = create_sync_gpu_encoder(
                 gpu_encoding=self.gpu_video_encoding,
                 gpu_encoder_config=self.gpu_encoder_config,
-                enable_logging=True
+                enable_logging=True,
             )
-        
+
         # Use GPU-accelerated encoding if enabled
         if self.gpu_video_encoding and self.sync_gpu_encoder:
             self.sync_gpu_encoder.encode_episode_videos(
                 episode_index=episode_index,
                 video_keys=self.meta.video_keys,
                 fps=self.fps,
-                root_path=self.root
+                root_path=self.root,
             )
         else:
             # Use traditional CPU encoding
@@ -1364,12 +1367,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Initialize sync GPU encoder if needed
         if self.gpu_video_encoding and self.sync_gpu_encoder is None:
             from .sync_gpu_encoder import create_sync_gpu_encoder
+
             self.sync_gpu_encoder = create_sync_gpu_encoder(
                 gpu_encoding=self.gpu_video_encoding,
                 gpu_encoder_config=self.gpu_encoder_config,
-                enable_logging=True
+                enable_logging=True,
             )
-        
+
         # Use GPU-accelerated batch encoding if enabled
         if self.gpu_video_encoding and self.sync_gpu_encoder:
             self.sync_gpu_encoder.batch_encode_videos(
@@ -1377,7 +1381,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 end_episode=end_episode,
                 video_keys=self.meta.video_keys,
                 fps=self.fps,
-                root_path=self.root
+                root_path=self.root,
             )
         else:
             # Use traditional CPU batch encoding
@@ -1422,13 +1426,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_writer = None
         obj.batch_encoding_size = batch_encoding_size
         obj.episodes_since_last_encoding = 0
-        
+
         # Async video encoding configuration
         obj.async_video_encoding = async_video_encoding
         obj.video_encoding_workers = video_encoding_workers
         obj.video_encoding_queue_size = video_encoding_queue_size
         obj.async_video_encoder = None
-        
+
         # GPU video encoding configuration (independent of async encoding)
         obj.gpu_video_encoding = gpu_video_encoding
         obj.gpu_encoder_config = gpu_encoder_config
@@ -1451,10 +1455,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.delta_indices = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         return obj
-    
+
     def __del__(self):
         """Cleanup when the dataset is destroyed."""
-        if hasattr(self, 'async_video_encoder') and self.async_video_encoder is not None:
+        if hasattr(self, "async_video_encoder") and self.async_video_encoder is not None:
             self.stop_async_video_encoder(wait=False)
 
 
