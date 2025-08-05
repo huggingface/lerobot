@@ -9,6 +9,7 @@ This module provides GPU-accelerated video encoding capabilities using:
 """
 
 import logging
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -59,8 +60,12 @@ class GPUVideoEncoder:
         
         try:
             # Get FFmpeg encoder list
+            ffmpeg_path = shutil.which("ffmpeg")
+            if not ffmpeg_path:
+                raise FileNotFoundError("ffmpeg not found in PATH")
+                
             result = subprocess.run(
-                ["ffmpeg", "-encoders"],
+                [ffmpeg_path, "-encoders"],
                 capture_output=True,
                 text=True,
                 check=True
@@ -140,8 +145,13 @@ class GPUVideoEncoder:
     ) -> List[str]:
         """Build FFmpeg command for GPU-accelerated encoding."""
         
+        # Get FFmpeg path
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            raise FileNotFoundError("ffmpeg not found in PATH")
+        
         # Base command
-        cmd = ["ffmpeg", "-y"]  # -y to overwrite output files
+        cmd = [ffmpeg_path, "-y"]  # -y to overwrite output files
         
         # Input settings
         cmd.extend([
@@ -271,7 +281,7 @@ class GPUVideoEncoder:
             if self.config.enable_logging:
                 logger.debug(f"Running FFmpeg command: {' '.join(cmd)}")
             
-            result = subprocess.run(
+            subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
