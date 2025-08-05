@@ -167,19 +167,6 @@ class ImagePreprocessingConfig:
 
 
 @dataclass
-class DatasetConfig:
-    """Configuration for dataset recording and replay."""
-
-    repo_id: str | None = None
-    dataset_root: str | None = None
-    task: str | None = ""
-    num_episodes: int = 10
-    episode: int = 0  # for replay mode
-    push_to_hub: bool = True
-    fps: int = 10
-
-
-@dataclass
 class RewardClassifierConfig:
     """Configuration for reward classification."""
 
@@ -214,7 +201,6 @@ class GripperConfig:
     """Configuration for gripper control and penalties."""
 
     use_gripper: bool = True
-    gripper_quantization_threshold: float | None = 0.8
     gripper_penalty: float = 0.0
     gripper_penalty_in_reward: bool = False
 
@@ -251,10 +237,8 @@ class HILSerlRobotEnvConfig(EnvConfig):
     robot: RobotConfig | None = None
     teleop: TeleoperatorConfig | None = None
     processor: HILSerlProcessorConfig = field(default_factory=HILSerlProcessorConfig)
-    dataset: DatasetConfig = field(default_factory=DatasetConfig)
 
     name: str = "real_robot"
-    mode: str | None = None  # Either "record", "replay", None
     device: str = "cuda"
 
     @property

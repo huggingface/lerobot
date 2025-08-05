@@ -16,6 +16,7 @@
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import gymnasium as gym
@@ -25,7 +26,7 @@ import torch
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.envs.configs import EnvConfig
+from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.processor import (
     DeviceProcessor,
     ImageProcessor,
@@ -61,6 +62,23 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
 logging.basicConfig(level=logging.INFO)
+
+
+@dataclass
+class DatasetConfig:
+    repo_id: str
+    dataset_root: str
+    task: str
+    num_episodes: int
+    episode: int
+    push_to_hub: bool
+
+
+@dataclass
+class GymManipulatorConfig:
+    env: HILSerlRobotEnvConfig
+    dataset: DatasetConfig
+    mode: str | None = None  # Either "record", "replay", None
 
 
 def create_transition(
@@ -287,7 +305,7 @@ class RobotEnv(gym.Env):
             self.robot.disconnect()
 
 
-def make_robot_env(cfg: EnvConfig) -> tuple[gym.Env, Any]:
+def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     """
     Factory function to create a robot environment.
 
@@ -317,7 +335,7 @@ def make_robot_env(cfg: EnvConfig) -> tuple[gym.Env, Any]:
     return env, teleop_device
 
 
-def make_processors(env, cfg):
+def make_processors(env: RobotEnv, cfg: HILSerlRobotEnvConfig):
     """
     Factory function to create environment and action processors.
 
@@ -331,13 +349,13 @@ def make_processors(env, cfg):
     env_pipeline_steps = [
         ImageProcessor(),
         StateProcessor(),
-        JointVelocityProcessor(dt=1.0 / cfg.dataset.fps),
+        JointVelocityProcessor(dt=1.0 / cfg.fps),
         MotorCurrentProcessor(env=env),
         ImageCropResizeProcessor(
             crop_params_dict=cfg.processor.image_preprocessing.crop_params_dict,
             resize_size=cfg.processor.image_preprocessing.resize_size,
         ),
-        TimeLimitProcessor(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.dataset.fps)),
+        TimeLimitProcessor(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps)),
     ]
     if cfg.processor.gripper.use_gripper:
         env_pipeline_steps.append(
@@ -355,7 +373,6 @@ def make_processors(env, cfg):
                 device=cfg.device,
                 success_threshold=cfg.processor.reward_classifier.success_threshold,
                 success_reward=cfg.processor.reward_classifier.success_reward,
-                terminate_on_success=cfg.processor.reward_classifier.terminate_on_success,
             )
         )
 
@@ -450,10 +467,10 @@ def step_env_and_process_transition(
     return new_transition, terminate_episode
 
 
-def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvConfig):
-    dt = 1.0 / cfg.dataset.fps
+def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymManipulatorConfig):
+    dt = 1.0 / cfg.env.fps
 
-    print(f"Starting control loop at {cfg.dataset.fps} FPS")
+    print(f"Starting control loop at {cfg.env.fps} FPS")
     print("Controls:")
     print("- Use gamepad/teleop device for intervention")
     print("- When not intervening, robot will stay still")
@@ -476,7 +493,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
             "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
             "next.done": {"dtype": "bool", "shape": (1,), "names": None},
         }
-        if cfg.processor.gripper.use_gripper:
+        if cfg.env.processor.gripper.use_gripper:
             features["complementary_info.discrete_penalty"] = {
                 "dtype": "float32",
                 "shape": (1,),
@@ -500,7 +517,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
         # Create dataset
         dataset = LeRobotDataset.create(
             cfg.dataset.repo_id,
-            cfg.dataset.fps,
+            cfg.env.fps,
             root=cfg.dataset.dataset_root,
             use_videos=True,
             image_writer_threads=4,
@@ -517,7 +534,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
 
         # Create a neutral action (no movement)
         neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
-        if cfg.processor.gripper.use_gripper:
+        if cfg.env.processor.gripper.use_gripper:
             neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
 
         # Use the new step function
@@ -540,7 +557,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
                 "next.reward": np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
                 "next.done": np.array([terminated or truncated], dtype=bool),
             }
-            if cfg.processor.gripper.use_gripper:
+            if cfg.env.processor.gripper.use_gripper:
                 frame["complementary_info.discrete_penalty"] = np.array(
                     [transition[TransitionKey.COMPLEMENTARY_DATA]["discrete_penalty"]], dtype=np.float32
                 )
@@ -583,7 +600,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: EnvCo
         dataset.push_to_hub()
 
 
-def replay_trajectory(env, action_processor, cfg):
+def replay_trajectory(env, action_processor, cfg: GymManipulatorConfig):
     dataset = LeRobotDataset(
         cfg.dataset.repo_id,
         root=cfg.dataset.dataset_root,
@@ -600,13 +617,13 @@ def replay_trajectory(env, action_processor, cfg):
         )
         transition = action_processor(transition)
         env.step(transition[TransitionKey.ACTION])
-        busy_wait(1 / cfg.dataset.fps - (time.perf_counter() - start_time))
+        busy_wait(1 / cfg.env.fps - (time.perf_counter() - start_time))
 
 
 @parser.wrap()
-def main(cfg: EnvConfig):
-    env, teleop_device = make_robot_env(cfg)
-    env_processor, action_processor = make_processors(env, cfg)
+def main(cfg: GymManipulatorConfig):
+    env, teleop_device = make_robot_env(cfg.env)
+    env_processor, action_processor = make_processors(env, cfg.env)
 
     print("Environment observation space:", env.observation_space)
     print("Environment action space:", env.action_space)
