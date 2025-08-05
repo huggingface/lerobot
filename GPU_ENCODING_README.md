@@ -122,7 +122,7 @@ python -c "from lerobot.datasets.async_video_encoder import AsyncVideoEncoder; p
 
 ### Performance Metrics (Async GPU)
 - **Episode 0**: 3.87s encoding time (599 frames)
-- **Episode 1**: 4.16s encoding time (597 frames)  
+- **Episode 1**: 4.16s encoding time (597 frames)
 - **Episode 2**: 2.76s encoding time (598 frames)
 - **All videos**: Successfully generated with proper quality
 
