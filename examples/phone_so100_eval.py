@@ -20,6 +20,7 @@ from lerobot.configs.types import DatasetFeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import merge_grouped_features
 from lerobot.model.kinematics import RobotKinematics
+from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.processor.pipeline import RobotProcessor
 from lerobot.processor.utils import (
     to_dataset_frame,
@@ -50,7 +51,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 30
 TASK_DESCRIPTION = "Pickup the pillow"  # TODO(pepijn): Add back default task description
-HF_REPO_ID = "pepijn223/phone_pipeline_pickup6"
+HF_REPO_ID = "pepijn223/eval_phone_pipeline_pickup6"
 
 # Initialize the robot and teleoperator
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -148,8 +149,6 @@ obs_joint = robot_ee_to_joints.aggregate_dataset_features(
 )  # Get gripper pos observation features
 observation_features = merge_grouped_features(obs_ee, obs_joint)
 
-print("All dataset features: ", {**action_features, **observation_features})  # TODO(pepijn): remove
-
 # Create the dataset
 dataset = LeRobotDataset.create(
     repo_id=HF_REPO_ID,
@@ -173,14 +172,16 @@ phone.connect()
 
 episode_idx = 0
 
-while episode_idx < NUM_EPISODES and not events["stop_recording"]:
-    log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
+policy = ACTPolicy.from_pretrained("pepijn223/phone_pipeline_pickup1")
+
+for episode_idx in range(NUM_EPISODES):
+    log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
 
     record_loop(
         robot=robot,
         events=events,
         fps=FPS,
-        teleop=phone,
+        policy=policy,
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
@@ -191,32 +192,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         to_dataset_features=to_dataset_features,
     )
 
-    # Reset the environment if not stopping or re-recording
-    if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
-        log_say("Reset the environment")
-        record_loop(
-            robot=robot,
-            events=events,
-            fps=FPS,
-            teleop=phone,
-            control_time_s=RESET_TIME_SEC,
-            single_task=TASK_DESCRIPTION,
-            display_data=True,
-            teleop_action_processor=phone_to_robot_ee_pose,
-            robot_action_processor=robot_ee_to_joints,
-            robot_observation_processor=robot_joints_to_ee_pose,
-            to_dataset_features=to_dataset_features,
-        )
-
-    if events["rerecord_episode"]:
-        log_say("Re-recording episode")
-        events["rerecord_episode"] = False
-        events["exit_early"] = False
-        dataset.clear_episode_buffer()
-        continue
-
     dataset.save_episode()
-    episode_idx += 1
 
 # Clean up
 log_say("Stop recording")

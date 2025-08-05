@@ -13,19 +13,22 @@ from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
-episode_idx = 0
+episode_idx = 2
 
-robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem58760434471", id="my_phone_teleop_follower_arm")
-
+robot_config = SO100FollowerConfig(
+    port="/dev/tty.usbmodem58760434471", id="my_phone_teleop_follower_arm", use_degrees=True
+)
 robot = SO100Follower(robot_config)
 robot.connect()
 
-dataset = LeRobotDataset("pepijn223/phone_pipeline_pickup1", episodes=[episode_idx])
+dataset = LeRobotDataset("pepijn223/phone_pipeline_pickup6", episodes=[episode_idx])
 actions = dataset.hf_dataset.select_columns("action")
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 kinematics_solver = RobotKinematics(
-    urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf", target_frame_name="gripper_frame_link"
+    urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf",
+    target_frame_name="gripper_frame_link",
+    joint_names=list(robot.bus.motors.keys()),
 )
 
 
@@ -66,6 +69,7 @@ robot_ee_to_joints = RobotProcessor(
 )
 
 log_say(f"Replaying episode {episode_idx}")
+print("dataset.fps", dataset.fps)
 for idx in range(dataset.num_frames):
     t0 = time.perf_counter()
 
@@ -73,12 +77,15 @@ for idx in range(dataset.num_frames):
         name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
     }
 
-    print("ee_action", ee_action)
+    print("ee.x action:", ee_action.get("ee.x"))
+    print("ee.y action:", ee_action.get("ee.y"))
+    print("ee.z action:", ee_action.get("ee.z"))
+    print("ee.wx action:", ee_action.get("ee.wx"))
+    print("ee.wy action:", ee_action.get("ee.wy"))
+    print("ee.wz action:", ee_action.get("ee.wz"))
 
     joint_action = robot_ee_to_joints(ee_action)
     action_sent = robot.send_action(joint_action)
-
-    print("action_sent", action_sent)
 
     busy_wait(1.0 / dataset.fps - (time.perf_counter() - t0))
 

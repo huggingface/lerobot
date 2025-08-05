@@ -267,6 +267,9 @@ class InverseKinematicsEEToJoints:
 
         q_curr = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
 
+        for name, val in zip(self.motor_names, q_curr, strict=False):
+            print(f"q_curr[{name}] = {val:.6f}")
+
         # Build desired 4x4 transform from pos + rotvec (twist)
         t_des = np.eye(4, dtype=float)
         t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
@@ -274,6 +277,9 @@ class InverseKinematicsEEToJoints:
 
         # Compute inverse kinematics
         q_target = self.kinematics.inverse_kinematics(q_curr, t_des)
+
+        for name, val in zip(self.motor_names, q_target, strict=False):
+            print(f"q_target[{name}] = {val:.6f}")
 
         new_act = dict(act)
         for i, name in enumerate(self.motor_names):

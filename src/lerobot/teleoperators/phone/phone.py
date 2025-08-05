@@ -34,16 +34,16 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-# -----Monday----- (2,3,4)
-# TODO(pepijn): Do write replay, do eval/inference 19:00
-# TODO(pepijn): Fix android reset of Teleop lib and gripper 20:00
-# TODO(pepijn): Ask for feedback from Adil before writing tests 3 20:30
+# -----Tuesday-----
+# TODO(pepijn): Fix replay, do eval/inference 9:00
+# TODO(pepijn): Clean up PR  10:00
+# TODO(pepijn): Fix android reset of Teleop lib and gripper 11:00
+# TODO(pepijn): Ask for feedback from Adil before writing tests 3 12:00
+# TODO(pepijn): Add a bunch of tests 14:00
 
-# ----Tuesday----- (5,6,7)
-# TODO(pepijn): Add a bunch of tests 4 9:00
-# TODO(pepijn): Add to docs with image etc 5 11:00
-# TODO(pepijn): Clean up and make PR 6 14:00
-# TODO(pepijn): Create release video 7 17:00
+# ----Wednesday-----
+# TODO(pepijn): Add to docs with image etc 10:00
+# TODO(pepijn): Create release video 12:00
 
 
 class Phone(Teleoperator):

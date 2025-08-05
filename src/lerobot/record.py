@@ -327,11 +327,11 @@ def record_loop(
         # Prefer pipelines if provided (merge transitions), otherwise fall back to old behavior for compatibility.
         if dataset is not None:
             if to_dataset_features is not None and (
-                (joints_transition is not None) or (obs_transition is not None)
+                (teleop_transition is not None) or (obs_transition is not None)
             ):
                 merged = []
-                if joints_transition is not None:
-                    merged.append(joints_transition)
+                if teleop_transition is not None:
+                    merged.append(teleop_transition)
                 if obs_transition is not None:
                     merged.append(obs_transition)
                 frame = to_dataset_features(merged if len(merged) > 1 else merged[0])
@@ -346,7 +346,7 @@ def record_loop(
                 dataset.add_frame(frame, task=single_task)
 
         if display_data:
-            log_rerun_data([obs_transition or observation, joints_transition or sent_action])
+            log_rerun_data([obs_transition or observation, teleop_transition or sent_action])
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)

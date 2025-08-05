@@ -100,14 +100,21 @@ def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransitio
 
 def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
     """
-    Strip 'action.' so the result can be passed straight into Robot.send_action().
+    Strips 'action.' from keys and ONLY keeps keys ending in '.pos',
+    which correspond to direct motor commands. This prevents intermediate
+    values (like 'ee.x') from being included in the final output.
     """
     out: dict[str, Any] = {}
-    for k, v in (transition.get(TransitionKey.ACTION) or {}).items():
-        if isinstance(k, str) and k.startswith("action."):
-            from lerobot.processor.utils import _from_tensor
+    action_dict = transition.get(TransitionKey.ACTION) or {}
 
-            out[k[len("action.") :]] = _from_tensor(v)
+    for k, v in action_dict.items():
+        # Check that the key represents a motor command.
+        if isinstance(k, str) and k.startswith("action.") and k.endswith(".pos"):
+            # Strip the 'action.' prefix.
+            out_key = k[len("action.") :]
+            # The value is already a float, no need for _from_tensor if not using tensors.
+            out[out_key] = float(v)
+
     return out
 
 
