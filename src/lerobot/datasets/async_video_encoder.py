@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .video_utils import encode_video_frames
+from .gpu_video_encoder import GPUVideoEncoder, create_gpu_encoder_config
 
 
 @dataclass
@@ -72,7 +73,9 @@ class AsyncVideoEncoder:
         self,
         num_workers: int = 2,
         max_queue_size: int = 100,
-        enable_logging: bool = True
+        enable_logging: bool = True,
+        gpu_encoding: bool = False,
+        gpu_encoder_config: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize the async video encoder.
@@ -100,6 +103,27 @@ class AsyncVideoEncoder:
         # Control flags
         self.running = False
         self.shutdown_event = threading.Event()
+        
+        # GPU encoding support
+        self.gpu_encoding = gpu_encoding
+        self.gpu_encoder = None
+        
+        if self.gpu_encoding:
+            config = gpu_encoder_config or {}
+            gpu_config = create_gpu_encoder_config(
+                encoder_type=config.get('encoder_type', 'auto'),
+                codec=config.get('codec', 'h264'),
+                preset=config.get('preset', 'fast'),
+                quality=config.get('quality', 23),
+                bitrate=config.get('bitrate'),
+                gpu_id=config.get('gpu_id', 0),
+                enable_logging=enable_logging
+            )
+            self.gpu_encoder = GPUVideoEncoder(gpu_config)
+            
+            if self.enable_logging:
+                encoder_info = self.gpu_encoder.get_encoder_info()
+                logging.info(f"GPU encoder initialized: {encoder_info['selected_encoder']} {encoder_info['selected_codec']}")
         
         # Statistics
         self.stats = {
@@ -366,13 +390,33 @@ class AsyncVideoEncoder:
                 logging.debug(f"Video {video_path} already exists, skipping")
             return
         
-        # Encode the video
-        encode_video_frames(
-            imgs_dir=img_dir,
-            video_path=video_path,
-            fps=task.fps,
-            overwrite=True
-        )
+        # Encode the video using GPU or CPU
+        if self.gpu_encoding and self.gpu_encoder:
+            # Use GPU encoding
+            success = self.gpu_encoder.encode_video(
+                input_dir=img_dir,
+                output_path=video_path,
+                fps=task.fps
+            )
+            
+            if not success:
+                if self.enable_logging:
+                    logging.warning(f"GPU encoding failed for {video_path}, falling back to CPU encoding")
+                # Fallback to CPU encoding
+                encode_video_frames(
+                    imgs_dir=img_dir,
+                    video_path=video_path,
+                    fps=task.fps,
+                    overwrite=True
+                )
+        else:
+            # Use CPU encoding
+            encode_video_frames(
+                imgs_dir=img_dir,
+                video_path=video_path,
+                fps=task.fps,
+                overwrite=True
+            )
         
         if self.enable_logging:
             logging.debug(f"Encoded video: {video_path}")
