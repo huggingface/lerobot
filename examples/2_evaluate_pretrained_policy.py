@@ -30,20 +30,23 @@ import imageio
 import numpy
 import torch
 
+from lerobot.policies.dact.variant_a.modeling_dact_a import DACTPolicyA
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
 # Create a directory to store the video of the evaluation
-output_directory = Path("outputs/eval/example_pusht_diffusion")
+output_directory = Path("outputs/eval/example_pusht_dacta")
 output_directory.mkdir(parents=True, exist_ok=True)
 
 # Select your device
 device = "cuda"
 
 # Provide the [hugging face repo id](https://huggingface.co/lerobot/diffusion_pusht):
+# pretrained_policy_path = "aposadasn/pusht_dacta_model"
 pretrained_policy_path = "lerobot/diffusion_pusht"
 # OR a path to a local outputs/train folder.
 # pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")
 
+# policy = DACTPolicyA.from_pretrained(pretrained_policy_path)
 policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
 
 # Initialize evaluation environment to render two observation types:

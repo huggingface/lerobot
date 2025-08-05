@@ -111,7 +111,6 @@ class DACTConfigA(PreTrainedConfig):
     replace_final_stride_with_dilation: int = False
     crop_shape: tuple[int, int] | None = (84, 84)
     crop_is_random: bool = True
-    pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
     spatial_softmax_num_keypoints: int = 32
 
@@ -152,7 +151,7 @@ class DACTConfigA(PreTrainedConfig):
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
     temporal_ensemble_coeff: float | None = None
     num_inference_steps: int | None = None
-    horizon: int = 8
+    horizon: int = 20
 
     # Training and loss computation.
     dropout: float = 0.1
