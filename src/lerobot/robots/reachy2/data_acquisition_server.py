@@ -221,7 +221,7 @@ class DataAcquisitionServicer():
 
         self.fps = request.fps if request.HasField("fps") else 30
         self.task = request.task_description
-        self.episode_duration = request.episode_duration + 1  # TO FIX
+        self.episode_duration = request.episode_duration
         self.break_time_duration = request.break_time_duration
 
         # Configure the dataset features
