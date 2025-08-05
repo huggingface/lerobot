@@ -10,7 +10,6 @@ It's useful when video files are missing or corrupted.
 import sys
 import time
 from pathlib import Path
-from typing import List
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
