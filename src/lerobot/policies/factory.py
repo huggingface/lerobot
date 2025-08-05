@@ -143,12 +143,12 @@ def make_processor(
         return (
             RobotProcessor.from_pretrained(
                 source=pretrained_path,
-                config_filename=kwargs.get("preprocessor_config_filename", "preprocessor.json"),
+                config_filename=kwargs.get("preprocessor_config_filename", "robot_preprocessor.json"),
                 overrides=kwargs.get("preprocessor_overrides", {}),
             ),
             RobotProcessor.from_pretrained(
                 source=pretrained_path,
-                config_filename=kwargs.get("postprocessor_config_filename", "postprocessor.json"),
+                config_filename=kwargs.get("postprocessor_config_filename", "robot_postprocessor.json"),
                 overrides=kwargs.get("postprocessor_overrides", {}),
             ),
         )
