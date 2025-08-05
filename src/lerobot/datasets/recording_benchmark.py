@@ -218,12 +218,16 @@ class RecordingBenchmark:
         if output_path is None:
             output_path = Path(f"recording_benchmark_{int(time.time())}.json")
         
+        total_frames = sum(ep['frame_count'] for ep in self.episode_stats.values())
+        total_duration = self.total_recording.total_time
+        average_fps = total_frames / total_duration if total_duration > 0 else 0.0
+        
         results = {
             'summary': {
                 'total_episodes': len(self.episode_stats),
-                'total_frames': sum(ep['frame_count'] for ep in self.episode_stats.values()),
-                'total_duration': self.total_recording.total_time,
-                'average_fps': sum(ep['frame_count'] for ep in self.episode_stats.values()) / self.total_recording.total_time
+                'total_frames': total_frames,
+                'total_duration': total_duration,
+                'average_fps': average_fps
             },
             'timing_stats': {
                 'frame_capture': self.frame_capture.to_dict(),
@@ -253,7 +257,7 @@ class RecordingBenchmark:
         print(f"Total Episodes: {len(self.episode_stats)}")
         print(f"Total Frames: {total_frames}")
         print(f"Total Duration: {total_duration:.2f}s")
-        print(f"Average FPS: {total_frames/total_duration:.2f}")
+        print(f"Average FPS: {total_frames/total_duration:.2f}" if total_duration > 0 else "Average FPS: 0.00")
         print()
         
         print("TIMING BREAKDOWN:")
@@ -268,17 +272,20 @@ class RecordingBenchmark:
         
         for name, stats in categories:
             if stats.count > 0:
-                percentage = (stats.total_time / total_duration) * 100
+                percentage = (stats.total_time / total_duration) * 100 if total_duration > 0 else 0.0
                 print(f"{name:20} {stats.mean_time*1000:8.2f}ms ± {stats.std_time*1000:6.2f}ms ({percentage:5.1f}%)")
         
         print()
         print("BOTTLENECK ANALYSIS:")
         print("-" * 40)
-        max_time = max(stats.total_time for _, stats in categories if stats.count > 0)
-        for name, stats in categories:
-            if stats.count > 0:
+        categories_with_data = [(name, stats) for name, stats in categories if stats.count > 0]
+        if categories_with_data:
+            max_time = max(stats.total_time for _, stats in categories_with_data)
+            for name, stats in categories_with_data:
                 percentage = (stats.total_time / max_time) * 100
                 print(f"{name:20} {stats.total_time:8.2f}s ({percentage:5.1f}% of slowest)")
+        else:
+            print("No timing data available")
 
 
 class BenchmarkDecorator:
