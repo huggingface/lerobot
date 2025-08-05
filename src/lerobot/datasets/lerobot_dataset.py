@@ -1304,7 +1304,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.async_video_encoder = AsyncVideoEncoder(
                 num_workers=self.video_encoding_workers,
                 max_queue_size=self.video_encoding_queue_size,
-                enable_logging=True
+                enable_logging=True,
+                gpu_encoding=self.gpu_video_encoding,
+                gpu_encoder_config=self.gpu_encoder_config
             )
             self.async_video_encoder.start()
             logging.info(f"Started async video encoder with {self.video_encoding_workers} workers")
@@ -1350,6 +1352,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         async_video_encoding: bool = False,
         video_encoding_workers: int = 2,
         video_encoding_queue_size: int = 100,
+        gpu_video_encoding: bool = False,
+        gpu_encoder_config: Optional[Dict[str, Any]] = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1374,6 +1378,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.video_encoding_workers = video_encoding_workers
         obj.video_encoding_queue_size = video_encoding_queue_size
         obj.async_video_encoder = None
+        
+        # GPU video encoding configuration
+        obj.gpu_video_encoding = gpu_video_encoding
+        obj.gpu_encoder_config = gpu_encoder_config
 
         if image_writer_processes or image_writer_threads:
             obj.start_image_writer(image_writer_processes, image_writer_threads)
