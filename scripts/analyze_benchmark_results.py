@@ -57,7 +57,7 @@ def analyze_single_benchmark(results: Dict[str, Any]) -> Dict[str, Any]:
         if category in timing_stats:
             stats = timing_stats[category]
             if stats['count'] > 0:
-                percentage = (stats['total_time'] / total_time) * 100
+                percentage = (stats['total_time'] / total_time) * 100 if total_time > 0 else 0.0
                 analysis['bottlenecks'][category] = {
                     'total_time': stats['total_time'],
                     'percentage': percentage,
