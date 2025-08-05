@@ -410,7 +410,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             root=cfg.dataset.root,
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
         )
-        
+
         # Start async video encoder if enabled
         if cfg.dataset.async_video_encoding:
             dataset.async_video_encoding = True
@@ -438,8 +438,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
             async_video_encoding=cfg.dataset.async_video_encoding,
-        gpu_video_encoding=cfg.dataset.gpu_video_encoding,
-        gpu_encoder_config=cfg.dataset.gpu_encoder_config,
+            gpu_video_encoding=cfg.dataset.gpu_video_encoding,
+            gpu_encoder_config=cfg.dataset.gpu_encoder_config,
             video_encoding_workers=cfg.dataset.video_encoding_workers,
             video_encoding_queue_size=cfg.dataset.video_encoding_queue_size,
         )
