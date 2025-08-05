@@ -592,10 +592,9 @@ class RobotProcessor(ModelHubMixin):
             if config_filename is None:
                 # Try common config names
                 common_names = [
-                    "processor.json",
-                    "preprocessor.json",
-                    "postprocessor.json",
-                    "robotprocessor.json",
+                    "robot_processor.json",
+                    "robot_preprocessor.json",
+                    "robot_postprocessor.json",
                 ]
                 config_path = None
                 for name in common_names:
