@@ -165,6 +165,12 @@ class DatasetRecordConfig:
     video_encoding_batch_size: int = 1
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    # Enable asynchronous video encoding to avoid blocking the recording thread
+    async_video_encoding: bool = False
+    # Number of worker threads for async video encoding
+    video_encoding_workers: int = 2
+    # Maximum number of encoding tasks in the queue
+    video_encoding_queue_size: int = 100
 
     def __post_init__(self):
         if self.single_task is None:
@@ -404,6 +410,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             root=cfg.dataset.root,
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
         )
+        
+        # Start async video encoder if enabled
+        if cfg.dataset.async_video_encoding:
+            dataset.async_video_encoding = True
+            dataset.video_encoding_workers = cfg.dataset.video_encoding_workers
+            dataset.video_encoding_queue_size = cfg.dataset.video_encoding_queue_size
+            dataset.start_async_video_encoder()
 
         if hasattr(robot, "cameras") and len(robot.cameras) > 0:
             dataset.start_image_writer(
@@ -424,6 +437,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             image_writer_processes=cfg.dataset.num_image_writer_processes,
             image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+            async_video_encoding=cfg.dataset.async_video_encoding,
+            video_encoding_workers=cfg.dataset.video_encoding_workers,
+            video_encoding_queue_size=cfg.dataset.video_encoding_queue_size,
         )
 
     # Load pretrained policy
@@ -505,6 +521,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if not is_headless() and listener is not None:
         listener.stop()
+
+    # Wait for async video encoding to complete before pushing to hub
+    if cfg.dataset.async_video_encoding:
+        log_say("Waiting for video encoding to complete", cfg.play_sounds)
+        dataset.wait_for_async_encoding()
+        dataset.stop_async_video_encoder()
 
     if cfg.dataset.push_to_hub:
         dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
