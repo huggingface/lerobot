@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .camera import Camera
-from .configs import CameraConfig, ColorMode, Cv2Rotation
-from .utils import make_cameras_from_configs
+from .camera_kinect import KinectCamera
+from .configuration_kinect import KinectCameraConfig, KinectPipeline
 
-# Import Kinect camera configuration to register it with draccus
-try:
-    from .kinect import KinectCamera, KinectCameraConfig, KinectPipeline
-except ImportError:
-    pass  # Kinect camera not available (pylibfreenect2 not installed)
+__all__ = ["KinectCamera", "KinectCameraConfig", "KinectPipeline"]
