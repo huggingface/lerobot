@@ -354,8 +354,8 @@ class AsyncVideoEncoder:
     def _encode_single_video(self, task: EncodingTask, video_key: str) -> None:
         """Encode a single video file."""
         # Construct paths
-        video_path = task.root_path / "videos" / f"episode_{task.episode_index}_{video_key}.mp4"
-        img_dir = task.root_path / "images" / f"episode_{task.episode_index}" / video_key
+        video_path = task.root_path / "videos" / f"chunk-{task.episode_index//1000:03d}" / video_key / f"episode_{task.episode_index:06d}.mp4"
+        img_dir = task.root_path / "images" / f"observation.images.{video_key}" / f"episode_{task.episode_index:06d}"
         
         # Ensure video directory exists
         video_path.parent.mkdir(parents=True, exist_ok=True)
