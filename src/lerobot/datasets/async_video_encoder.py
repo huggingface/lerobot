@@ -28,7 +28,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .gpu_video_encoder import GPUVideoEncoder, create_gpu_encoder_config
 from .video_utils import encode_video_frames
