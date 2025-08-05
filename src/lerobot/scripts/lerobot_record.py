@@ -169,7 +169,7 @@ class DatasetRecordConfig:
     # Enable asynchronous video encoding to avoid blocking the recording thread
     async_video_encoding: bool = False
     gpu_video_encoding: bool = False
-    gpu_encoder_config: Optional[dict[str, Any]] = None
+    gpu_encoder_config: dict[str, Any] | None = None
     # Number of worker threads for async video encoding
     video_encoding_workers: int = 2
     # Maximum number of encoding tasks in the queue

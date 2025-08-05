@@ -59,7 +59,7 @@ class EncodingResult:
     video_keys: list[str]
     success: bool
     duration: float
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 class AsyncVideoEncoder:
@@ -77,7 +77,7 @@ class AsyncVideoEncoder:
         max_queue_size: int = 100,
         enable_logging: bool = True,
         gpu_encoding: bool = False,
-        gpu_encoder_config: Optional[dict[str, Any]] = None,
+        gpu_encoder_config: dict[str, Any] | None = None,
     ):
         """
         Initialize the async video encoder.
@@ -99,8 +99,8 @@ class AsyncVideoEncoder:
         self.results_lock = threading.Lock()
 
         # Worker thread pool
-        self.executor: Optional[ThreadPoolExecutor] = None
-        self.worker_thread: Optional[threading.Thread] = None
+        self.executor: ThreadPoolExecutor | None = None
+        self.worker_thread: threading.Thread | None = None
 
         # Control flags
         self.running = False
@@ -163,7 +163,7 @@ class AsyncVideoEncoder:
         if self.enable_logging:
             logging.info("AsyncVideoEncoder started")
 
-    def stop(self, wait: bool = True, timeout: Optional[float] = None) -> None:
+    def stop(self, wait: bool = True, timeout: float | None = None) -> None:
         """
         Stop the async video encoder.
 
@@ -271,7 +271,7 @@ class AsyncVideoEncoder:
                 stats["average_encoding_time"] = stats["total_encoding_time"] / stats["tasks_completed"]
             return stats
 
-    def wait_for_completion(self, timeout: Optional[float] = None) -> bool:
+    def wait_for_completion(self, timeout: float | None = None) -> bool:
         """
         Wait for all submitted tasks to complete.
 
