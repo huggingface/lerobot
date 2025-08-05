@@ -898,13 +898,23 @@ class VLAFlowMatching(nn.Module):
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
+
+            v_t = self.denoise_step(
+                prefix_pad_masks,
+                past_key_values,
+                x_t,
+                expanded_time,
+            )
+
             if mode == "rtc":
-                v_t = self.denoise_step_rtc(
-                    prefix_pad_masks,
-                    past_key_values,
-                    x_t,
-                    expanded_time,
-                )
+                # v_t = self.rtc_processor.denoise_step(
+                #     noise=x_t,
+                #     model_denoise_step=euler_step,
+                #     prev_action=x_t,
+                #     latency_delay=dt,
+                #     v_t=v_t,
+                # )
+                pass
             else:
                 v_t = self.denoise_step(
                     prefix_pad_masks,
@@ -912,12 +922,7 @@ class VLAFlowMatching(nn.Module):
                     x_t,
                     expanded_time,
                 )
-            v_t = self.denoise_step(
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
-            )
+
             # Euler step
             x_t += dt * v_t
             time += dt

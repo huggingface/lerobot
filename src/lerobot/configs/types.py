@@ -43,6 +43,7 @@ class PolicyFeature:
 
 
 class RTCAttentionSchedule(str, Enum):
-    LINEAR = "linear"
-    EXP = "exp"
-    CONSTANT = "constant"
+    ZEROS = "ZEROS"
+    ONES = "ONES"
+    LINEAR = "LINEAR"
+    EXP = "EXP"

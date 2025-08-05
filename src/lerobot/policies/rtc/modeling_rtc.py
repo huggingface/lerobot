@@ -21,8 +21,12 @@ Based on Physical Intelligence's Kinetix implementation:
 https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L214
 """
 
+import math
+
+import torch
 from torch import Tensor
 
+from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.policies.rtc_config import RTCConfig
 
 
@@ -52,29 +56,34 @@ class RTCProcessor:
         self.previous_chunk: Tensor | None = None
         self.chunk_step = 0
 
-    def denoise_step(self, noise, prev_action, latency_delay) -> Tensor:
+    def denoise_step(self, noise, prev_chunk, latency_delay, dt, v_t) -> Tensor:
         """Denoise the noise to get the next action.
         Real-time chunking (RTC) denoising.
 
         Reference:
         https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
-        # if self.prev_chunk is None:
-        #     # First step, no guidance
-        #     x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
-        #     self.prev_chunk = x_t
-        #     return x_t
+        if prev_chunk is None:
+            # First step, no guidance
+            return v_t
 
-        # if rtc_t is None or rtc_d is None or rtc_soft_mask_length is None:
-        #     raise ValueError(
-        #         f"rtc_t, rtc_d and rtc_soft_mask_length must be provided for RTC denoising (current {rtc_t=}, {rtc_d=}, {rtc_soft_mask_length=})."
-        #     )
+        x1_t = noise + dt * v_t
 
-        # # Prepare the previous chunk for guidance.
-        # # Rotate the second (time) dimension left by `t` steps and pad the right with zeros.
-        # # Keep the unexecuted part, pad the remainder with zeros.
+        # Prepare the previous chunk for guidance.
+        # Rotate the second (time) dimension left by `t` steps and pad the right with zeros.
+        # Keep the unexecuted part, pad the remainder with zeros.
         # pad = torch.zeros_like(self.prev_chunk[:, :rtc_t])
         # A_prev = torch.cat([self.prev_chunk[:, rtc_t:], pad], dim=1)  # noqa: N806
+
+        # weights = self.get_prefix_weights(
+        #     inference_delay, prefix_attention_horizon, self.action_chunk_size, prefix_attention_schedule
+        # )
+
+        with torch.enable_grad():
+            error = (x1_t - noise).clone().detach()
+            grad_output = torch.autograd.grad(x1_t, noise, error, retain_graph=True)[0]
+
+        return v_t + self.rtc_config.max_guidance_weight * grad_output
 
         # H = self.config.chunk_size  # noqa: N806
 
@@ -145,3 +154,51 @@ class RTCProcessor:
 
         # self.prev_chunk = A_tau
         # return A_tau
+
+    def get_prefix_weights(self, start, end, total):
+        start = min(start, end)
+
+        if self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.ZEROS:
+            weights = torch.zeros(total)
+            weights[:start] = 1.0
+        elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.ONES:
+            weights = torch.ones(total)
+        elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR:
+            lin_weights = self._linweights(start, end, total)
+            weights = self._add_trailing_zeros(lin_weights, total, end)
+            weights = self._add_leading_ones(weights, start, total)
+        elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.EXP:
+            lin_weights = self._linweights(start, end, total)
+            lin_weights = lin_weights * torch.expm1(lin_weights).div(math.e - 1)
+            weights = self._add_trailing_zeros(lin_weights, total, end)
+            weights = self._add_leading_ones(weights, start, total)
+
+        return weights
+
+    def _linweights(self, start, end, total):
+        skip_steps_at_end = max(total - end, 0)
+
+        linspace_steps = total - skip_steps_at_end - start
+
+        if end <= start or linspace_steps <= 0:
+            return torch.tensor([])
+
+        return torch.linspace(1, 0, linspace_steps + 2)[1:-1]
+
+    def _add_trailing_zeros(self, weights, total, end):
+        zeros_len = total - end
+
+        if zeros_len <= 0:
+            return weights
+
+        zeros = torch.zeros(zeros_len)
+        return torch.cat([weights, zeros])
+
+    def _add_leading_ones(self, weights, start, total):
+        ones_len = min(start, total)
+
+        if ones_len <= 0:
+            return weights
+
+        ones = torch.ones(ones_len)
+        return torch.cat([ones, weights])
