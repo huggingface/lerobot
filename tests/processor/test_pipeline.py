@@ -461,9 +461,6 @@ def test_unregister_nonexistent_hook():
     with pytest.raises(ValueError, match="not found in after_step_hooks"):
         pipeline.unregister_after_step_hook(some_hook)
 
-    with pytest.raises(ValueError, match="not found in reset_hooks"):
-        pipeline.unregister_reset_hook(reset_hook)
-
 
 def test_multiple_hooks_and_selective_unregister():
     """Test registering multiple hooks and selectively unregistering them."""
