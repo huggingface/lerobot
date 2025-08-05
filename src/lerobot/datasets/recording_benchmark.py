@@ -85,7 +85,7 @@ class RecordingBenchmark:
 
     # Episode tracking
     current_episode: int = 0
-    episode_start_time: Optional[float] = None
+    episode_start_time: float | None = None
     episode_stats: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     # Configuration
@@ -229,7 +229,7 @@ class RecordingBenchmark:
                 f"  Image writing: {self.image_writing.mean_time * 1000:.2f}ms ± {self.image_writing.std_time * 1000:.2f}ms"
             )
 
-    def save_results(self, output_path: Optional[Path] = None) -> None:
+    def save_results(self, output_path: Path | None = None) -> None:
         """Save benchmark results to JSON file."""
         if output_path is None:
             output_path = Path(f"recording_benchmark_{int(time.time())}.json")

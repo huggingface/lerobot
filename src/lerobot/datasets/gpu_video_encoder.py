@@ -26,7 +26,7 @@ class GPUEncoderConfig:
         codec: str = "h264",  # "h264", "hevc", "av1"
         preset: str = "fast",  # "fast", "medium", "slow", "hq"
         quality: int = 23,  # Lower = better quality (for NVENC: 0-51, for x264: 0-51)
-        bitrate: Optional[str] = None,  # e.g., "5M", "10M"
+        bitrate: str | None = None,  # e.g., "5M", "10M"
         gpu_id: int = 0,  # GPU device ID
         enable_logging: bool = True,
     ):
@@ -341,7 +341,7 @@ def create_gpu_encoder_config(
     codec: str = "h264",
     preset: str = "fast",
     quality: int = 23,
-    bitrate: Optional[str] = None,
+    bitrate: str | None = None,
     gpu_id: int = 0,
     enable_logging: bool = True,
 ) -> GPUEncoderConfig:
