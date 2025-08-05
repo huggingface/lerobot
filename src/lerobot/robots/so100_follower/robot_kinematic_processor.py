@@ -231,6 +231,7 @@ class InverseKinematicsEEToJoints:
 
     kinematics: RobotKinematics
     motor_names: list[str]
+    q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         act = transition.get(TransitionKey.ACTION) or {}
@@ -265,9 +266,10 @@ class InverseKinematicsEEToJoints:
                 "raw_joint_positions is not in complementary data and is required for EEReferenceAndDelta"
             )
 
-        q_curr = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
+        if self.q_curr is None:
+            self.q_curr = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
 
-        for name, val in zip(self.motor_names, q_curr, strict=False):
+        for name, val in zip(self.motor_names, self.q_curr, strict=False):
             print(f"q_curr[{name}] = {val:.6f}")
 
         # Build desired 4x4 transform from pos + rotvec (twist)
@@ -276,7 +278,8 @@ class InverseKinematicsEEToJoints:
         t_des[:3, 3] = [x, y, z]
 
         # Compute inverse kinematics
-        q_target = self.kinematics.inverse_kinematics(q_curr, t_des)
+        q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+        self.q_curr = q_target
 
         for name, val in zip(self.motor_names, q_target, strict=False):
             print(f"q_target[{name}] = {val:.6f}")
@@ -296,6 +299,9 @@ class InverseKinematicsEEToJoints:
         features["action.ee.wy"] = float
         features["action.ee.wz"] = float
         return features
+
+    def reset(self):
+        self.q_curr = None
 
 
 @ProcessorStepRegistry.register("gripper_velocity_to_joint")

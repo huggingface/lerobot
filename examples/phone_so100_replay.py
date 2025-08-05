@@ -68,6 +68,8 @@ robot_ee_to_joints = RobotProcessor(
     to_output=to_output_robot_action,
 )
 
+robot_ee_to_joints.reset()
+
 log_say(f"Replaying episode {episode_idx}")
 print("dataset.fps", dataset.fps)
 for idx in range(dataset.num_frames):
