@@ -8,14 +8,15 @@ echo "=========================================="
 echo ""
 echo "Select test configuration:"
 echo "1) Kinect RGB only"
-echo "2) Kinect RGB + Depth (side by side)"
-echo "3) 2 RealSense cameras"
-echo "4) No cameras (robot arms only)"
-echo "5) Test LEFT arms only (leader + follower)"
-echo "6) Test RIGHT arms only (leader + follower)"
-echo "7) Exit"
+echo "2) Kinect RGB + Depth"
+echo "3) 2 RealSense RGB only"
+echo "4) 2 RealSense RGB + Depth"
+echo "5) 2 RealSense RGB + Kinect RGB"
+echo "6) 2 RealSense RGB + Depth + Kinect RGB + Depth"
+echo "7) No cameras (robot arms only)"
+echo "8) Exit"
 echo ""
-read -p "Enter your choice (1-7): " choice
+read -p "Enter your choice (1-8): " choice
 
 # Activate conda environment
 echo "Activating lerobot environment..."
@@ -70,9 +71,8 @@ case $choice in
 
     2)
         echo ""
-        echo "Running: Kinect RGB + Depth (side by side)"
-        echo "==========================================="
-        echo "Note: async_read() returns RGB, async_read_all() returns both"
+        echo "Running: Kinect RGB + Depth"
+        echo "==========================="
         python -m lerobot.teleoperate \
             --robot.type=$ROBOT_TYPE \
             --robot.id=$ROBOT_ID \
@@ -105,8 +105,8 @@ case $choice in
 
     3)
         echo ""
-        echo "Running: 2 RealSense cameras"
-        echo "============================="
+        echo "Running: 2 RealSense RGB only"
+        echo "=============================="
         python -m lerobot.teleoperate \
             --robot.type=$ROBOT_TYPE \
             --robot.id=$ROBOT_ID \
@@ -138,6 +138,151 @@ case $choice in
 
     4)
         echo ""
+        echo "Running: 2 RealSense RGB + Depth"
+        echo "================================="
+        python -m lerobot.teleoperate \
+            --robot.type=$ROBOT_TYPE \
+            --robot.id=$ROBOT_ID \
+            --robot.left_arm_port=$LEFT_ARM_PORT \
+            --robot.right_arm_port=$RIGHT_ARM_PORT \
+            --robot.cameras "{
+                'cam_low': {
+                    'type': 'intelrealsense',
+                    'serial_number_or_name': '$REALSENSE1_SERIAL',
+                    'width': 640,
+                    'height': 480,
+                    'fps': 30,
+                    'use_depth': true,
+                    'depth_colormap': 'jet',
+                    'depth_min_meters': 0.3,
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
+                },
+                'cam_high': {
+                    'type': 'intelrealsense',
+                    'serial_number_or_name': '$REALSENSE2_SERIAL',
+                    'width': 640,
+                    'height': 480,
+                    'fps': 30,
+                    'use_depth': true,
+                    'depth_colormap': 'jet',
+                    'depth_min_meters': 0.3,
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
+                }
+            }" \
+            --teleop.type=$TELEOP_TYPE \
+            --teleop.id=$TELEOP_ID \
+            --teleop.left_arm_port=$TELEOP_LEFT_PORT \
+            --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
+            --fps=$FPS \
+            --display_data=true
+        ;;
+
+    5)
+        echo ""
+        echo "Running: 2 RealSense RGB + Kinect RGB"
+        echo "======================================"
+        python -m lerobot.teleoperate \
+            --robot.type=$ROBOT_TYPE \
+            --robot.id=$ROBOT_ID \
+            --robot.left_arm_port=$LEFT_ARM_PORT \
+            --robot.right_arm_port=$RIGHT_ARM_PORT \
+            --robot.cameras "{
+                'cam_low': {
+                    'type': 'intelrealsense',
+                    'serial_number_or_name': '$REALSENSE1_SERIAL',
+                    'width': 640,
+                    'height': 480,
+                    'fps': 30
+                },
+                'cam_high': {
+                    'type': 'intelrealsense',
+                    'serial_number_or_name': '$REALSENSE2_SERIAL',
+                    'width': 640,
+                    'height': 480,
+                    'fps': 30
+                },
+                'cam_kinect': {
+                    'type': 'kinect',
+                    'device_index': 0,
+                    'width': 1920,
+                    'height': 1080,
+                    'fps': 30,
+                    'use_depth': false,
+                    'pipeline': 'cuda',
+                    'enable_bilateral_filter': false,
+                    'enable_edge_filter': false
+                }
+            }" \
+            --teleop.type=$TELEOP_TYPE \
+            --teleop.id=$TELEOP_ID \
+            --teleop.left_arm_port=$TELEOP_LEFT_PORT \
+            --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
+            --fps=$FPS \
+            --display_data=true
+        ;;
+
+    6)
+        echo ""
+        echo "Running: 2 RealSense RGB + Depth + Kinect RGB + Depth"
+        echo "======================================================"
+        python -m lerobot.teleoperate \
+            --robot.type=$ROBOT_TYPE \
+            --robot.id=$ROBOT_ID \
+            --robot.left_arm_port=$LEFT_ARM_PORT \
+            --robot.right_arm_port=$RIGHT_ARM_PORT \
+            --robot.cameras "{
+                'cam_low': {
+                    'type': 'intelrealsense',
+                    'serial_number_or_name': '$REALSENSE1_SERIAL',
+                    'width': 640,
+                    'height': 480,
+                    'fps': 30,
+                    'use_depth': true,
+                    'depth_colormap': 'jet',
+                    'depth_min_meters': 0.3,
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
+                },
+                'cam_high': {
+                    'type': 'intelrealsense',
+                    'serial_number_or_name': '$REALSENSE2_SERIAL',
+                    'width': 640,
+                    'height': 480,
+                    'fps': 30,
+                    'use_depth': true,
+                    'depth_colormap': 'jet',
+                    'depth_min_meters': 0.3,
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
+                },
+                'cam_kinect': {
+                    'type': 'kinect',
+                    'device_index': 0,
+                    'width': 1920,
+                    'height': 1080,
+                    'fps': 30,
+                    'use_depth': true,
+                    'depth_colormap': 'jet',
+                    'depth_min_meters': 0.5,
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true,
+                    'enable_bilateral_filter': false,
+                    'enable_edge_filter': false,
+                    'pipeline': 'cuda'
+                }
+            }" \
+            --teleop.type=$TELEOP_TYPE \
+            --teleop.id=$TELEOP_ID \
+            --teleop.left_arm_port=$TELEOP_LEFT_PORT \
+            --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
+            --fps=$FPS \
+            --display_data=true
+        ;;
+
+    7)
+        echo ""
         echo "Running: No cameras (robot arms only)"
         echo "======================================"
         python -m lerobot.teleoperate \
@@ -153,43 +298,13 @@ case $choice in
             --display_data=true
         ;;
 
-    5)
-        echo ""
-        echo "Running: LEFT arms only (leader + follower)"
-        echo "==========================================="
-        python -m lerobot.teleoperate \
-            --robot.type="so101_follower" \
-            --robot.id="my_bimanual_left" \
-            --robot.port=$LEFT_ARM_PORT \
-            --teleop.type="so101_leader" \
-            --teleop.id="my_bimanual_leader_left" \
-            --teleop.port=$TELEOP_LEFT_PORT \
-            --fps=$FPS \
-            --display_data=true
-        ;;
-
-    6)
-        echo ""
-        echo "Running: RIGHT arms only (leader + follower)"
-        echo "============================================"
-        python -m lerobot.teleoperate \
-            --robot.type="so101_follower" \
-            --robot.id="my_bimanual_right" \
-            --robot.port=$RIGHT_ARM_PORT \
-            --teleop.type="so101_leader" \
-            --teleop.id="my_bimanual_leader_right" \
-            --teleop.port=$TELEOP_RIGHT_PORT \
-            --fps=$FPS \
-            --display_data=true
-        ;;
-
-    7)
+    8)
         echo "Exiting..."
         exit 0
         ;;
 
     *)
-        echo "Invalid choice. Please select 1-7."
+        echo "Invalid choice. Please select 1-8."
         exit 1
         ;;
 esac

@@ -34,6 +34,9 @@ class RealSenseCameraConfig(CameraConfig):
     # Advanced configurations
     RealSenseCameraConfig("0123456789", 30, 640, 480, use_depth=True)  # With depth sensing
     RealSenseCameraConfig("0123456789", 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)  # With 90° rotation
+
+    # With colorized depth stream
+    RealSenseCameraConfig("0123456789", 30, 640, 480, use_depth=True, depth_colormap="jet")
     ```
 
     Attributes:
@@ -45,12 +48,17 @@ class RealSenseCameraConfig(CameraConfig):
         use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
+        depth_colormap: Colormap for depth visualization. Options: jet, hot, cool, viridis, turbo, rainbow, bone. Defaults to jet.
+        depth_min_meters: Minimum depth in meters for colorization. Defaults to 0.3.
+        depth_max_meters: Maximum depth in meters for colorization. Defaults to 10.0.
+        depth_clipping: Whether to clip depth values outside min/max range. Defaults to True.
 
     Note:
         - Either name or serial_number must be specified.
         - Depth stream configuration (if enabled) will use the same FPS as the color stream.
         - The actual resolution and FPS may be adjusted by the camera to the nearest supported mode.
         - For `fps`, `width` and `height`, either all of them need to be set, or none of them.
+        - Depth colorization uses native RealSense colorizer for optimal performance.
     """
 
     serial_number_or_name: str
@@ -58,6 +66,11 @@ class RealSenseCameraConfig(CameraConfig):
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
+    # Depth colorization settings
+    depth_colormap: str = "jet"
+    depth_min_meters: float = 0.3
+    depth_max_meters: float = 10.0
+    depth_clipping: bool = True
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
@@ -79,4 +92,16 @@ class RealSenseCameraConfig(CameraConfig):
         if any(v is not None for v in values) and any(v is None for v in values):
             raise ValueError(
                 "For `fps`, `width` and `height`, either all of them need to be set, or none of them."
+            )
+
+        # Validate depth colorization settings
+        valid_colormaps = ["jet", "hot", "cool", "viridis", "turbo", "rainbow", "bone"]
+        if self.depth_colormap not in valid_colormaps:
+            raise ValueError(
+                f"`depth_colormap` must be one of {valid_colormaps}, but {self.depth_colormap} is provided."
+            )
+
+        if self.depth_min_meters >= self.depth_max_meters:
+            raise ValueError(
+                f"`depth_min_meters` ({self.depth_min_meters}) must be less than `depth_max_meters` ({self.depth_max_meters})"
             )
