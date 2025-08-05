@@ -47,6 +47,9 @@ class KinectCameraConfig(CameraConfig):
     # With depth and IR streams
     KinectCameraConfig(device_index=0, fps=30, use_depth=True, use_ir=True)
 
+    # With colorized depth stream
+    KinectCameraConfig(device_index=0, fps=30, use_depth=True, depth_colormap="jet")
+
     # Custom resolution (Note: Kinect v2 has fixed resolutions)
     # Color: 1920x1080, Depth/IR: 512x424
     KinectCameraConfig(device_index=0, fps=30, width=1920, height=1080)
@@ -68,12 +71,17 @@ class KinectCameraConfig(CameraConfig):
         enable_edge_filter: Apply edge-aware filter to depth. Defaults to True.
         min_depth: Minimum depth in meters for depth processing. Defaults to 0.5.
         max_depth: Maximum depth in meters for depth processing. Defaults to 4.5.
+        depth_colormap: Colormap for depth visualization. Options: jet, hot, cool, viridis, turbo, rainbow, bone. Defaults to jet.
+        depth_min_meters: Minimum depth in meters for colorization. Defaults to 0.5.
+        depth_max_meters: Maximum depth in meters for colorization. Defaults to 4.5.
+        depth_clipping: Whether to clip depth values outside min/max range. Defaults to True.
 
     Note:
         - Kinect v2 has fixed resolutions: Color (1920x1080), Depth/IR (512x424)
         - Pipeline selection order: CUDA > OpenCL > OpenGL > CPU
         - Only one Kinect v2 can be connected per USB 3.0 controller
         - Requires USB 3.0 for full framerate operation
+        - Depth colorization converts depth data to RGB for visualization
     """
 
     device_index: int | None = 0
@@ -88,6 +96,11 @@ class KinectCameraConfig(CameraConfig):
     enable_edge_filter: bool = True
     min_depth: float = 0.5
     max_depth: float = 4.5
+    # Depth colorization settings
+    depth_colormap: str = "jet"
+    depth_min_meters: float = 0.5
+    depth_max_meters: float = 4.5
+    depth_clipping: bool = True
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
@@ -136,3 +149,15 @@ class KinectCameraConfig(CameraConfig):
 
         if self.device_index is not None and self.device_index < 0:
             raise ValueError(f"`device_index` must be >= 0. Got {self.device_index}")
+
+        # Validate depth colorization settings
+        valid_colormaps = ["jet", "hot", "cool", "viridis", "turbo", "rainbow", "bone"]
+        if self.depth_colormap not in valid_colormaps:
+            raise ValueError(
+                f"`depth_colormap` must be one of {valid_colormaps}, but {self.depth_colormap} is provided."
+            )
+
+        if self.depth_min_meters >= self.depth_max_meters:
+            raise ValueError(
+                f"`depth_min_meters` ({self.depth_min_meters}) must be less than `depth_max_meters` ({self.depth_max_meters})"
+            )

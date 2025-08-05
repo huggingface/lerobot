@@ -74,9 +74,21 @@ class BiSO101Follower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
+        ft = {}
+        for cam_key, cam in self.cameras.items():
+            cam_config = self.config.cameras[cam_key]
+            ft[cam_key] = (cam_config.height, cam_config.width, 3)
+
+            # Add depth stream if enabled
+            if hasattr(cam, "use_depth") and cam.use_depth:
+                # Depth has fixed resolution for Kinect (512x424)
+                if hasattr(cam_config, "type") and cam_config.type == "kinect":
+                    ft[f"{cam_key}_depth"] = (424, 512, 3)
+                else:
+                    # For other cameras, use same resolution as color
+                    ft[f"{cam_key}_depth"] = (cam_config.height, cam_config.width, 3)
+
+        return ft
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -130,7 +142,22 @@ class BiSO101Follower(Robot):
 
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read(timeout_ms=1000)
+
+            # Check if this camera has depth enabled
+            if hasattr(cam, "use_depth") and cam.use_depth and hasattr(cam, "async_read_all"):
+                # Get all streams (RGB and depth)
+                all_frames = cam.async_read_all(timeout_ms=1000)
+
+                # Add RGB frame with original key
+                obs_dict[cam_key] = all_frames.get("color")
+
+                # Add depth frame with "_depth" suffix
+                if "depth_rgb" in all_frames:
+                    obs_dict[f"{cam_key}_depth"] = all_frames["depth_rgb"]
+            else:
+                # Regular camera without depth
+                obs_dict[cam_key] = cam.async_read(timeout_ms=1000)
+
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
