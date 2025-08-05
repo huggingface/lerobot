@@ -46,7 +46,7 @@ def test_async_encoding_with_real_dataset():
     with AsyncVideoEncoder(num_workers=2, max_queue_size=10) as encoder:
         # Submit encoding tasks for both episodes
         for episode_index in [0, 1]:
-            for video_key in ["front", "wrist"]:
+            for video_key in ["observation.images.front", "observation.images.wrist"]:
                 success = encoder.submit_encoding_task(
                     episode_index=episode_index,
                     video_keys=[video_key],
