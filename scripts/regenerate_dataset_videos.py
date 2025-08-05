@@ -19,7 +19,7 @@ from lerobot.datasets.gpu_video_encoder import GPUVideoEncoder, create_gpu_encod
 from lerobot.datasets.video_utils import encode_video_frames
 
 
-def find_episodes(dataset_path: Path) -> List[int]:
+def find_episodes(dataset_path: Path) -> list[int]:
     """Find all episode numbers in the dataset."""
     episodes = []
 
@@ -46,7 +46,7 @@ def find_episodes(dataset_path: Path) -> List[int]:
     return sorted(episodes)
 
 
-def find_cameras(dataset_path: Path) -> List[str]:
+def find_cameras(dataset_path: Path) -> list[str]:
     """Find all camera keys in the dataset."""
     cameras = []
     images_dir = dataset_path / "images"

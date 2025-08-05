@@ -43,7 +43,7 @@ class TimingStats:
     max_time: float = 0.0
     mean_time: float = 0.0
     std_time: float = 0.0
-    times: List[float] = field(default_factory=list)
+    times: list[float] = field(default_factory=list)
 
     def add_measurement(self, duration: float) -> None:
         """Add a timing measurement."""
@@ -58,7 +58,7 @@ class TimingStats:
         if self.count > 1:
             self.std_time = np.std(self.times)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "count": self.count,
@@ -86,7 +86,7 @@ class RecordingBenchmark:
     # Episode tracking
     current_episode: int = 0
     episode_start_time: Optional[float] = None
-    episode_stats: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    episode_stats: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     # Configuration
     save_detailed_times: bool = True
