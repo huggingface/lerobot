@@ -1576,7 +1576,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_encoding_workers: int = 2,
         video_encoding_queue_size: int = 100,
         gpu_video_encoding: bool = False,
-        gpu_encoder_config: Optional[dict[str, Any]] = None,
+        gpu_encoder_config: dict[str, Any] | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)

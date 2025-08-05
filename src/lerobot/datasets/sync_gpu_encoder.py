@@ -29,7 +29,7 @@ class SyncGPUVideoEncoder:
     def __init__(
         self,
         gpu_encoding: bool = False,
-        gpu_encoder_config: Optional[dict] = None,
+        gpu_encoder_config: dict | None = None,
         enable_logging: bool = True,
     ):
         """
@@ -179,7 +179,7 @@ class SyncGPUVideoEncoder:
 
 
 def create_sync_gpu_encoder(
-    gpu_encoding: bool = False, gpu_encoder_config: Optional[dict] = None, enable_logging: bool = True
+    gpu_encoding: bool = False, gpu_encoder_config: dict | None = None, enable_logging: bool = True
 ) -> SyncGPUVideoEncoder:
     """
     Create a synchronous GPU video encoder.
