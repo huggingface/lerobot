@@ -9,7 +9,6 @@ to see if the improvements have fixed the sticking issues.
 
 import subprocess
 import sys
-from pathlib import Path
 
 
 def run_async_gpu_recording():

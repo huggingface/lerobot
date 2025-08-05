@@ -11,6 +11,7 @@ This PR adds **two major performance enhancements** to LeRobot's video recording
 ## 🚀 Dual Enhancement Benefits
 
 ### GPU + Async = Maximum Performance
+
 - **GPU Acceleration**: Hardware encoding for speed
 - **Async Processing**: Background processing for non-blocking operation
 - **Combined Effect**: 3-4x speedup + non-blocking recording
@@ -18,12 +19,14 @@ This PR adds **two major performance enhancements** to LeRobot's video recording
 ## 📊 Performance Results
 
 ### Before vs After (90-second episode, 2 cameras)
-| Mode | Encoding Time | Recording Impact | Total Time |
-|------|---------------|------------------|------------|
-| **Before**: Sync CPU | ~45-60s | Blocks recording | ~135-150s |
-| **After**: Async GPU | ~15-25s | Non-blocking | ~90s + background |
+
+| Mode                 | Encoding Time | Recording Impact | Total Time        |
+| -------------------- | ------------- | ---------------- | ----------------- |
+| **Before**: Sync CPU | ~45-60s       | Blocks recording | ~135-150s         |
+| **After**: Async GPU | ~15-25s       | Non-blocking     | ~90s + background |
 
 ### Real-World Testing Results
+
 - ✅ **NVIDIA RTX 4060**: 3-4x speedup achieved
 - ✅ **SO-101 Robot**: Tested with real hardware
 - ✅ **Dual Camera Setup**: Front + Wrist cameras working perfectly
@@ -32,6 +35,7 @@ This PR adds **two major performance enhancements** to LeRobot's video recording
 ## 🛠️ Usage
 
 ### Enable Both Enhancements
+
 ```bash
 python -m lerobot.record \
 --robot.type=so101_follower \
@@ -45,6 +49,7 @@ python -m lerobot.record \
 ```
 
 ### Individual Feature Usage
+
 ```bash
 # GPU only (synchronous)
 --dataset.gpu_video_encoding=true
@@ -64,6 +69,7 @@ python -m lerobot.record \
 ## 🧪 Testing
 
 ### Test Both Enhancements
+
 ```bash
 # Conservative test (1 worker)
 python scripts/test_async_gpu_encoding.py --mode conservative
@@ -73,6 +79,7 @@ python scripts/test_async_gpu_encoding.py --mode aggressive
 ```
 
 ### Test Individual Features
+
 ```bash
 # Test GPU encoding only
 python -c "from lerobot.datasets.gpu_video_encoder import GPUVideoEncoder; print(GPUVideoEncoder().get_encoder_info())"
@@ -84,11 +91,13 @@ python -c "from lerobot.datasets.async_video_encoder import AsyncVideoEncoder; p
 ## 📁 Files Added
 
 ### Core Implementation
+
 - `src/lerobot/datasets/gpu_video_encoder.py` - GPU encoding implementation
 - `src/lerobot/datasets/sync_gpu_encoder.py` - Synchronous GPU encoder
 - `src/lerobot/datasets/async_video_encoder.py` - Async encoder with improvements
 
 ### Utilities
+
 - `scripts/regenerate_dataset_videos.py` - Video regeneration utility
 - `scripts/test_async_gpu_encoding.py` - Comprehensive test script
 - `GPU_ENCODING_README.md` - Documentation
@@ -96,6 +105,7 @@ python -c "from lerobot.datasets.async_video_encoder import AsyncVideoEncoder; p
 ## 📝 Files Modified
 
 ### Enhanced Core Files
+
 - `src/lerobot/datasets/lerobot_dataset.py` - Added GPU + async support
 - `src/lerobot/record.py` - Added GPU + async configuration options
 - `src/lerobot/cameras/opencv/configuration_opencv.py` - MJPEG enhancement
@@ -103,6 +113,7 @@ python -c "from lerobot.datasets.async_video_encoder import AsyncVideoEncoder; p
 ## 🔧 Configuration Options
 
 ### GPU + Async Configuration
+
 ```python
 # Enable both enhancements
 --dataset.gpu_video_encoding=true
@@ -115,18 +126,21 @@ python -c "from lerobot.datasets.async_video_encoder import AsyncVideoEncoder; p
 ## ✅ Testing Results
 
 ### Hardware Tested
+
 - **GPU**: NVIDIA RTX 4060
 - **Robot**: SO-101 Follower + Leader
 - **Cameras**: Front (/dev/video4) + Wrist (/dev/video2)
 - **Format**: MJPEG, 1280x720, 30fps
 
 ### Performance Metrics (Async GPU)
+
 - **Episode 0**: 3.87s encoding time (599 frames)
 - **Episode 1**: 4.16s encoding time (597 frames)
 - **Episode 2**: 2.76s encoding time (598 frames)
 - **All videos**: Successfully generated with proper quality
 
 ### Reliability
+
 - ✅ **No sticking issues**: Proper timeout and fallback
 - ✅ **Clean shutdown**: All workers stopped correctly
 - ✅ **Memory management**: No memory leaks detected
