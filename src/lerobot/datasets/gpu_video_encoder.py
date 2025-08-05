@@ -53,7 +53,7 @@ class GPUVideoEncoder:
             logger.info(f"GPUVideoEncoder initialized with config: {config}")
             logger.info(f"Available encoders: {list(self._detected_encoders.keys())}")
 
-    def _detect_available_encoders(self) -> Dict[str, List[str]]:
+    def _detect_available_encoders(self) -> dict[str, list[str]]:
         """Detect available hardware and software encoders."""
         encoders = {}
 
@@ -102,7 +102,7 @@ class GPUVideoEncoder:
 
         return encoders
 
-    def _select_encoder(self) -> Tuple[str, str]:
+    def _select_encoder(self) -> tuple[str, str]:
         """Select the best available encoder for the requested configuration."""
         if self.config.encoder_type == "auto":
             # Try hardware encoders first, then software
@@ -135,7 +135,7 @@ class GPUVideoEncoder:
 
     def _build_ffmpeg_command(
         self, input_dir: Path, output_path: Path, fps: int, encoder_type: str, codec: str
-    ) -> List[str]:
+    ) -> list[str]:
         """Build FFmpeg command for GPU-accelerated encoding."""
 
         # Get FFmpeg path
@@ -318,7 +318,7 @@ class GPUVideoEncoder:
             logger.error(f"Unexpected error during encoding: {e}")
             return False
 
-    def get_encoder_info(self) -> Dict[str, any]:
+    def get_encoder_info(self) -> dict[str, any]:
         """Get information about available encoders and current configuration."""
         encoder_type, codec = self._select_encoder()
 

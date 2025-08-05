@@ -39,7 +39,7 @@ class EncodingTask:
     """Represents a video encoding task."""
 
     episode_index: int
-    video_keys: List[str]
+    video_keys: list[str]
     fps: int
     root_path: Path
     priority: int = 0  # Higher number = higher priority
@@ -56,7 +56,7 @@ class EncodingResult:
     """Result of a video encoding operation."""
 
     episode_index: int
-    video_keys: List[str]
+    video_keys: list[str]
     success: bool
     duration: float
     error_message: Optional[str] = None
@@ -77,7 +77,7 @@ class AsyncVideoEncoder:
         max_queue_size: int = 100,
         enable_logging: bool = True,
         gpu_encoding: bool = False,
-        gpu_encoder_config: Optional[Dict[str, Any]] = None,
+        gpu_encoder_config: Optional[dict[str, Any]] = None,
     ):
         """
         Initialize the async video encoder.
@@ -95,7 +95,7 @@ class AsyncVideoEncoder:
         self.task_queue = queue.PriorityQueue(maxsize=max_queue_size)
 
         # Results storage
-        self.results: List[EncodingResult] = []
+        self.results: list[EncodingResult] = []
         self.results_lock = threading.Lock()
 
         # Worker thread pool
@@ -202,7 +202,7 @@ class AsyncVideoEncoder:
             logging.info("AsyncVideoEncoder stopped")
 
     def submit_encoding_task(
-        self, episode_index: int, video_keys: List[str], fps: int, root_path: Path, priority: int = 0
+        self, episode_index: int, video_keys: list[str], fps: int, root_path: Path, priority: int = 0
     ) -> bool:
         """
         Submit a video encoding task to the queue.
@@ -245,7 +245,7 @@ class AsyncVideoEncoder:
             logging.error(f"Encoding task queue is full. Episode {episode_index} not submitted.")
             return False
 
-    def get_results(self, clear: bool = False) -> List[EncodingResult]:
+    def get_results(self, clear: bool = False) -> list[EncodingResult]:
         """
         Get completed encoding results.
 
@@ -263,7 +263,7 @@ class AsyncVideoEncoder:
             else:
                 return self.results.copy()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get encoding statistics."""
         with self.stats_lock:
             stats = self.stats.copy()
