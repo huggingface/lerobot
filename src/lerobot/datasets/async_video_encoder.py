@@ -25,13 +25,13 @@ import logging
 import queue
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from .video_utils import encode_video_frames
 from .gpu_video_encoder import GPUVideoEncoder, create_gpu_encoder_config
+from .video_utils import encode_video_frames
 
 
 @dataclass
