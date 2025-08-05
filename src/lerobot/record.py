@@ -55,6 +55,52 @@ python -m lerobot.record \
   --dataset.num_episodes=25 \
   --dataset.single_task="Grab and handover the red cube to the other arm"
 ```
+
+Multi-Dataset Recording:
+
+The `multi_record` function allows recording data for multiple datasets sequentially within the same episode.
+This is useful for complex tasks that can be broken down into distinct stages or phases, such as:
+- Pick and place operations (pick stage + place stage)
+- Multi-step assembly tasks
+- Sequential manipulation tasks
+
+Example for multi-dataset recording:
+```python
+from lerobot.record import multi_record, MultiRecordConfig, MultiDatasetRecordConfig, DatasetRecordConfig
+
+# Define configurations for each stage
+pick_config = DatasetRecordConfig(
+    repo_id="username/pick_dataset",
+    single_task="Pick up the object",
+    fps=30, episode_time_s=30, num_episodes=50
+)
+
+place_config = DatasetRecordConfig(
+    repo_id="username/place_dataset",
+    single_task="Place the object",
+    fps=30, episode_time_s=30, num_episodes=50
+)
+
+# Create multi-dataset configuration
+multi_config = MultiRecordConfig(
+    robot=robot_config,
+    multi_dataset=MultiDatasetRecordConfig(
+        datasets=[pick_config, place_config],
+        stage_switch_keys=["space", "tab"]  # Space for pick, Tab for place
+    ),
+    teleop=teleop_config
+)
+
+# Start multi-dataset recording
+datasets = multi_record(multi_config)
+```
+
+During multi-dataset recording:
+- Press the configured keys (e.g., SPACE, TAB) to switch between recording stages
+- Press RIGHT ARROW to finish the current episode
+- Press LEFT ARROW to re-record the current episode
+- Press ESC to stop recording completely
+- The environment is reset only after all stages of an episode are completed
 """
 
 import logging
@@ -156,6 +202,25 @@ class DatasetRecordConfig:
 
 
 @dataclass
+class MultiDatasetRecordConfig:
+    # List of dataset configurations for each stage/phase of the motion
+    datasets: list[DatasetRecordConfig]
+    # Key sequence to switch between dataset stages (e.g., ['space', 'tab'])
+    stage_switch_keys: list[str] | None = None
+
+    def __post_init__(self):
+        if not self.datasets:
+            raise ValueError("At least one dataset configuration must be provided")
+        if self.stage_switch_keys is None:
+            # Default keys for switching stages
+            self.stage_switch_keys = ["space", "tab", "enter"][: len(self.datasets)]
+        elif len(self.stage_switch_keys) < len(self.datasets):
+            raise ValueError(
+                f"Number of stage_switch_keys ({len(self.stage_switch_keys)}) must be at least the number of datasets ({len(self.datasets)})"
+            )
+
+
+@dataclass
 class RecordConfig:
     robot: RobotConfig
     dataset: DatasetRecordConfig
@@ -168,6 +233,38 @@ class RecordConfig:
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Resume recording on an existing dataset.
+    resume: bool = False
+
+    def __post_init__(self):
+        # HACK: We parse again the cli args here to get the pretrained path if there was one.
+        policy_path = parser.get_path_arg("policy")
+        if policy_path:
+            cli_overrides = parser.get_cli_overrides("policy")
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy.pretrained_path = policy_path
+
+        if self.teleop is None and self.policy is None:
+            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+
+    @classmethod
+    def __get_path_fields__(cls) -> list[str]:
+        """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
+        return ["policy"]
+
+
+@dataclass
+class MultiRecordConfig:
+    robot: RobotConfig
+    multi_dataset: MultiDatasetRecordConfig
+    # Whether to control the robot with a teleoperator
+    teleop: TeleoperatorConfig | None = None
+    # Whether to control the robot with a policy
+    policy: PreTrainedConfig | None = None
+    # Display all cameras on screen
+    display_data: bool = False
+    # Use vocal synthesis to read events.
+    play_sounds: bool = True
+    # Resume recording on existing datasets.
     resume: bool = False
 
     def __post_init__(self):
@@ -273,7 +370,7 @@ def record_loop(
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
-            dataset.add_frame(frame, task=single_task)
+            dataset.add_frame(frame, task=single_task, timestamp=None)
 
         if display_data:
             log_rerun_data(observation, action)
@@ -282,6 +379,421 @@ def record_loop(
         busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
+
+
+def init_multi_keyboard_listener(stage_switch_keys: list[str]):
+    """Initialize keyboard listener for multi-dataset recording with stage switching."""
+    # Allow to exit early while recording an episode or resetting the environment,
+    # by tapping the right arrow key '->'. This might require a sudo permission
+    # to allow your terminal to monitor keyboard events.
+    events = {}
+    events["exit_early"] = False
+    events["rerecord_episode"] = False
+    events["stop_recording"] = False
+    events["switch_stage"] = False
+    events["current_stage"] = 0
+
+    if is_headless():
+        logging.warning(
+            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
+        )
+        listener = None
+        return listener, events
+
+    # Only import pynput if not in a headless environment
+    from pynput import keyboard
+
+    def on_press(key):
+        try:
+            if key == keyboard.Key.right:
+                print("Right arrow key pressed. Exiting loop...")
+                events["exit_early"] = True
+            elif key == keyboard.Key.left:
+                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+                events["rerecord_episode"] = True
+                events["exit_early"] = True
+            elif key == keyboard.Key.esc:
+                print("Escape key pressed. Stopping data recording...")
+                events["stop_recording"] = True
+                events["exit_early"] = True
+            elif hasattr(key, "char") and key.char:
+                # Handle stage switching keys
+                if key.char == " " and "space" in stage_switch_keys:
+                    stage_idx = stage_switch_keys.index("space")
+                    events["current_stage"] = stage_idx
+                    events["switch_stage"] = True
+                    print(f"Switched to dataset stage {stage_idx}")
+                elif key.char == "\t" and "tab" in stage_switch_keys:
+                    stage_idx = stage_switch_keys.index("tab")
+                    events["current_stage"] = stage_idx
+                    events["switch_stage"] = True
+                    print(f"Switched to dataset stage {stage_idx}")
+                elif key.char == "\r" and "enter" in stage_switch_keys:
+                    stage_idx = stage_switch_keys.index("enter")
+                    events["current_stage"] = stage_idx
+                    events["switch_stage"] = True
+                    print(f"Switched to dataset stage {stage_idx}")
+            elif key == keyboard.Key.space and "space" in stage_switch_keys:
+                stage_idx = stage_switch_keys.index("space")
+                events["current_stage"] = stage_idx
+                events["switch_stage"] = True
+                print(f"Switched to dataset stage {stage_idx}")
+            elif key == keyboard.Key.tab and "tab" in stage_switch_keys:
+                stage_idx = stage_switch_keys.index("tab")
+                events["current_stage"] = stage_idx
+                events["switch_stage"] = True
+                print(f"Switched to dataset stage {stage_idx}")
+            elif key == keyboard.Key.enter and "enter" in stage_switch_keys:
+                stage_idx = stage_switch_keys.index("enter")
+                events["current_stage"] = stage_idx
+                events["switch_stage"] = True
+                print(f"Switched to dataset stage {stage_idx}")
+        except Exception as e:
+            print(f"Error handling key press: {e}")
+
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
+
+    return listener, events
+
+
+@safe_stop_image_writer
+def multi_record_loop(
+    robot: Robot,
+    events: dict,
+    fps: int,
+    datasets: list[LeRobotDataset],
+    dataset_configs: list[DatasetRecordConfig],  # Add dataset configs to access single_task
+    teleop: Teleoperator | list[Teleoperator] | None = None,
+    policy: PreTrainedPolicy | None = None,
+    control_time_s: int | None = None,
+    display_data: bool = False,
+):
+    """Record loop for multi-dataset recording with stage switching."""
+    if datasets and datasets[0].fps != fps:
+        raise ValueError(f"The dataset fps should be equal to requested fps ({datasets[0].fps} != {fps}).")
+
+    teleop_arm = teleop_keyboard = None
+    if isinstance(teleop, list):
+        teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
+        teleop_arm = next(
+            (
+                t
+                for t in teleop
+                if isinstance(t, (so100_leader.SO100Leader, so101_leader.SO101Leader, koch_leader.KochLeader))
+            ),
+            None,
+        )
+
+        if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and robot.name == "lekiwi_client"):
+            raise ValueError(
+                "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
+            )
+
+    # if policy is given it needs cleaning up
+    if policy is not None:
+        policy.reset()
+
+    timestamp = 0
+    start_episode_t = time.perf_counter()
+    current_stage = events["current_stage"]
+    current_dataset = datasets[current_stage] if current_stage < len(datasets) else None
+
+    print(f"Starting recording with stage {current_stage}")
+    print(f"Available stages: {[f'Stage {i}: {ds.meta.repo_id}' for i, ds in enumerate(datasets)]}")
+    from tqdm import tqdm
+
+    pbar = tqdm(
+        total=control_time_s,
+        desc="Recording",
+        unit="s",
+        bar_format="{desc} {percentage:3.0f}%: {bar} | Elapsed: {elapsed} | Remaining: {remaining}",
+    )
+    last_timestamp = 0
+    while timestamp < control_time_s:
+        # Update progress bar with elapsed time since last update
+        if control_time_s is not None:
+            elapsed_since_last = timestamp - last_timestamp
+            # round to 2 decimal places for better readability
+            elapsed_since_last = round(elapsed_since_last, 2)
+
+            pbar.update(float(elapsed_since_last))
+            last_timestamp = timestamp
+
+        start_loop_t = time.perf_counter()
+
+        if events["exit_early"]:
+            events["exit_early"] = False
+            break
+
+        # Check if stage has switched
+        if events["switch_stage"]:
+            events["switch_stage"] = False
+            new_stage = events["current_stage"]
+            if new_stage < len(datasets):
+                current_stage = new_stage
+                current_dataset = datasets[current_stage]
+                print(f"Recording switched to stage {current_stage}: {current_dataset.meta.repo_id}")
+
+        observation = robot.get_observation()
+
+        if policy is not None or current_dataset is not None:
+            observation_frame = build_dataset_frame(
+                current_dataset.features, observation, prefix="observation"
+            )
+
+        if policy is not None:
+            # Use the task from the dataset configuration
+            current_task = (
+                dataset_configs[current_stage].single_task if current_stage < len(dataset_configs) else None
+            )
+            action_values = predict_action(
+                observation_frame,
+                policy,
+                get_safe_torch_device(policy.config.device),
+                policy.config.use_amp,
+                task=current_task,
+                robot_type=robot.robot_type,
+            )
+            action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+        elif policy is None and isinstance(teleop, Teleoperator):
+            action = teleop.get_action()
+        elif policy is None and isinstance(teleop, list):
+            # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
+            arm_action = teleop_arm.get_action()
+            arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+
+            keyboard_action = teleop_keyboard.get_action()
+            base_action = robot._from_keyboard_to_base_action(keyboard_action)
+
+            action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+        else:
+            logging.info(
+                "No policy or teleoperator provided, skipping action generation."
+                "This is likely to happen when resetting the environment without a teleop device."
+                "The robot won't be at its rest position at the start of the next episode."
+            )
+            continue
+
+        # Action can eventually be clipped using `max_relative_target`,
+        # so action actually sent is saved in the dataset.
+        sent_action = robot.send_action(action)
+
+        if current_dataset is not None:
+            action_frame = build_dataset_frame(current_dataset.features, sent_action, prefix="action")
+            frame = {**observation_frame, **action_frame}
+            # Use the task from the dataset configuration
+            current_task = (
+                dataset_configs[current_stage].single_task if current_stage < len(dataset_configs) else None
+            )
+            current_dataset.add_frame(frame, task=current_task, timestamp=None)
+
+        if display_data:
+            log_rerun_data(observation, action)
+
+        dt_s = time.perf_counter() - start_loop_t
+        busy_wait(1 / fps - dt_s)
+
+        timestamp = time.perf_counter() - start_episode_t
+    pbar.close()
+
+
+@parser.wrap()
+def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
+    """Record data for multiple datasets sequentially within the same episode."""
+    init_logging()
+    logging.info(pformat(asdict(cfg)))
+    if cfg.display_data:
+        _init_rerun(session_name="multi_recording")
+
+    robot = make_robot_from_config(cfg.robot)
+    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+
+    action_features = hw_to_dataset_features(
+        robot.action_features, "action", cfg.multi_dataset.datasets[0].video
+    )
+    obs_features = hw_to_dataset_features(
+        robot.observation_features, "observation", cfg.multi_dataset.datasets[0].video
+    )
+    dataset_features = {**action_features, **obs_features}
+
+    # Create or load datasets for each stage
+    datasets = []
+    for i, dataset_cfg in enumerate(cfg.multi_dataset.datasets):
+        if cfg.resume:
+            dataset = LeRobotDataset(
+                dataset_cfg.repo_id,
+                root=dataset_cfg.root,
+                batch_encoding_size=dataset_cfg.video_encoding_batch_size,
+            )
+
+            if hasattr(robot, "cameras") and len(robot.cameras) > 0:
+                dataset.start_image_writer(
+                    num_processes=dataset_cfg.num_image_writer_processes,
+                    num_threads=dataset_cfg.num_image_writer_threads_per_camera * len(robot.cameras),
+                )
+            sanity_check_dataset_robot_compatibility(dataset, robot, dataset_cfg.fps, dataset_features)
+        else:
+            # Create empty dataset or load existing saved episodes
+            sanity_check_dataset_name(dataset_cfg.repo_id, cfg.policy)
+            dataset = LeRobotDataset.create(
+                dataset_cfg.repo_id,
+                dataset_cfg.fps,
+                root=dataset_cfg.root,
+                robot_type=robot.name,
+                features=dataset_features,
+                use_videos=dataset_cfg.video,
+                image_writer_processes=dataset_cfg.num_image_writer_processes,
+                image_writer_threads=dataset_cfg.num_image_writer_threads_per_camera * len(robot.cameras),
+                batch_encoding_size=dataset_cfg.video_encoding_batch_size,
+            )
+        datasets.append(dataset)
+        print(f"Created dataset {i}: {dataset_cfg.repo_id} (current episodes: {dataset.num_episodes})")
+
+    # Validate that all datasets have the same FPS for consistent recording
+    fps_values = [dataset.fps for dataset in datasets]
+    if len(set(fps_values)) > 1:
+        raise ValueError(
+            f"All datasets must have the same FPS for multi-dataset recording. Found: {fps_values}"
+        )
+
+    recording_fps = fps_values[0]
+
+    # Load pretrained policy
+    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=datasets[0].meta)
+
+    robot.connect()
+    if teleop is not None:
+        teleop.connect()
+
+    # Use custom keyboard listener for stage switching
+    listener, events = init_multi_keyboard_listener(cfg.multi_dataset.stage_switch_keys)
+
+    # Reset to stage 0 at the beginning
+    events["current_stage"] = 0
+
+    # Print instructions for the user
+    print("\n=== Multi-Dataset Recording Instructions ===")
+    for i, (key, dataset_cfg) in enumerate(
+        zip(cfg.multi_dataset.stage_switch_keys, cfg.multi_dataset.datasets, strict=False)
+    ):
+        print(f"Press '{key}' to record to stage {i}: {dataset_cfg.repo_id} ({dataset_cfg.single_task})")
+    print("Press -> (right arrow) to exit current episode")
+    print("Press <- (left arrow) to re-record current episode")
+    print("Press ESC to stop recording")
+    print("===========================================\n")
+
+    # Use video encoding managers for all datasets
+    video_managers = [VideoEncodingManager(dataset) for dataset in datasets]
+
+    # Enter all video managers
+    for manager in video_managers:
+        manager.__enter__()
+
+    try:
+        recorded_episodes = 0
+        max_episodes = max(dataset_cfg.num_episodes for dataset_cfg in cfg.multi_dataset.datasets)
+
+        while recorded_episodes < max_episodes and not events["stop_recording"]:
+            # Reset to stage 0 at the beginning of each episode
+            events["current_stage"] = 0
+
+            log_say(f"Recording multi-stage episode {recorded_episodes + 1}", cfg.play_sounds)
+            print(
+                f"Starting episode {recorded_episodes + 1} - Currently at stage 0: {cfg.multi_dataset.datasets[0].repo_id}"
+            )
+            print("Use the configured keys to switch between recording stages during the episode.")
+
+            # Record the multi-stage episode
+            multi_record_loop(
+                robot=robot,
+                events=events,
+                fps=recording_fps,
+                datasets=datasets,
+                dataset_configs=cfg.multi_dataset.datasets,  # Pass dataset configs
+                teleop=teleop,
+                policy=policy,
+                control_time_s=sum(
+                    dataset_cfg.episode_time_s for dataset_cfg in cfg.multi_dataset.datasets
+                ),  # Sum of all stage times
+                display_data=cfg.display_data,
+            )
+
+            # Execute a few seconds without recording to give time to manually reset the environment
+            # Skip reset for the last episode to be recorded
+            if not events["stop_recording"] and (
+                (recorded_episodes < max_episodes - 1) or events["rerecord_episode"]
+            ):
+                log_say("Reset the environment", cfg.play_sounds)
+                # Don't pass datasets to reset loop to avoid recording during reset
+                record_loop(
+                    robot=robot,
+                    events=events,
+                    fps=recording_fps,
+                    teleop=teleop,
+                    control_time_s=cfg.multi_dataset.datasets[0].reset_time_s,
+                    single_task=None,
+                    display_data=cfg.display_data,
+                )
+
+            if events["rerecord_episode"]:
+                log_say("Re-record episode", cfg.play_sounds)
+                events["rerecord_episode"] = False
+                events["exit_early"] = False
+                # Clear episode buffers for all datasets
+                for dataset in datasets:
+                    dataset.clear_episode_buffer()
+                continue
+
+            # Save episodes only for datasets that have frames recorded
+            saved_any_dataset = False
+            for i, dataset in enumerate(datasets):
+                if (
+                    dataset.episode_buffer is not None and dataset.episode_buffer.get("size", 0) > 0
+                ):  # Only save if there are frames
+                    try:
+                        dataset.save_episode()
+                        saved_any_dataset = True
+                        print(f"Saved episode for dataset {i}: {cfg.multi_dataset.datasets[i].repo_id}")
+                    except Exception as e:
+                        print(f"Error saving episode for dataset {i}: {e}")
+                        # Clear the buffer to avoid issues
+                        dataset.clear_episode_buffer()
+                else:
+                    # Clear empty buffer to avoid issues
+                    if dataset.episode_buffer is not None:
+                        dataset.clear_episode_buffer()
+                    print(f"No data recorded for dataset {i}: {cfg.multi_dataset.datasets[i].repo_id}")
+
+            if saved_any_dataset:
+                recorded_episodes += 1
+                print(f"Episode {recorded_episodes} completed successfully")
+            else:
+                print("Warning: No data recorded for any dataset in this episode. Episode not counted.")
+    finally:
+        # Exit all video managers with proper error handling
+        for i, manager in enumerate(video_managers):
+            try:
+                manager.__exit__(None, None, None)
+            except Exception as e:
+                print(f"Warning: Error closing video manager for dataset {i}: {e}")
+
+    log_say("Stop recording", cfg.play_sounds, blocking=True)
+
+    robot.disconnect()
+    if teleop is not None:
+        teleop.disconnect()
+
+    if not is_headless() and listener is not None:
+        listener.stop()
+
+    # Push all datasets to hub if configured
+    for i, (dataset, dataset_cfg) in enumerate(zip(datasets, cfg.multi_dataset.datasets, strict=False)):
+        if dataset_cfg.push_to_hub:
+            dataset.push_to_hub(tags=dataset_cfg.tags, private=dataset_cfg.private)
+
+    log_say("Exiting", cfg.play_sounds)
+    return datasets
 
 
 @parser.wrap()
