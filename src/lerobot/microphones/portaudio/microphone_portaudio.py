@@ -81,6 +81,7 @@ class PortAudioMicrophone(Microphone):
         self.record_start_event = process_Event()
         self.record_close_event = process_Event()
         self.record_is_started_event = process_Event()
+        self.audio_callback_start_event = process_Event()
 
         # Process-safe concurrent queues to store the written/read audio
         self.write_queue = process_Queue()
@@ -214,6 +215,7 @@ class PortAudioMicrophone(Microphone):
         self.record_stop_event.clear()
         self.record_close_event.clear()
         self.record_is_started_event.clear()
+        self.audio_callback_start_event.clear()
 
         # Create and start an audio input stream with a recording callback
         # Remark: this is done in a separate process so that audio recording is not impacted by the main thread CPU usage, especially the busy_wait function.
@@ -227,6 +229,7 @@ class PortAudioMicrophone(Microphone):
                 self.record_stop_event,
                 self.record_close_event,
                 self.record_is_started_event,
+                self.audio_callback_start_event,
                 self.write_queue,
                 self.read_queue,
             ),
@@ -301,6 +304,7 @@ class PortAudioMicrophone(Microphone):
         record_stop_event,
         record_close_event,
         record_is_started_event,
+        audio_callback_start_event,
         write_queue,
         read_queue,
     ) -> None:
@@ -319,8 +323,9 @@ class PortAudioMicrophone(Microphone):
             # Slicing makes copy unnecessary
             # Two separate queues are necessary because .get() also pops the data from the queue
             # Remark: this also ensures that file-recorded data and chunk-audio data are the same.
-            write_queue.put_nowait(indata[:, channels_index])
-            read_queue.put_nowait(indata[:, channels_index])
+            if audio_callback_start_event.is_set():
+                write_queue.put_nowait(indata[:, channels_index])
+                read_queue.put_nowait(indata[:, channels_index])
 
         # Create the audio stream
         stream = sd.InputStream(
@@ -408,9 +413,7 @@ class PortAudioMicrophone(Microphone):
                     ),
                 )
             self.write_thread.daemon = True
-
-            if barrier is None:
-                self.write_thread.start()
+            self.write_thread.start()
 
         self.record_start_event.set()  # Start the input audio stream process
         self.record_is_started_event.wait()  # Wait for the input audio stream process to be actually started
@@ -418,10 +421,7 @@ class PortAudioMicrophone(Microphone):
         if barrier is not None:
             barrier.wait()  # Wait for multiple input audio streams to be started at the same time
 
-            self._clear_queue(self.read_queue)
-            self._clear_queue(self.write_queue)
-            if output_file is not None:
-                self.write_thread.start()
+        self.audio_callback_start_event.set()
 
         if not self.is_recording:
             raise RuntimeError(f"Error starting recording for microphone {self.microphone_index}.")
@@ -437,6 +437,7 @@ class PortAudioMicrophone(Microphone):
         if not self.is_recording:
             raise DeviceNotRecordingError(f"Microphone {self.microphone_index} is not recording.")
 
+        self.audio_callback_start_event.clear()
         self.record_start_event.clear()  # Ensures the audio stream is not started again !
         self.record_stop_event.set()
 
