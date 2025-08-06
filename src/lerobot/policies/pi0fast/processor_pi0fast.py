@@ -27,7 +27,7 @@ from lerobot.processor import (
 )
 
 
-def make_pi0_processor(
+def make_pi0fast_processor(
     config: PI0Config, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [

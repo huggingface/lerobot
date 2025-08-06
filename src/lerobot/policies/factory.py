@@ -144,12 +144,12 @@ def make_processor(
         # TODO(azouitine): Handle this case.
         return (
             RobotProcessor.from_pretrained(
-                source=pretrained_path,
+                pretrained_model_name_or_path=pretrained_path,
                 config_filename=kwargs.get("preprocessor_config_filename", "robot_preprocessor.json"),
                 overrides=kwargs.get("preprocessor_overrides", {}),
             ),
             RobotProcessor.from_pretrained(
-                source=pretrained_path,
+                pretrained_model_name_or_path=pretrained_path,
                 config_filename=kwargs.get("postprocessor_config_filename", "robot_postprocessor.json"),
                 overrides=kwargs.get("postprocessor_overrides", {}),
             ),
