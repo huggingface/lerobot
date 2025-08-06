@@ -34,11 +34,13 @@ class DeviceProcessor:
     (int, long, bool, etc.).
     """
 
-    device: torch.device = "cpu"
+    device: str = "cpu"
     float_dtype: str | None = None
+    _device: torch.device | None = None
 
     def __post_init__(self):
-        self.device = get_safe_torch_device(self.device)
+        self._device = get_safe_torch_device(self.device)
+        self.device = self._device.type
         self.non_blocking = "cuda" in str(self.device)
 
         # Validate and convert float_dtype string to torch dtype
