@@ -19,6 +19,7 @@ import traceback
 import pytest
 from serial import SerialException
 
+from lerobot.configs.types import FeatureType, PolicyFeature
 from tests.utils import DEVICE
 
 # Import fixture modules as plugins
@@ -69,3 +70,19 @@ def patch_builtins_input(monkeypatch):
             print(text)
 
     monkeypatch.setattr("builtins.input", print_text)
+
+
+@pytest.fixture
+def policy_feature_factory():
+    """PolicyFeature factory"""
+
+    def _pf(ft: FeatureType, shape: tuple[int, ...]) -> PolicyFeature:
+        return PolicyFeature(type=ft, shape=shape)
+
+    return _pf
+
+
+def assert_contract_is_typed(features: dict[str, PolicyFeature]) -> None:
+    assert isinstance(features, dict)
+    assert all(isinstance(k, str) for k in features.keys())
+    assert all(isinstance(v, PolicyFeature) for v in features.values())
