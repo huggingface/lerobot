@@ -363,32 +363,6 @@ def test_hooks():
     assert after_calls == [0]
 
 
-def test_reset():
-    """Test pipeline reset functionality."""
-    step = MockStep("test_step")
-    pipeline = RobotProcessor([step])
-
-    reset_called = []
-
-    def reset_hook():
-        reset_called.append(True)
-
-    pipeline.register_reset_hook(reset_hook)
-
-    # Make some calls to increment counter
-    transition = create_transition()
-    pipeline(transition)
-    pipeline(transition)
-
-    assert step.counter == 2
-
-    # Reset should reset step and call hook
-    pipeline.reset()
-
-    assert step.counter == 0
-    assert len(reset_called) == 1
-
-
 def test_unregister_hooks():
     """Test unregistering hooks from the pipeline."""
     step = MockStep("test_step")
@@ -428,21 +402,6 @@ def test_unregister_hooks():
     pipeline(transition)
     assert len(after_calls) == 0
 
-    # Test reset_hook
-    reset_calls = []
-
-    def reset_hook():
-        reset_calls.append(True)
-
-    pipeline.register_reset_hook(reset_hook)
-    pipeline.reset()
-    assert len(reset_calls) == 1
-
-    pipeline.unregister_reset_hook(reset_hook)
-    reset_calls.clear()
-    pipeline.reset()
-    assert len(reset_calls) == 0
-
 
 def test_unregister_nonexistent_hook():
     """Test error handling when unregistering hooks that don't exist."""
@@ -460,9 +419,6 @@ def test_unregister_nonexistent_hook():
 
     with pytest.raises(ValueError, match="not found in after_step_hooks"):
         pipeline.unregister_after_step_hook(some_hook)
-
-    with pytest.raises(ValueError, match="not found in reset_hooks"):
-        pipeline.unregister_reset_hook(reset_hook)
 
 
 def test_multiple_hooks_and_selective_unregister():
@@ -552,22 +508,6 @@ def test_hook_execution_order_documentation():
     assert execution_order == ["A", "C", "B"]  # B is now last
 
 
-def test_profile_steps():
-    """Test step profiling functionality."""
-    step1 = MockStep("step1")
-    step2 = MockStep("step2")
-    pipeline = RobotProcessor([step1, step2])
-
-    transition = create_transition()
-
-    profile_results = pipeline.profile_steps(transition, num_runs=10)
-
-    assert len(profile_results) == 2
-    assert "step_0_MockStep" in profile_results
-    assert "step_1_MockStep" in profile_results
-    assert all(isinstance(time, float) and time >= 0 for time in profile_results.values())
-
-
 def test_save_and_load_pretrained():
     """Test saving and loading pipeline.
 
@@ -581,7 +521,7 @@ def test_save_and_load_pretrained():
     step1.counter = 5
     step2.counter = 10
 
-    pipeline = RobotProcessor([step1, step2], name="TestPipeline", seed=42)
+    pipeline = RobotProcessor([step1, step2], name="TestPipeline")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save pipeline
@@ -596,7 +536,6 @@ def test_save_and_load_pretrained():
             config = json.load(f)
 
         assert config["name"] == "TestPipeline"
-        assert config["seed"] == 42
         assert len(config["steps"]) == 2
 
         # Verify counters are saved in config, not in separate state files
@@ -607,7 +546,6 @@ def test_save_and_load_pretrained():
         loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
 
         assert loaded_pipeline.name == "TestPipeline"
-        assert loaded_pipeline.seed == 42
         assert len(loaded_pipeline) == 2
 
         # Check that counter was restored from config
@@ -1255,10 +1193,10 @@ def test_repr_with_custom_name():
 def test_repr_with_seed():
     """Test __repr__ with seed parameter."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step], seed=42)
+    pipeline = RobotProcessor([step])
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='RobotProcessor', steps=1: [MockStep], seed=42)"
+    expected = "RobotProcessor(name='RobotProcessor', steps=1: [MockStep])"
     assert repr_str == expected
 
 
@@ -1266,19 +1204,17 @@ def test_repr_with_custom_name_and_seed():
     """Test __repr__ with both custom name and seed."""
     step1 = MockStep("step1")
     step2 = MockStepWithoutOptionalMethods()
-    pipeline = RobotProcessor([step1, step2], name="MyProcessor", seed=123)
+    pipeline = RobotProcessor([step1, step2], name="MyProcessor")
     repr_str = repr(pipeline)
 
-    expected = (
-        "RobotProcessor(name='MyProcessor', steps=2: [MockStep, MockStepWithoutOptionalMethods], seed=123)"
-    )
+    expected = "RobotProcessor(name='MyProcessor', steps=2: [MockStep, MockStepWithoutOptionalMethods])"
     assert repr_str == expected
 
 
 def test_repr_without_seed():
     """Test __repr__ when seed is explicitly None (should not show seed)."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step], name="TestProcessor", seed=None)
+    pipeline = RobotProcessor([step], name="TestProcessor")
     repr_str = repr(pipeline)
 
     expected = "RobotProcessor(name='TestProcessor', steps=1: [MockStep])"
@@ -1306,10 +1242,10 @@ def test_repr_edge_case_long_names():
     step3 = MockStepWithTensorState()
     step4 = MockNonModuleStepWithState()
 
-    pipeline = RobotProcessor([step1, step2, step3, step4], name="LongNames", seed=999)
+    pipeline = RobotProcessor([step1, step2, step3, step4], name="LongNames")
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='LongNames', steps=4: [MockStepWithNonSerializableParam, MockStepWithoutOptionalMethods, ..., MockNonModuleStepWithState], seed=999)"
+    expected = "RobotProcessor(name='LongNames', steps=4: [MockStepWithNonSerializableParam, MockStepWithoutOptionalMethods, ..., MockNonModuleStepWithState])"
     assert repr_str == expected
 
 

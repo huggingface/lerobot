@@ -16,11 +16,7 @@
 
 from .device_processor import DeviceProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor
-from .observation_processor import (
-    ImageProcessor,
-    StateProcessor,
-    VanillaObservationProcessor,
-)
+from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessor,
     DoneProcessor,
@@ -43,7 +39,6 @@ __all__ = [
     "DoneProcessor",
     "EnvTransition",
     "IdentityProcessor",
-    "ImageProcessor",
     "InfoProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
@@ -53,7 +48,6 @@ __all__ = [
     "RenameProcessor",
     "RewardProcessor",
     "RobotProcessor",
-    "StateProcessor",
     "TransitionKey",
     "TruncatedProcessor",
     "VanillaObservationProcessor",
