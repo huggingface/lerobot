@@ -30,13 +30,13 @@ def _to_tensor(x: Any):
     if isinstance(x, torch.Tensor):
         return x
     if isinstance(x, np.ndarray):
-        # keep images (uint8 HWC) and python objects as-is
+        # Keep images (uint8 HWC) and python objects as-is
         if x.dtype == np.uint8 or x.dtype == np.object_:
             return x
-        return torch.from_numpy(x)
-    if isinstance(x, (int, float, np.integer, np.floating)):
-        return torch.tensor(x, dtype=torch.float32)
-    return x
+        # Scalars/arrays to float32 tensor
+        return torch.as_tensor(x, dtype=torch.float32)
+    # Anything else to float32 tensor
+    return torch.as_tensor(x, dtype=torch.float32)
 
 
 def _from_tensor(x: Any):

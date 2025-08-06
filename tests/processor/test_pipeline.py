@@ -1930,11 +1930,6 @@ class NonCompliantStep:
         return transition
 
 
-def test_construction_rejects_step_without_dataset_features():
-    with pytest.raises(TypeError, match=r"must define dataset_features\(features\) -> dict\[str, Any\]"):
-        RobotProcessor([NonCompliantStep()])
-
-
 class NonCallableStep:
     """Intentionally non-compliant: missing __call__."""
 

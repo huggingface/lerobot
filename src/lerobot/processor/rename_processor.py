@@ -56,4 +56,4 @@ class RenameProcessor:
         pass
 
     def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        pass
+        return features

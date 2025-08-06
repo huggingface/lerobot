@@ -176,7 +176,7 @@ class StateProcessor:
 
     def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """No dataset features for this processor."""
-        pass
+        return features
 
 
 @dataclass
