@@ -42,6 +42,7 @@ from lerobot.errors import (
     DeviceAlreadyRecordingError,
     DeviceNotRecordingError,
 )
+from lerobot.microphones.portaudio.interface_sounddevice_sdk import ISounddeviceSDK, SounddeviceSDKAdapter
 
 from ..microphone import Microphone
 from .configuration_portaudio import PortAudioMicrophoneConfig
@@ -69,7 +70,7 @@ class PortAudioMicrophone(Microphone):
     ```
     """
 
-    def __init__(self, config: PortAudioMicrophoneConfig):
+    def __init__(self, config: PortAudioMicrophoneConfig, sounddevice_sdk: ISounddeviceSDK = None):
         """
         Initializes the PortAudioMicrophone instance.
 
@@ -77,6 +78,11 @@ class PortAudioMicrophone(Microphone):
             config: The configuration settings for the microphone.
         """
         super().__init__(config)
+
+        if sounddevice_sdk is None:
+            self.sounddevice_sdk = SounddeviceSDKAdapter()
+        else:
+            self.sounddevice_sdk = sounddevice_sdk
 
         # Microphone index
         self.microphone_index = config.microphone_index
@@ -114,7 +120,7 @@ class PortAudioMicrophone(Microphone):
         return self.write_thread is not None and self.write_thread.is_alive()
 
     @staticmethod
-    def find_microphones() -> list[dict[str, Any]]:
+    def find_microphones(sounddevice_sdk: ISounddeviceSDK = None) -> list[dict[str, Any]]:
         """
         Detects available microphones connected to the system.
 
@@ -122,9 +128,13 @@ class PortAudioMicrophone(Microphone):
             List[Dict[str, Any]]: A list of dictionaries,
             where each dictionary contains information about a detected microphone : index, name, sample rate, channels.
         """
+
+        if sounddevice_sdk is None:
+            sounddevice_sdk = SounddeviceSDKAdapter()
+
         found_microphones_info = []
 
-        devices = sd.query_devices()
+        devices = sounddevice_sdk.query_devices()
         for device in devices:
             if device["max_input_channels"] > 0:
                 microphone_info = {
@@ -161,7 +171,7 @@ class PortAudioMicrophone(Microphone):
 
         is_index_input = (
             self.microphone_index >= 0
-            and sd.query_devices(self.microphone_index)["max_input_channels"] > 0
+            and self.sounddevice_sdk.query_devices(self.microphone_index)["max_input_channels"] > 0
         )
 
         if not is_index_input:
@@ -174,7 +184,7 @@ class PortAudioMicrophone(Microphone):
     def _validate_sample_rate(self) -> None:
         """Validates the sample rate against the actual microphone's default sample rate."""
 
-        actual_sample_rate = sd.query_devices(self.microphone_index)["default_samplerate"]
+        actual_sample_rate = self.sounddevice_sdk.query_devices(self.microphone_index)["default_samplerate"]
 
         if self.sample_rate is not None:
             if self.sample_rate > actual_sample_rate or self.sample_rate < 1000:
@@ -243,6 +253,7 @@ class PortAudioMicrophone(Microphone):
                 self.audio_callback_start_event,
                 self.write_queue,
                 self.read_queue,
+                self.sounddevice_sdk,
             ),
         )
         self.record_process.daemon = True
@@ -318,6 +329,7 @@ class PortAudioMicrophone(Microphone):
         audio_callback_start_event,
         write_queue,
         read_queue,
+        sounddevice_sdk,
     ) -> None:
         """
         Process callback used to create an unpickable sounddevice audio input stream with a recording callback and start, stop and close it based on multiprocessing events.
@@ -339,7 +351,7 @@ class PortAudioMicrophone(Microphone):
                 read_queue.put_nowait(indata[:, channels_index])
 
         # Create the audio stream
-        stream = sd.InputStream(
+        stream = sounddevice_sdk.InputStream(
             device=microphone_index,
             samplerate=sample_rate,
             channels=max(channels),
