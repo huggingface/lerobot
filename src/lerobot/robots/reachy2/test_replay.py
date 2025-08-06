@@ -8,14 +8,9 @@ from lerobot.utils.utils import log_say
 # from lerobot.utils.visualization_utils import _init_rerun
 from lerobot.record import record_loop
 from reachy2_sdk import ReachySDK
+from lerobot.utils.robot_utils import busy_wait
 import numpy as np
 import time
-
-
-NUM_EPISODES = 2
-FPS = 15
-EPISODE_TIME_SEC = 4
-TASK_DESCRIPTION = "Grab a cube with Reachy 2"
 
 
 REACHY2_MOTORS = {
@@ -42,48 +37,28 @@ REACHY2_MOTORS = {
     "r_antenna.pos": "head.r_antenna",
 }
 
-
 # Create the robot configuration
 robot_config = Reachy2RobotConfig(
+    # ip_address="localhost",
+    # ip_address="172.18.131.66",
     ip_address="192.168.0.199",
-    id="test_reachy",
+    id="reachy2-pvt02",
 )
 
 # Initialize the robot
 robot = Reachy2Robot(robot_config)
-# Instantiate a client for starting and intermediate positions
+
+
 reachy = ReachySDK(robot_config.ip_address)
 
-# Initialize the policy
-policy = ACTPolicy.from_pretrained("pepijn223/grab_cube_2")
-
-# Get initial dataset first episode
-initial_dataset = LeRobotDataset(repo_id="glannuzel/grab_cube_2", episodes=[0])
-actions = initial_dataset.hf_dataset.select_columns("action")
-
-# Configure the dataset features
-action_features = hw_to_dataset_features(robot.action_features, "action")
-obs_features = hw_to_dataset_features(robot.observation_features, "observation")
-dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
-dataset = LeRobotDataset.create(
-    repo_id="glannuzel/eval_grab_cube_2.1",
-    fps=FPS,
-    features=dataset_features,
-    robot_type=robot.name,
-    use_videos=True,
-    image_writer_threads=4,
-)
-
-# Initialize the keyboard listener and rerun visualization
-_, events = init_keyboard_listener()
-# _init_rerun(session_name="recording")
+dataset = LeRobotDataset(repo_id="glannuzel/grab_cube_2", episodes=[0])
+actions = dataset.hf_dataset.select_columns("action")
 
 # Connect the robot
 robot.connect()
 
-# Go to the initial pose
 action_array = actions[0]["action"]
 action = {}
 for i, name in enumerate(dataset.features["action"]["names"]):
@@ -107,34 +82,20 @@ l_arm_goal = [action["l_shoulder_pitch.pos"],
 
 reachy.head.goto(neck_goal)
 reachy.r_arm.goto(r_arm_goal)
-reachy.r_arm.gripper.goto(100.0)
 reachy.l_arm.goto(l_arm_goal, wait=True)
-time.sleep(1.0)
 
-for episode_idx in range(NUM_EPISODES):
-    log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
+for idx in range(dataset.num_frames):
+    start_episode_t = time.perf_counter()
 
-    # Run the policy inference loop
-    record_loop(
-        robot=robot,
-        events=events,
-        fps=FPS,
-        policy=policy,
-        dataset=dataset,
-        control_time_s=EPISODE_TIME_SEC,
-        single_task=TASK_DESCRIPTION,
-        display_data=False,
-    )
+    action_array = actions[idx]["action"]
 
-    # Set the robot back to the initial pose
-    reachy.head.goto(neck_goal)
-    reachy.r_arm.goto(r_arm_goal)
-    reachy.r_arm.gripper.goto(100.0)
-    reachy.l_arm.goto(l_arm_goal, wait=True)
-    time.sleep(1.0)
+    action = {}
+    for i, name in enumerate(dataset.features["action"]["names"]):
+        action[name] = action_array[i].item()
 
-    dataset.save_episode()
+    robot.send_action(action)
+    dt_s = time.perf_counter() - start_episode_t
+    busy_wait(1 / dataset.fps - dt_s)
 
 # Clean up
-robot.disconnect()
-dataset.push_to_hub()
+# robot.disconnect()
