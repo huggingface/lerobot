@@ -304,7 +304,7 @@ def test_feature_contract():
 
 def test_integration_with_robot_processor():
     """Test integration with RobotProcessor."""
-    from lerobot.constants import ACTION, OBS_STATE
+    from lerobot.constants import OBS_STATE
     from lerobot.processor import ToBatchProcessor
 
     # Create a pipeline with DeviceProcessor
