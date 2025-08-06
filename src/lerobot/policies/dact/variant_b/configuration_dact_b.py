@@ -20,9 +20,9 @@ from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 
 
-@PreTrainedConfig.register_subclass("act")
+@PreTrainedConfig.register_subclass("dact_a")
 @dataclass
-class ACTConfig(PreTrainedConfig):
+class DACTConfigA(PreTrainedConfig):
     """Configuration class for the Action Chunking Transformers policy.
 
     Defaults are configured for training on bimanual Aloha tasks like "insertion" or "transfer".
@@ -92,8 +92,8 @@ class ACTConfig(PreTrainedConfig):
 
     # Input / output structure.
     n_obs_steps: int = 1
-    chunk_size: int = 100
-    n_action_steps: int = 100
+    chunk_size: int = 20
+    n_action_steps: int = 20
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -104,10 +104,16 @@ class ACTConfig(PreTrainedConfig):
     )
 
     # Architecture.
+
     # Vision backbone.
     vision_backbone: str = "resnet18"
     pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
     replace_final_stride_with_dilation: int = False
+    crop_shape: tuple[int, int] | None = (84, 84)
+    crop_is_random: bool = True
+    use_group_norm: bool = True
+    spatial_softmax_num_keypoints: int = 32
+
     # Transformer layers.
     pre_norm: bool = False
     dim_model: int = 512
@@ -115,18 +121,37 @@ class ACTConfig(PreTrainedConfig):
     dim_feedforward: int = 3200
     feedforward_activation: str = "relu"
     n_encoder_layers: int = 4
+
     # Note: Although the original ACT implementation has 7 for `n_decoder_layers`, there is a bug in the code
     # that means only the first layer is used. Here we match the original implementation by setting this to 1.
     # See this issue https://github.com/tonyzhaozh/act/issues/25#issue-2258740521.
     n_decoder_layers: int = 1
+
     # VAE.
     use_vae: bool = True
     latent_dim: int = 32
     n_vae_encoder_layers: int = 4
+    # Unet.
+    down_dims: tuple[int, ...] = (512, 1024, 2048)
+    kernel_size: int = 5
+    n_groups: int = 8
+    diffusion_step_embed_dim: int = 128
+    use_film_scale_modulation: bool = True
+    # Noise scheduler.
+    noise_scheduler_type: str = "DDPM"
+    num_train_timesteps: int = 100
+    beta_schedule: str = "squaredcos_cap_v2"
+    beta_start: float = 0.0001
+    beta_end: float = 0.02
+    prediction_type: str = "epsilon"
+    clip_sample: bool = True
+    clip_sample_range: float = 1.0
 
     # Inference.
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
     temporal_ensemble_coeff: float | None = None
+    num_inference_steps: int | None = None
+    horizon: int = 20
 
     # Training and loss computation.
     dropout: float = 0.1
@@ -155,9 +180,17 @@ class ACTConfig(PreTrainedConfig):
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
                 f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
             )
-        if self.n_obs_steps != 1:
+
+        supported_prediction_types = ["epsilon", "sample"]
+        if self.prediction_type not in supported_prediction_types:
             raise ValueError(
-                f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
+                f"`prediction_type` must be one of {supported_prediction_types}. Got {self.prediction_type}."
+            )
+        supported_noise_schedulers = ["DDPM", "DDIM"]
+        if self.noise_scheduler_type not in supported_noise_schedulers:
+            raise ValueError(
+                f"`noise_scheduler_type` must be one of {supported_noise_schedulers}. "
+                f"Got {self.noise_scheduler_type}."
             )
 
     def get_optimizer_preset(self) -> AdamWConfig:
