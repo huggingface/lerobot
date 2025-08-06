@@ -421,7 +421,7 @@ def step_env_and_process_transition(
     """
     # Get teleoperation action and events
     teleop_action = teleop_device.get_action()
-    teleop_events = teleop_device.get_teleop_events()
+    teleop_events = teleop_device.get_teleop_events() if hasattr(teleop_device, "get_teleop_events") else {}
 
     # Create action transition
     action_transition = dict(transition)
