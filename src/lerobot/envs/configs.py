@@ -14,12 +14,12 @@
 
 import abc
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 import draccus
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGE_2, OBS_IMAGES, OBS_STATE
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 
@@ -30,6 +30,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     fps: int = 30
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
+    multitask_eval: bool = False
+    max_parallel_tasks: int = 5
 
     @property
     def type(self) -> str:
@@ -44,7 +46,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 @EnvConfig.register_subclass("aloha")
 @dataclass
 class AlohaEnv(EnvConfig):
-    task: str | None = "AlohaInsertion-v0"
+    task: str = "AlohaInsertion-v0"
     fps: int = 50
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
@@ -82,7 +84,7 @@ class AlohaEnv(EnvConfig):
 @EnvConfig.register_subclass("pusht")
 @dataclass
 class PushtEnv(EnvConfig):
-    task: str | None = "PushT-v0"
+    task: str = "PushT-v0"
     fps: int = 10
     episode_length: int = 300
     obs_type: str = "pixels_agent_pos"
@@ -124,7 +126,7 @@ class PushtEnv(EnvConfig):
 @EnvConfig.register_subclass("xarm")
 @dataclass
 class XarmEnv(EnvConfig):
-    task: str | None = "XarmLift-v0"
+    task: str = "XarmLift-v0"
     fps: int = 15
     episode_length: int = 200
     obs_type: str = "pixels_agent_pos"
@@ -179,10 +181,10 @@ class EnvTransformConfig:
     add_joint_velocity_to_observation: bool = False
     add_current_to_observation: bool = False
     add_ee_pose_to_observation: bool = False
-    crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
-    resize_size: tuple[int, int] | None = None
+    crop_params_dict: Optional[dict[str, tuple[int, int, int, int]]] = None
+    resize_size: Optional[tuple[int, int]] = None
     control_time_s: float = 20.0
-    fixed_reset_joint_positions: Any | None = None
+    fixed_reset_joint_positions: Optional[Any] = None
     reset_time_s: float = 5.0
     use_gripper: bool = True
     gripper_quantization_threshold: float | None = 0.8
@@ -195,25 +197,24 @@ class EnvTransformConfig:
 class HILSerlRobotEnvConfig(EnvConfig):
     """Configuration for the HILSerlRobotEnv environment."""
 
-    robot: RobotConfig | None = None
-    teleop: TeleoperatorConfig | None = None
-    wrapper: EnvTransformConfig | None = None
+    robot: Optional[RobotConfig] = None
+    teleop: Optional[TeleoperatorConfig] = None
+    wrapper: Optional[EnvTransformConfig] = None
     fps: int = 10
     name: str = "real_robot"
-    mode: str | None = None  # Either "record", "replay", None
-    repo_id: str | None = None
-    dataset_root: str | None = None
-    task: str | None = ""
+    mode: str = None  # Either "record", "replay", None
+    repo_id: Optional[str] = None
+    dataset_root: Optional[str] = None
+    task: str = ""
     num_episodes: int = 10  # only for record mode
     episode: int = 0
     device: str = "cuda"
     push_to_hub: bool = True
-    pretrained_policy_name_or_path: str | None = None
-    reward_classifier_pretrained_path: str | None = None
+    pretrained_policy_name_or_path: Optional[str] = None
+    reward_classifier_pretrained_path: Optional[str] = None
     # For the reward classifier, to record more positive examples after a success
     number_of_steps_after_success: int = 0
 
-    @property
     def gym_kwargs(self) -> dict:
         return {}
 
@@ -223,8 +224,9 @@ class HILSerlRobotEnvConfig(EnvConfig):
 class HILEnvConfig(EnvConfig):
     """Configuration for the HIL environment."""
 
+    type: str = "hil"
     name: str = "PandaPickCube"
-    task: str | None = "PandaPickCubeKeyboard-v0"
+    task: str = "PandaPickCubeKeyboard-v0"
     use_viewer: bool = True
     gripper_penalty: float = 0.0
     use_gamepad: bool = True
@@ -248,18 +250,18 @@ class HILEnvConfig(EnvConfig):
         }
     )
     ################# args from hilserlrobotenv
-    reward_classifier_pretrained_path: str | None = None
-    robot_config: RobotConfig | None = None
-    teleop_config: TeleoperatorConfig | None = None
-    wrapper: EnvTransformConfig | None = None
-    mode: str | None = None  # Either "record", "replay", None
-    repo_id: str | None = None
-    dataset_root: str | None = None
+    reward_classifier_pretrained_path: Optional[str] = None
+    robot_config: Optional[RobotConfig] = None
+    teleop_config: Optional[TeleoperatorConfig] = None
+    wrapper: Optional[EnvTransformConfig] = None
+    mode: str = None  # Either "record", "replay", None
+    repo_id: Optional[str] = None
+    dataset_root: Optional[str] = None
     num_episodes: int = 10  # only for record mode
     episode: int = 0
     device: str = "cuda"
     push_to_hub: bool = True
-    pretrained_policy_name_or_path: str | None = None
+    pretrained_policy_name_or_path: Optional[str] = None
     # For the reward classifier, to record more positive examples after a success
     number_of_steps_after_success: int = 0
     ############################
@@ -270,4 +272,56 @@ class HILEnvConfig(EnvConfig):
             "use_viewer": self.use_viewer,
             "use_gamepad": self.use_gamepad,
             "gripper_penalty": self.gripper_penalty,
+        }
+
+
+@EnvConfig.register_subclass("libero")
+@dataclass
+class LiberoEnv(EnvConfig):
+    task: str = "libero_10"  # can also choose libero_spatial, libero_object, etc.
+    fps: int = 30
+    episode_length: int = 520
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    camera_name: str = "agentview_image,robot0_eye_in_hand_image"
+    init_states: bool = True
+    multitask_eval: bool = True
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/agentview_image": f"{OBS_IMAGE}",
+            "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGE_2}",
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            self.features["pixels/agentview_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(360, 360, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(360, 360, 3)
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(8,))
+            self.features["pixels/agentview_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(360, 360, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(360, 360, 3)
+            )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            # "task": self.task,
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            # "max_episode_steps": self.episode_length,
         }

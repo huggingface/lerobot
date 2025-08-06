@@ -34,7 +34,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.eval import eval_policy, eval_policy_multitask
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -252,14 +252,32 @@ def train(cfg: TrainPipelineConfig):
                 torch.no_grad(),
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
             ):
-                eval_info = eval_policy(
-                    eval_env,
-                    policy,
-                    cfg.eval.n_episodes,
-                    videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
-                    max_episodes_rendered=4,
-                    start_seed=cfg.seed,
-                )
+                if cfg.env.multitask_eval:
+                            eval_info = eval_policy_multitask(
+                                eval_env,
+                                policy,
+                                cfg.eval.n_episodes,
+                                videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
+                                max_episodes_rendered=4,
+                                start_seed=cfg.seed,
+                                max_parallel_tasks=cfg.env.max_parallel_tasks,
+                            )
+                            aggregated_results = eval_info["overall"]["aggregated"]
+                            # Print per-suite stats
+                            for task_group, task_group_info in eval_info.items():
+                                if task_group == "overall":
+                                    continue  # Skip the overall stats since we already printed it
+                                print(f"\nAggregated Metrics for {task_group}:")
+                                print(task_group_info["aggregated"])
+                else:
+                    eval_info = eval_policy(
+                        eval_env,
+                        policy,
+                        cfg.eval.n_episodes,
+                        videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
+                        max_episodes_rendered=4,
+                        start_seed=cfg.seed,
+                    )
 
             eval_metrics = {
                 "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
