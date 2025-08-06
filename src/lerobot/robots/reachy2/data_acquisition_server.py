@@ -1,19 +1,13 @@
-import logging
 from pathlib import Path
-from typing import List
 import json
 import os
 import shutil
-
-import cProfile
-import pstats
 
 from concurrent import futures
 from typing import Dict
 import threading
 
 import grpc
-import time
 from logging import getLogger
 
 import torch.multiprocessing as mp
@@ -22,9 +16,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.robots.reachy2 import Reachy2Robot, Reachy2RobotConfig
 from lerobot.teleoperators.reachy2_fake_teleoperator import Reachy2FakeTeleoperator, Reachy2FakeTeleoperatorConfig
-from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
 from lerobot.record import record_loop
 
 from data_acquisition_api.data_acquisition_pb2 import (
@@ -48,13 +40,7 @@ class DataAcquisitionServicer():
 
         self.thread: threading.Thread = None
         self.events: Dict = {}
-        # self.events["stop_episode"] = False
-        # self.events["stop_session"] = False
-        # self.events["skip_break_time"] = False
-
         self.events["exit_early"] = False
-        # self.events["rerecord_episode"] = False
-        # self.events["stop_recording"] = False
 
         self.setup_over = False
 
@@ -68,7 +54,6 @@ class DataAcquisitionServicer():
         self.break_time_duration: int
 
         self.episode_recording_in_progress: bool = False
-        # self.break_time_in_progress: bool = False
         self.episode_saved: bool = False
         self.episode_recorded_in_session: bool = False
 
@@ -124,8 +109,6 @@ class DataAcquisitionServicer():
     def StopSession(self, request: Empty, context: grpc.ServicerContext) -> ActionAck:
         self._logger.error("Stopping session")
         try:
-            # self.events["stop_episode"] = True
-            # self.events["stop_session"] = True
             if self.thread and self.thread.is_alive():
                 self.thread.join()  # Wait for the thread to finish
             log_say("Stop recording", play_sounds=self.play_sound, blocking=True)
@@ -148,8 +131,6 @@ class DataAcquisitionServicer():
             if self.episode_recording_in_progress:
                 raise RuntimeError("Episode recording already in progress. Please stop it before starting a new one.")
             self.episode_saved = False
-            # if self.break_time_in_progress:
-            #     self.events["skip_break_time"] = True
             self.thread = threading.Thread(target=self.record_episode)
             self.thread.daemon = True
             self.thread.start()

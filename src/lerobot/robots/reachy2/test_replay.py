@@ -1,15 +1,6 @@
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.robots.reachy2 import Reachy2Robot, Reachy2RobotConfig
-from lerobot.utils.control_utils import init_keyboard_listener
-from lerobot.utils.utils import log_say
-# from lerobot.utils.visualization_utils import _init_rerun
-from lerobot.record import record_loop
-from reachy2_sdk import ReachySDK
 from lerobot.utils.robot_utils import busy_wait
-import numpy as np
 import time
 
 
@@ -17,14 +8,13 @@ import time
 robot_config = Reachy2RobotConfig(
     ip_address="192.168.0.199",
     id="reachy2-pvt02",
-    with_mobile_base=False,
 )
 
 # Initialize the robot
 robot = Reachy2Robot(robot_config)
 
 # Create the dataset
-dataset = LeRobotDataset(repo_id="glannuzel/grab_cube_2", episodes=[0])
+dataset = LeRobotDataset(repo_id="glannuzel/store-rubiks-cube", episodes=[0])
 actions = dataset.hf_dataset.select_columns("action")
 
 # Connect the robot
