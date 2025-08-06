@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-exclude: "tests/artifacts/.*\\.safetensors$"
 default_language_version:
     python: python3.10
+
+exclude: "tests/artifacts/.*\\.safetensors$"
+
 repos:
   ##### Meta #####
   - repo: meta
@@ -22,12 +24,12 @@ repos:
       - id: check-useless-excludes
       - id: check-hooks-apply
 
-
-  ##### Style / Misc. #####
+   ##### General Code Quality & Formatting #####
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: check-added-large-files
+        args: ['--maxkb=1024']
       - id: debug-statements
       - id: check-merge-conflict
       - id: check-case-conflict
@@ -36,8 +38,15 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
 
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.4
+    hooks:
+      - id: ruff-format
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
   - repo: https://github.com/adhtruong/mirrors-typos
-    rev: v1.33.1
+    rev: v1.34.0
     hooks:
       - id: typos
         args: [--force-exclude]
@@ -46,14 +55,16 @@ repos:
     rev: v3.20.0
     hooks:
     -   id: pyupgrade
+        args: [--py310-plus]
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.13
+  ##### Markdown Quality #####
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.6.2
     hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
-
+      - id: prettier
+        name: Format Markdown with Prettier
+        types_or: [markdown, mdx]
+        args: [--prose-wrap=preserve]
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
@@ -62,13 +73,35 @@ repos:
       - id: gitleaks
 
   - repo: https://github.com/woodruffw/zizmor-pre-commit
-    rev: v1.9.0
+    rev: v1.11.0
     hooks:
       - id: zizmor
 
   - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.3
+    rev: 1.8.6
     hooks:
     - id: bandit
       args: ["-c", "pyproject.toml"]
       additional_dependencies: ["bandit[toml]"]
+
+  # TODO(Steven): Uncomment when ready to use
+  ##### Static Analysis & Typing #####
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.16.0
+  #   hooks:
+  #     - id: mypy
+  #       args: [--python-version=3.10]
+
+  ##### Docstring Checks #####
+  # - repo: https://github.com/akaihola/darglint2
+  #   rev: v1.8.2
+  #   hooks:
+  #     - id: darglint2
+  #       args: ["--docstring-style", "google", "-v", "2"]
+  #       exclude: ^tests/.*$
+
+  # - repo: https://github.com/econchick/interrogate
+  #   rev: 1.7.0
+  #   hooks:
+  #     - id: interrogate
+  #       args: ["-vv", "--config=pyproject.toml"]

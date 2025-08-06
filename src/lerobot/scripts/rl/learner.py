@@ -77,6 +77,7 @@ from lerobot.scripts.rl import learner_service
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.transport import services_pb2_grpc
 from lerobot.transport.utils import (
+    MAX_MESSAGE_SIZE,
     bytes_to_python_object,
     bytes_to_transitions,
     state_to_bytes,
@@ -86,11 +87,9 @@ from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
+    load_training_state as utils_load_training_state,
     save_checkpoint,
     update_last_checkpoint,
-)
-from lerobot.utils.train_utils import (
-    load_training_state as utils_load_training_state,
 )
 from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
 from lerobot.utils.utils import (
@@ -658,8 +657,8 @@ def start_learner(
     server = grpc.server(
         ThreadPoolExecutor(max_workers=learner_service.MAX_WORKERS),
         options=[
-            ("grpc.max_receive_message_length", learner_service.MAX_MESSAGE_SIZE),
-            ("grpc.max_send_message_length", learner_service.MAX_MESSAGE_SIZE),
+            ("grpc.max_receive_message_length", MAX_MESSAGE_SIZE),
+            ("grpc.max_send_message_length", MAX_MESSAGE_SIZE),
         ],
     )
 

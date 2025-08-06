@@ -14,13 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import collections
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Sequence
+from typing import Any
 
 import torch
 from torchvision.transforms import v2
-from torchvision.transforms.v2 import Transform
-from torchvision.transforms.v2 import functional as F  # noqa: N812
+from torchvision.transforms.v2 import (
+    Transform,
+    functional as F,  # noqa: N812
+)
 
 
 class RandomSubsetApply(Transform):

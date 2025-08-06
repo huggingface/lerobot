@@ -11,7 +11,6 @@ This guide explains how to use the `gym_hil` simulation environments as an alter
 
 Currently, the main environment is a Franka Panda robot simulation based on MuJoCo, with tasks like picking up a cube.
 
-
 ## Installation
 
 First, install the `gym_hil` package within the LeRobot environment:
@@ -25,8 +24,6 @@ pip install -e ".[hilserl]"
 - A gamepad or keyboard to control the robot
 - A Nvidia GPU
 
-
-
 ## Configuration
 
 To use `gym_hil` with LeRobot, you need to create a configuration file. An example is provided [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/gym_hil_env.json). Key configuration sections include:
@@ -35,14 +32,15 @@ To use `gym_hil` with LeRobot, you need to create a configuration file. An examp
 
 ```json
 {
-    "type": "hil",
-    "name": "franka_sim",
-    "task": "PandaPickCubeGamepad-v0",
-    "device": "cuda"
+  "type": "hil",
+  "name": "franka_sim",
+  "task": "PandaPickCubeGamepad-v0",
+  "device": "cuda"
 }
 ```
 
 Available tasks:
+
 - `PandaPickCubeBase-v0`: Basic environment
 - `PandaPickCubeGamepad-v0`: With gamepad control
 - `PandaPickCubeKeyboard-v0`: With keyboard control
@@ -65,6 +63,7 @@ Available tasks:
 ```
 
 Important parameters:
+
 - `gripper_penalty`: Penalty for excessive gripper movement
 - `use_gripper`: Whether to enable gripper control
 - `end_effector_step_sizes`: Size of the steps in the x,y,z axes of the end-effector
@@ -76,40 +75,49 @@ Important parameters:
 
 To run the environment, set mode to null:
 
+<!-- prettier-ignore-start -->
 ```python
 python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 ```
+<!-- prettier-ignore-end -->
 
 ### Recording a Dataset
 
 To collect a dataset, set the mode to `record` whilst defining the repo_id and number of episodes to record:
 
+<!-- prettier-ignore-start -->
 ```python
 python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 ```
+<!-- prettier-ignore-end -->
 
 ### Training a Policy
 
 To train a policy, checkout the configuration example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_gym_hil_env.json) and run the actor and learner servers:
 
+<!-- prettier-ignore-start -->
 ```python
 python -m lerobot.scripts.rl.actor --config_path path/to/train_gym_hil_env.json
 ```
+<!-- prettier-ignore-end -->
 
 In a different terminal, run the learner server:
 
+<!-- prettier-ignore-start -->
 ```python
 python -m lerobot.scripts.rl.learner --config_path path/to/train_gym_hil_env.json
 ```
+<!-- prettier-ignore-end -->
 
 The simulation environment provides a safe and repeatable way to develop and test your Human-In-the-Loop reinforcement learning components before deploying to real robots.
 
 Congrats 🎉, you have finished this tutorial!
 
 > [!TIP]
->  If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
+> If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
 
 Paper citation:
+
 ```
 @article{luo2024precise,
   title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},

@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,61 +12,47 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# This workflow handles linting, formatting, and static analysis checks for the codebase.
 name: Quality
+permissions:
+  contents: read
 
 on:
+  # Allows running this workflow manually from the Actions tab
   workflow_dispatch:
-  workflow_call:
-  pull_request:
+
+  # Triggers the workflow on push events to main
   push:
     branches:
       - main
 
-permissions: {}
+  # Triggers the workflow on pull request events targeting main
+  pull_request:
+    branches:
+      - main
 
-env:
-  PYTHON_VERSION: "3.10"
+# Ensures that only the latest commit for a PR or branch is built, canceling older runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
-  style:
-    name: Style
+  # This job runs pre-commit hooks to check code style and formatting.
+  pre-commit-checks:
+    name: Run Pre-commit Hooks (Lint, Format & Static Analysis)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c # v4.9.1
+        uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: '3.10'
 
-      - name: Get Ruff Version from pre-commit-config.yaml
-        id: get-ruff-version
-        run: |
-          RUFF_VERSION=$(awk '/repo: https:\/\/github.com\/astral-sh\/ruff-pre-commit/{flag=1;next}/rev:/{if(flag){print $2;exit}}' .pre-commit-config.yaml)
-          echo "ruff_version=${RUFF_VERSION}" >> $GITHUB_OUTPUT
-
-      - name: Install Ruff
-        env:
-          RUFF_VERSION: ${{ steps.get-ruff-version.outputs.ruff_version }}
-        run: python -m pip install "ruff==${RUFF_VERSION}"
-
-      - name: Ruff check
-        run: ruff check --output-format=github
-
-      - name: Ruff format
-        run: ruff format --diff
-
-  typos:
-    name: Typos
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run pre-commit hooks
+        uses: pre-commit/action@v3.0.1 # zizmor: ignore[unpinned-uses]
         with:
-          persist-credentials: false
-
-      - name: typos-action
-        uses: crate-ci/typos@db35ee91e80fbb447f33b0e5fbddb24d2a1a884f # v1.29.10
+          extra_args: --all-files --show-diff-on-failure --color=always

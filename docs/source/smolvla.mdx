@@ -3,9 +3,18 @@
 SmolVLA is Hugging Face’s lightweight foundation model for robotics. Designed for easy fine-tuning on LeRobot datasets, it helps accelerate your development!
 
 <p align="center">
-  <img src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png" alt="SmolVLA architecture." width="500"/>
-  <br/>
-  <em>Figure 1. SmolVLA takes as input (i) multiple cameras views, (ii) the robot’s current sensorimotor state, and (iii) a natural language instruction, encoded into contextual features used to condition the action expert when generating an action chunk.</em>
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png"
+    alt="SmolVLA architecture."
+    width="500"
+  />
+  <br />
+  <em>
+    Figure 1. SmolVLA takes as input (i) multiple cameras views, (ii) the
+    robot’s current sensorimotor state, and (iii) a natural language
+    instruction, encoded into contextual features used to condition the action
+    expert when generating an action chunk.
+  </em>
 </p>
 
 ## Set Up Your Environment
@@ -32,6 +41,7 @@ We recommend checking out the dataset linked below for reference that was used i
 
 In this dataset, we recorded 50 episodes across 5 distinct cube positions. For each position, we collected 10 episodes of pick-and-place interactions. This structure, repeating each variation several times, helped the model generalize better. We tried similar dataset with 25 episodes, and it was not enough leading to a bad performance. So, the data quality and quantity is definitely a key.
 After you have your dataset available on the Hub, you are good to go to use our finetuning script to adapt SmolVLA to your application.
+
 </Tip>
 
 ## Finetune SmolVLA on your data
@@ -56,7 +66,8 @@ cd lerobot && python -m lerobot.scripts.train \
 ```
 
 <Tip>
-You can start with a small batch size and increase it incrementally, if the GPU allows it, as long as loading times remain short.
+  You can start with a small batch size and increase it incrementally, if the
+  GPU allows it, as long as loading times remain short.
 </Tip>
 
 Fine-tuning is an art. For a complete overview of the options for finetuning, run
@@ -66,11 +77,19 @@ python -m lerobot.scripts.train --help
 ```
 
 <p align="center">
-  <img src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif" alt="Comparison of SmolVLA across task variations." width="500"/>
-  <br/>
-  <em>Figure 2: Comparison of SmolVLA across task variations. From left to right: (1) pick-place cube counting, (2) pick-place cube counting, (3) pick-place cube counting under perturbations, and (4) generalization on pick-and-place of the lego block with real-world SO101.</em>
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif"
+    alt="Comparison of SmolVLA across task variations."
+    width="500"
+  />
+  <br />
+  <em>
+    Figure 2: Comparison of SmolVLA across task variations. From left to right:
+    (1) pick-place cube counting, (2) pick-place cube counting, (3) pick-place
+    cube counting under perturbations, and (4) generalization on pick-and-place
+    of the lego block with real-world SO101.
+  </em>
 </p>
-
 
 ## Evaluate the finetuned model and run it in real-time
 

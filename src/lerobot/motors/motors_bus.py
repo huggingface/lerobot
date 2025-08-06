@@ -224,7 +224,7 @@ class MotorsBus(abc.ABC):
     ```bash
     python -m lerobot.find_port.py
     >>> Finding all available ports for the MotorsBus.
-    >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+    >>> ["/dev/tty.usbmodem575E0032081", "/dev/tty.usbmodem575E0031751"]
     >>> Remove the usb cable from your MotorsBus and press Enter when done.
     >>> The port of this MotorsBus is /dev/tty.usbmodem575E0031751.
     >>> Reconnect the usb cable.

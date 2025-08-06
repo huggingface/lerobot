@@ -63,12 +63,12 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.scripts.rl import learner_service
 from lerobot.scripts.rl.gym_manipulator import make_robot_env
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import (
     bytes_to_state_dict,
+    grpc_channel_options,
     python_object_to_bytes,
     receive_bytes_in_chunks,
     send_bytes_in_chunks,
@@ -399,8 +399,6 @@ def learner_service_client(
     host: str = "127.0.0.1",
     port: int = 50051,
 ) -> tuple[services_pb2_grpc.LearnerServiceStub, grpc.Channel]:
-    import json
-
     """
     Returns a client for the learner service.
 
@@ -408,34 +406,9 @@ def learner_service_client(
     So we need to create only one client and reuse it.
     """
 
-    service_config = {
-        "methodConfig": [
-            {
-                "name": [{}],  # Applies to ALL methods in ALL services
-                "retryPolicy": {
-                    "maxAttempts": 5,  # Max retries (total attempts = 5)
-                    "initialBackoff": "0.1s",  # First retry after 0.1s
-                    "maxBackoff": "2s",  # Max wait time between retries
-                    "backoffMultiplier": 2,  # Exponential backoff factor
-                    "retryableStatusCodes": [
-                        "UNAVAILABLE",
-                        "DEADLINE_EXCEEDED",
-                    ],  # Retries on network failures
-                },
-            }
-        ]
-    }
-
-    service_config_json = json.dumps(service_config)
-
     channel = grpc.insecure_channel(
         f"{host}:{port}",
-        options=[
-            ("grpc.max_receive_message_length", learner_service.MAX_MESSAGE_SIZE),
-            ("grpc.max_send_message_length", learner_service.MAX_MESSAGE_SIZE),
-            ("grpc.enable_retries", 1),
-            ("grpc.service_config", service_config_json),
-        ],
+        grpc_channel_options(),
     )
     stub = services_pb2_grpc.LearnerServiceStub(channel)
     logging.info("[ACTOR] Learner service client created")

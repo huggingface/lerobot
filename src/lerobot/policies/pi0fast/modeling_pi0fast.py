@@ -21,6 +21,7 @@
 [Jax code](https://github.com/Physical-Intelligence/openpi)
 
 Designed by Physical Intelligence. Ported from Jax by Hugging Face.
+Disclaimer: It is not expected to perform as well as the original implementation.
 
 Example of finetuning the pi0+FAST pretrained model (`pi0_fast_base` in `openpi`):
 ```bash
@@ -161,6 +162,16 @@ class PI0FASTPolicy(PreTrainedPolicy):
     def reset(self):
         """This should be called whenever the environment is reset."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        """Override the from_pretrained method to display important disclaimer."""
+        print(
+            "⚠️  DISCLAIMER: The PI0FAST model is ported from JAX by the Hugging Face team. \n"
+            "   It is not expected to perform as well as the original implementation. \n"
+            "   Original implementation: https://github.com/Physical-Intelligence/openpi"
+        )
+        return super().from_pretrained(*args, **kwargs)
 
     def get_optim_params(self) -> dict:
         return self.parameters()
@@ -477,6 +488,8 @@ class PI0FAST(nn.Module):
                 param.data = param.data.to(dtype=torch_precision)
         self.set_requires_grad()
         self.image_keys = self.config.image_features.keys()
+        # TODO: Remove this once we bump transformers to >4.52.0 because the attribute will be removed
+        # AttributeError: 'PaliGemmaConfig' object has no attribute 'ignore_index'
         self.ignore_index = self.pi0_paligemma.config.ignore_index
         self.padding_side = self.config.padding_side
 

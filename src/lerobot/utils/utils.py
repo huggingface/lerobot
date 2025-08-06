@@ -48,7 +48,7 @@ def auto_select_torch_device() -> torch.device:
         logging.info("Cuda backend detected, using cuda.")
         return torch.device("cuda")
     elif torch.backends.mps.is_available():
-        logging.info("Metal backend detected, using cuda.")
+        logging.info("Metal backend detected, using mps.")
         return torch.device("mps")
     else:
         logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
@@ -185,10 +185,10 @@ def print_cuda_memory_usage():
     gc.collect()
     # Also clear the cache if you want to fully release the memory
     torch.cuda.empty_cache()
-    print("Current GPU Memory Allocated: {:.2f} MB".format(torch.cuda.memory_allocated(0) / 1024**2))
-    print("Maximum GPU Memory Allocated: {:.2f} MB".format(torch.cuda.max_memory_allocated(0) / 1024**2))
-    print("Current GPU Memory Reserved: {:.2f} MB".format(torch.cuda.memory_reserved(0) / 1024**2))
-    print("Maximum GPU Memory Reserved: {:.2f} MB".format(torch.cuda.max_memory_reserved(0) / 1024**2))
+    print(f"Current GPU Memory Allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+    print(f"Maximum GPU Memory Allocated: {torch.cuda.max_memory_allocated(0) / 1024**2:.2f} MB")
+    print(f"Current GPU Memory Reserved: {torch.cuda.memory_reserved(0) / 1024**2:.2f} MB")
+    print(f"Maximum GPU Memory Reserved: {torch.cuda.max_memory_reserved(0) / 1024**2:.2f} MB")
 
 
 def capture_timestamp_utc():
