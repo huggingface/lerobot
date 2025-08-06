@@ -13,10 +13,7 @@
 # limitations under the License.
 
 from multiprocessing import Barrier
-from queue import Queue
 from threading import Thread
-
-import numpy as np
 
 from .configs import MicrophoneConfig
 from .microphone import Microphone
@@ -43,7 +40,13 @@ def async_microphones_start_recording(
     overwrite: bool = True,
 ) -> None:
     """
-    Starts recording on multiple microphones asynchronously to avoid delays
+    Starts recording on multiple microphones asynchronously to avoid delays.
+
+    Args:
+        microphones: A dictionary of microphones.
+        output_files: A list of output files.
+        multiprocessing: If True, enables multiprocessing for recording.
+        overwrite: If True, overwrites existing files at output_file path.
     """
 
     start_recording_threads = []
@@ -65,7 +68,10 @@ def async_microphones_start_recording(
 
 def async_microphones_stop_recording(microphones: dict[str, Microphone]) -> None:
     """
-    Stops recording on multiple microphones asynchronously to avoid delays
+    Stops recording on multiple microphones asynchronously to avoid delays.
+
+    Args:
+        microphones: A dictionary of microphones.
     """
 
     stop_recording_threads = []
@@ -77,30 +83,3 @@ def async_microphones_stop_recording(microphones: dict[str, Microphone]) -> None
         thread.start()
     for thread in stop_recording_threads:
         thread.join()
-
-
-def async_microphones_read(microphones: dict[str, Microphone]) -> dict[str, np.ndarray]:
-    """
-    Reads from multiple microphones asynchronously to avoid delays.
-    -> Actually induces more delays than the synchronous version, so use with caution !
-    """
-
-    read_threads = []
-    read_queue = Queue()
-
-    for microphone_key, microphone in microphones.items():
-        read_threads.append(
-            Thread(
-                target=lambda microphone, output, microphone_key: output.put_nowait(
-                    {microphone_key: microphone.read()}
-                ),
-                args=(microphone, read_queue, microphone_key),
-            )
-        )
-
-    for thread in read_threads:
-        thread.start()
-    for thread in read_threads:
-        thread.join()
-
-    return dict(kv for d in read_queue.queue for kv in d.items())
