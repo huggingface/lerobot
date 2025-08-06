@@ -74,6 +74,7 @@ class Reachy2Robot(Robot):
 
         self.config = config
         self.robot_type = self.config.type
+        self.use_external_commands = self.config.use_external_commands
 
         self.reachy: None | ReachySDK = None
         self.cameras = make_cameras_from_configs(config.cameras)
@@ -166,9 +167,10 @@ class Reachy2Robot(Robot):
                 self.reachy.joints[REACHY2_JOINTS[key]].goal_position = val
         self.reachy.mobile_base.set_goal_speed(vel["vx"], vel["vy"], vel["vtheta"])
 
-        # # We don't want the teleoperator reachy2_specific to send the goal positions
-        # self.reachy.send_goal_positions()
-        # self.reachy.send_speed_command()
+        # We don't send the goal positions if we control Reachy 2 externally
+        if not self.use_external_commands:
+            self.reachy.send_goal_positions()
+            self.reachy.mobile_base.send_speed_command()
 
         self.logs["write_pos_dt_s"] = time.perf_counter() - before_write_t
         return action

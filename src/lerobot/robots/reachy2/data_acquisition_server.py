@@ -210,6 +210,7 @@ class DataAcquisitionServicer():
         self.robot_config = Reachy2RobotConfig(
             ip_address=request.robot.ip_address,
             id=request.robot.robot_id,
+            use_external_commands=True,
         )
         self.teleop_config = Reachy2FakeTeleoperatorConfig(
             ip_address=request.robot.ip_address,
@@ -328,10 +329,10 @@ class DataAcquisitionServicer():
         if not dataset_found:
             print(f"No dataset with name '{dataset.dataset_name}' found.")
             return
-    
+
         with open(json_filename, "w") as f:
             json.dump(data, f, indent=2)
-    
+
         print(f"Dataset '{dataset.dataset_name}' updated successfully.")
 
     def dict_to_dataset(self, d: Dict) -> Dataset:

@@ -30,6 +30,7 @@ class Reachy2RobotConfig(RobotConfig):
     # the number of motors in your follower arms.
     max_relative_target: int | None = None
     ip_address: str | None = "localhost"
+    use_external_commands: bool = False
 
     # cameras
     cameras: dict[str, CameraConfig] = field(
