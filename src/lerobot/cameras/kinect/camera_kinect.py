@@ -742,12 +742,20 @@ class KinectCamera(Camera):
         # Pre-allocate buffers for zero-copy operation
         color_buffer = np.empty((1080, 1920, 3), dtype=np.uint8)
         depth_buffer = np.empty((424, 512), dtype=np.float32)
+        
+        # Timing stats
+        frame_count = 0
+        total_wait_time = 0
+        total_process_time = 0
 
         while not self.stop_event.is_set():
             try:
                 frames = FrameMap()
                 # Use shorter timeout for more responsive shutdown
+                wait_start = time.perf_counter()
                 if self.listener.waitForNewFrame(frames, 100):
+                    wait_time = time.perf_counter() - wait_start
+                    total_wait_time += wait_time
                     try:
                         # Read color frame using optimized method
                         color_frame = frames[FrameType.Color]
@@ -833,7 +841,23 @@ class KinectCamera(Camera):
                             self.latest_ir = ir_data
                         self.new_frame_event.set()
 
-                        # Frame stored successfully
+                        # Track timing stats
+                        process_time = time.perf_counter() - wait_start - wait_time
+                        total_process_time += process_time
+                        frame_count += 1
+                        
+                        # Log stats every 500 frames (about 16 seconds at 30fps) to reduce log spam
+                        if frame_count % 500 == 0:
+                            avg_wait = (total_wait_time / frame_count) * 1000
+                            avg_process = (total_process_time / frame_count) * 1000
+                            logger.debug(
+                                f"Kinect thread stats (100 frames): "
+                                f"avg wait={avg_wait:.1f}ms, avg process={avg_process:.1f}ms"
+                            )
+                            # Reset counters
+                            frame_count = 0
+                            total_wait_time = 0
+                            total_process_time = 0
 
                     finally:
                         self.listener.release(frames)
@@ -896,6 +920,15 @@ class KinectCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
+        # Don't wait if we already have a frame - return immediately
+        # This is the key optimization for parallel reading
+        with self.frame_lock:
+            if self.latest_frame is not None:
+                # Clear the event for next read
+                self.new_frame_event.clear()
+                return self.latest_frame.copy()
+        
+        # Only wait if no frame is available yet
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(
@@ -955,6 +988,22 @@ class KinectCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
+        # Don't wait if we already have frames - return immediately
+        # This is the key optimization for parallel reading
+        with self.frame_lock:
+            if self.latest_frame is not None:
+                # Build result dict immediately
+                frames = {"color": self.latest_frame.copy()}
+                
+                # Add colorized depth if available
+                if self.use_depth and self.latest_depth_rgb is not None:
+                    frames["depth_rgb"] = self.latest_depth_rgb.copy()
+                
+                # Clear the event for next read
+                self.new_frame_event.clear()
+                return frames
+        
+        # Only wait if no frames are available yet
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(

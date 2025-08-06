@@ -711,8 +711,8 @@ class RealSenseCamera(Camera):
                 total_depth_time += depth_time
                 total_colorize_time += colorize_time
 
-                # Log timing info every 100 frames (about 3 seconds at 30fps)
-                if frame_count % 100 == 0 and frame_count > 0:
+                # Log timing info every 500 frames (about 16 seconds at 30fps) to reduce log spam
+                if frame_count % 500 == 0 and frame_count > 0:
                     avg_capture = total_capture_time / frame_count
                     avg_depth = total_depth_time / frame_count if self.use_depth else 0
                     avg_colorize = total_colorize_time / frame_count if self.use_depth else 0

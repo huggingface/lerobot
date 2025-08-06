@@ -68,6 +68,9 @@ class ParallelCameraReader:
             "total_time_ms": 0.0,
             "max_time_ms": 0.0,
         }
+        self._last_log_time = time.perf_counter()
+        self._log_interval = 5.0  # Log every 5 seconds
+        self._read_count = 0
 
         if persistent_executor:
             # Pre-create executor to avoid startup overhead
@@ -135,8 +138,11 @@ class ParallelCameraReader:
             # This is the key optimization - all reads start simultaneously
             futures = {}
             submit_time = time.perf_counter()
+            submit_timings = {}  # Track individual submission times
 
             for cam_key, cam in cameras.items():
+                cam_submit_start = time.perf_counter()
+                
                 # Determine which read method to use based on camera capabilities
                 if (
                     with_depth
@@ -149,6 +155,8 @@ class ParallelCameraReader:
                 else:
                     # Regular camera or depth disabled - use async_read
                     futures[cam_key] = (executor.submit(cam.async_read, timeout_ms), "color")
+                
+                submit_timings[cam_key] = (time.perf_counter() - cam_submit_start) * 1000
 
             submit_duration_ms = (time.perf_counter() - submit_time) * 1000
             if submit_duration_ms > 1.0:  # Warn if submission takes too long
@@ -168,10 +176,16 @@ class ParallelCameraReader:
                     # Convert timeout from ms to seconds for future.result()
                     timeout_s = timeout_ms / 1000.0
 
-                    # Get result with timeout (this includes hardware wait time)
-                    result = future.result(timeout=timeout_s)
-                    wait_time = time.perf_counter()
-                    wait_timings[cam_key] = (wait_time - cam_start) * 1000
+                    # Check if future is already done (no wait needed)
+                    if future.done():
+                        result = future.result()
+                        wait_timings[cam_key] = 0.0  # No wait, already completed
+                    else:
+                        # Get result with timeout (this includes hardware wait time)
+                        result = future.result(timeout=timeout_s)
+                        wait_timings[cam_key] = (time.perf_counter() - cam_start) * 1000
+                    
+                    process_start = time.perf_counter()
 
                     # Process result based on read type (this is software overhead)
                     if read_type == "depth" and isinstance(result, dict):
@@ -185,7 +199,7 @@ class ParallelCameraReader:
                         # Regular async_read returns the frame directly
                         obs_dict[cam_key] = result
 
-                    process_timings[cam_key] = (time.perf_counter() - wait_time) * 1000
+                    process_timings[cam_key] = (time.perf_counter() - process_start) * 1000
                     individual_timings[cam_key] = (time.perf_counter() - cam_start) * 1000
 
                 except FutureTimeoutError:
@@ -210,32 +224,45 @@ class ParallelCameraReader:
         # Calculate and log statistics
         total_duration_ms = (time.perf_counter() - start_time) * 1000
         self._update_stats(total_duration_ms, len(failed_cameras))
+        self._read_count += 1
 
-        # Log performance metrics - always log to understand timing
-        if total_duration_ms > 5.0 or failed_cameras or len(cameras) > 1:
+        # Only log periodically (every 5 seconds) to reduce overhead
+        current_time = time.perf_counter()
+        should_log = (current_time - self._last_log_time) >= self._log_interval
+
+        if should_log and wait_timings:
             # Find bottleneck camera (longest wait time)
-            if wait_timings:
-                bottleneck_cam = max(wait_timings, key=wait_timings.get)
-                bottleneck_wait = wait_timings[bottleneck_cam]
+            bottleneck_cam = max(wait_timings, key=wait_timings.get)
+            bottleneck_wait = wait_timings[bottleneck_cam]
 
-                # Calculate actual parallel efficiency
-                max_wait = max(wait_timings.values())
-                total_process = sum(process_timings.values())
-                overhead = total_duration_ms - max_wait - total_process
+            # Calculate actual parallel efficiency
+            max_wait = max(wait_timings.values())
+            total_process = sum(process_timings.values())
+            overhead = total_duration_ms - max_wait - total_process
+            
+            # Show per-camera timing breakdown
+            cam_breakdown = []
+            for cam_key in sorted(wait_timings.keys()):
+                wait = wait_timings.get(cam_key, 0)
+                proc = process_timings.get(cam_key, 0)
+                total = wait + proc
+                # Mark the bottleneck camera
+                mark = "*" if cam_key == bottleneck_cam else ""
+                cam_breakdown.append(f"{cam_key}{mark}:{total:.1f}ms")
 
-                # Build compact timing string showing key metrics
-                timing_str = f"Bottleneck: {bottleneck_cam}={bottleneck_wait:.1f}ms"
-                if with_depth and any("depth" in str(f[1]) for f in futures.values()):
-                    # Show depth processing overhead
-                    depth_cams = [k for k, v in futures.items() if v[1] == "depth"]
-                    depth_overhead = sum(process_timings.get(k, 0) for k in depth_cams)
-                    timing_str += f" | Depth proc: {depth_overhead:.1f}ms"
+            # Build compact timing string showing key metrics
+            timing_str = " | ".join(cam_breakdown)
+            
+            # Calculate average stats over the interval
+            avg_time = self._stats["total_time_ms"] / self._stats["total_reads"] if self._stats["total_reads"] > 0 else 0
 
-                logger.info(
-                    f"📊 Parallel read: {len(cameras)} cams in {total_duration_ms:.1f}ms | "
-                    f"HW wait: {max_wait:.1f}ms | SW overhead: {total_process + overhead:.1f}ms | "
-                    f"{timing_str}"
-                )
+            logger.info(
+                f"📊 Camera Stats (5s avg): {avg_time:.1f}ms | Last: {total_duration_ms:.1f}ms | "
+                f"Breakdown: [{timing_str}] | Reads: {self._read_count}"
+            )
+            
+            self._last_log_time = current_time
+            self._read_count = 0
             else:
                 logger.info(
                     f"Parallel camera read: {len(cameras)} cameras, "
