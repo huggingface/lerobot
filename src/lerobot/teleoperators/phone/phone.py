@@ -35,15 +35,14 @@ from .config_phone import PhoneConfig, PhoneOS
 logger = logging.getLogger(__name__)
 
 # -----Tuesday-----
-# TODO(pepijn): Fix replay, do eval/inference 9:00
-# TODO(pepijn): Clean up PR  10:00
-# TODO(pepijn): Fix android reset of Teleop lib and gripper 11:00
-# TODO(pepijn): Ask for feedback from Adil before writing tests 3 12:00
-# TODO(pepijn): Add a bunch of tests 14:00
+# TODO(pepijn): Clean up code and tests 12:00
+# TODO(pepijn): Ask for feedback from Adil before writing tests 12:00
 
 # ----Wednesday-----
-# TODO(pepijn): Add to docs with image etc 10:00
-# TODO(pepijn): Create release video 12:00
+# TODO(pepijn): Check tests by running them with broken code 14:00
+# TODO(pepijn): Try teleop, record, replay, and eval of existing policy again 15:00
+# TODO(pepijn): Add to docs with image etc 17:00
+# TODO(pepijn): Create release video 18:00
 
 
 class Phone(Teleoperator):
@@ -215,6 +214,8 @@ class Phone(Teleoperator):
             msg = self._latest_message or {}
             raw_inputs["move"] = bool(msg.get("move", False))
             raw_inputs["scale"] = float(msg.get("scale", 1.0))
+            raw_inputs["reservedButtonA"] = bool(msg.get("reservedButtonA", False))
+            raw_inputs["reservedButtonB"] = bool(msg.get("reservedButtonB", False))
 
         if self.config.phone_os == PhoneOS.IOS:
             enable = bool(raw_inputs.get("b1", 0))

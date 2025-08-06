@@ -62,6 +62,7 @@ robot_ee_to_joints = RobotProcessor(
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
+            initial_guess_current_joints=False,  # Because replay is open loop
         ),
     ],
     to_transition=to_transition_from_action,
@@ -71,20 +72,12 @@ robot_ee_to_joints = RobotProcessor(
 robot_ee_to_joints.reset()
 
 log_say(f"Replaying episode {episode_idx}")
-print("dataset.fps", dataset.fps)
 for idx in range(dataset.num_frames):
     t0 = time.perf_counter()
 
     ee_action = {
         name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
     }
-
-    print("ee.x action:", ee_action.get("ee.x"))
-    print("ee.y action:", ee_action.get("ee.y"))
-    print("ee.z action:", ee_action.get("ee.z"))
-    print("ee.wx action:", ee_action.get("ee.wx"))
-    print("ee.wy action:", ee_action.get("ee.wy"))
-    print("ee.wz action:", ee_action.get("ee.wz"))
 
     joint_action = robot_ee_to_joints(ee_action)
     action_sent = robot.send_action(joint_action)

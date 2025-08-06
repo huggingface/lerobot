@@ -50,7 +50,7 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 30
 TASK_DESCRIPTION = "Pickup the pillow"  # TODO(pepijn): Add back default task description
-HF_REPO_ID = "pepijn223/phone_pipeline_pickup6"
+HF_REPO_ID = "pepijn223/phone_pipeline_pickup8"
 
 # Initialize the robot and teleoperator
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -188,7 +188,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         teleop_action_processor=phone_to_robot_ee_pose,
         robot_action_processor=robot_ee_to_joints,
         robot_observation_processor=robot_joints_to_ee_pose,
-        to_dataset_features=to_dataset_features,
+        to_dataset_frame=to_dataset_features,
     )
 
     # Reset the environment if not stopping or re-recording
@@ -205,7 +205,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             teleop_action_processor=phone_to_robot_ee_pose,
             robot_action_processor=robot_ee_to_joints,
             robot_observation_processor=robot_joints_to_ee_pose,
-            to_dataset_features=to_dataset_features,
+            to_dataset_frame=to_dataset_features,
         )
 
     if events["rerecord_episode"]:

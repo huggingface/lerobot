@@ -78,7 +78,7 @@ from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
-from lerobot.processor.utils import to_dataset_frame
+from lerobot.processor.pipeline import TransitionKey
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -204,7 +204,7 @@ def record_loop(
     teleop_action_processor: RobotProcessor | None = None,  # runs after teleop
     robot_action_processor: RobotProcessor | None = None,  # runs before robot
     robot_observation_processor: RobotProcessor | None = None,  # runs after robot
-    to_dataset_features: Callable | None = None,  # optional merger for dataset
+    to_dataset_frame: Callable | None = None,  # optional merger for dataset
     single_task: str | None = None,
     display_data: bool = False,
 ):
@@ -229,9 +229,11 @@ def record_loop(
             )
 
     # Reset policy and processor if they are provided
-    if policy is not None or preprocessor is not None:
+    if policy is not None:
         policy.reset()
+    if preprocessor is not None:
         preprocessor.reset()
+    if postprocessor is not None:
         postprocessor.reset()
 
     # Reset custom pipelines if provided
@@ -241,9 +243,6 @@ def record_loop(
         robot_action_processor.reset()
     if robot_observation_processor is not None:
         robot_observation_processor.reset()
-
-    if dataset is not None and to_dataset_features is None:
-        to_dataset_features = to_dataset_frame(dataset.features)
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -258,10 +257,16 @@ def record_loop(
         robot_action_to_send = None
         joints_transition = None
 
-        if policy is not None or preprocessor is not None:
+        if policy is not None and preprocessor is not None and postprocessor is not None:
             observation = robot.get_observation()
             if dataset is not None:
-                observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
+                if robot_observation_processor is not None:
+                    observation = robot_observation_processor(observation)
+                    observation_frame = to_dataset_frame(observation)
+                else:
+                    observation_frame = build_dataset_frame(
+                        dataset.features, observation, prefix="observation"
+                    )
 
             action_values = predict_action(
                 observation=observation_frame,
@@ -273,7 +278,19 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
-            policy_action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+
+            if robot_action_processor is not None:
+                action_names = dataset.features["action"]["names"]
+                policy_action = {
+                    f"action.{name}": float(action_values[i]) for i, name in enumerate(action_names)
+                }
+                policy_transition = {
+                    TransitionKey.ACTION: policy_action,
+                    TransitionKey.COMPLEMENTARY_DATA: {},
+                }
+            else:
+                policy_action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+
             robot_action_to_send = policy_action
 
         elif isinstance(teleop, Teleoperator):
@@ -307,6 +324,12 @@ def record_loop(
             joints_transition = robot_action_processor(teleop_transition)
             robot_action_to_send = robot_action_processor.to_output(joints_transition)
 
+        if (
+            robot_action_processor is not None and policy_transition is not None
+        ):  # TODO(pepijn): merge these two if statements
+            joints_transition = robot_action_processor(policy_transition)
+            robot_action_to_send = robot_action_processor.to_output(joints_transition)
+
         if robot_action_to_send:
             # Action can eventually be clipped using `max_relative_target`,
             # so action actually sent is saved in the dataset. action = postprocessor.process(action)
@@ -326,15 +349,19 @@ def record_loop(
         # Write to dataset
         # Prefer pipelines if provided (merge transitions), otherwise fall back to old behavior for compatibility.
         if dataset is not None:
-            if to_dataset_features is not None and (
-                (teleop_transition is not None) or (obs_transition is not None)
+            if to_dataset_frame is not None and (
+                (teleop_transition is not None)
+                or (policy_transition is not None)
+                or (obs_transition is not None)
             ):
                 merged = []
                 if teleop_transition is not None:
                     merged.append(teleop_transition)
+                if policy_transition is not None:
+                    merged.append(policy_transition)
                 if obs_transition is not None:
                     merged.append(obs_transition)
-                frame = to_dataset_features(merged if len(merged) > 1 else merged[0])
+                frame = to_dataset_frame(merged if len(merged) > 1 else merged[0])
                 dataset.add_frame(frame, task=single_task)
             else:
                 # No pipeline: store raw observation + sent action

@@ -64,8 +64,11 @@ class MapPhoneActionToRobotAction(ActionProcessor):
             # y = float(inputs.get("a2", 0.0))
             # theta = float(inputs.get("a7", 0.0))
         else:
-            sc = float(inputs.get("scale", 1.0))
-            gripper = max(min(sc - 1.0, 1.0), -1.0)
+            a = float(inputs.get("reservedButtonA", 0.0))
+            b = float(inputs.get("reservedButtonB", 0.0))
+            gripper = (
+                a - b
+            )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
             # x = y = theta = 0.0
 
         # For some actions we need to invert the axis
