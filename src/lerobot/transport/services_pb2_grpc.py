@@ -244,14 +244,9 @@ class AsyncInferenceStub:
         Args:
             channel: A grpc.Channel.
         """
-        self.SendObservations = channel.stream_unary(
-                '/transport.AsyncInference/SendObservations',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.Observation.SerializeToString,
-                response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
-                _registered_method=True)
-        self.GetActions = channel.unary_unary(
+        self.GetActions = channel.stream_unary(
                 '/transport.AsyncInference/GetActions',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                request_serializer=lerobot_dot_transport_dot_services__pb2.Observation.SerializeToString,
                 response_deserializer=lerobot_dot_transport_dot_services__pb2.Actions.FromString,
                 _registered_method=True)
         self.SendPolicyInstructions = channel.unary_unary(
@@ -271,16 +266,9 @@ class AsyncInferenceServicer:
     Robot send observations to & executes action received from a remote Policy server
     """
 
-    def SendObservations(self, request_iterator, context):
+    def GetActions(self, request_iterator, context):
         """Robot -> Policy to share observations with a remote inference server
-        Policy -> Robot to share actions predicted for given observations
         """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetActions(self, request, context):
-        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -300,14 +288,9 @@ class AsyncInferenceServicer:
 
 def add_AsyncInferenceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'SendObservations': grpc.stream_unary_rpc_method_handler(
-                    servicer.SendObservations,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Observation.FromString,
-                    response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-            ),
-            'GetActions': grpc.unary_unary_rpc_method_handler(
+            'GetActions': grpc.stream_unary_rpc_method_handler(
                     servicer.GetActions,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Observation.FromString,
                     response_serializer=lerobot_dot_transport_dot_services__pb2.Actions.SerializeToString,
             ),
             'SendPolicyInstructions': grpc.unary_unary_rpc_method_handler(
@@ -334,7 +317,7 @@ class AsyncInference:
     """
 
     @staticmethod
-    def SendObservations(request_iterator,
+    def GetActions(request_iterator,
             target,
             options=(),
             channel_credentials=None,
@@ -347,35 +330,8 @@ class AsyncInference:
         return grpc.experimental.stream_unary(
             request_iterator,
             target,
-            '/transport.AsyncInference/SendObservations',
-            lerobot_dot_transport_dot_services__pb2.Observation.SerializeToString,
-            lerobot_dot_transport_dot_services__pb2.Empty.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetActions(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
             '/transport.AsyncInference/GetActions',
-            lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+            lerobot_dot_transport_dot_services__pb2.Observation.SerializeToString,
             lerobot_dot_transport_dot_services__pb2.Actions.FromString,
             options,
             channel_credentials,
