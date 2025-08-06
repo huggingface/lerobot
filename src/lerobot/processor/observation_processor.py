@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
-from typing import Any
 
 import einops
 import numpy as np
@@ -96,22 +95,6 @@ class VanillaObservationProcessor(ObservationProcessor):
 
     def observation(self, observation):
         return self._process_observation(observation)
-
-    def get_config(self) -> dict[str, Any]:
-        """Return configuration for serialization."""
-        return {}
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        """Return state dictionary (empty for this processor)."""
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """Load state dictionary (no-op for this processor)."""
-        pass
-
-    def reset(self) -> None:
-        """Reset processor state (no-op for this processor)."""
-        pass
 
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Transforms feature keys to a standardized contract.
