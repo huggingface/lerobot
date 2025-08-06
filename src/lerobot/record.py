@@ -78,8 +78,8 @@ from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
-from lerobot.processor.pipeline import TransitionKey
 from lerobot.processor.normalize_processor import rename_stats
+from lerobot.processor.pipeline import TransitionKey
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
