@@ -24,6 +24,13 @@
   - local: smolvla
     title: Finetune SmolVLA
   title: "Policies"
+
+- sections:
+  - local: introduction_processors
+    title: Introduction to Robot Processors
+  - local: implement_your_own_processor
+    title: Implement your own processor
+  title: "Robot Processors"
 - sections:
   - local: hope_jr
     title: Hope Jr
