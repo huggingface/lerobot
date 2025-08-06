@@ -111,6 +111,7 @@ from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
     log_say,
+    move_cursor_up,
 )
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
@@ -225,6 +226,22 @@ def record_loop(
     if policy is not None:
         policy.reset()
 
+    import numpy as np
+    import psutil
+
+    # Calculate display length for telemetry
+    display_len = max(len(key) for key in robot.action_features) if robot.action_features else 20
+
+    # Lightweight stats tracking - compound average
+    all_frame_times = []
+    cpu_samples = []
+    last_stats_time = time.perf_counter()
+    last_cpu_time = time.perf_counter()
+    stats_interval = 5.0  # Print stats every 5 seconds
+    cpu_sample_interval = 0.5  # Sample CPU every 0.5 seconds
+    process = psutil.Process()
+    stats_printed = False
+
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -283,7 +300,50 @@ def record_loop(
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
 
-        timestamp = time.perf_counter() - start_episode_t
+        loop_end_t = time.perf_counter()
+        timestamp = loop_end_t - start_episode_t
+        loop_s = loop_end_t - start_loop_t
+        all_frame_times.append(1 / loop_s if loop_s > 0 else 0)
+
+        # Sample CPU periodically to build average
+        if loop_end_t - last_cpu_time >= cpu_sample_interval:
+            cpu_samples.append(process.cpu_percent(interval=None))
+            last_cpu_time = loop_end_t
+            # Keep only last 10 samples (5 seconds worth)
+            if len(cpu_samples) > 10:
+                cpu_samples.pop(0)
+
+        # Print statistics every 5 seconds at the top (persistent)
+        if loop_end_t - last_stats_time >= stats_interval and len(all_frame_times) > 0:
+            fps_array = np.array(all_frame_times)  # All frames for compound average
+            recent_fps = (
+                np.array(all_frame_times[-150:]) if len(all_frame_times) > 150 else fps_array
+            )  # Last 5s
+            avg_cpu = np.mean(cpu_samples) if cpu_samples else 0.0
+
+            # Move to top, print stats, then return to position
+            if stats_printed:
+                move_cursor_up(len(sent_action) + 7)
+            print(
+                f"\r📊 Stats | Total avg:{fps_array.mean():.1f} | Recent(5s): avg:{recent_fps.mean():.1f} min:{recent_fps.min():.1f} max:{recent_fps.max():.1f} std:{recent_fps.std():.1f} | CPU(avg):{avg_cpu:.1f}%"
+            )
+            print("" + " " * 80)  # Clear line for clean display
+            if not stats_printed:
+                stats_printed = True
+            last_stats_time = loop_end_t
+        elif stats_printed:
+            # Account for stats lines when moving cursor
+            move_cursor_up(2)
+
+        # Display telemetry like in teleoperate
+        print("\n" + "-" * (display_len + 10))
+        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        for motor, value in sent_action.items():
+            print(f"{motor:<{display_len}} | {value:>7.2f}")
+        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        print(f"Episode: {timestamp:.1f}s / {control_time_s:.1f}s")
+
+        move_cursor_up(len(sent_action) + 7)  # +1 for episode progress line
 
 
 @parser.wrap()

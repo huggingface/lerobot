@@ -362,16 +362,13 @@ class KinectCamera(Camera):
         # Store actual serial number
         if not self.serial_number:
             self.serial_number = self.device.getSerialNumber()
-            logger.debug(f"{self} serial number: {self.serial_number}")
 
         # Configure frame listener
         frame_types = FrameType.Color
         if self.use_depth:
             frame_types |= FrameType.Depth
-            logger.debug(f"{self} depth stream enabled")
         if self.use_ir:
             frame_types |= FrameType.Ir
-            logger.debug(f"{self} IR stream enabled")
 
         self.listener = SyncMultiFrameListener(frame_types)
         self.device.setColorFrameListener(self.listener)
@@ -379,7 +376,6 @@ class KinectCamera(Camera):
             self.device.setIrAndDepthFrameListener(self.listener)
 
         # Start device
-        logger.debug(f"{self} starting device streams...")
         self.device.start()
 
         # Setup registration for depth alignment if needed
@@ -387,7 +383,6 @@ class KinectCamera(Camera):
             self.registration = Registration(
                 self.device.getIrCameraParams(), self.device.getColorCameraParams()
             )
-            logger.debug(f"{self} depth registration configured")
 
         # Start async thread for better performance
         self._start_read_thread()
@@ -421,7 +416,6 @@ class KinectCamera(Camera):
             for name, create_func in pipelines_to_try:
                 pipeline = create_func()
                 if pipeline is not None:
-                    logger.info(f"Using {name.value} pipeline")
                     return pipeline
 
             # Should never reach here as CPU pipeline always works
@@ -446,8 +440,8 @@ class KinectCamera(Camera):
         try:
             if hasattr(pylibfreenect2, "CudaPacketPipeline"):
                 return pylibfreenect2.CudaPacketPipeline()
-        except Exception as e:
-            logger.debug(f"CUDA pipeline not available: {e}")
+        except Exception:
+            pass
         return None
 
     def _try_opencl_pipeline(self):
@@ -455,8 +449,8 @@ class KinectCamera(Camera):
         try:
             if hasattr(pylibfreenect2, "OpenCLPacketPipeline"):
                 return pylibfreenect2.OpenCLPacketPipeline()
-        except Exception as e:
-            logger.debug(f"OpenCL pipeline not available: {e}")
+        except Exception:
+            pass
         return None
 
     def _try_opengl_pipeline(self):
@@ -464,8 +458,8 @@ class KinectCamera(Camera):
         try:
             if hasattr(pylibfreenect2, "OpenGLPacketPipeline"):
                 return pylibfreenect2.OpenGLPacketPipeline()
-        except Exception as e:
-            logger.debug(f"OpenGL pipeline not available: {e}")
+        except Exception:
+            pass
         return None
 
     def _try_cpu_pipeline(self):
@@ -550,6 +544,9 @@ class KinectCamera(Camera):
 
         frames = FrameMap()
 
+        # Pre-allocate buffer for optimized reading
+        depth_buffer = np.empty((424, 512), dtype=np.float32)
+
         # Wait for new frame
         if not self.listener.waitForNewFrame(frames, timeout_ms):
             self.listener.release(frames)
@@ -557,7 +554,12 @@ class KinectCamera(Camera):
 
         try:
             depth_frame = frames[FrameType.Depth]
-            depth_data = depth_frame.asarray().copy()
+
+            # Use optimized method if available
+            if hasattr(depth_frame, "asarray_optimized"):
+                depth_data = depth_frame.asarray_optimized(depth_buffer)
+            else:
+                depth_data = depth_frame.asarray().copy()
 
             # Apply depth filters
             if self.enable_bilateral_filter:
@@ -703,21 +705,30 @@ class KinectCamera(Camera):
         """
         Internal loop run by the background thread for asynchronous reading.
         """
+        # Pre-allocate buffers for zero-copy operation
+        color_buffer = np.empty((1080, 1920, 3), dtype=np.uint8)
+        depth_buffer = np.empty((424, 512), dtype=np.float32)
+
         while not self.stop_event.is_set():
             try:
                 frames = FrameMap()
                 # Use shorter timeout for more responsive shutdown
                 if self.listener.waitForNewFrame(frames, 100):
                     try:
-                        # Read color frame
+                        # Read color frame using optimized method
                         color_frame = frames[FrameType.Color]
-                        color_raw = color_frame.asarray()
 
-                        # Convert BGRX to BGR using OpenCV
-                        if color_raw.shape[2] == 4:
-                            color_data = cv2.cvtColor(color_raw, cv2.COLOR_BGRA2BGR)
+                        # Check if asarray_optimized is available
+                        if hasattr(color_frame, "asarray_optimized"):
+                            # Use optimized method that does BGRX->BGR conversion internally
+                            color_data = color_frame.asarray_optimized(color_buffer)
                         else:
-                            color_data = color_raw.copy()
+                            # Fallback to old method
+                            color_raw = color_frame.asarray()
+                            if color_raw.shape[2] == 4:
+                                color_data = cv2.cvtColor(color_raw, cv2.COLOR_BGRA2BGR)
+                            else:
+                                color_data = color_raw.copy()
 
                         if self.color_mode == ColorMode.RGB:
                             color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
@@ -730,7 +741,12 @@ class KinectCamera(Camera):
                         depth_rgb = None
                         if self.use_depth:
                             depth_frame = frames[FrameType.Depth]
-                            depth_data = depth_frame.asarray().copy()
+
+                            # Use optimized method if available
+                            if hasattr(depth_frame, "asarray_optimized"):
+                                depth_data = depth_frame.asarray_optimized(depth_buffer)
+                            else:
+                                depth_data = depth_frame.asarray().copy()
 
                             if self.enable_bilateral_filter:
                                 depth_data = cv2.bilateralFilter(depth_data.astype(np.float32), 5, 50, 50)
@@ -761,7 +777,16 @@ class KinectCamera(Camera):
                         ir_data = None
                         if self.use_ir:
                             ir_frame = frames[FrameType.Ir]
-                            ir_data = ir_frame.asarray().copy()
+
+                            # Pre-allocate IR buffer if needed
+                            if not hasattr(self, "_ir_buffer"):
+                                self._ir_buffer = np.empty((424, 512), dtype=np.float32)
+
+                            # Use optimized method if available
+                            if hasattr(ir_frame, "asarray_optimized"):
+                                ir_data = ir_frame.asarray_optimized(self._ir_buffer)
+                            else:
+                                ir_data = ir_frame.asarray().copy()
 
                             if self.rotation is not None:
                                 ir_data = cv2.rotate(ir_data, self.rotation)
@@ -781,8 +806,8 @@ class KinectCamera(Camera):
 
             except DeviceNotConnectedError:
                 break
-            except Exception as e:
-                logger.warning(f"Error reading frame in background thread for {self}: {e}")
+            except Exception:
+                pass  # Silently ignore frame read errors
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""

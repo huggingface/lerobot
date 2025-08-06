@@ -212,6 +212,10 @@ class RealSenseCamera(Camera):
         self.latest_depth_rgb: np.ndarray | None = None  # Colorized depth
         self.new_frame_event: Event = Event()
 
+        # Initialize colorization counters (removed in cleanup)
+        self._colorization_error_count = 0
+        self._colorization_success_count = 0
+
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
         if self.height and self.width:
@@ -636,10 +640,9 @@ class RealSenseCamera(Camera):
                                     if self.rotation is not None:
                                         depth_rgb = cv2.rotate(depth_rgb, self.rotation)
 
-                                    self._colorization_success_count += 1
+                                    pass  # Success
                             except Exception:
-                                self._colorization_error_count += 1
-                                # Silently ignore colorization errors for performance
+                                # Silently ignore colorization errors
                                 depth_rgb = None
 
                 # Store frames thread-safely
@@ -656,11 +659,13 @@ class RealSenseCamera(Camera):
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
+        # Stop existing thread if it's running
         if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=0.1)
-        if self.stop_event is not None:
-            self.stop_event.set()
+            if self.stop_event is not None:
+                self.stop_event.set()
+            self.thread.join(timeout=0.5)
 
+        # Create and start new thread
         self.stop_event = Event()
         self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")
         self.thread.daemon = True
@@ -701,9 +706,9 @@ class RealSenseCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Thread should already be running from connect()
+        # Restart thread if it died (self-healing behavior)
         if self.thread is None or not self.thread.is_alive():
-            raise RuntimeError(f"{self} background thread is not running. This is a bug.")
+            self._start_read_thread()
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
@@ -762,9 +767,9 @@ class RealSenseCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Thread should already be running from connect()
+        # Restart thread if it died (self-healing behavior)
         if self.thread is None or not self.thread.is_alive():
-            raise RuntimeError(f"{self} background thread is not running. This is a bug.")
+            self._start_read_thread()
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
@@ -812,15 +817,6 @@ class RealSenseCamera(Camera):
             self.rs_pipeline.stop()
             self.rs_pipeline = None
             self.rs_profile = None
-
-        # Report colorization statistics if depth was used
-        if self.use_depth and self._colorization_error_count > 0:
-            total_attempts = self._colorization_success_count + self._colorization_error_count
-            error_rate = (self._colorization_error_count / total_attempts * 100) if total_attempts > 0 else 0
-            logger.info(
-                f"{self} colorization stats: {self._colorization_success_count} successes, "
-                f"{self._colorization_error_count} errors ({error_rate:.1f}% error rate)"
-            )
 
         # Clean up colorizer
         self.depth_colorizer = None

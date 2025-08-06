@@ -104,8 +104,22 @@ class TeleoperateConfig:
 def teleop_loop(
     teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
 ):
+    import numpy as np
+    import psutil
+
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+
+    # Lightweight stats tracking - compound average
+    all_frame_times = []
+    cpu_samples = []
+    last_stats_time = start
+    last_cpu_time = start
+    stats_interval = 5.0  # Print stats every 5 seconds
+    cpu_sample_interval = 0.5  # Sample CPU every 0.5 seconds
+    process = psutil.Process()
+    stats_printed = False
+
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
@@ -117,7 +131,39 @@ def teleop_loop(
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
-        loop_s = time.perf_counter() - loop_start
+        loop_end = time.perf_counter()
+        loop_s = loop_end - loop_start
+        all_frame_times.append(1 / loop_s if loop_s > 0 else 0)
+
+        # Sample CPU periodically to build average
+        if loop_end - last_cpu_time >= cpu_sample_interval:
+            cpu_samples.append(process.cpu_percent(interval=None))
+            last_cpu_time = loop_end
+            # Keep only last 10 samples (5 seconds worth)
+            if len(cpu_samples) > 10:
+                cpu_samples.pop(0)
+
+        # Print statistics every 5 seconds at the top (persistent)
+        if loop_end - last_stats_time >= stats_interval and len(all_frame_times) > 0:
+            fps_array = np.array(all_frame_times)  # All frames for compound average
+            recent_fps = (
+                np.array(all_frame_times[-150:]) if len(all_frame_times) > 150 else fps_array
+            )  # Last 5s
+            avg_cpu = np.mean(cpu_samples) if cpu_samples else 0.0
+
+            # Move to top, print stats, then return to position
+            if stats_printed:
+                move_cursor_up(len(action) + 6)
+            print(
+                f"\r📊 Stats | Total avg:{fps_array.mean():.1f} | Recent(5s): avg:{recent_fps.mean():.1f} min:{recent_fps.min():.1f} max:{recent_fps.max():.1f} std:{recent_fps.std():.1f} | CPU(avg):{avg_cpu:.1f}%"
+            )
+            print("" + " " * 80)  # Clear line for clean display
+            if not stats_printed:
+                stats_printed = True
+            last_stats_time = loop_end
+        elif stats_printed:
+            # Account for stats lines when moving cursor
+            move_cursor_up(2)
 
         print("\n" + "-" * (display_len + 10))
         print(f"{'NAME':<{display_len}} | {'NORM':>7}")
@@ -128,7 +174,7 @@ def teleop_loop(
         if duration is not None and time.perf_counter() - start >= duration:
             return
 
-        move_cursor_up(len(action) + 5)
+        move_cursor_up(len(action) + 6)
 
 
 @draccus.wrap()
