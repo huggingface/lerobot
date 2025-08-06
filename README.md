@@ -101,6 +101,9 @@
 ## Installation
 
 LeRobot works with Python 3.10+ and PyTorch 2.2+.
+
+### Environment Setup
+
 Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 
 ```bash
@@ -124,10 +127,21 @@ conda install ffmpeg -c conda-forge
 >
 > - _[On Linux only]_ Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 
-Install 🤗 LeRobot:
+### Install LeRobot 🤗
+
+#### From Source
+
+First, clone the repository and navigate into the directory:
 
 ```bash
-pip install lerobot
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+```
+
+Then, install the library in editable mode. This is useful if you plan to contribute to the code.
+
+```bash
+pip install -e .
 ```
 
 > **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
@@ -144,6 +158,34 @@ For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
 pip install -e ".[aloha, pusht]"
 ```
+
+### Installation from PyPI
+
+**Core Library:**
+Install the base package with:
+
+```bash
+pip install lerobot
+```
+
+_This installs only the default dependencies._
+
+**Extra Features:**
+To install additional functionality, use one of the following:
+
+```bash
+pip install 'lerobot[all]'          # All available features
+pip install 'lerobot[aloha,pusht]'  # Specific features (Aloha & Pusht)
+pip install 'lerobot[feetech]'      # Feetech motor support
+```
+
+_Replace `[...]` with your desired features._
+
+**Available Tags:**
+For a full list of optional dependencies, see:
+https://pypi.org/project/lerobot/
+
+### Weights & Biases
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
 
