@@ -263,14 +263,6 @@ class ParallelCameraReader:
             
             self._last_log_time = current_time
             self._read_count = 0
-            else:
-                logger.info(
-                    f"Parallel camera read: {len(cameras)} cameras, "
-                    f"{total_duration_ms:.1f}ms total "
-                    f"(submit: {submit_duration_ms:.1f}ms, "
-                    f"collect: {collect_duration_ms:.1f}ms), "
-                    f"{len(failed_cameras)} failed"
-                )
 
         # Handle failures in strict mode
         if not return_partial and failed_cameras:

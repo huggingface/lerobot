@@ -788,6 +788,15 @@ class RealSenseCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
+        # Don't wait if we already have a frame - return immediately
+        # This is the key optimization for parallel reading
+        with self.frame_lock:
+            if self.latest_frame is not None:
+                frame = self.latest_frame.copy()
+                self.new_frame_event.clear()
+                return frame
+
+        # Only wait if no frame is available yet
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(
@@ -849,6 +858,22 @@ class RealSenseCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
+        # Don't wait if we already have frames - return immediately
+        # This is the key optimization for parallel reading
+        with self.frame_lock:
+            if self.latest_frame is not None:
+                # Build result dict immediately
+                frames = {"color": self.latest_frame.copy()}
+                
+                # Always include depth_rgb key if depth is enabled
+                # This ensures the robot's observation dict has all expected keys
+                if self.use_depth:
+                    frames["depth_rgb"] = self.latest_depth_rgb.copy() if self.latest_depth_rgb is not None else None
+                
+                self.new_frame_event.clear()
+                return frames
+
+        # Only wait if no frames are available yet
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(
