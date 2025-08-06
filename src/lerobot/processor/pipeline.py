@@ -863,6 +863,9 @@ class ObservationProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
+        if observation is None:
+            return transition
+
         processed_observation = self.observation(observation)
         # Create a new transition dict with the processed observation
         new_transition = transition.copy()
@@ -920,6 +923,9 @@ class ActionProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+
         processed_action = self.action(action)
         # Create a new transition dict with the processed action
         new_transition = transition.copy()
@@ -976,6 +982,9 @@ class RewardProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         reward = transition.get(TransitionKey.REWARD)
+        if reward is None:
+            return transition
+
         processed_reward = self.reward(reward)
         # Create a new transition dict with the processed reward
         new_transition = transition.copy()
@@ -1037,6 +1046,9 @@ class DoneProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         done = transition.get(TransitionKey.DONE)
+        if done is None:
+            return transition
+
         processed_done = self.done(done)
         # Create a new transition dict with the processed done flag
         new_transition = transition.copy()
@@ -1094,6 +1106,9 @@ class TruncatedProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         truncated = transition.get(TransitionKey.TRUNCATED)
+        if truncated is None:
+            return transition
+
         processed_truncated = self.truncated(truncated)
         # Create a new transition dict with the processed truncated flag
         new_transition = transition.copy()
@@ -1156,6 +1171,9 @@ class InfoProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         info = transition.get(TransitionKey.INFO)
+        if info is None:
+            return transition
+
         processed_info = self.info(info)
         # Create a new transition dict with the processed info
         new_transition = transition.copy()
@@ -1199,6 +1217,9 @@ class ComplementaryDataProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            return transition
+
         processed_complementary_data = self.complementary_data(complementary_data)
         # Create a new transition dict with the processed complementary data
         new_transition = transition.copy()

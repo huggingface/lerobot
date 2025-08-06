@@ -31,9 +31,6 @@ class RenameProcessor(ObservationProcessor):
     rename_map: dict[str, str] = field(default_factory=dict)
 
     def observation(self, observation):
-        if observation is None:
-            return observation
-
         processed_obs = {}
         for key, value in observation.items():
             if key in self.rename_map:

@@ -73,8 +73,6 @@ class VanillaObservationProcessor(ObservationProcessor):
         """
         Processes both image and state observations.
         """
-        if observation is None:
-            return None
 
         processed_obs = observation.copy()
 
