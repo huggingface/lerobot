@@ -14,6 +14,7 @@
 
 import abc
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 
 import numpy as np
@@ -65,6 +66,26 @@ class Microphone(abc.ABC):
         """
         pass
 
+    @property
+    @abc.abstractmethod
+    def is_recording(self) -> bool:
+        """Check if the microphone is currently recording.
+
+        Returns:
+            bool: True if the microphone is recording, False otherwise.
+        """
+        pass
+
+    @property
+    @abc.abstractmethod
+    def is_writing(self) -> bool:
+        """Check if the microphone is currently writing to a file.
+
+        Returns:
+            bool: True if the microphone is writing to a file, False otherwise.
+        """
+        pass
+
     @staticmethod
     @abc.abstractmethod
     def find_microphones() -> list[dict[str, Any]]:
@@ -86,14 +107,16 @@ class Microphone(abc.ABC):
         self,
         output_file: str | Path | None = None,
         multiprocessing: bool | None = False,
-        overwrtie: bool | None = True,
+        overwrite: bool | None = True,
+        barrier: Barrier | None = None,
     ) -> None:
         """Start recording audio from the microphone.
 
         Args:
             output_file: Optional path to save the recorded audio.
-            multiprocessing: If True, enables multiprocessing for recording.
+            multiprocessing: If True, enables multiprocessing for recording. Defaults to multithreading otherwise.
             overwrite: If True, overwrites existing files at output_file path.
+            barrier: If not None, ensures that multiple microphones start recording at the same time.
         """
         pass
 
