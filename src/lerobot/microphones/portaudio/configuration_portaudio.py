@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from ..configs import MicrophoneConfig
+
 
 @MicrophoneConfig.register_subclass("portaudio")
 @dataclass
@@ -28,8 +28,8 @@ class PortAudioMicrophoneConfig(MicrophoneConfig):
     Example configurations:
     ```python
     # Basic configurations
-    PortAudioMicrophoneConfig(0, 16000, [1])    # Device index 0, 16000Hz, mono
-    PortAudioMicrophoneConfig(1, 44100, [1, 2])    # Device index 1, 44100Hz, stereo
+    PortAudioMicrophoneConfig(0, 16000, [1])  # Device index 0, 16000Hz, mono
+    PortAudioMicrophoneConfig(1, 44100, [1, 2])  # Device index 1, 44100Hz, stereo
     ```
 
     Attributes:
