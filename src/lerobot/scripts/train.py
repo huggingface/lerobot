@@ -140,7 +140,7 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
-    preprocessor, _ = make_processor(
+    preprocessor, postprocessor = make_processor(
         policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path, dataset_stats=dataset.meta.stats
     )
 
@@ -288,7 +288,10 @@ def train(cfg: TrainPipelineConfig):
 
     if cfg.policy.push_to_hub:
         policy.push_model_to_hub(cfg)
-        preprocessor.push_to_hub(cfg.policy.repo_id)
+        if preprocessor:
+            preprocessor.push_to_hub(cfg.policy.repo_id)
+        if postprocessor:
+            postprocessor.push_to_hub(cfg.policy.repo_id)
 
 
 if __name__ == "__main__":
