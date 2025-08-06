@@ -35,7 +35,7 @@ class DeviceProcessor:
 
     def __post_init__(self):
         self.device = get_safe_torch_device(self.device)
-        self.non_blocking = "cuda" in self.device
+        self.non_blocking = "cuda" in str(self.device)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         # Create a copy of the transition
