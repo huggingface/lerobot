@@ -41,3 +41,8 @@ class DictLike(Protocol):
 class PolicyFeature:
     type: FeatureType
     shape: tuple
+
+
+class DatasetFeatureType(Enum):
+    EE = "ee"
+    JOINT = "joint"

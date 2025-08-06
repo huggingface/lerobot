@@ -133,7 +133,3 @@ class ToBatchProcessor:
     def reset(self) -> None:
         """Reset processor state (no-op for this processor)."""
         pass
-
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
-        """Return features (no-op for this processor)."""
-        return features

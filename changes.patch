@@ -1,0 +1,4332 @@
+diff --git a/examples/lekiwi/teleoperate.py b/examples/lekiwi/teleoperate.py
+index 8358a2b9..45afca0c 100644
+--- a/examples/lekiwi/teleoperate.py
++++ b/examples/lekiwi/teleoperate.py
+@@ -38,7 +38,7 @@ while True:
+     keyboard_keys = keyboard.get_action()
+     base_action = robot._from_keyboard_to_base_action(keyboard_keys)
+
+-    log_rerun_data(observation, {**arm_action, **base_action})
++    log_rerun_data(observation=observation, action={**arm_action, **base_action})
+
+     action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+
+diff --git a/examples/phone_so100_eval.py b/examples/phone_so100_eval.py
+new file mode 100644
+index 00000000..cb4844a4
+--- /dev/null
++++ b/examples/phone_so100_eval.py
+@@ -0,0 +1,168 @@
++# !/usr/bin/env python
++
++# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
++from lerobot.configs.types import DatasetFeatureType
++from lerobot.datasets.lerobot_dataset import LeRobotDataset
++from lerobot.datasets.utils import merge_grouped_features
++from lerobot.model.kinematics import RobotKinematics
++from lerobot.policies.act.modeling_act import ACTPolicy
++from lerobot.policies.factory import make_processor
++from lerobot.processor.pipeline import RobotProcessor
++from lerobot.processor.utils import (
++    to_dataset_frame,
++    to_output_robot_action,
++    to_transition_robot_observation,
++)
++from lerobot.record import record_loop
++from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
++from lerobot.robots.so100_follower.robot_kinematic_processor import (
++    AddRobotObservationAsComplimentaryData,
++    ForwardKinematicsJointsToEE,
++    InverseKinematicsEEToJoints,
++)
++from lerobot.robots.so100_follower.so100_follower import SO100Follower
++from lerobot.utils.control_utils import init_keyboard_listener
++from lerobot.utils.utils import log_say
++from lerobot.utils.visualization_utils import _init_rerun
++
++NUM_EPISODES = 2
++FPS = 30
++EPISODE_TIME_SEC = 60
++TASK_DESCRIPTION = "Pickup the blue block"
++HF_REPO_ID = "pepijn223/eval_phone_pipeline_pickup_block4"
++
++# Initialize the robot and teleoperator
++camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
++robot_config = SO100FollowerConfig(
++    port="/dev/tty.usbmodem58760434471",
++    id="my_phone_teleop_follower_arm",
++    cameras=camera_config,
++    use_degrees=True,
++)
++
++# Initialize the robot and teleoperator
++robot = SO100Follower(robot_config)
++
++# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
++kinematics_solver = RobotKinematics(
++    urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf",
++    target_frame_name="gripper_frame_link",
++    joint_names=list(robot.bus.motors.keys()),
++)
++
++# Build pipeline to convert ee pose action to joint action
++robot_ee_to_joints = RobotProcessor(
++    steps=[
++        AddRobotObservationAsComplimentaryData(robot=robot),
++        InverseKinematicsEEToJoints(
++            kinematics=kinematics_solver,
++            motor_names=list(robot.bus.motors.keys()),
++        ),
++    ],
++    to_transition=lambda tr: tr,
++    to_output=to_output_robot_action,
++)
++
++# Build pipeline to convert joint observation to ee pose observation
++robot_joints_to_ee_pose = RobotProcessor(
++    steps=[
++        ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
++    ],
++    to_transition=to_transition_robot_observation,
++    to_output=lambda tr: tr,
++)
++
++# Build dataset action features
++action_ee = robot_ee_to_joints.aggregate_dataset_features(
++    initial_features={},
++    use_videos=True,
++    include=("action",),
++    action_type=[DatasetFeatureType.EE, DatasetFeatureType.JOINT],
++)  # Get all ee action features + gripper pos action features
++
++# Build dataset observation features
++obs_ee = robot_joints_to_ee_pose.aggregate_dataset_features(
++    initial_features=robot.observation_features,
++    use_videos=True,
++    include=("observation",),
++    action_type=DatasetFeatureType.EE,
++)  # Get all ee observation features
++obs_joint = robot_ee_to_joints.aggregate_dataset_features(
++    initial_features={},
++    use_videos=True,
++    include=("observation",),
++    action_type=DatasetFeatureType.JOINT,
++)  # Get gripper pos observation features
++observation_features = merge_grouped_features(obs_ee, obs_joint)
++
++print("All dataset features: ", {**action_ee, **observation_features})
++
++# Create the dataset
++dataset = LeRobotDataset.create(
++    repo_id=HF_REPO_ID,
++    fps=FPS,
++    features={**action_ee, **observation_features},
++    robot_type=robot.name,
++    use_videos=True,
++    image_writer_threads=4,
++)
++
++# Create a function to convert the pipelines output to the dataset format using the expected features
++to_dataset_features = to_dataset_frame(dataset.features)
++
++# Initialize the keyboard listener and rerun visualization
++_, events = init_keyboard_listener()
++_init_rerun(session_name="recording_phone")
++
++# Connect the robot and teleoperator
++robot.connect()
++
++episode_idx = 0
++
++policy = ACTPolicy.from_pretrained("pepijn223/phone_pipeline_pickup1_migrated")
++preprocessor, postprocessor = make_processor(
++    policy_cfg=policy,
++    pretrained_path="pepijn223/phone_pipeline_pickup1_migrated",
++    dataset_stats=dataset.meta.stats,
++    preprocessor_overrides={"device_processor": {"device": "mps"}},
++)
++
++for episode_idx in range(NUM_EPISODES):
++    log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
++
++    record_loop(
++        robot=robot,
++        events=events,
++        fps=FPS,
++        policy=policy,
++        preprocessor=preprocessor,
++        postprocessor=postprocessor,
++        dataset=dataset,
++        control_time_s=EPISODE_TIME_SEC,
++        single_task=TASK_DESCRIPTION,
++        display_data=True,
++        robot_action_processor=robot_ee_to_joints,
++        robot_observation_processor=robot_joints_to_ee_pose,
++        to_dataset_frame=to_dataset_features,
++    )
++
++    dataset.save_episode()
++
++# Clean up
++log_say("Stop recording")
++robot.disconnect()
++dataset.push_to_hub()
+diff --git a/examples/phone_so100_record.py b/examples/phone_so100_record.py
+new file mode 100644
+index 00000000..66c79379
+--- /dev/null
++++ b/examples/phone_so100_record.py
+@@ -0,0 +1,225 @@
++# !/usr/bin/env python
++
++# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++
++from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
++from lerobot.configs.types import DatasetFeatureType
++from lerobot.datasets.lerobot_dataset import LeRobotDataset
++from lerobot.datasets.utils import merge_grouped_features
++from lerobot.model.kinematics import RobotKinematics
++from lerobot.processor.pipeline import RobotProcessor
++from lerobot.processor.utils import (
++    to_dataset_frame,
++    to_output_robot_action,
++    to_transition_robot_observation,
++    to_transition_teleop_action,
++)
++from lerobot.record import record_loop
++from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
++from lerobot.robots.so100_follower.robot_kinematic_processor import (
++    AddRobotObservationAsComplimentaryData,
++    EEBoundsAndSafety,
++    EEReferenceAndDelta,
++    ForwardKinematicsJointsToEE,
++    GripperVelocityToJoint,
++    InverseKinematicsEEToJoints,
++)
++from lerobot.robots.so100_follower.so100_follower import SO100Follower
++from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
++from lerobot.teleoperators.phone.phone import Phone
++from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
++from lerobot.utils.control_utils import init_keyboard_listener
++from lerobot.utils.utils import log_say
++from lerobot.utils.visualization_utils import _init_rerun
++
++NUM_EPISODES = 10
++FPS = 30
++EPISODE_TIME_SEC = 60
++RESET_TIME_SEC = 30
++TASK_DESCRIPTION = "Pickup the pillow"  # TODO(pepijn): Add back default task description
++HF_REPO_ID = "pepijn223/phone_pipeline_pickup8"
++
++# Initialize the robot and teleoperator
++camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
++robot_config = SO100FollowerConfig(
++    port="/dev/tty.usbmodem58760434471",
++    id="my_phone_teleop_follower_arm",
++    cameras=camera_config,
++    use_degrees=True,
++)
++teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # or PhoneOS.ANDROID
++
++# Initialize the robot and teleoperator
++robot = SO100Follower(robot_config)
++phone = Phone(teleop_config)
++
++# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
++kinematics_solver = RobotKinematics(
++    urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf",
++    target_frame_name="gripper_frame_link",
++    joint_names=list(robot.bus.motors.keys()),
++)
++
++# Build pipeline to convert phone action to ee pose action
++phone_to_robot_ee_pose = RobotProcessor(
++    steps=[
++        MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
++        AddRobotObservationAsComplimentaryData(robot=robot),
++        EEReferenceAndDelta(
++            kinematics=kinematics_solver,
++            end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
++            motor_names=list(robot.bus.motors.keys()),
++        ),
++        EEBoundsAndSafety(
++            end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
++            max_ee_step_m=0.20,
++            max_ee_twist_step_rad=0.50,
++        ),
++    ],
++    to_transition=to_transition_teleop_action,
++    to_output=lambda tr: tr,
++)
++
++# Build pipeline to convert ee pose action to joint action
++robot_ee_to_joints = RobotProcessor(
++    steps=[
++        InverseKinematicsEEToJoints(
++            kinematics=kinematics_solver,
++            motor_names=list(robot.bus.motors.keys()),
++        ),
++        GripperVelocityToJoint(
++            motor_names=list(robot.bus.motors.keys()),
++            speed_factor=20.0,
++        ),
++    ],
++    to_transition=lambda tr: tr,
++    to_output=to_output_robot_action,
++)
++
++# Build pipeline to convert joint observation to ee pose observation
++robot_joints_to_ee_pose = RobotProcessor(
++    steps=[
++        ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
++    ],
++    to_transition=to_transition_robot_observation,
++    to_output=lambda tr: tr,
++)
++
++# Build dataset action features
++action_ee = phone_to_robot_ee_pose.aggregate_dataset_features(
++    initial_features=phone.action_features,
++    use_videos=True,
++    include=("action",),
++    action_type=DatasetFeatureType.EE,
++)  # Get all ee action features
++action_joint = robot_ee_to_joints.aggregate_dataset_features(
++    initial_features={},
++    use_videos=True,
++    include=("action",),
++    action_type=DatasetFeatureType.JOINT,
++)  # Get gripper pos action features
++action_features = merge_grouped_features(action_ee, action_joint)
++
++# Build dataset observation features
++obs_ee = robot_joints_to_ee_pose.aggregate_dataset_features(
++    initial_features=robot.observation_features,
++    use_videos=True,
++    include=("observation",),
++    action_type=DatasetFeatureType.EE,
++)  # Get all ee observation features
++obs_joint = robot_ee_to_joints.aggregate_dataset_features(
++    initial_features={},
++    use_videos=True,
++    include=("observation",),
++    action_type=DatasetFeatureType.JOINT,
++)  # Get gripper pos observation features
++observation_features = merge_grouped_features(obs_ee, obs_joint)
++
++print("All dataset features: ", {**action_features, **observation_features})  # TODO(pepijn): remove
++
++# Create the dataset
++dataset = LeRobotDataset.create(
++    repo_id=HF_REPO_ID,
++    fps=FPS,
++    features={**action_features, **observation_features},
++    robot_type=robot.name,
++    use_videos=True,
++    image_writer_threads=4,
++)
++
++# Create a function to convert the pipelines output to the dataset format using the expected features
++to_dataset_features = to_dataset_frame(dataset.features)
++
++# Initialize the keyboard listener and rerun visualization
++_, events = init_keyboard_listener()
++_init_rerun(session_name="recording_phone")
++
++# Connect the robot and teleoperator
++robot.connect()
++phone.connect()
++
++episode_idx = 0
++
++while episode_idx < NUM_EPISODES and not events["stop_recording"]:
++    log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
++
++    record_loop(
++        robot=robot,
++        events=events,
++        fps=FPS,
++        teleop=phone,
++        dataset=dataset,
++        control_time_s=EPISODE_TIME_SEC,
++        single_task=TASK_DESCRIPTION,
++        display_data=True,
++        teleop_action_processor=phone_to_robot_ee_pose,
++        robot_action_processor=robot_ee_to_joints,
++        robot_observation_processor=robot_joints_to_ee_pose,
++        to_dataset_frame=to_dataset_features,
++    )
++
++    # Reset the environment if not stopping or re-recording
++    if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
++        log_say("Reset the environment")
++        record_loop(
++            robot=robot,
++            events=events,
++            fps=FPS,
++            teleop=phone,
++            control_time_s=RESET_TIME_SEC,
++            single_task=TASK_DESCRIPTION,
++            display_data=True,
++            teleop_action_processor=phone_to_robot_ee_pose,
++            robot_action_processor=robot_ee_to_joints,
++            robot_observation_processor=robot_joints_to_ee_pose,
++            to_dataset_frame=to_dataset_features,
++        )
++
++    if events["rerecord_episode"]:
++        log_say("Re-recording episode")
++        events["rerecord_episode"] = False
++        events["exit_early"] = False
++        dataset.clear_episode_buffer()
++        continue
++
++    dataset.save_episode()
++    episode_idx += 1
++
++# Clean up
++log_say("Stop recording")
++robot.disconnect()
++phone.disconnect()
++dataset.push_to_hub()
+diff --git a/examples/phone_so100_replay.py b/examples/phone_so100_replay.py
+new file mode 100644
+index 00000000..96ed03aa
+--- /dev/null
++++ b/examples/phone_so100_replay.py
+@@ -0,0 +1,87 @@
++import time
++
++from lerobot.datasets.lerobot_dataset import LeRobotDataset
++from lerobot.model.kinematics import RobotKinematics
++from lerobot.processor.pipeline import RobotProcessor
++from lerobot.processor.utils import to_output_robot_action
++from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
++from lerobot.robots.so100_follower.robot_kinematic_processor import (
++    AddRobotObservationAsComplimentaryData,
++    InverseKinematicsEEToJoints,
++)
++from lerobot.robots.so100_follower.so100_follower import SO100Follower
++from lerobot.utils.robot_utils import busy_wait
++from lerobot.utils.utils import log_say
++
++episode_idx = 2
++
++robot_config = SO100FollowerConfig(
++    port="/dev/tty.usbmodem58760434471", id="my_phone_teleop_follower_arm", use_degrees=True
++)
++robot = SO100Follower(robot_config)
++robot.connect()
++
++dataset = LeRobotDataset("pepijn223/phone_pipeline_pickup6", episodes=[episode_idx])
++actions = dataset.hf_dataset.select_columns("action")
++
++# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
++kinematics_solver = RobotKinematics(
++    urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf",
++    target_frame_name="gripper_frame_link",
++    joint_names=list(robot.bus.motors.keys()),
++)
++
++
++def to_transition_from_action(action: dict):
++    act = {}
++
++    # EE pose
++    for k in ("ee.x", "ee.y", "ee.z", "ee.wx", "ee.wy", "ee.wz"):
++        if k in action:
++            act[f"action.{k}"] = float(action[k])
++
++    # Gripper: your dataset has absolute position
++    if "gripper.pos" in action:
++        act["action.gripper.pos"] = float(action["gripper.pos"])
++
++    return {
++        "observation": None,
++        "action": act,
++        "reward": None,
++        "done": False,
++        "truncated": False,
++        "info": {},
++        "complementary_data": {},
++    }
++
++
++# Build pipeline to convert ee pose action to joint action
++robot_ee_to_joints = RobotProcessor(
++    steps=[
++        AddRobotObservationAsComplimentaryData(robot=robot),
++        InverseKinematicsEEToJoints(
++            kinematics=kinematics_solver,
++            motor_names=list(robot.bus.motors.keys()),
++            initial_guess_current_joints=False,  # Because replay is open loop
++        ),
++    ],
++    to_transition=to_transition_from_action,
++    to_output=to_output_robot_action,
++)
++
++robot_ee_to_joints.reset()
++
++log_say(f"Replaying episode {episode_idx}")
++for idx in range(dataset.num_frames):
++    t0 = time.perf_counter()
++
++    ee_action = {
++        name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
++    }
++
++    joint_action = robot_ee_to_joints(ee_action)
++    action_sent = robot.send_action(joint_action)
++
++    busy_wait(1.0 / dataset.fps - (time.perf_counter() - t0))
++
++robot.disconnect()
+diff --git a/examples/phone_so100_teleop.py b/examples/phone_so100_teleop.py
+new file mode 100644
+index 00000000..0604ddaa
+--- /dev/null
++++ b/examples/phone_so100_teleop.py
+@@ -0,0 +1,113 @@
++#!/usr/bin/env python
++
++# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specif
++
++import time
++
++from lerobot.model.kinematics import RobotKinematics
++from lerobot.processor import RobotProcessor
++from lerobot.processor.utils import to_output_robot_action, to_transition_teleop_action
++from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
++from lerobot.robots.so100_follower.robot_kinematic_processor import (
++    AddRobotObservationAsComplimentaryData,
++    EEBoundsAndSafety,
++    EEReferenceAndDelta,
++    GripperVelocityToJoint,
++    InverseKinematicsEEToJoints,
++)
++from lerobot.robots.so100_follower.so100_follower import SO100Follower
++from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
++from lerobot.teleoperators.phone.phone import Phone
++from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
++
++# Initialize the robot and teleoperator
++robot_config = SO100FollowerConfig(
++    port="/dev/tty.usbmodem58760434471", id="my_phone_teleop_follower_arm", use_degrees=True
++)
++teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # or PhoneOS.ANDROID
++
++# Initialize the robot and teleoperator
++robot = SO100Follower(robot_config)
++teleop_device = Phone(teleop_config)
++
++# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
++kinematics_solver = RobotKinematics(
++    urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf",
++    target_frame_name="gripper_frame_link",
++    joint_names=list(robot.bus.motors.keys()),
++)
++
++# Build pipeline to convert phone action to ee pose action
++phone_to_robot_ee_pose = RobotProcessor(
++    steps=[
++        MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
++        AddRobotObservationAsComplimentaryData(robot=robot),
++        EEReferenceAndDelta(
++            kinematics=kinematics_solver,
++            end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
++            motor_names=list(robot.bus.motors.keys()),
++        ),
++        EEBoundsAndSafety(
++            end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
++            max_ee_step_m=0.10,
++            max_ee_twist_step_rad=0.50,
++        ),
++    ],
++    to_transition=to_transition_teleop_action,
++    to_output=lambda tr: tr,
++)
++
++# Build pipeline to convert ee pose action to joint action
++robot_ee_to_joints = RobotProcessor(
++    steps=[
++        InverseKinematicsEEToJoints(
++            kinematics=kinematics_solver,
++            motor_names=list(robot.bus.motors.keys()),
++        ),
++        GripperVelocityToJoint(
++            motor_names=list(robot.bus.motors.keys()),
++            speed_factor=20.0,
++        ),
++    ],
++    to_transition=lambda tr: tr,
++    to_output=to_output_robot_action,
++)
++
++robot.connect()
++teleop_device.connect()
++
++print("Starting teleop loop. Move your phone to teleoperate the robot.")
++
++while True:
++    phone_obs = teleop_device.get_action()
++    if not phone_obs:
++        time.sleep(0.01)
++        continue
++
++    # Get teleop observation
++    phone_obs = teleop_device.get_action()
++
++    # Phone to EE pose transition
++    ee_transition = phone_to_robot_ee_pose(phone_obs)
++
++    # EE pose to Joints transition
++    joints_transition = robot_ee_to_joints(ee_transition)
++
++    # Transition to action dict expected by the robot
++    joint_action = robot_ee_to_joints.to_output(joints_transition)
++
++    if joint_action:
++        robot.send_action(joint_action)
++
++    time.sleep(0.01)
+diff --git a/pyproject.toml b/pyproject.toml
+index 61d3f18c..41ac0b6c 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -57,9 +57,9 @@ classifiers = [
+ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artificial intelligence"]
+
+ dependencies = [
+-
+-    # Hugging Face dependencies
+-    "datasets>=2.19.0,<=3.6.0", # TODO: Bumb dependency
++    "cmake>=3.29.0.1",
++    "datasets>=2.19.0,<4.0.0",
++    "deepdiff>=7.0.1",
+     "diffusers>=0.27.2",
+     "huggingface-hub[hf-transfer,cli]>=0.34.2",
+
+@@ -110,6 +110,7 @@ intelrealsense = [
+     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
+     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
+ ]
++phone = ["hebi-py>=2.8.0", "teleop>=0.1.0"]
+ # stretch = [
+ #     "hello-robot-stretch-body>=0.7.27 ; sys_platform == 'linux'",
+ #     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
+@@ -153,7 +154,8 @@ all = [
+     "lerobot[video_benchmark]",
+     "lerobot[aloha]",
+     "lerobot[pusht]",
+-    "lerobot[xarm]"
++    "lerobot[xarm]",
++    "lerobot[phone]",
+ ]
+
+ [project.scripts]
+diff --git a/src/lerobot/configs/types.py b/src/lerobot/configs/types.py
+index 322a7ea9..b9b9c7df 100644
+--- a/src/lerobot/configs/types.py
++++ b/src/lerobot/configs/types.py
+@@ -41,3 +41,8 @@ class DictLike(Protocol):
+ class PolicyFeature:
+     type: FeatureType
+     shape: tuple
++
++
++class DatasetFeatureType(Enum):
++    EE = "ee"
++    JOINT = "joint"
+diff --git a/src/lerobot/datasets/utils.py b/src/lerobot/datasets/utils.py
+index 078c5351..c8b604e7 100644
+--- a/src/lerobot/datasets/utils.py
++++ b/src/lerobot/datasets/utils.py
+@@ -470,6 +470,47 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
+     return policy_features
+
+
++def merge_grouped_features(*groups: dict) -> dict:
++    """
++    Merge LeRobot grouped feature dicts (e.g. outputs of aggregate_dataset_features).
++
++    - For 1D numeric specs (dtype not image/video/string) with "names": merge names and recompute shape.
++    - For others (e.g. observation.images.*), last one wins (they should be identical).
++    """
++    out: dict = {}
++    for g in groups:
++        for k, spec in g.items():
++            if not isinstance(spec, dict):
++                out[k] = spec
++                continue
++
++            dtype = spec.get("dtype")
++            shape = spec.get("shape")
++            is_vector = (
++                dtype not in ("image", "video", "string")
++                and isinstance(shape, tuple)
++                and len(shape) == 1
++                and "names" in spec
++            )
++
++            if is_vector:
++                tgt = out.setdefault(k, {"dtype": dtype, "names": [], "shape": (0,)})
++                if "dtype" in tgt and dtype != tgt["dtype"]:
++                    raise ValueError(f"dtype mismatch for '{k}': {tgt['dtype']} vs {dtype}")
++
++                # merge names (keep order, no dups)
++                seen = set(tgt["names"])
++                for n in spec["names"]:
++                    if n not in seen:
++                        tgt["names"].append(n)
++                        seen.add(n)
++                tgt["shape"] = (len(tgt["names"]),)
++            else:
++                # Images/videos and any non-1D entries: copy over (identical expected)
++                out[k] = spec
++    return out
++
++
+ def create_empty_dataset_info(
+     codebase_version: str,
+     fps: int,
+diff --git a/src/lerobot/motors/feetech/feetech.py b/src/lerobot/motors/feetech/feetech.py
+index 88d45ba3..9d2c857f 100644
+--- a/src/lerobot/motors/feetech/feetech.py
++++ b/src/lerobot/motors/feetech/feetech.py
+@@ -165,7 +165,7 @@ class FeetechMotorsBus(MotorsBus):
+
+     def _handshake(self) -> None:
+         self._assert_motors_exist()
+-        self._assert_same_firmware()
++        # self._assert_same_firmware()
+
+     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
+         if self.protocol_version == 0:
+diff --git a/src/lerobot/processor/batch_processor.py b/src/lerobot/processor/batch_processor.py
+index 40017760..9011970e 100644
+--- a/src/lerobot/processor/batch_processor.py
++++ b/src/lerobot/processor/batch_processor.py
+@@ -133,7 +133,3 @@ class ToBatchProcessor:
+     def reset(self) -> None:
+         """Reset processor state (no-op for this processor)."""
+         pass
+-
+-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
+-        """Return features (no-op for this processor)."""
+-        return features
+diff --git a/src/lerobot/processor/device_processor.py b/src/lerobot/processor/device_processor.py
+index e0978295..2747f403 100644
+--- a/src/lerobot/processor/device_processor.py
++++ b/src/lerobot/processor/device_processor.py
+@@ -137,5 +137,5 @@ class DeviceProcessor:
+         """Reset processor state (no-op for this processor)."""
+         pass
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+         return features
+diff --git a/src/lerobot/processor/migrate.py b/src/lerobot/processor/migrate.py
+new file mode 100644
+index 00000000..fa6739c6
+--- /dev/null
++++ b/src/lerobot/processor/migrate.py
+@@ -0,0 +1,403 @@
++#!/usr/bin/env python
++
++# Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""
++Script to migrate pretrained pi0 model from lerobot/pi0 HuggingFace repository
++with updated input/output features configuration and option to push to hub.
++
++Usage:
++    # Basic migration (saves locally)
++    python migrate.py --source-repo-id lerobot/smolvla_base
++
++    # Migrate and push to hub
++    python migrate.py --push-to-hub --source-repo-id lerobot/smolvla_base --repo-id username/my-pi0-model
++
++    # Push to specific branch
++    python migrate.py --push-to-hub --source-repo-id lerobot/smolvla_base --repo-id username/my-pi0-model --branch dev
++
++    # Push to same repo with different branch
++    python migrate.py --push-to-hub --source-repo-id lerobot/smolvla_base --repo-id lerobot/pi0 --branch migrated-v2
++"""
++
++import argparse
++import json
++import os
++
++import safetensors
++import torch
++from huggingface_hub import HfApi, create_repo, snapshot_download
++
++from lerobot.configs.types import FeatureType
++from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
++from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
++from lerobot.policies.smolvla.processor_smolvla import SmolVLANewLineProcessor
++from lerobot.processor import (
++    DeviceProcessor,
++    NormalizerProcessor,
++    ProcessorStep,
++    RenameProcessor,
++    RobotProcessor,
++    ToBatchProcessor,
++    UnnormalizerProcessor,
++)
++from lerobot.processor.tokenizer_processor import TokenizerProcessor
++
++
++def update_config_with_features(config_dict: dict) -> dict:
++    """Update the configuration dictionary with the new input/output features."""
++
++    # Define input features
++    config_dict["input_features"] = {
++        "observation.state": {"type": FeatureType.STATE.value, "shape": (6,)},
++        "observation.images.camera0": {
++            "type": FeatureType.VISUAL.value,
++            "shape": (3, 480, 640),  # C, H, W format for RGB image
++        },
++        "observation.images.camera1": {
++            "type": FeatureType.VISUAL.value,
++            "shape": (3, 480, 640),  # C, H, W format for RGB image
++        },
++        "observation.images.camera2": {
++            "type": FeatureType.VISUAL.value,
++            "shape": (3, 480, 640),  # C, H, W format for RGB image
++        },
++    }
++
++    # Define output features
++    config_dict["output_features"] = {"action": {"type": FeatureType.ACTION.value, "shape": (6,)}}
++
++    return config_dict
++
++
++def update_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
++    """Update the state dictionary with the new input/output features."""
++    updated_state_dict = {}
++    removed_keys = []
++
++    for key, value in state_dict.items():
++        # Remove keys containing normalization terms
++        if any(term in key for term in ["unnormalize_outputs", "normalize_targets", "normalize_inputs"]):
++            removed_keys.append(key)
++            continue
++
++        # Rename keys: remove "_orig_mod." from anywhere in the key
++        new_key = key.replace("_orig_mod.", "")
++        updated_state_dict[new_key] = value
++
++    if removed_keys:
++        print(f"Removed {len(removed_keys)} normalization-related keys from state dict:")
++        for key in removed_keys:
++            print(f"  - {key}")
++
++    return updated_state_dict
++
++
++def make_smolvla_processor(
++    config: SmolVLAConfig,
++    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
++) -> tuple[RobotProcessor, RobotProcessor]:
++    """Create preprocessing and postprocessing pipelines for PI0 policy."""
++
++    input_steps: list[ProcessorStep] = [
++        # Add tokenizer processor first (always included for pi0)
++        # Add normalizers
++        RenameProcessor(rename_map={}),
++        NormalizerProcessor(
++            features={**config.input_features, **config.output_features},
++            norm_map=config.normalization_mapping,
++            stats=dataset_stats,
++        ),
++        ToBatchProcessor(),
++        SmolVLANewLineProcessor(),  # Add newlines before tokenization for PaliGemma
++        TokenizerProcessor(
++            tokenizer_name="HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
++            max_length=config.tokenizer_max_length,
++            padding_side="right",
++            padding="max_length",
++        ),
++        DeviceProcessor(device=config.device),
++    ]
++
++    output_steps = [
++        DeviceProcessor(device="cpu"),
++        UnnormalizerProcessor(
++            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
++        ),
++    ]
++    # Create and return the processors
++    preprocessor = RobotProcessor(steps=input_steps, name="robot_preprocessor")
++
++    postprocessor = RobotProcessor(steps=output_steps, name="robot_postprocessor")
++
++    return preprocessor, postprocessor
++
++
++def migrate_smolvla_model(
++    source_repo_id: str = "lerobot/smolvla_base",
++    save_directory: str = "./migrated_smolvla",
++    device: str = "cuda" if torch.cuda.is_available() else "cpu",
++    push_to_hub: bool = False,
++    hub_repo_id: str = None,
++    hub_branch: str = "main",
++    create_pr: bool = False,
++) -> tuple[SmolVLAPolicy, SmolVLAConfig, RobotProcessor, RobotProcessor]:
++    """
++    Migrate pretrained smolvla model with updated configuration.
++
++    Args:
++        source_repo_id: HuggingFace repository ID where the pretrained model is stored
++        save_directory: Local directory to save the migrated model
++        device: Device to load the model on
++        push_to_hub: Whether to push the migrated model to HuggingFace Hub
++        hub_repo_id: Repository ID to push to (if push_to_hub is True)
++        hub_branch: Branch to push to (default: "main")
++        create_pr: Whether to create a pull request instead of pushing directly
++
++    Returns:
++        Tuple of (model, config, preprocessor, postprocessor)
++    """
++
++    print(f"Starting migration of smolvla model from {source_repo_id}")
++
++    # Create save directory
++    os.makedirs(save_directory, exist_ok=True)
++
++    # Step 1: Download the entire repository
++    print("Downloading entire model repository...")
++    snapshot_dir = snapshot_download(repo_id=source_repo_id, cache_dir=".cache")
++    print(f"Repository downloaded to: {snapshot_dir}")
++
++    # Step 2: Load and update configuration
++    config_path = os.path.join(snapshot_dir, "config.json")
++    with open(config_path) as f:
++        config_dict = json.load(f)
++
++    # Update with new input/output features
++    config_dict = update_config_with_features(config_dict)
++
++    state_dict = safetensors.torch.load_file(filename=f"{snapshot_dir}/model.safetensors", device="cpu")
++
++    # Update state dict with key renaming and normalization removal
++    state_dict = update_state_dict(state_dict)
++
++    # Create SmolVLAConfig instance from updated dictionary
++    # Remove 'type' field as it's not needed for instantiation
++    if "type" in config_dict:
++        del config_dict["type"]
++    config = SmolVLAConfig(**config_dict)
++
++    # Step 3: Create model with updated config and load updated state dict
++    print("Loading model with pretrained weights...")
++    model = SmolVLAPolicy(config)
++    model.load_state_dict(state_dict, strict=True)
++    model.to("cpu")
++    model.to(torch.float32)
++    # Step 4: Create processors (without stats for now)
++    print("Creating processors...")
++    preprocessor, postprocessor = make_smolvla_processor(config, dataset_stats=None)
++
++    # Step 5: Save the migrated model locally
++    print(f"Saving migrated model to {save_directory}")
++
++    # Save configuration
++    config_save_path = os.path.join(save_directory, "config.json")
++    with open(config_save_path, "w") as f:
++        json.dump(config_dict, f, indent=2)
++
++    # Save the model
++    model.save_pretrained(save_directory)
++
++    # Save processors
++    preprocessor.save_pretrained(save_directory, config_filename="robot_preprocessor.json")
++    postprocessor.save_pretrained(save_directory, config_filename="robot_postprocessor.json")
++
++    # Also copy tokenizer files if they exist
++    tokenizer_files = [
++        "tokenizer.json",
++        "tokenizer.model",
++        "tokenizer_config.json",
++        "special_tokens_map.json",
++        "added_tokens.json",
++    ]
++
++    for tokenizer_file in tokenizer_files:
++        src_path = os.path.join(snapshot_dir, tokenizer_file)
++        if os.path.exists(src_path):
++            dst_path = os.path.join(save_directory, tokenizer_file)
++            import shutil
++
++            shutil.copy2(src_path, dst_path)
++            print(f"Copied {tokenizer_file}")
++
++    print("Migration completed successfully!")
++    print(f"Migrated model saved to: {save_directory}")
++    print("\nUpdated configuration:")
++    print(f"  Input features: {list(config.input_features.keys())}")
++    print(f"  Output features: {list(config.output_features.keys())}")
++
++    # Step 6: Push to hub if requested
++    if push_to_hub:
++        if hub_repo_id is None:
++            raise ValueError("--repo-id must be specified when using --push-to-hub")
++
++        print(f"\nPushing to HuggingFace Hub: {hub_repo_id}")
++
++        # Create repository if it doesn't exist
++        api = HfApi()
++        try:
++            create_repo(repo_id=hub_repo_id, repo_type="model", exist_ok=True)
++        except Exception as e:
++            print(f"Note: Could not create repo (may already exist): {e}")
++
++        # Push the model
++        model.push_to_hub(repo_id=hub_repo_id, branch=hub_branch, create_pr=create_pr)
++
++        # Push processors
++        api.upload_file(
++            path_or_fileobj=os.path.join(save_directory, "robot_preprocessor.json"),
++            path_in_repo="preprocessor.json",
++            repo_id=hub_repo_id,
++            repo_type="model",
++            revision=hub_branch,
++            create_pr=create_pr,
++        )
++
++        # Upload processor state files if they exist
++        for file in os.listdir(save_directory):
++            if file.endswith("_preprocessor.safetensors"):
++                api.upload_file(
++                    path_or_fileobj=os.path.join(save_directory, file),
++                    path_in_repo=file,
++                    repo_id=hub_repo_id,
++                    repo_type="model",
++                    revision=hub_branch,
++                    create_pr=create_pr,
++                )
++
++        api.upload_file(
++            path_or_fileobj=os.path.join(save_directory, "robot_postprocessor.json"),
++            path_in_repo="postprocessor.json",
++            repo_id=hub_repo_id,
++            repo_type="model",
++            revision=hub_branch,
++            create_pr=create_pr,
++        )
++
++        # Upload postprocessor state files if they exist
++        for file in os.listdir(save_directory):
++            if file.endswith("_postprocessor.safetensors"):
++                api.upload_file(
++                    path_or_fileobj=os.path.join(save_directory, file),
++                    path_in_repo=file,
++                    repo_id=hub_repo_id,
++                    repo_type="model",
++                    revision=hub_branch,
++                    create_pr=create_pr,
++                )
++
++        # Upload tokenizer files
++        for tokenizer_file in tokenizer_files:
++            file_path = os.path.join(save_directory, tokenizer_file)
++            if os.path.exists(file_path):
++                api.upload_file(
++                    path_or_fileobj=file_path,
++                    path_in_repo=tokenizer_file,
++                    repo_id=hub_repo_id,
++                    repo_type="model",
++                    revision=hub_branch,
++                    create_pr=create_pr,
++                )
++
++        print(f"Successfully pushed to {hub_repo_id} on branch '{hub_branch}'")
++        if create_pr:
++            print("A pull request has been created for review.")
++
++    return model, config, preprocessor, postprocessor
++
++
++def main():
++    parser = argparse.ArgumentParser(
++        description="Migrate pretrained smolvla model with updated configuration"
++    )
++    parser.add_argument(
++        "--source-repo-id",
++        type=str,
++        default="lerobot/smolvla",
++        help="Source HuggingFace repository ID (default: lerobot/smolvla)",
++    )
++    parser.add_argument(
++        "--save-directory",
++        type=str,
++        default="./migrated_smolvla",
++        help="Local directory to save migrated model (default: ./migrated_smolvla)",
++    )
++    parser.add_argument(
++        "--device",
++        type=str,
++        default="cuda" if torch.cuda.is_available() else "cpu",
++        help="Device to load model on (default: cuda if available, else cpu)",
++    )
++    parser.add_argument(
++        "--push-to-hub", action="store_true", help="Push the migrated model to HuggingFace Hub"
++    )
++    parser.add_argument(
++        "--repo-id", type=str, help="HuggingFace Hub repository ID to push to (required if --push-to-hub)"
++    )
++    parser.add_argument("--branch", type=str, default="main", help="Branch to push to (default: main)")
++    parser.add_argument(
++        "--create-pr", action="store_true", help="Create a pull request instead of pushing directly"
++    )
++
++    args = parser.parse_args()
++
++    # Run migration
++    model, config, preprocessor, postprocessor = migrate_smolvla_model(
++        source_repo_id=args.source_repo_id,
++        save_directory=args.save_directory,
++        device=args.device,
++        push_to_hub=args.push_to_hub,
++        hub_repo_id=args.repo_id,
++        hub_branch=args.branch,
++        create_pr=args.create_pr,
++    )
++
++    print("\nMigration complete! ✓")
++
++    # Print example usage
++    print("\nExample usage:")
++    print("```python")
++    print("from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy")
++    print("from lerobot.processor import RobotProcessor")
++    print()
++    print("# Load migrated model")
++    print(f"model = SmolVLAPolicy.from_pretrained('{args.save_directory}')")
++    print(
++        f"preprocessor = RobotProcessor.from_pretrained('{args.save_directory}', config_filename='preprocessor.json')"
++    )
++    print(
++        f"postprocessor = RobotProcessor.from_pretrained('{args.save_directory}', config_filename='postprocessor.json')"
++    )
++    print()
++    print("# Use for inference")
++    print("observation = {...}  # Your observation dict")
++    print("processed_obs = preprocessor(observation)")
++    print("action = model.predict_action_chunk(processed_obs)")
++    print("action = postprocessor({'action': action})['action']")
++    print("```")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/lerobot/processor/migrate_policy_normalization.py b/src/lerobot/processor/migrate_policy_normalization.py
+index 90df3172..0f9ba604 100644
+--- a/src/lerobot/processor/migrate_policy_normalization.py
++++ b/src/lerobot/processor/migrate_policy_normalization.py
+@@ -47,8 +47,10 @@ from safetensors.torch import load_file as load_safetensors
+
+ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+ from lerobot.processor.batch_processor import ToBatchProcessor
++from lerobot.processor.device_processor import DeviceProcessor
+ from lerobot.processor.normalize_processor import NormalizerProcessor, UnnormalizerProcessor
+ from lerobot.processor.pipeline import RobotProcessor
++from lerobot.processor.rename_processor import RenameProcessor
+
+ # Policy type to class mapping
+ POLICY_CLASSES = {
+@@ -410,16 +412,17 @@ def main():
+
+     # Create preprocessor with two normalizers (following the pattern from processor factories)
+     preprocessor_steps = [
+-        NormalizerProcessor(features=input_features, norm_map=norm_map, stats=stats),
+-        NormalizerProcessor(features=output_features, norm_map=norm_map, stats=stats),
++        RenameProcessor(rename_map={}),
++        NormalizerProcessor(features={**input_features, **output_features}, norm_map=norm_map, stats=stats),
+         ToBatchProcessor(),
++        DeviceProcessor(device="cpu"),
+     ]
+     preprocessor = RobotProcessor(preprocessor_steps, name="preprocessor")
+
+     # Create postprocessor with unnormalizer for outputs only
+     postprocessor_steps = [
++        DeviceProcessor(device="cpu"),
+         UnnormalizerProcessor(features=output_features, norm_map=norm_map, stats=stats),
+-        ToBatchProcessor(),
+     ]
+     postprocessor = RobotProcessor(postprocessor_steps, name="postprocessor")
+
+diff --git a/src/lerobot/processor/normalize_processor.py b/src/lerobot/processor/normalize_processor.py
+index abbb3dd0..3427261c 100644
+--- a/src/lerobot/processor/normalize_processor.py
++++ b/src/lerobot/processor/normalize_processor.py
+@@ -257,9 +257,6 @@ class NormalizerProcessor:
+     def reset(self):
+         pass
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        return features
+-
+
+ @dataclass
+ @ProcessorStepRegistry.register(name="unnormalizer_processor")
+@@ -439,9 +436,6 @@ class UnnormalizerProcessor:
+     def reset(self):
+         pass
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        return features
+-
+
+ def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, Any]]) -> RobotProcessor:
+     robot_processor = deepcopy(robot_processor)
+diff --git a/src/lerobot/processor/observation_processor.py b/src/lerobot/processor/observation_processor.py
+index 091b1286..ff089cfd 100644
+--- a/src/lerobot/processor/observation_processor.py
++++ b/src/lerobot/processor/observation_processor.py
+@@ -111,26 +111,9 @@ class ImageProcessor:
+         """Reset processor state (no-op for this processor)."""
+         pass
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        """Transforms:
+-        pixels -> OBS_IMAGE,
+-        observation.pixels -> OBS_IMAGE,
+-        pixels.<cam> -> OBS_IMAGES.<cam>,
+-        observation.pixels.<cam> -> OBS_IMAGES.<cam>
+-        """
+-        if "pixels" in features:
+-            features[OBS_IMAGE] = features.pop("pixels")
+-        if "observation.pixels" in features:
+-            features[OBS_IMAGE] = features.pop("observation.pixels")
+-
+-        prefixes = ("pixels.", "observation.pixels.")
+-        for key in list(features.keys()):
+-            for p in prefixes:
+-                if key.startswith(p):
+-                    suffix = key[len(p) :]
+-                    features[f"{OBS_IMAGES}.{suffix}"] = features.pop(key)
+-                    break
+-        return features
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        """No dataset features for this processor."""
++        pass
+
+
+ @dataclass
+@@ -191,24 +174,9 @@ class StateProcessor:
+         """Reset processor state (no-op for this processor)."""
+         pass
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        """Transforms:
+-        environment_state -> OBS_ENV_STATE,
+-        agent_pos -> OBS_STATE,
+-        observation.environment_state -> OBS_ENV_STATE,
+-        observation.agent_pos -> OBS_STATE
+-        """
+-        pairs = (
+-            ("environment_state", OBS_ENV_STATE),
+-            ("agent_pos", OBS_STATE),
+-        )
+-        for old, new in pairs:
+-            if old in features:
+-                features[new] = features.pop(old)
+-            prefixed = f"observation.{old}"
+-            if prefixed in features:
+-                features[new] = features.pop(prefixed)
+-        return features
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        """No dataset features for this processor."""
++        pass
+
+
+ @dataclass
+@@ -260,8 +228,3 @@ class VanillaObservationProcessor:
+         """Reset processor state."""
+         self.image_processor.reset()
+         self.state_processor.reset()
+-
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        features = self.image_processor.feature_contract(features)
+-        features = self.state_processor.feature_contract(features)
+-        return features
+diff --git a/src/lerobot/processor/pipeline.py b/src/lerobot/processor/pipeline.py
+index 02d499b1..2bf2c3ad 100644
+--- a/src/lerobot/processor/pipeline.py
++++ b/src/lerobot/processor/pipeline.py
+@@ -30,7 +30,8 @@ from huggingface_hub import ModelHubMixin, hf_hub_download
+ from huggingface_hub.errors import HfHubHTTPError
+ from safetensors.torch import load_file, save_file
+
+-from lerobot.configs.types import PolicyFeature
++from lerobot.configs.types import DatasetFeatureType, PolicyFeature
++from lerobot.datasets.utils import hw_to_dataset_features
+
+
+ class TransitionKey(str, Enum):
+@@ -51,8 +52,8 @@ class EnvTransition(TypedDict, total=False):
+     All fields are optional (total=False) to allow flexible usage.
+     """
+
+-    observation: dict[str, Any] | None
+-    action: Any | torch.Tensor | None
++    observation: dict[str, Any] | torch.Tensor | None
++    action: dict[str, Any] | torch.Tensor | None
+     reward: float | torch.Tensor | None
+     done: bool | torch.Tensor | None
+     truncated: bool | torch.Tensor | None
+@@ -145,7 +146,6 @@ class ProcessorStep(Protocol):
+
+     **Required**:
+         - ``__call__(transition: EnvTransition) -> EnvTransition``
+-        - ``feature_contract(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
+
+     Optional helper protocol:
+     * ``get_config() -> dict[str, Any]`` – User-defined JSON-serializable
+@@ -158,6 +158,8 @@ class ProcessorStep(Protocol):
+     * ``load_state_dict(state)`` – Inverse of ``state_dict``. Receives a dict
+       containing torch tensors only.
+     * ``reset()`` – Clear internal buffers at episode boundaries.
++    * ``dataset_features(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
++    If present, this method will be called to aggregate the dataset features of all steps.
+
+     Example separation:
+     - get_config(): {"name": "my_step", "learning_rate": 0.01, "window_size": 10}
+@@ -174,7 +176,7 @@ class ProcessorStep(Protocol):
+
+     def reset(self) -> None: ...
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
+
+
+ def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
+@@ -861,26 +863,84 @@ class RobotProcessor(ModelHubMixin):
+                     f"Step {i} ({type(step).__name__}) must define __call__(transition) -> EnvTransition"
+                 )
+
+-            fc = getattr(step, "feature_contract", None)
+-            if not callable(fc):
+-                raise TypeError(
+-                    f"Step {i} ({type(step).__name__}) must define feature_contract(features) -> dict[str, Any]"
+-                )
+-
+-    def feature_contract(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++    def dataset_features(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+         """
+-        Apply ALL steps in order. Each step must implement
+-        feature_contract(features) and return a dict (full or incremental schema).
++        Apply ALL steps in order. Only if a step has a dataset_features method, it will be called.
++        We aggregate the dataset features of all steps.
+         """
+         features: dict[str, PolicyFeature] = deepcopy(initial_features)
+
+         for _, step in enumerate(self.steps):
+-            out = step.feature_contract(features)
+-            if not isinstance(out, dict):
+-                raise TypeError(f"{step.__class__.__name__}.feature_contract must return dict[str, Any]")
+-            features = out
++            if hasattr(step, "dataset_features"):
++                out = step.dataset_features(features)
++                if not isinstance(out, dict):
++                    raise TypeError(f"{step.__class__.__name__}.dataset_features must return dict[str, Any]")
++                features = out
+         return features
+
++    def aggregate_dataset_features(
++        self,
++        initial_features: dict[str, Any],
++        *,
++        use_videos: bool = True,
++        include: tuple[str, ...] = ("action", "observation"),
++        action_type: DatasetFeatureType | list[DatasetFeatureType] = DatasetFeatureType.JOINT,
++    ) -> dict[str, dict]:
++        """
++        Aggregates the pipeline's dataset_features and returns a features dict that is ready to be stored in the dataset.
++
++        - Filters to keys under requested spaces.
++        - Adds camera keys from the initial_features (robot.observation_features).
++        - Filters ACTION features by `action_type` (EE, JOINT, or both).
++        """
++        # Allow list or single enum
++        if not isinstance(action_type, (list, tuple, set)):
++            action_types = {action_type}
++        else:
++            action_types = set(action_type)
++
++        def _is_hw_image(v: Any) -> bool:
++            # robot.observation_features uses tuples for images: (H, W, C)
++            return isinstance(v, tuple) and len(v) == 3 and v[-1] in (1, 3)
++
++        fc = self.dataset_features(initial_features)
++
++        action_hw: dict[str, Any] = {}
++        obs_hw: dict[str, Any] = {}
++
++        # Collect from dataset_features outputs
++        for k, v in fc.items():
++            if k.startswith("action.") and "action" in include:
++                # Strip prefix and filter by action_type
++                subk = k[len("action.") :]
++                is_ee = subk.startswith("ee.")
++                is_joint = subk.endswith(".pos") and not subk.startswith("ee.")
++                if is_ee and DatasetFeatureType.EE in action_types:
++                    action_hw[subk] = v
++                elif is_joint and DatasetFeatureType.JOINT in action_types:
++                    action_hw[subk] = v
++
++            elif k.startswith("observation.state.") and "observation" in include:
++                obs_hw[k[len("observation.state.") :]] = v
++
++            elif k.startswith("observation.images.") and "observation" in include:
++                obs_hw[k[len("observation.images.") :]] = v
++
++        # Add cameras from initial_features (if observation requested)
++        if "observation" in include:
++            for k, v in (initial_features or {}).items():
++                if _is_hw_image(v):
++                    # e.g. "front": (H, W, 3)
++                    obs_hw.setdefault(k, v)
++
++        # Convert to dataset features
++        out: dict[str, dict] = {}
++        if action_hw and "action" in include:
++            out.update(hw_to_dataset_features(action_hw, "action", use_videos))
++        if obs_hw and "observation" in include:
++            out.update(hw_to_dataset_features(obs_hw, "observation", use_videos))
++        return out
++
+
+ class ObservationProcessor:
+     """Base class for processors that modify only the observation component of a transition.
+@@ -1187,5 +1247,5 @@ class IdentityProcessor:
+     def reset(self) -> None:
+         pass
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+         return features
+diff --git a/src/lerobot/processor/rename_processor.py b/src/lerobot/processor/rename_processor.py
+index 7e189754..41efb979 100644
+--- a/src/lerobot/processor/rename_processor.py
++++ b/src/lerobot/processor/rename_processor.py
+@@ -55,9 +55,5 @@ class RenameProcessor:
+     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+         pass
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        """Transforms:
+-        - Each key in the observation that appears in `rename_map` is renamed to its value.
+-        - Keys not in `rename_map` remain unchanged.
+-        """
+-        return {self.rename_map.get(k, k): v for k, v in features.items()}
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        pass
+diff --git a/src/lerobot/processor/utils.py b/src/lerobot/processor/utils.py
+new file mode 100644
+index 00000000..466e446c
+--- /dev/null
++++ b/src/lerobot/processor/utils.py
+@@ -0,0 +1,214 @@
++# !/usr/bin/env python
++
++# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++from __future__ import annotations
++
++from collections.abc import Iterable
++from copy import deepcopy
++from typing import Any
++
++import numpy as np
++import torch
++
++from .pipeline import EnvTransition, TransitionKey
++
++
++def _to_tensor(x: Any):
++    if isinstance(x, torch.Tensor):
++        return x
++    if isinstance(x, np.ndarray):
++        # keep images (uint8 HWC) and python objects as-is
++        if x.dtype == np.uint8 or x.dtype == np.object_:
++            return x
++        return torch.from_numpy(x)
++    if isinstance(x, (int, float, np.integer, np.floating)):
++        return torch.tensor(x, dtype=torch.float32)
++    return x
++
++
++def _from_tensor(x: Any):
++    if isinstance(x, torch.Tensor):
++        return x.item() if x.numel() == 1 else x.detach().cpu().numpy()
++    return x
++
++
++def _is_image(arr: Any) -> bool:
++    return isinstance(arr, np.ndarray) and arr.dtype == np.uint8 and arr.ndim == 3
++
++
++def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
++    state, images = {}, {}
++    for k, v in obs.items():
++        if _is_image(v):
++            images[k] = v
++        else:
++            state[k] = v
++    return state, images
++
++
++def make_transition(*, obs: dict | None = None, act: dict | None = None) -> EnvTransition:
++    return {
++        TransitionKey.OBSERVATION: {} if obs is None else obs,
++        TransitionKey.ACTION: {} if act is None else act,
++    }
++
++
++def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
++    """
++    Convert a raw teleop action dict (provided under 'teleop_action') into an EnvTransition:
++        ACTION -> {f"action.{k}": tensor(v)}
++    """
++    act_dict: dict[str, Any] = {}
++    for k, v in action.items():
++        arr = np.array(v) if np.isscalar(v) else v
++        act_dict[f"action.{k}"] = _to_tensor(arr)
++
++    return make_transition(act=act_dict)
++
++
++def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransition:
++    """
++    Convert a raw robot observation dict (provided under 'robot_observation') into an EnvTransition:
++        OBSERVATION.state  -> scalars/tensors
++        OBSERVATION.images -> pass-through uint8 HWC images
++    """
++    state, images = _split_obs_to_state_and_images(observation)
++
++    obs_dict: dict[str, Any] = {}
++    for k, v in state.items():
++        arr = np.array(v) if np.isscalar(v) else v
++        obs_dict[f"observation.state.{k}"] = _to_tensor(arr)
++
++    for cam, img in images.items():
++        obs_dict[f"observation.images.{cam}"] = img  # keep raw uint8 HWC
++
++    return make_transition(obs=obs_dict)
++
++
++def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
++    """
++    Strips 'action.' from keys and ONLY keeps keys ending in '.pos',
++    which correspond to direct motor commands. This prevents intermediate
++    values (like 'ee.x') from being included in the final output.
++    """
++    out: dict[str, Any] = {}
++    action_dict = transition.get(TransitionKey.ACTION) or {}
++
++    for k, v in action_dict.items():
++        # Check that the key represents a motor command.
++        if isinstance(k, str) and k.startswith("action.") and k.endswith(".pos"):
++            # Strip the 'action.' prefix.
++            out_key = k[len("action.") :]
++            # The value is already a float, no need for _from_tensor if not using tensors.
++            out[out_key] = float(v)
++
++    return out
++
++
++def to_dataset_frame(features: dict[str, dict]) -> dict[str, any]:
++    """
++    Build a to_output(...) function that returns a dataset-ready frame dict.
++    The function can be called with:
++      - a single EnvTransition, or
++      - an iterable of EnvTransitions (which will be merged).
++    The packing order of vectors is taken from features['...']['names'].
++    """
++    # Ordered names for vectors
++    action_names = (features.get("action", {}) or {}).get("names", [])
++    obs_state_names = (features.get("observation.state", {}) or {}).get("names", [])
++
++    # All image keys that should be copied through if present in the observation
++    image_keys = [k for k, ft in features.items() if k.startswith("observation.images.")]
++
++    def _merge(base: EnvTransition, other: EnvTransition) -> EnvTransition:
++        out = deepcopy(base)
++        for key in (
++            TransitionKey.OBSERVATION,
++            TransitionKey.ACTION,
++            TransitionKey.INFO,
++            TransitionKey.COMPLEMENTARY_DATA,
++        ):
++            if other.get(key):
++                out.setdefault(key, {}).update(deepcopy(other[key]))
++        # reward/done/truncated: last writer wins
++        for k in (TransitionKey.REWARD, TransitionKey.DONE, TransitionKey.TRUNCATED):
++            if k in other:
++                out[k] = other[k]
++        return out
++
++    def _ensure_transition(obj) -> EnvTransition:
++        # Accept either a single transition or a list/tuple of them
++        if isinstance(obj, dict) and any(isinstance(k, TransitionKey) for k in obj.keys()):
++            return obj
++        if isinstance(obj, Iterable):
++            it = list(obj)
++            if not it:
++                return {}
++            acc = it[0]
++            for t in it[1:]:
++                acc = _merge(acc, t)
++            return acc
++        raise TypeError("to_output expected an EnvTransition or an iterable of EnvTransitions")
++
++    def to_output(transitions_or_transition) -> dict[str, any]:
++        tr = _ensure_transition(transitions_or_transition)
++        obs = tr.get(TransitionKey.OBSERVATION) or {}
++        act = tr.get(TransitionKey.ACTION) or {}
++
++        batch: dict[str, any] = {}
++
++        # Images passthrough (only the ones declared in features)
++        for k in image_keys:
++            if k in obs:
++                batch[k] = obs[k]
++
++        # observation.state vector according to feature order
++        if obs_state_names:
++            vals = []
++            for name in obs_state_names:
++                key = f"observation.state.{name}"
++                vals.append(_from_tensor(obs.get(key, 0.0)))
++            batch["observation.state"] = np.asarray(vals, dtype=np.float32)
++
++        # action vector according to feature order
++        if action_names:
++            vals = []
++            for name in action_names:
++                key = f"action.{name}"
++                vals.append(_from_tensor(act.get(key, 0.0)))
++            batch["action"] = np.asarray(vals, dtype=np.float32)
++
++        # reward/done/truncated/info
++        if TransitionKey.REWARD in tr:
++            batch["next.reward"] = _from_tensor(tr[TransitionKey.REWARD])
++        if TransitionKey.DONE in tr:
++            batch["next.done"] = _from_tensor(tr[TransitionKey.DONE])
++        if TransitionKey.TRUNCATED in tr:
++            batch["next.truncated"] = _from_tensor(tr[TransitionKey.TRUNCATED])
++        if TransitionKey.INFO in tr:
++            batch["info"] = tr[TransitionKey.INFO] or {}
++
++        # complementary data: keep *_is_pad and task
++        comp = tr.get(TransitionKey.COMPLEMENTARY_DATA) or {}
++        for k, v in comp.items():
++            if k.endswith("_is_pad"):
++                batch[k] = v
++        if "task" in comp:
++            batch["task"] = comp["task"]
++
++        return batch
++
++    return to_output
+diff --git a/src/lerobot/record.py b/src/lerobot/record.py
+index be83f89c..459208b5 100644
+--- a/src/lerobot/record.py
++++ b/src/lerobot/record.py
+@@ -59,6 +59,7 @@ python -m lerobot.record \
+
+ import logging
+ import time
++from collections.abc import Callable
+ from dataclasses import asdict, dataclass
+ from pathlib import Path
+ from pprint import pformat
+@@ -77,6 +78,7 @@ from lerobot.datasets.video_utils import VideoEncodingManager
+ from lerobot.policies.factory import make_policy, make_processor
+ from lerobot.policies.pretrained import PreTrainedPolicy
+ from lerobot.processor import RobotProcessor
++from lerobot.processor.pipeline import TransitionKey
+ from lerobot.robots import (  # noqa: F401
+     Robot,
+     RobotConfig,
+@@ -199,6 +201,10 @@ def record_loop(
+     preprocessor: RobotProcessor | None = None,
+     postprocessor: RobotProcessor | None = None,
+     control_time_s: int | None = None,
++    teleop_action_processor: RobotProcessor | None = None,  # runs after teleop
++    robot_action_processor: RobotProcessor | None = None,  # runs before robot
++    robot_observation_processor: RobotProcessor | None = None,  # runs after robot
++    to_dataset_frame: Callable | None = None,  # optional merger for dataset
+     single_task: str | None = None,
+     display_data: bool = False,
+ ):
+@@ -223,11 +229,21 @@ def record_loop(
+             )
+
+     # Reset policy and processor if they are provided
+-    if policy is not None or preprocessor is not None:
++    if policy is not None:
+         policy.reset()
++    if preprocessor is not None:
+         preprocessor.reset()
++    if postprocessor is not None:
+         postprocessor.reset()
+
++    # Reset custom pipelines if provided
++    if teleop_action_processor is not None:
++        teleop_action_processor.reset()
++    if robot_action_processor is not None:
++        robot_action_processor.reset()
++    if robot_observation_processor is not None:
++        robot_observation_processor.reset()
++
+     timestamp = 0
+     start_episode_t = time.perf_counter()
+     while timestamp < control_time_s:
+@@ -237,12 +253,21 @@ def record_loop(
+             events["exit_early"] = False
+             break
+
+-        observation = robot.get_observation()
+-
+-        if policy is not None or dataset is not None:
+-            observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
++        teleop_transition = None
++        robot_action_to_send = None
++        joints_transition = None
++
++        if policy is not None and preprocessor is not None and postprocessor is not None:
++            observation = robot.get_observation()
++            if dataset is not None:
++                if robot_observation_processor is not None:
++                    observation = robot_observation_processor(observation)
++                    observation_frame = to_dataset_frame(observation)
++                else:
++                    observation_frame = build_dataset_frame(
++                        dataset.features, observation, prefix="observation"
++                    )
+
+-        if policy is not None or preprocessor is not None:
+             action_values = predict_action(
+                 observation=observation_frame,
+                 policy=policy,
+@@ -253,37 +278,102 @@ def record_loop(
+                 task=single_task,
+                 robot_type=robot.robot_type,
+             )
+-            action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+-        elif policy is None and isinstance(teleop, Teleoperator):
+-            action = teleop.get_action()
+-        elif policy is None and isinstance(teleop, list):
+-            # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
++
++            if robot_action_processor is not None:
++                action_names = dataset.features["action"]["names"]
++                policy_action = {
++                    f"action.{name}": float(action_values[i]) for i, name in enumerate(action_names)
++                }
++                policy_transition = {
++                    TransitionKey.ACTION: policy_action,
++                    TransitionKey.COMPLEMENTARY_DATA: {},
++                }
++            else:
++                policy_action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
++
++            robot_action_to_send = policy_action
++
++        elif isinstance(teleop, Teleoperator):
++            raw_teleop_action = teleop.get_action()
++
++            if teleop_action_processor is not None:
++                # teleop_pipeline is expected to define how to get a transition from the raw teleop dict
++                # (e.g., via to_transition_teleop_action). It may also add complementary data.
++                teleop_transition = teleop_action_processor(raw_teleop_action)
++            else:
++                # No pipeline: send raw teleop action directly (legacy behavior)
++                robot_action_to_send = raw_teleop_action
++
++        elif isinstance(teleop, list):
+             arm_action = teleop_arm.get_action()
+             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+-
+             keyboard_action = teleop_keyboard.get_action()
+             base_action = robot._from_keyboard_to_base_action(keyboard_action)
+-
+             action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
++            robot_action_to_send = action
+         else:
+             logging.info(
+-                "No policy or teleoperator provided, skipping action generation."
+-                "This is likely to happen when resetting the environment without a teleop device."
+-                "The robot won't be at its rest position at the start of the next episode."
++                "No policy or teleoperator provided, skipping action generation. "
++                "This is likely to happen during environment reset."
+             )
+-            continue
++            # Still continue to next loop to respect timing
++
++        # Before robot pipeline: turn (EE/etc) action into robot command and send
++        if robot_action_processor is not None and teleop_transition is not None:
++            # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
++            joints_transition = robot_action_processor(teleop_transition)
++            robot_action_to_send = robot_action_processor.to_output(joints_transition)
++
++        if (
++            robot_action_processor is not None and policy_transition is not None
++        ):  # TODO(pepijn): merge these two if statements
++            joints_transition = robot_action_processor(policy_transition)
++            robot_action_to_send = robot_action_processor.to_output(joints_transition)
++
++        if robot_action_to_send:
++            # Action can eventually be clipped using `max_relative_target`,
++            # so action actually sent is saved in the dataset. action = postprocessor.process(action)
++            sent_action = robot.send_action(robot_action_to_send)
++        else:
++            sent_action = None
+
+-        # Action can eventually be clipped using `max_relative_target`,
+-        # so action actually sent is saved in the dataset. action = postprocessor.process(action)
+-        sent_action = robot.send_action(action)
++        # Read robot observation and run optional AFTER-ROBOT pipeline
++        observation = robot.get_observation()
+
++        obs_transition = None
++        if robot_observation_processor is not None:
++            # observation_pipeline is expected to know how to read a raw robot obs dict
++            # (e.g., via to_transition_robot_observation)
++            obs_transition = robot_observation_processor(observation)
++
++        # Write to dataset
++        # Prefer pipelines if provided (merge transitions), otherwise fall back to old behavior for compatibility.
+         if dataset is not None:
+-            action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
+-            frame = {**observation_frame, **action_frame}
+-            dataset.add_frame(frame, task=single_task)
++            if to_dataset_frame is not None and (
++                (teleop_transition is not None)
++                or (policy_transition is not None)
++                or (obs_transition is not None)
++            ):
++                merged = []
++                if teleop_transition is not None:
++                    merged.append(teleop_transition)
++                if policy_transition is not None:
++                    merged.append(policy_transition)
++                if obs_transition is not None:
++                    merged.append(obs_transition)
++                frame = to_dataset_frame(merged if len(merged) > 1 else merged[0])
++                dataset.add_frame(frame, task=single_task)
++            else:
++                # No pipeline: store raw observation + sent action
++                observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
++                action_frame = {}
++                if sent_action is not None:
++                    action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
++                frame = {**observation_frame, **action_frame}
++                dataset.add_frame(frame, task=single_task)
+
+         if display_data:
+-            log_rerun_data(observation, action)
++            log_rerun_data([obs_transition or observation, teleop_transition or sent_action])
+
+         dt_s = time.perf_counter() - start_loop_t
+         busy_wait(1 / fps - dt_s)
+diff --git a/src/lerobot/robots/so100_follower/__init__.py b/src/lerobot/robots/so100_follower/__init__.py
+index b995aab1..5dc43ac3 100644
+--- a/src/lerobot/robots/so100_follower/__init__.py
++++ b/src/lerobot/robots/so100_follower/__init__.py
+@@ -14,6 +14,5 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+
+-from .config_so100_follower import SO100FollowerConfig, SO100FollowerEndEffectorConfig
++from .config_so100_follower import SO100FollowerConfig
+ from .so100_follower import SO100Follower
+-from .so100_follower_end_effector import SO100FollowerEndEffector
+diff --git a/src/lerobot/robots/so100_follower/config_so100_follower.py b/src/lerobot/robots/so100_follower/config_so100_follower.py
+index ea8b9f1c..16bab13e 100644
+--- a/src/lerobot/robots/so100_follower/config_so100_follower.py
++++ b/src/lerobot/robots/so100_follower/config_so100_follower.py
+@@ -39,35 +39,3 @@ class SO100FollowerConfig(RobotConfig):
+
+     # Set to `True` for backward compatibility with previous policies/dataset
+     use_degrees: bool = False
+-
+-
+-@RobotConfig.register_subclass("so100_follower_end_effector")
+-@dataclass
+-class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
+-    """Configuration for the SO100FollowerEndEffector robot."""
+-
+-    # Path to URDF file for kinematics
+-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo:
+-    # https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
+-    urdf_path: str | None = None
+-
+-    # End-effector frame name in the URDF
+-    target_frame_name: str = "gripper_frame_link"
+-
+-    # Default bounds for the end-effector position (in meters)
+-    end_effector_bounds: dict[str, list[float]] = field(
+-        default_factory=lambda: {
+-            "min": [-1.0, -1.0, -1.0],  # min x, y, z
+-            "max": [1.0, 1.0, 1.0],  # max x, y, z
+-        }
+-    )
+-
+-    max_gripper_pos: float = 50
+-
+-    end_effector_step_sizes: dict[str, float] = field(
+-        default_factory=lambda: {
+-            "x": 0.02,
+-            "y": 0.02,
+-            "z": 0.02,
+-        }
+-    )
+diff --git a/src/lerobot/robots/so100_follower/robot_kinematic_processor.py b/src/lerobot/robots/so100_follower/robot_kinematic_processor.py
+new file mode 100644
+index 00000000..8be1df3c
+--- /dev/null
++++ b/src/lerobot/robots/so100_follower/robot_kinematic_processor.py
+@@ -0,0 +1,441 @@
++# !/usr/bin/env python
++
++# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++from dataclasses import dataclass, field
++
++import numpy as np
++from scipy.spatial.transform import Rotation
++
++from lerobot.configs.types import PolicyFeature
++from lerobot.model.kinematics import RobotKinematics
++from lerobot.processor.pipeline import (
++    ActionProcessor,
++    ComplementaryDataProcessor,
++    EnvTransition,
++    ObservationProcessor,
++    ProcessorStepRegistry,
++    TransitionKey,
++)
++from lerobot.robots.robot import Robot
++
++
++@ProcessorStepRegistry.register("ee_reference_and_delta")
++@dataclass
++class EEReferenceAndDelta:
++    """
++    Compute the desired end-effector pose from the target pose and the current pose.
++
++    Input ACTION keys:
++    {
++        "action.ee.{x,y,z,wx,wy,wz}" : float
++        "complementary_data.raw_joint_positions": dict,
++    }
++
++    Output ACTION keys:
++    {
++        "action.ee.{x,y,z,wx,wy,wz}" : float
++    }
++    """
++
++    kinematics: RobotKinematics
++    end_effector_step_sizes: dict
++    motor_names: list[str]
++
++    reference_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
++    _prev_enabled: bool = field(default=False, init=False, repr=False)
++    _command_when_disabled: np.ndarray | None = field(default=None, init=False, repr=False)
++
++    def __call__(self, transition: EnvTransition) -> EnvTransition:
++        act = transition.get(TransitionKey.ACTION) or {}
++        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
++
++        # Get joint positions from complimentary data
++        raw = comp.get("raw_joint_positions", None)
++        if raw is None:
++            raise ValueError(
++                "raw_joint_positions is not in complementary data and is required for EEReferenceAndDelta"
++            )
++
++        q = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
++
++        # Current pose from FK on measured joints
++        t_curr = self.kinematics.forward_kinematics(q)
++
++        enabled = bool(act.pop("action.enabled", 0))
++        tx = float(act.pop("action.target_x", 0.0))
++        ty = float(act.pop("action.target_y", 0.0))
++        tz = float(act.pop("action.target_z", 0.0))
++        wx = float(act.pop("action.target_wx", 0.0))
++        wy = float(act.pop("action.target_wy", 0.0))
++        wz = float(act.pop("action.target_wz", 0.0))
++
++        desired = None
++
++        if enabled:
++            # Latch a reference at the rising edge; also be defensive if None
++            if not self._prev_enabled or self.reference_ee_pose is None:
++                self.reference_ee_pose = t_curr.copy()
++
++            ref = self.reference_ee_pose if self.reference_ee_pose is not None else t_curr
++
++            delta_p = np.array(
++                [
++                    tx * self.end_effector_step_sizes["x"],
++                    ty * self.end_effector_step_sizes["y"],
++                    tz * self.end_effector_step_sizes["z"],
++                ],
++                dtype=float,
++            )
++            r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
++
++            desired = np.eye(4, dtype=float)
++            desired[:3, :3] = ref[:3, :3] @ r_abs
++            desired[:3, 3] = ref[:3, 3] + delta_p
++
++            self._command_when_disabled = desired.copy()
++        else:
++            # While disabled, keep sending the same command to avoid drift.
++            if self._command_when_disabled is None:
++                # If we've never had an enabled command yet, freeze current FK pose once.
++                self._command_when_disabled = t_curr.copy()
++            desired = self._command_when_disabled.copy()
++
++        # Write action fields
++        pos = desired[:3, 3]
++        tw = Rotation.from_matrix(desired[:3, :3]).as_rotvec()
++        act.update(
++            {
++                "action.ee.x": float(pos[0]),
++                "action.ee.y": float(pos[1]),
++                "action.ee.z": float(pos[2]),
++                "action.ee.wx": float(tw[0]),
++                "action.ee.wy": float(tw[1]),
++                "action.ee.wz": float(tw[2]),
++            }
++        )
++
++        self._prev_enabled = enabled
++        transition[TransitionKey.ACTION] = act
++        return transition
++
++
++@ProcessorStepRegistry.register("ee_bounds_and_safety")
++@dataclass
++class EEBoundsAndSafety(ActionProcessor):
++    """
++    Clip the end-effector pose to the bounds and check for jumps.
++
++    Input ACTION keys:
++    {
++        "action.ee.{x,y,z,wx,wy,wz}" : float
++    }
++
++    Output ACTION keys:
++    {
++        "action.ee.{x,y,z,wx,wy,wz}" : float
++    }
++    """
++
++    end_effector_bounds: dict
++    max_ee_step_m: float = 0.05
++    max_ee_twist_step_rad: float = 0.20
++    _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
++
++    def action(self, act: dict | None) -> dict:
++        x = act.pop("action.ee.x", None)
++        y = act.pop("action.ee.y", None)
++        z = act.pop("action.ee.z", None)
++        wx = act.pop("action.ee.wx", None)
++        wy = act.pop("action.ee.wy", None)
++        wz = act.pop("action.ee.wz", None)
++
++        if None in (x, y, z, wx, wy, wz):
++            return act
++
++        pos = np.array([x, y, z], dtype=float)
++        twist = np.array([wx, wy, wz], dtype=float)
++
++        # clip position
++        pos = np.clip(pos, self.end_effector_bounds["min"], self.end_effector_bounds["max"])
++
++        # Check for jumps in position
++        if self._last_pos is not None:
++            dpos = pos - self._last_pos
++            n = float(np.linalg.norm(dpos))
++            if n > self.max_ee_step_m and n > 0:
++                pos = self._last_pos + dpos * (self.max_ee_step_m / n)
++                raise ValueError(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
++
++        self._last_pos = pos
++        self._last_twist = twist
++
++        act.update(
++            {
++                "action.ee.x": float(pos[0]),
++                "action.ee.y": float(pos[1]),
++                "action.ee.z": float(pos[2]),
++                "action.ee.wx": float(twist[0]),
++                "action.ee.wy": float(twist[1]),
++                "action.ee.wz": float(twist[2]),
++            }
++        )
++        return act
++
++    def reset(self):
++        self._last_pos = None
++
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # Because this is last step we specify the dataset features of this step that we want to be stored in the dataset
++        features["action.ee.x"] = float
++        features["action.ee.y"] = float
++        features["action.ee.z"] = float
++        features["action.ee.wx"] = float
++        features["action.ee.wy"] = float
++        features["action.ee.wz"] = float
++        return features
++
++
++@ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
++@dataclass
++class InverseKinematicsEEToJoints:
++    """
++    Compute the desired joint positions from the desired end-effector pose.
++
++    Input ACTION keys:
++    {
++        "action.ee.{x,y,z,wx,wy,wz}" : float
++        "complementary_data.raw_joint_positions": dict,
++    }
++
++    Output ACTION keys:
++    {
++        "action.joint_name_1.pos": float,
++        "action.joint_name_2.pos": float,
++        ...
++        "action.joint_name_n.pos": float,
++    }
++    """
++
++    kinematics: RobotKinematics
++    motor_names: list[str]
++    q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
++    initial_guess_current_joints: bool = True
++
++    def __call__(self, transition: EnvTransition) -> EnvTransition:
++        act = transition.get(TransitionKey.ACTION) or {}
++        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
++
++        x = act.get("action.ee.x", None)
++        y = act.get("action.ee.y", None)
++        z = act.get("action.ee.z", None)
++        wx = act.get("action.ee.wx", None)
++        wy = act.get("action.ee.wy", None)
++        wz = act.get("action.ee.wz", None)
++
++        if None in (x, y, z, wx, wy, wz):
++            # Nothing to do; restore what we popped and return
++            act.update(
++                {
++                    "action.ee.x": x,
++                    "action.ee.y": y,
++                    "action.ee.z": z,
++                    "action.ee.wx": wx,
++                    "action.ee.wy": wy,
++                    "action.ee.wz": wz,
++                }
++            )
++            transition[TransitionKey.ACTION] = act
++            return transition
++
++        # Get joint positions from complimentary data
++        raw = comp.get("raw_joint_positions", None)
++        if raw is None:
++            raise ValueError(
++                "raw_joint_positions is not in complementary data and is required for EEReferenceAndDelta"
++            )
++
++        if self.initial_guess_current_joints:  # Use current joints as initial guess
++            self.q_curr = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
++        else:  # Use previous ik solution as initial guess
++            if self.q_curr is None:
++                self.q_curr = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
++
++        # Build desired 4x4 transform from pos + rotvec (twist)
++        t_des = np.eye(4, dtype=float)
++        t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
++        t_des[:3, 3] = [x, y, z]
++
++        # Compute inverse kinematics
++        q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
++        self.q_curr = q_target
++
++        new_act = dict(act)
++        for i, name in enumerate(self.motor_names):
++            if name == "gripper":
++                new_act["observation.state.gripper.pos"] = float(raw["gripper"])
++            else:
++                new_act[f"action.{name}.pos"] = float(q_target[i])
++        transition[TransitionKey.ACTION] = new_act
++        return transition
++
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We specify the dataset features of this step that we want to be stored in the dataset
++        features["action.ee.x"] = float
++        features["action.ee.y"] = float
++        features["action.ee.z"] = float
++        features["action.ee.wx"] = float
++        features["action.ee.wy"] = float
++        features["action.ee.wz"] = float
++
++        features["observation.state.gripper.pos"] = float
++        features["action.gripper.pos"] = float
++        return features
++
++    def reset(self):
++        self.q_curr = None
++
++
++@ProcessorStepRegistry.register("gripper_velocity_to_joint")
++@dataclass
++class GripperVelocityToJoint:
++    """
++    Convert the gripper velocity to a joint velocity.
++
++    Input ACTION keys:
++    {
++        "action.gripper": float,
++    }
++
++    Output ACTION keys:
++    {
++        "action.gripper.pos": float,
++    }
++    """
++
++    motor_names: list[str]
++    speed_factor: float = 20.0
++    clip_min: float = 0.0
++    clip_max: float = 100.0
++
++    def __call__(self, transition: EnvTransition) -> EnvTransition:
++        obs = transition.get(TransitionKey.OBSERVATION) or {}
++        act = transition.get(TransitionKey.ACTION) or {}
++        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
++
++        if "action.gripper" not in act:
++            return transition
++
++        if "gripper" not in self.motor_names:
++            new_act = dict(act)
++            new_act.pop("action.gripper", None)
++            transition[TransitionKey.ACTION] = new_act
++            return transition
++
++        # Get current gripper position from complementary data
++        raw = comp.get("raw_joint_positions") or {}
++        curr_pos = float(raw.get("gripper"))
++
++        # Compute desired gripper velocity
++        u = float(act.get("action.gripper", 0.0))
++        delta = u * float(self.speed_factor)
++        gripper_pos = float(np.clip(curr_pos + delta, self.clip_min, self.clip_max))
++
++        new_act = dict(act)
++        new_act["action.gripper.pos"] = gripper_pos
++        new_act.pop("action.gripper", None)
++        transition[TransitionKey.ACTION] = new_act
++
++        obs.update({"observation.state.gripper.pos": curr_pos})
++        transition[TransitionKey.OBSERVATION] = obs
++        return transition
++
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We specify the dataset features of this step that we want to be stored in the dataset
++        features["observation.state.gripper.pos"] = float
++        features["action.gripper.pos"] = float
++        return features
++
++
++@ProcessorStepRegistry.register("forward_kinematics_joints_to_ee")
++@dataclass
++class ForwardKinematicsJointsToEE(ObservationProcessor):
++    """
++    Compute the end-effector pose from the joint positions.
++
++    Input OBSERVATION keys:
++    {
++        "observation.state.{joint_name_1,joint_name_2,...,joint_name_n}.pos": float,
++    }
++
++    Output OBSERVATION keys:
++    {
++        "observation.state.ee.{x,y,z,wx,wy,wz}" : float
++    }
++    """
++
++    kinematics: RobotKinematics
++    motor_names: list[str]
++
++    def observation(self, obs: dict | None) -> dict:
++        if not all(f"observation.state.{n}.pos" in obs for n in self.motor_names):
++            return obs
++
++        q = np.array([obs[f"observation.state.{n}.pos"] for n in self.motor_names], dtype=float)
++        t = self.kinematics.forward_kinematics(q)
++        pos = t[:3, 3]
++        tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
++
++        obs.update(
++            {
++                "observation.state.ee.x": float(pos[0]),
++                "observation.state.ee.y": float(pos[1]),
++                "observation.state.ee.z": float(pos[2]),
++                "observation.state.ee.wx": float(tw[0]),
++                "observation.state.ee.wy": float(tw[1]),
++                "observation.state.ee.wz": float(tw[2]),
++            }
++        )
++        return obs
++
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We specify the dataset features of this step that we want to be stored in the dataset
++        for k in ["x", "y", "z", "wx", "wy", "wz"]:
++            features[f"observation.state.ee.{k}"] = float
++        return features
++
++
++@ProcessorStepRegistry.register("add_robot_observation")
++@dataclass
++class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessor):
++    """
++    Read the robot's current observation and insert it into the transition as complementary data.
++
++    - Joint positions are added under complementary_data["raw_joint_positions"] as a dict:
++        { "<motor_name>": <float position>, ... }
++    """
++
++    robot: Robot
++
++    def complementary_data(self, comp: dict | None) -> dict:
++        comp = {} if comp is None else dict(comp)
++        obs = self.robot.get_observation()
++
++        comp["raw_joint_positions"] = {
++            k.removesuffix(".pos"): float(v)
++            for k, v in obs.items()
++            if isinstance(k, str) and k.endswith(".pos")
++        }
++        return comp
+diff --git a/src/lerobot/robots/so100_follower/so100_follower_end_effector.py b/src/lerobot/robots/so100_follower/so100_follower_end_effector.py
+deleted file mode 100644
+index 5fe2993c..00000000
+--- a/src/lerobot/robots/so100_follower/so100_follower_end_effector.py
++++ /dev/null
+@@ -1,200 +0,0 @@
+-# !/usr/bin/env python
+-
+-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+-#
+-# Licensed under the Apache License, Version 2.0 (the "License");
+-# you may not use this file except in compliance with the License.
+-# You may obtain a copy of the License at
+-#
+-#     http://www.apache.org/licenses/LICENSE-2.0
+-#
+-# Unless required by applicable law or agreed to in writing, software
+-# distributed under the License is distributed on an "AS IS" BASIS,
+-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-# See the License for the specific language governing permissions and
+-# limitations under the License.
+-
+-import logging
+-import time
+-from typing import Any
+-
+-import numpy as np
+-
+-from lerobot.cameras import make_cameras_from_configs
+-from lerobot.errors import DeviceNotConnectedError
+-from lerobot.model.kinematics import RobotKinematics
+-from lerobot.motors import Motor, MotorNormMode
+-from lerobot.motors.feetech import FeetechMotorsBus
+-
+-from . import SO100Follower
+-from .config_so100_follower import SO100FollowerEndEffectorConfig
+-
+-logger = logging.getLogger(__name__)
+-
+-
+-class SO100FollowerEndEffector(SO100Follower):
+-    """
+-    SO100Follower robot with end-effector space control.
+-
+-    This robot inherits from SO100Follower but transforms actions from
+-    end-effector space to joint space before sending them to the motors.
+-    """
+-
+-    config_class = SO100FollowerEndEffectorConfig
+-    name = "so100_follower_end_effector"
+-
+-    def __init__(self, config: SO100FollowerEndEffectorConfig):
+-        super().__init__(config)
+-        self.bus = FeetechMotorsBus(
+-            port=self.config.port,
+-            motors={
+-                "shoulder_pan": Motor(1, "sts3215", MotorNormMode.DEGREES),
+-                "shoulder_lift": Motor(2, "sts3215", MotorNormMode.DEGREES),
+-                "elbow_flex": Motor(3, "sts3215", MotorNormMode.DEGREES),
+-                "wrist_flex": Motor(4, "sts3215", MotorNormMode.DEGREES),
+-                "wrist_roll": Motor(5, "sts3215", MotorNormMode.DEGREES),
+-                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
+-            },
+-            calibration=self.calibration,
+-        )
+-
+-        self.cameras = make_cameras_from_configs(config.cameras)
+-
+-        self.config = config
+-
+-        # Initialize the kinematics module for the so100 robot
+-        if self.config.urdf_path is None:
+-            raise ValueError(
+-                "urdf_path must be provided in the configuration for end-effector control. "
+-                "Please set urdf_path in your SO100FollowerEndEffectorConfig."
+-            )
+-
+-        self.kinematics = RobotKinematics(
+-            urdf_path=self.config.urdf_path,
+-            target_frame_name=self.config.target_frame_name,
+-        )
+-
+-        # Store the bounds for end-effector position
+-        self.end_effector_bounds = self.config.end_effector_bounds
+-
+-        self.current_ee_pos = None
+-        self.current_joint_pos = None
+-
+-    @property
+-    def action_features(self) -> dict[str, Any]:
+-        """
+-        Define action features for end-effector control.
+-        Returns dictionary with dtype, shape, and names.
+-        """
+-        return {
+-            "dtype": "float32",
+-            "shape": (4,),
+-            "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
+-        }
+-
+-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+-        """
+-        Transform action from end-effector space to joint space and send to motors.
+-
+-        Args:
+-            action: Dictionary with keys 'delta_x', 'delta_y', 'delta_z' for end-effector control
+-                   or a numpy array with [delta_x, delta_y, delta_z]
+-
+-        Returns:
+-            The joint-space action that was sent to the motors
+-        """
+-
+-        if not self.is_connected:
+-            raise DeviceNotConnectedError(f"{self} is not connected.")
+-
+-        # Convert action to numpy array if not already
+-        if isinstance(action, dict):
+-            if all(k in action for k in ["delta_x", "delta_y", "delta_z"]):
+-                delta_ee = np.array(
+-                    [
+-                        action["delta_x"] * self.config.end_effector_step_sizes["x"],
+-                        action["delta_y"] * self.config.end_effector_step_sizes["y"],
+-                        action["delta_z"] * self.config.end_effector_step_sizes["z"],
+-                    ],
+-                    dtype=np.float32,
+-                )
+-                if "gripper" not in action:
+-                    action["gripper"] = [1.0]
+-                action = np.append(delta_ee, action["gripper"])
+-            else:
+-                logger.warning(
+-                    f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"
+-                )
+-                action = np.zeros(4, dtype=np.float32)
+-
+-        if self.current_joint_pos is None:
+-            # Read current joint positions
+-            current_joint_pos = self.bus.sync_read("Present_Position")
+-            self.current_joint_pos = np.array([current_joint_pos[name] for name in self.bus.motors])
+-
+-        # Calculate current end-effector position using forward kinematics
+-        if self.current_ee_pos is None:
+-            self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos)
+-
+-        # Set desired end-effector position by adding delta
+-        desired_ee_pos = np.eye(4)
+-        desired_ee_pos[:3, :3] = self.current_ee_pos[:3, :3]  # Keep orientation
+-
+-        # Add delta to position and clip to bounds
+-        desired_ee_pos[:3, 3] = self.current_ee_pos[:3, 3] + action[:3]
+-        if self.end_effector_bounds is not None:
+-            desired_ee_pos[:3, 3] = np.clip(
+-                desired_ee_pos[:3, 3],
+-                self.end_effector_bounds["min"],
+-                self.end_effector_bounds["max"],
+-            )
+-
+-        # Compute inverse kinematics to get joint positions
+-        target_joint_values_in_degrees = self.kinematics.inverse_kinematics(
+-            self.current_joint_pos, desired_ee_pos
+-        )
+-
+-        # Create joint space action dictionary
+-        joint_action = {
+-            f"{key}.pos": target_joint_values_in_degrees[i] for i, key in enumerate(self.bus.motors.keys())
+-        }
+-
+-        # Handle gripper separately if included in action
+-        # Gripper delta action is in the range 0 - 2,
+-        # We need to shift the action to the range -1, 1 so that we can expand it to -Max_gripper_pos, Max_gripper_pos
+-        joint_action["gripper.pos"] = np.clip(
+-            self.current_joint_pos[-1] + (action[-1] - 1) * self.config.max_gripper_pos,
+-            5,
+-            self.config.max_gripper_pos,
+-        )
+-
+-        self.current_ee_pos = desired_ee_pos.copy()
+-        self.current_joint_pos = target_joint_values_in_degrees.copy()
+-        self.current_joint_pos[-1] = joint_action["gripper.pos"]
+-
+-        # Send joint space action to parent class
+-        return super().send_action(joint_action)
+-
+-    def get_observation(self) -> dict[str, Any]:
+-        if not self.is_connected:
+-            raise DeviceNotConnectedError(f"{self} is not connected.")
+-
+-        # Read arm position
+-        start = time.perf_counter()
+-        obs_dict = self.bus.sync_read("Present_Position")
+-        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+-        dt_ms = (time.perf_counter() - start) * 1e3
+-        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
+-
+-        # Capture images from cameras
+-        for cam_key, cam in self.cameras.items():
+-            start = time.perf_counter()
+-            obs_dict[cam_key] = cam.async_read()
+-            dt_ms = (time.perf_counter() - start) * 1e3
+-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+-
+-        return obs_dict
+-
+-    def reset(self):
+-        self.current_ee_pos = None
+-        self.current_joint_pos = None
+diff --git a/src/lerobot/robots/utils.py b/src/lerobot/robots/utils.py
+index 7486ee49..87e751b2 100644
+--- a/src/lerobot/robots/utils.py
++++ b/src/lerobot/robots/utils.py
+@@ -69,6 +69,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
+         raise ValueError(config.type)
+
+
++# TODO(pepijn): Move to pipeline step to make sure we don't have to do this in the robot code and send action to robot is clean for use in dataset
+ def ensure_safe_goal_position(
+     goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[float]
+ ) -> dict[str, float]:
+diff --git a/src/lerobot/teleoperate.py b/src/lerobot/teleoperate.py
+index 9836f139..6c00f03b 100644
+--- a/src/lerobot/teleoperate.py
++++ b/src/lerobot/teleoperate.py
+@@ -109,7 +109,7 @@ def teleop_loop(
+         action = teleop.get_action()
+         if display_data:
+             observation = robot.get_observation()
+-            log_rerun_data(observation, action)
++            log_rerun_data(observation=observation, action=action)
+
+         robot.send_action(action)
+         dt_s = time.perf_counter() - loop_start
+diff --git a/src/lerobot/teleoperators/phone/__init__.py b/src/lerobot/teleoperators/phone/__init__.py
+new file mode 100644
+index 00000000..f82ab11e
+--- /dev/null
++++ b/src/lerobot/teleoperators/phone/__init__.py
+@@ -0,0 +1,18 @@
++#!/usr/bin/env python
++
++# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++from .config_phone import PhoneConfig
++from .phone import Phone
+diff --git a/src/lerobot/teleoperators/phone/config_phone.py b/src/lerobot/teleoperators/phone/config_phone.py
+new file mode 100644
+index 00000000..380d5f5f
+--- /dev/null
++++ b/src/lerobot/teleoperators/phone/config_phone.py
+@@ -0,0 +1,36 @@
++#!/usr/bin/env python
++
++# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++from dataclasses import dataclass
++from enum import Enum
++
++import numpy as np
++
++from ..config import TeleoperatorConfig
++
++
++class PhoneOS(Enum):
++    ANDROID = "android"
++    IOS = "ios"
++
++
++@TeleoperatorConfig.register_subclass("phone")
++@dataclass
++class PhoneConfig(TeleoperatorConfig):
++    phone_os: PhoneOS = PhoneOS.IOS
++    camera_offset = np.array(
++        [0.0, -0.02, 0.04]
++    )  # iPhone 14 Pro camera is 2cm off center and 4cm above center
+diff --git a/src/lerobot/teleoperators/phone/phone.py b/src/lerobot/teleoperators/phone/phone.py
+new file mode 100644
+index 00000000..09f9ccd8
+--- /dev/null
++++ b/src/lerobot/teleoperators/phone/phone.py
+@@ -0,0 +1,257 @@
++#!/usr/bin/env python
++
++# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++# Docs:
++# hebi: https://docs.hebi.us/tools.html#mobile-io
++# teleop: https://github.com/SpesRobotics/teleop
++
++import logging
++import threading
++import time
++
++import hebi
++import numpy as np
++from scipy.spatial.transform import Rotation
++from teleop import Teleop
++
++from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
++
++from ..teleoperator import Teleoperator
++from .config_phone import PhoneConfig, PhoneOS
++
++logger = logging.getLogger(__name__)
++
++# -----Tuesday-----
++# TODO(pepijn): Clean up code and tests 12:00
++# TODO(pepijn): Ask for feedback from Adil before writing tests 12:00
++
++# ----Wednesday-----
++# TODO(pepijn): Check tests by running them with broken code 14:00
++# TODO(pepijn): Try teleop, record, replay, and eval of existing policy again 15:00
++# TODO(pepijn): Add to docs with image etc 17:00
++# TODO(pepijn): Create release video 18:00
++
++
++class Phone(Teleoperator):
++    """
++    Phone-based teleoperator using ARKit (iOS via HEBI Mobile I/O App) or the teleop Python package (Android via WebXR API).
++    For HEBI Mobile I/O we also expose 8 analog (a1-a8) and 8 digital (b1-b8) inputs.
++
++    Press and hold **B1** to enable teleoperation. While enabled, the first B1 press
++    captures a reference pose and rotation, when disabled and pressed again the position is reapplied.
++    """
++
++    config_class = PhoneConfig
++    name = "phone"
++
++    def __init__(self, config: PhoneConfig):
++        super().__init__(config)
++        self.config = config
++        self._group = None
++        self._teleop = None
++        self._teleop_thread = None
++        self._latest_pose = None
++        self._latest_message = None
++        self._enabled: bool = False
++        self._calib_pos: np.ndarray | None = None
++        self._calib_rot_inv: Rotation | None = None
++
++    @property
++    def is_connected(self) -> bool:
++        return (self.config.phone_os == PhoneOS.IOS and self._group is not None) or (
++            self.config.phone_os == PhoneOS.ANDROID and self._teleop is not None
++        )
++
++    def connect(self) -> None:
++        if self.is_connected:
++            raise DeviceAlreadyConnectedError(f"{self} already connected")
++
++        if self.config.phone_os == PhoneOS.IOS:
++            logger.info("Connecting to IPhone, make sure to open the HEBI Mobile I/O app.")
++            lookup = hebi.Lookup()
++            time.sleep(2.0)
++            group = lookup.get_group_from_names(["HEBI"], ["mobileIO"])
++            if group is None:
++                raise RuntimeError("Mobile I/O not found — check name/family settings in the app.")
++            self._group = group
++            logger.info(f"{self} connected to HEBI group with {group.size} module(s).")
++        elif self.config.phone_os == PhoneOS.ANDROID:
++            logger.info("Starting teleop stream for Android...")
++            self._teleop = Teleop()
++            self._teleop.subscribe(self._android_callback)
++            self._teleop_thread = threading.Thread(target=self._teleop.run, daemon=True)
++            self._teleop_thread.start()
++            logger.info(f"{self} connected, teleop stream started.")
++        else:
++            raise ValueError(f"Invalid config phone_os: {self.config.phone_os}")
++
++        self.calibrate()
++
++    def calibrate(self) -> None:
++        print(
++            "Hold the phone so that: top edge points forward in same direction as the robot (robot +x) and screen points up (robot +z)"
++        )
++        if self.config.phone_os == PhoneOS.IOS:
++            print("Press and hold B1 in the HEBI Mobile I/O app to capture this pose...\n")
++        else:
++            print("Touch and move on the WebXR page to capture this pose...\n")
++
++        pos, rot = self._wait_for_capture_trigger()
++        self._calib_pos = pos.copy()
++        self._calib_rot_inv = rot.inv()
++        self._enabled = False
++        print("Calibration done\n")
++
++    def _reapply_position_calibration(self, pos: np.ndarray) -> None:
++        self._calib_pos = pos.copy()
++
++    @property
++    def is_calibrated(self) -> bool:
++        return (self._calib_pos is not None) and (self._calib_rot_inv is not None)
++
++    @property
++    def action_features(self) -> dict[str, type]:
++        return {
++            "phone.pos": np.ndarray,  # shape (3,)
++            "phone.rot": Rotation,  # scipy.spatial.transform.Rotation
++            "phone.raw_inputs": dict,  # analogs/buttons or webXR meta
++            "phone.enabled": bool,
++        }
++
++    def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
++        """Wait trigger for calibration: iOS: B1. Android: 'move'."""
++        while True:
++            ok, pos, rot, pose = self._read_current_pose()
++            if not ok:
++                time.sleep(0.01)
++                continue
++
++            if self.config.phone_os == PhoneOS.IOS:
++                io = getattr(pose, "io", None)
++                b = getattr(io, "b", None) if io is not None else None
++                b1 = False
++                if b is not None:
++                    b1 = bool(b.get_int(1))
++                if b1:
++                    return pos, rot
++            else:
++                msg = self._latest_message or {}
++                if bool(msg.get("move", False)):
++                    return pos, rot
++
++            time.sleep(0.01)
++
++    def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None, object | None]:
++        if self.config.phone_os == PhoneOS.IOS:
++            fbk = self._group.get_next_feedback()
++            pose = fbk[0]
++            ar_pos = getattr(pose, "ar_position", None)
++            ar_quat = getattr(pose, "ar_orientation", None)
++            if ar_pos is None or ar_quat is None:
++                return False, None, None, None
++            quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))  # wxyz to xyzw
++            rot = Rotation.from_quat(quat_xyzw)
++            pos = ar_pos - rot.apply(self.config.camera_offset)
++            return True, pos, rot, pose
++        else:
++            p = self._latest_pose
++            if p is None:
++                return False, None, None, None
++            rot = Rotation.from_matrix(p[:3, :3])
++            pos = p[:3, 3] - rot.apply(self.config.camera_offset)
++            pose = self._latest_pose
++            return True, pos, rot, pose
++
++    @property
++    def feedback_features(self) -> dict[str, type]:
++        # No haptic or other feedback implemented yet
++        pass
++
++    def configure(self) -> None:
++        # No additional configuration required for phone teleop
++        pass
++
++    def _android_callback(self, pose: np.ndarray, message: dict) -> None:
++        self._latest_pose = pose
++        self._latest_message = message
++        time.sleep(0.001)  # 1ms delay to avoid race condition
++
++    def get_action(self) -> dict:
++        ok, raw_pos, raw_rot, pose = self._read_current_pose()
++        if not ok or not self.is_calibrated:
++            return {}
++
++        # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
++        raw_inputs: dict[str, float | int | bool] = {}
++        if self.config.phone_os == PhoneOS.IOS:
++            io = getattr(pose, "io", None)
++            if io is not None:
++                bank_a, bank_b = io.a, io.b
++                if bank_a:
++                    for ch in range(1, 9):
++                        if bank_a.has_float(ch):
++                            raw_inputs[f"a{ch}"] = float(bank_a.get_float(ch))
++                if bank_b:
++                    for ch in range(1, 9):
++                        if bank_b.has_int(ch):
++                            raw_inputs[f"b{ch}"] = int(bank_b.get_int(ch))
++                        elif hasattr(bank_b, "has_bool") and bank_b.has_bool(ch):
++                            raw_inputs[f"b{ch}"] = int(bank_b.get_bool(ch))
++        else:
++            msg = self._latest_message or {}
++            raw_inputs["move"] = bool(msg.get("move", False))
++            raw_inputs["scale"] = float(msg.get("scale", 1.0))
++            raw_inputs["reservedButtonA"] = bool(msg.get("reservedButtonA", False))
++            raw_inputs["reservedButtonB"] = bool(msg.get("reservedButtonB", False))
++
++        if self.config.phone_os == PhoneOS.IOS:
++            enable = bool(raw_inputs.get("b1", 0))
++        else:
++            enable = bool(raw_inputs.get("move", False))
++
++        # Rising edge then re-capture calibration immediately from *current* raw pose
++        if enable and not self._enabled:
++            self._reapply_position_calibration(raw_pos)
++
++        # Apply calibration
++        pos_cal = self._calib_rot_inv.apply(raw_pos - self._calib_pos)
++        rot_cal = self._calib_rot_inv * raw_rot
++
++        self._enabled = enable
++
++        return {
++            "phone.pos": pos_cal,
++            "phone.rot": rot_cal,
++            "phone.raw_inputs": raw_inputs,
++            "phone.enabled": self._enabled,
++        }
++
++    def send_feedback(self, feedback: dict[str, float]) -> None:
++        # We could add haptic feedback (vibrations) here, but it's not implemented yet
++        raise NotImplementedError
++
++    def disconnect(self) -> None:
++        if not self.is_connected:
++            raise DeviceNotConnectedError(f"{self} is not connected.")
++
++        if self.config.phone_os == PhoneOS.IOS:
++            self._group = None
++        else:
++            self._teleop = None
++            if self._teleop_thread and self._teleop_thread.is_alive():
++                self._teleop_thread.join(timeout=1.0)
++                self._teleop_thread = None
++                self._latest_pose = None
+diff --git a/src/lerobot/teleoperators/phone/phone_processor.py b/src/lerobot/teleoperators/phone/phone_processor.py
+new file mode 100644
+index 00000000..ae1d9c20
+--- /dev/null
++++ b/src/lerobot/teleoperators/phone/phone_processor.py
+@@ -0,0 +1,90 @@
++# !/usr/bin/env python
++
++# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++from dataclasses import dataclass, field
++
++from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
++from lerobot.teleoperators.phone.config_phone import PhoneOS
++
++
++@ProcessorStepRegistry.register("map_phone_action_to_robot_action")
++@dataclass
++class MapPhoneActionToRobotAction(ActionProcessor):
++    """
++    Map calibrated phone pose (actions) to the inputs for robot actions
++
++    Expected input ACTION keys:
++    {
++        "action.phone.enabled": bool,
++        "action.phone.pos": np.ndarray,
++        "action.phone.rot": Rotation,
++        "action.phone.raw_inputs": dict,
++    }
++
++    Output ACTION keys:
++    {
++        "action.enabled": bool,
++        "action.ee.{x,y,z,wx,wy,wz}" : float
++        "action.gripper": float,
++    }
++    """
++
++    platform: PhoneOS
++    _enabled_prev: bool = field(default=False, init=False, repr=False)
++
++    def action(self, act: dict | None) -> dict:
++        # Pop them from the action
++        enabled = act.pop("action.phone.enabled", 0)
++        pos = act.pop("action.phone.pos", None)
++        rot = act.pop("action.phone.rot", None)
++        inputs = act.pop("action.phone.raw_inputs", {})
++
++        if pos is None or rot is None:
++            return act
++
++        rotvec = rot.as_rotvec()  # Absolute orientation as rotvec
++
++        # Map certain inputs to certain actions
++        if self.platform == PhoneOS.IOS:
++            gripper = float(inputs.get("a3", 0.0))
++            # x = float(inputs.get("a1", 0.0))
++            # y = float(inputs.get("a2", 0.0))
++            # theta = float(inputs.get("a7", 0.0))
++        else:
++            a = float(inputs.get("reservedButtonA", 0.0))
++            b = float(inputs.get("reservedButtonB", 0.0))
++            gripper = (
++                a - b
++            )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
++            # x = y = theta = 0.0
++
++        # For some actions we need to invert the axis
++        act.update(
++            {
++                "action.enabled": enabled,
++                "action.target_x": -pos[1] if enabled else 0.0,
++                "action.target_y": pos[0] if enabled else 0.0,
++                "action.target_z": pos[2] if enabled else 0.0,
++                "action.target_wx": rotvec[1] if enabled else 0.0,
++                "action.target_wy": rotvec[0] if enabled else 0.0,
++                "action.target_wz": -rotvec[2] if enabled else 0.0,
++                "action.gripper": gripper,  # Still send gripper action when disabled
++                # "action.x": x if enabled else 0.0,
++                # "action.y": y if enabled else 0.0,
++                # "action.theta": theta if enabled else 0.0,
++            }
++        )
++        return act
+diff --git a/src/lerobot/utils/visualization_utils.py b/src/lerobot/utils/visualization_utils.py
+index f0f9aebb..5c0c8ea5 100644
+--- a/src/lerobot/utils/visualization_utils.py
++++ b/src/lerobot/utils/visualization_utils.py
+@@ -12,12 +12,15 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+
++import numbers
+ import os
+ from typing import Any
+
+ import numpy as np
+ import rerun as rr
+
++from lerobot.processor.pipeline import EnvTransition, TransitionKey
++
+
+ def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
+     """Initializes the Rerun SDK for visualizing the control loop."""
+@@ -28,19 +31,92 @@ def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
+     rr.spawn(memory_limit=memory_limit)
+
+
+-def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
+-    for obs, val in observation.items():
+-        if isinstance(val, float):
+-            rr.log(f"observation.{obs}", rr.Scalar(val))
+-        elif isinstance(val, np.ndarray):
+-            if val.ndim == 1:
+-                for i, v in enumerate(val):
+-                    rr.log(f"observation.{obs}_{i}", rr.Scalar(float(v)))
++def _is_scalar(x):
++    return (
++        isinstance(x, numbers.Real)
++        or isinstance(x, (np.integer, np.floating))
++        or (isinstance(x, np.ndarray) and x.ndim == 0)
++    )
++
++
++def log_rerun_data(
++    data: list[dict[str | Any] | EnvTransition] | dict[str | Any] | EnvTransition | None = None,
++    *,
++    observation: dict[str, Any] | None = None,
++    action: dict[str, Any] | None = None,
++) -> None:
++    # Normalize "data" to a list for uniform parsing
++    items = data if isinstance(data, list) else ([data] if data is not None else [])
++
++    # Seed with explicit kwargs (if provided)
++    obs = {} if observation is None else dict(observation)
++    act = {} if action is None else dict(action)
++
++    # Parse list/dict/EnvTransition inputs
++    for idx, item in enumerate(items):
++        if not isinstance(item, dict):
++            continue
++
++        # EnvTransition-like (TransitionKey keys)
++        if any(isinstance(k, TransitionKey) for k in item.keys()):
++            o = item.get(TransitionKey.OBSERVATION) or {}
++            a = item.get(TransitionKey.ACTION) or {}
++            if isinstance(o, dict):
++                obs.update(o)
++            if isinstance(a, dict):
++                act.update(a)
++            continue
++
++        # Plain dict: check for prefixes
++        keys = list(item.keys())
++        has_obs = any(str(k).startswith("observation.") for k in keys)
++        has_act = any(str(k).startswith("action.") for k in keys)
++
++        if has_obs or has_act:
++            if has_obs:
++                obs.update(item)
++            if has_act:
++                act.update(item)
++        else:
++            # No prefixes: assume first is observation, second is action, others -> observation
++            if idx == 0:
++                obs.update(item)
++            elif idx == 1:
++                act.update(item)
++            else:
++                obs.update(item)
++
++    for k, v in obs.items():
++        if v is None:
++            continue
++        key = k if str(k).startswith("observation.") else f"observation.{k}"
++
++        if _is_scalar(v):
++            rr.log(key, rr.Scalar(float(v)))
++        elif isinstance(v, np.ndarray):
++            arr = v
++            # Convert CHW -> HWC when needed
++            if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
++                arr = np.transpose(arr, (1, 2, 0))
++            if arr.ndim == 1:
++                for i, vi in enumerate(arr):
++                    rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
++            else:
++                rr.log(key, rr.Image(arr), static=True)
++
++    for k, v in act.items():
++        if v is None:
++            continue
++        key = k if str(k).startswith("action.") else f"action.{k}"
++
++        if _is_scalar(v):
++            rr.log(key, rr.Scalar(float(v)))
++        elif isinstance(v, np.ndarray):
++            if v.ndim == 1:
++                for i, vi in enumerate(v):
++                    rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
+             else:
+-                rr.log(f"observation.{obs}", rr.Image(val), static=True)
+-    for act, val in action.items():
+-        if isinstance(val, float):
+-            rr.log(f"action.{act}", rr.Scalar(val))
+-        elif isinstance(val, np.ndarray):
+-            for i, v in enumerate(val):
+-                rr.log(f"action.{act}_{i}", rr.Scalar(float(v)))
++                # Fall back to flattening higher-d arrays
++                flat = v.flatten()
++                for i, vi in enumerate(flat):
++                    rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
+diff --git a/tests/datasets/test_utils.py b/tests/datasets/test_utils.py
+index ba16874d..736f29d7 100644
+--- a/tests/datasets/test_utils.py
++++ b/tests/datasets/test_utils.py
+@@ -14,12 +14,13 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+
++import pytest
+ import torch
+ from datasets import Dataset
+ from huggingface_hub import DatasetCard
+
+ from lerobot.datasets.push_dataset_to_hub.utils import calculate_episode_data_index
+-from lerobot.datasets.utils import create_lerobot_dataset_card, hf_transform_to_torch
++from lerobot.datasets.utils import create_lerobot_dataset_card, hf_transform_to_torch, merge_grouped_features
+
+
+ def test_default_parameters():
+@@ -53,3 +54,80 @@ def test_calculate_episode_data_index():
+     episode_data_index = calculate_episode_data_index(dataset)
+     assert torch.equal(episode_data_index["from"], torch.tensor([0, 2, 3]))
+     assert torch.equal(episode_data_index["to"], torch.tensor([2, 3, 6]))
++
++
++def test_merge_simple_vectors():
++    g1 = {
++        "action": {
++            "dtype": "float32",
++            "shape": (2,),
++            "names": ["ee.x", "ee.y"],
++        }
++    }
++    g2 = {
++        "action": {
++            "dtype": "float32",
++            "shape": (2,),
++            "names": ["ee.y", "ee.z"],
++        }
++    }
++
++    out = merge_grouped_features(g1, g2)
++
++    assert "action" in out
++    assert out["action"]["dtype"] == "float32"
++    # names merged with preserved order & de-dup
++    assert out["action"]["names"] == ["ee.x", "ee.y", "ee.z"]
++    # shape recomputed from names length
++    assert out["action"]["shape"] == (3,)
++
++
++def test_merge_multiple_groups_order_and_dedup():
++    g1 = {"action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]}}
++    g2 = {"action": {"dtype": "float32", "shape": (2,), "names": ["b", "c"]}}
++    g3 = {"action": {"dtype": "float32", "shape": (3,), "names": ["a", "c", "d"]}}
++
++    out = merge_grouped_features(g1, g2, g3)
++
++    # Order: from first group, then unseen from subsequent groups
++    assert out["action"]["names"] == ["a", "b", "c", "d"]
++    assert out["action"]["shape"] == (4,)
++
++
++def test_non_vector_last_wins_for_images():
++    # Non-vector (dtype=image) should be overwritten by the last spec
++    g1 = {
++        "observation.images.front": {
++            "dtype": "image",
++            "shape": (3, 480, 640),
++            "names": ["channels", "height", "width"],
++        }
++    }
++    g2 = {
++        "observation.images.front": {
++            "dtype": "image",
++            "shape": (3, 720, 1280),
++            "names": ["channels", "height", "width"],
++        }
++    }
++
++    out = merge_grouped_features(g1, g2)
++    assert out["observation.images.front"]["shape"] == (3, 720, 1280)
++    assert out["observation.images.front"]["dtype"] == "image"
++
++
++def test_dtype_mismatch_raises():
++    g1 = {"action": {"dtype": "float32", "shape": (1,), "names": ["a"]}}
++    g2 = {"action": {"dtype": "float64", "shape": (1,), "names": ["b"]}}
++
++    with pytest.raises(ValueError, match="dtype mismatch for 'action'"):
++        _ = merge_grouped_features(g1, g2)
++
++
++def test_non_dict_passthrough_last_wins():
++    g1 = {"misc": 123}
++    g2 = {"misc": 456}
++
++    out = merge_grouped_features(g1, g2)
++    # Non-dict entries are assigned; last one wins
++    assert out["misc"] == 456
+diff --git a/tests/processor/test_observation_processor.py b/tests/processor/test_observation_processor.py
+index fb6a7815..f9204e80 100644
+--- a/tests/processor/test_observation_processor.py
++++ b/tests/processor/test_observation_processor.py
+@@ -425,13 +425,13 @@ def test_equivalent_with_image_dict():
+         torch.testing.assert_close(original_result[key], processor_result[key])
+
+
+-def test_image_processor_feature_contract_pixels_to_image(policy_feature_factory):
++def test_image_processor_dataset_features_pixels_to_image(policy_feature_factory):
+     processor = ImageProcessor()
+     features = {
+         "pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
+         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
+     }
+-    out = processor.feature_contract(features.copy())
++    out = processor.dataset_features(features.copy())
+
+     assert OBS_IMAGE in out and out[OBS_IMAGE] == features["pixels"]
+     assert "pixels" not in out
+@@ -439,13 +439,13 @@ def test_image_processor_feature_contract_pixels_to_image(policy_feature_factory
+     assert_contract_is_typed(out)
+
+
+-def test_image_processor_feature_contract_observation_pixels_to_image(policy_feature_factory):
++def test_image_processor_dataset_features_observation_pixels_to_image(policy_feature_factory):
+     processor = ImageProcessor()
+     features = {
+         "observation.pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
+         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
+     }
+-    out = processor.feature_contract(features.copy())
++    out = processor.dataset_features(features.copy())
+
+     assert OBS_IMAGE in out and out[OBS_IMAGE] == features["observation.pixels"]
+     assert "observation.pixels" not in out
+@@ -453,7 +453,7 @@ def test_image_processor_feature_contract_observation_pixels_to_image(policy_fea
+     assert_contract_is_typed(out)
+
+
+-def test_image_processor_feature_contract_multi_camera_and_prefixed(policy_feature_factory):
++def test_image_processor_dataset_features_multi_camera_and_prefixed(policy_feature_factory):
+     processor = ImageProcessor()
+     features = {
+         "pixels.front": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
+@@ -461,7 +461,7 @@ def test_image_processor_feature_contract_multi_camera_and_prefixed(policy_featu
+         "observation.pixels.rear": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
+         "keep": policy_feature_factory(FeatureType.ENV, (7,)),
+     }
+-    out = processor.feature_contract(features.copy())
++    out = processor.dataset_features(features.copy())
+
+     assert f"{OBS_IMAGES}.front" in out and out[f"{OBS_IMAGES}.front"] == features["pixels.front"]
+     assert f"{OBS_IMAGES}.wrist" in out and out[f"{OBS_IMAGES}.wrist"] == features["pixels.wrist"]
+@@ -471,14 +471,14 @@ def test_image_processor_feature_contract_multi_camera_and_prefixed(policy_featu
+     assert_contract_is_typed(out)
+
+
+-def test_state_processor_feature_contract_environment_and_agent_pos(policy_feature_factory):
++def test_state_processor_dataset_features_environment_and_agent_pos(policy_feature_factory):
+     processor = StateProcessor()
+     features = {
+         "environment_state": policy_feature_factory(FeatureType.STATE, (3,)),
+         "agent_pos": policy_feature_factory(FeatureType.STATE, (7,)),
+         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
+     }
+-    out = processor.feature_contract(features.copy())
++    out = processor.dataset_features(features.copy())
+
+     assert OBS_ENV_STATE in out and out[OBS_ENV_STATE] == features["environment_state"]
+     assert OBS_STATE in out and out[OBS_STATE] == features["agent_pos"]
+@@ -487,13 +487,13 @@ def test_state_processor_feature_contract_environment_and_agent_pos(policy_featu
+     assert_contract_is_typed(out)
+
+
+-def test_state_processor_feature_contract_prefixed_inputs(policy_feature_factory):
++def test_state_processor_dataset_features_prefixed_inputs(policy_feature_factory):
+     proc = StateProcessor()
+     features = {
+         "observation.environment_state": policy_feature_factory(FeatureType.STATE, (2,)),
+         "observation.agent_pos": policy_feature_factory(FeatureType.STATE, (4,)),
+     }
+-    out = proc.feature_contract(features.copy())
++    out = proc.dataset_features(features.copy())
+
+     assert OBS_ENV_STATE in out and out[OBS_ENV_STATE] == features["observation.environment_state"]
+     assert OBS_STATE in out and out[OBS_STATE] == features["observation.agent_pos"]
+diff --git a/tests/processor/test_pipeline.py b/tests/processor/test_pipeline.py
+index e3e48b73..3afa61fe 100644
+--- a/tests/processor/test_pipeline.py
++++ b/tests/processor/test_pipeline.py
+@@ -25,7 +25,7 @@ import pytest
+ import torch
+ import torch.nn as nn
+
+-from lerobot.configs.types import FeatureType, PolicyFeature
++from lerobot.configs.types import DatasetFeatureType, FeatureType, PolicyFeature
+ from lerobot.processor import EnvTransition, ProcessorStepRegistry, RobotProcessor
+ from lerobot.processor.pipeline import TransitionKey
+ from tests.conftest import assert_contract_is_typed
+@@ -90,8 +90,8 @@ class MockStep:
+     def reset(self) -> None:
+         self.counter = 0
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        # We do not test feature_contract here
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We do not test dataset_features here
+         return features
+
+
+@@ -112,8 +112,8 @@ class MockStepWithoutOptionalMethods:
+
+         return transition
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        # We do not test feature_contract here
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We do not test dataset_features here
+         return features
+
+
+@@ -168,8 +168,8 @@ class MockStepWithTensorState:
+         self.running_mean.zero_()
+         self.running_count.zero_()
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        # We do not test feature_contract here
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We do not test dataset_features here
+         return features
+
+
+@@ -724,8 +724,8 @@ class MockModuleStep(nn.Module):
+         self.running_mean.zero_()
+         self.counter = 0
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        # We do not test feature_contract here
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We do not test dataset_features here
+         return features
+
+
+@@ -806,8 +806,8 @@ class MockNonModuleStepWithState:
+         self.step_count.zero_()
+         self.history.clear()
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        # We do not test feature_contract here
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We do not test dataset_features here
+         return features
+
+
+@@ -861,8 +861,8 @@ class MockStepWithNonSerializableParam:
+     def reset(self) -> None:
+         pass
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        # We do not test feature_contract here
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We do not test dataset_features here
+         return features
+
+
+@@ -900,8 +900,8 @@ class RegisteredMockStep:
+     def reset(self) -> None:
+         pass
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-        # We do not test feature_contract here
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        # We do not test dataset_features here
+         return features
+
+
+@@ -1446,8 +1446,8 @@ def test_state_file_naming_with_registry():
+         def load_state_dict(self, state):
+             self.state_tensor = state["state_tensor"]
+
+-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-            # We do not test feature_contract here
++        def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++            # We do not test dataset_features here
+             return features
+
+     try:
+@@ -1503,8 +1503,8 @@ def test_override_with_nested_config():
+         def get_config(self):
+             return {"name": self.name, "simple_param": self.simple_param, "nested_config": self.nested_config}
+
+-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-            # We do not test feature_contract here
++        def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++            # We do not test dataset_features here
+             return features
+
+     try:
+@@ -1595,8 +1595,8 @@ def test_override_with_callables():
+         def get_config(self):
+             return {"name": self.name}
+
+-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-            # We do not test feature_contract here
++        def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++            # We do not test dataset_features here
+             return features
+
+     try:
+@@ -1830,8 +1830,8 @@ def test_override_with_device_strings():
+         def load_state_dict(self, state):
+             self.buffer = state["buffer"]
+
+-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+-            # We do not test feature_contract here
++        def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++            # We do not test dataset_features here
+             return features
+
+     try:
+@@ -1924,21 +1924,21 @@ def test_save_load_with_custom_converter_functions():
+
+
+ class NonCompliantStep:
+-    """Intentionally non-compliant: missing feature_contract."""
++    """Intentionally non-compliant: missing dataset_features."""
+
+     def __call__(self, transition: EnvTransition) -> EnvTransition:
+         return transition
+
+
+-def test_construction_rejects_step_without_feature_contract():
+-    with pytest.raises(TypeError, match=r"must define feature_contract\(features\) -> dict\[str, Any\]"):
++def test_construction_rejects_step_without_dataset_features():
++    with pytest.raises(TypeError, match=r"must define dataset_features\(features\) -> dict\[str, Any\]"):
+         RobotProcessor([NonCompliantStep()])
+
+
+ class NonCallableStep:
+     """Intentionally non-compliant: missing __call__."""
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+         return features
+
+
+@@ -1957,7 +1957,7 @@ class FeatureContractAddStep:
+     def __call__(self, transition: EnvTransition) -> EnvTransition:
+         return transition
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+         features[self.key] = self.value
+         return features
+
+@@ -1972,7 +1972,7 @@ class FeatureContractMutateStep:
+     def __call__(self, transition: EnvTransition) -> EnvTransition:
+         return transition
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+         features[self.key] = self.fn(features.get(self.key))
+         return features
+
+@@ -1984,7 +1984,7 @@ class FeatureContractBadReturnStep:
+     def __call__(self, transition: EnvTransition) -> EnvTransition:
+         return transition
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+         return ["not-a-dict"]
+
+
+@@ -1997,12 +1997,12 @@ class FeatureContractRemoveStep:
+     def __call__(self, transition: EnvTransition) -> EnvTransition:
+         return transition
+
+-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+         features.pop(self.key, None)
+         return features
+
+
+-def test_feature_contract_orders_and_merges(policy_feature_factory):
++def test_dataset_features_orders_and_merges(policy_feature_factory):
+     p = RobotProcessor(
+         [
+             FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
+@@ -2010,14 +2010,14 @@ def test_feature_contract_orders_and_merges(policy_feature_factory):
+             FeatureContractAddStep("b", policy_feature_factory(FeatureType.ENV, (2,))),
+         ]
+     )
+-    out = p.feature_contract({})
++    out = p.dataset_features({})
+
+     assert out["a"].type == FeatureType.STATE and out["a"].shape == (3,)
+     assert out["b"].type == FeatureType.ENV and out["b"].shape == (2,)
+     assert_contract_is_typed(out)
+
+
+-def test_feature_contract_respects_initial_without_mutation(policy_feature_factory):
++def test_dataset_features_respects_initial_without_mutation(policy_feature_factory):
+     initial = {
+         "seed": policy_feature_factory(FeatureType.STATE, (7,)),
+         "nested": policy_feature_factory(FeatureType.ENV, (0,)),
+@@ -2030,7 +2030,7 @@ def test_feature_contract_respects_initial_without_mutation(policy_feature_facto
+             ),
+         ]
+     )
+-    out = p.feature_contract(initial_features=initial)
++    out = p.dataset_features(initial_features=initial)
+
+     assert out["seed"].shape == (8,)
+     assert out["nested"].shape == (5,)
+@@ -2041,13 +2041,13 @@ def test_feature_contract_respects_initial_without_mutation(policy_feature_facto
+     assert_contract_is_typed(out)
+
+
+-def test_feature_contract_type_error_on_bad_step():
++def test_dataset_features_type_error_on_bad_step():
+     p = RobotProcessor([FeatureContractAddStep(), FeatureContractBadReturnStep()])
+-    with pytest.raises(TypeError, match=r"\w+\.feature_contract must return dict\[str, Any\]"):
+-        _ = p.feature_contract({})
++    with pytest.raises(TypeError, match=r"\w+\.dataset_features must return dict\[str, Any\]"):
++        _ = p.dataset_features({})
+
+
+-def test_feature_contract_execution_order_tracking():
++def test_dataset_features_execution_order_tracking():
+     class Track:
+         def __init__(self, label):
+             self.label = label
+@@ -2055,32 +2055,169 @@ def test_feature_contract_execution_order_tracking():
+         def __call__(self, transition: EnvTransition) -> EnvTransition:
+             return transition
+
+-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
++        def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+             code = {"A": 1, "B": 2, "C": 3}[self.label]
+             pf = features.get("order", PolicyFeature(type=FeatureType.ENV, shape=()))
+             features["order"] = PolicyFeature(type=pf.type, shape=pf.shape + (code,))
+             return features
+
+-    out = RobotProcessor([Track("A"), Track("B"), Track("C")]).feature_contract({})
++    out = RobotProcessor([Track("A"), Track("B"), Track("C")]).dataset_features({})
+     assert out["order"].shape == (1, 2, 3)
+
+
+-def test_feature_contract_remove_key(policy_feature_factory):
++def test_dataset_features_remove_key(policy_feature_factory):
+     p = RobotProcessor(
+         [
+             FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
+             FeatureContractRemoveStep("a"),
+         ]
+     )
+-    out = p.feature_contract({})
++    out = p.dataset_features({})
+     assert "a" not in out
+
+
+-def test_feature_contract_remove_from_initial(policy_feature_factory):
++def test_dataset_features_remove_from_initial(policy_feature_factory):
+     initial = {
+         "keep": policy_feature_factory(FeatureType.STATE, (1,)),
+         "drop": policy_feature_factory(FeatureType.STATE, (1,)),
+     }
+     p = RobotProcessor([FeatureContractRemoveStep("drop")])
+-    out = p.feature_contract(initial_features=initial)
++    out = p.dataset_features(initial_features=initial)
+     assert "drop" not in out and out["keep"] == initial["keep"]
++
++
++@dataclass
++class AddActionEEAndJointFeatures:
++    """Adds both EE and JOINT action features."""
++
++    def __call__(self, tr):
++        return tr
++
++    def dataset_features(self, features: dict) -> dict:
++        # EE features
++        features["action.ee.x"] = float
++        features["action.ee.y"] = float
++        # JOINT features
++        features["action.j1.pos"] = float
++        features["action.j2.pos"] = float
++        return features
++
++
++@dataclass
++class AddObservationStateFeatures:
++    """Adds state features (and optionally an image spec to test precedence)."""
++
++    add_front_image: bool = False
++    front_image_shape: tuple = (240, 320, 3)
++
++    def __call__(self, tr):
++        return tr
++
++    def dataset_features(self, features: dict) -> dict:
++        # State features (mix EE and a joint state)
++        features["observation.state.ee.x"] = float
++        features["observation.state.j1.pos"] = float
++        if self.add_front_image:
++            features["observation.images.front"] = self.front_image_shape
++        return features
++
++
++def test_aggregate_joint_action_only():
++    rp = RobotProcessor([AddActionEEAndJointFeatures()])
++    initial = {"front": (480, 640, 3)}  # cameras (should be ignored because include=("action",))
++
++    out = rp.aggregate_dataset_features(
++        initial_features=initial,
++        use_videos=True,
++        include=("action",),
++        action_type=DatasetFeatureType.JOINT,
++    )
++
++    # Expect only "action" with joint names
++    assert "action" in out and "observation.state" not in out
++    assert out["action"]["dtype"] == "float32"
++    assert set(out["action"]["names"]) == {"j1.pos", "j2.pos"}
++    assert out["action"]["shape"] == (len(out["action"]["names"]),)
++
++    # No images because observation wasn't included
++    assert not any(k.startswith("observation.images.") for k in out)
++
++
++def test_aggregate_ee_action_and_observation_with_videos():
++    rp = RobotProcessor([AddActionEEAndJointFeatures(), AddObservationStateFeatures()])
++    initial = {"front": (480, 640, 3), "side": (720, 1280, 3)}
++
++    out = rp.aggregate_dataset_features(
++        initial_features=initial,
++        use_videos=True,
++        include=("action", "observation"),
++        action_type=DatasetFeatureType.EE,  # only EE actions
++    )
++
++    # Action should pack only EE names
++    assert "action" in out
++    assert set(out["action"]["names"]) == {"ee.x", "ee.y"}
++    assert out["action"]["dtype"] == "float32"
++
++    # Observation state should pack both ee.x and j1.pos as a vector
++    assert "observation.state" in out
++    assert set(out["observation.state"]["names"]) == {"ee.x", "j1.pos"}
++    assert out["observation.state"]["dtype"] == "float32"
++
++    # Cameras from initial_features appear as videos
++    for cam in ("front", "side"):
++        key = f"observation.images.{cam}"
++        assert key in out
++        assert out[key]["dtype"] == "video"
++        assert out[key]["shape"] == initial[cam]
++        assert out[key]["names"] == ["height", "width", "channels"]
++
++
++def test_aggregate_both_action_types():
++    rp = RobotProcessor([AddActionEEAndJointFeatures()])
++    out = rp.aggregate_dataset_features(
++        initial_features={},
++        use_videos=True,
++        include=("action",),
++        action_type=[DatasetFeatureType.EE, DatasetFeatureType.JOINT],
++    )
++
++    assert "action" in out
++    expected = {"ee.x", "ee.y", "j1.pos", "j2.pos"}
++    assert set(out["action"]["names"]) == expected
++    assert out["action"]["shape"] == (len(expected),)
++
++
++def test_aggregate_images_when_use_videos_false():
++    rp = RobotProcessor([AddObservationStateFeatures()])
++    initial = {"front": (480, 640, 3)}
++
++    out = rp.aggregate_dataset_features(
++        initial_features=initial,
++        use_videos=False,  # expect "image" dtype
++        include=("observation",),
++        action_type=DatasetFeatureType.JOINT,
++    )
++
++    key = "observation.images.front"
++    assert key in out
++    assert out[key]["dtype"] == "image"
++    assert out[key]["shape"] == initial["front"]
++
++
++def test_initial_camera_not_overridden_by_step_image():
++    # Step explicitly sets a different front image shape; initial has another shape.
++    # aggregate_dataset_features should keep the step's value (setdefault behavior on initial cams).
++    rp = RobotProcessor([AddObservationStateFeatures(add_front_image=True, front_image_shape=(240, 320, 3))])
++    initial = {"front": (480, 640, 3)}  # should NOT override the step-provided (240, 320, 3)
++
++    out = rp.aggregate_dataset_features(
++        initial_features=initial,
++        use_videos=True,
++        include=("observation",),
++        action_type=DatasetFeatureType.JOINT,
++    )
++
++    key = "observation.images.front"
++    assert key in out
++    assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial
+diff --git a/tests/processor/test_rename_processor.py b/tests/processor/test_rename_processor.py
+index 229d57f9..1c2fd71d 100644
+--- a/tests/processor/test_rename_processor.py
++++ b/tests/processor/test_rename_processor.py
+@@ -410,7 +410,7 @@ def test_value_types_preserved():
+     assert processed_obs["old_list"] == [1, 2, 3]
+
+
+-def test_feature_contract_basic_renaming(policy_feature_factory):
++def test_dataset_features_basic_renaming(policy_feature_factory):
+     processor = RenameProcessor(rename_map={"a": "x", "b": "y"})
+     features = {
+         "a": policy_feature_factory(FeatureType.STATE, (2,)),
+@@ -418,7 +418,7 @@ def test_feature_contract_basic_renaming(policy_feature_factory):
+         "c": policy_feature_factory(FeatureType.ENV, (1,)),
+     }
+
+-    out = processor.feature_contract(features.copy())
++    out = processor.dataset_features(features.copy())
+
+     # Values preserved and typed
+     assert out["x"] == features["a"]
+@@ -430,14 +430,14 @@ def test_feature_contract_basic_renaming(policy_feature_factory):
+     assert set(features) == {"a", "b", "c"}
+
+
+-def test_feature_contract_overlapping_keys(policy_feature_factory):
++def test_dataset_features_overlapping_keys(policy_feature_factory):
+     # Overlapping renames: both 'a' and 'b' exist. 'a'->'b', 'b'->'c'
+     processor = RenameProcessor(rename_map={"a": "b", "b": "c"})
+     features = {
+         "a": policy_feature_factory(FeatureType.STATE, (1,)),
+         "b": policy_feature_factory(FeatureType.STATE, (2,)),
+     }
+-    out = processor.feature_contract(features)
++    out = processor.dataset_features(features)
+
+     assert set(out) == {"b", "c"}
+     assert out["b"] == features["a"]  # 'a' renamed to'b'
+@@ -445,7 +445,7 @@ def test_feature_contract_overlapping_keys(policy_feature_factory):
+     assert_contract_is_typed(out)
+
+
+-def test_feature_contract_chained_processors(policy_feature_factory):
++def test_dataset_features_chained_processors(policy_feature_factory):
+     # Chain two rename processors at the contract level
+     processor1 = RenameProcessor(rename_map={"pos": "agent_position", "img": "camera_image"})
+     processor2 = RenameProcessor(
+@@ -458,7 +458,7 @@ def test_feature_contract_chained_processors(policy_feature_factory):
+         "img": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
+         "extra": policy_feature_factory(FeatureType.ENV, (1,)),
+     }
+-    out = pipeline.feature_contract(initial_features=spec)
++    out = pipeline.dataset_features(initial_features=spec)
+
+     assert set(out) == {"observation.state", "observation.image", "extra"}
+     assert out["observation.state"] == spec["pos"]
+diff --git a/tests/processor/test_utils.py b/tests/processor/test_utils.py
+new file mode 100644
+index 00000000..7d312462
+--- /dev/null
++++ b/tests/processor/test_utils.py
+@@ -0,0 +1,233 @@
++import numpy as np
++import pytest
++import torch
++
++from lerobot.processor.pipeline import TransitionKey
++from lerobot.processor.utils import (
++    to_dataset_frame,
++    to_output_robot_action,
++    to_transition_robot_observation,
++    to_transition_teleop_action,
++)
++
++
++def test_to_transition_teleop_action_prefix_and_tensor_conversion():
++    # Scalars, arrays, and "image-like" uint8 arrays are supported
++    img = np.zeros((8, 12, 3), dtype=np.uint8)
++    act = {
++        "ee.x": 0.5,  # scalar -> torch tensor
++        "delta": np.array([1.0, 2.0]),  # ndarray -> torch tensor
++        "raw_img": img,  # uint8 HWC -> passthrough ndarray
++    }
++
++    tr = to_transition_teleop_action(act)
++
++    # Should be an EnvTransition-like dict with ACTION populated
++    assert isinstance(tr, dict)
++    assert TransitionKey.ACTION in tr
++    assert "action.ee.x" in tr[TransitionKey.ACTION]
++    assert "action.delta" in tr[TransitionKey.ACTION]
++    assert "action.raw_img" in tr[TransitionKey.ACTION]
++
++    # Types: scalars/arrays -> torch tensor; images -> np.ndarray
++    assert isinstance(tr[TransitionKey.ACTION]["action.ee.x"], torch.Tensor)
++    assert tr[TransitionKey.ACTION]["action.ee.x"].dtype == torch.float32
++    assert tr[TransitionKey.ACTION]["action.ee.x"].item() == pytest.approx(0.5)
++
++    assert isinstance(tr[TransitionKey.ACTION]["action.delta"], torch.Tensor)
++    assert tr[TransitionKey.ACTION]["action.delta"].dtype == torch.float32
++    assert tr[TransitionKey.ACTION]["action.delta"].shape == (2,)
++    assert torch.allclose(tr[TransitionKey.ACTION]["action.delta"], torch.tensor([1.0, 2.0]))
++
++    assert isinstance(tr[TransitionKey.ACTION]["action.raw_img"], np.ndarray)
++    assert tr[TransitionKey.ACTION]["action.raw_img"].dtype == np.uint8
++    assert tr[TransitionKey.ACTION]["action.raw_img"].shape == (8, 12, 3)
++
++    # Observation is created as empty dict by make_transition
++    assert TransitionKey.OBSERVATION in tr
++    assert isinstance(tr[TransitionKey.OBSERVATION], dict)
++    assert tr[TransitionKey.OBSERVATION] == {}
++
++
++def test_to_transition_robot_observation_state_vs_images_split():
++    # Create an observation with mixed content
++    img = np.full((10, 20, 3), 255, dtype=np.uint8)  # image (uint8 HWC)
++    obs = {
++        "j1.pos": 10.0,  # scalar -> state -> torch tensor
++        "j2.pos": np.float32(20.0),  # scalar np -> state -> torch tensor
++        "image_front": img,  # -> images passthrough
++        "flag": np.int32(7),  # scalar -> state -> torch tensor
++        "arr": np.array([1.5, 2.5]),  # vector -> state -> torch tensor
++    }
++
++    tr = to_transition_robot_observation(obs)
++    assert isinstance(tr, dict)
++    assert TransitionKey.OBSERVATION in tr
++
++    out = tr[TransitionKey.OBSERVATION]
++    # Check state keys are present and converted to tensors
++    for k in ("j1.pos", "j2.pos", "flag", "arr"):
++        key = f"observation.state.{k}"
++        assert key in out
++        v = out[key]
++        if k != "arr":
++            assert isinstance(v, torch.Tensor) and v.ndim == 0
++        else:
++            assert isinstance(v, torch.Tensor) and v.ndim == 1 and v.shape == (2,)
++
++    # Check image present as is
++    assert "observation.images.image_front" in out
++    assert isinstance(out["observation.images.image_front"], np.ndarray)
++    assert out["observation.images.image_front"].dtype == np.uint8
++    assert out["observation.images.image_front"].shape == (10, 20, 3)
++
++    # ACTION should be empty dict by make_transition
++    assert TransitionKey.ACTION in tr
++    assert isinstance(tr[TransitionKey.ACTION], dict)
++    assert tr[TransitionKey.ACTION] == {}
++
++
++def test_to_output_robot_action_strips_prefix_and_filters_pos_keys_only():
++    # Build a transition with mixed action keys
++    tr = {
++        TransitionKey.ACTION: {
++            "action.j1.pos": 11.0,  # keep -> "j1.pos"
++            "action.gripper.pos": torch.tensor(33.0),  # keep: tensor accepted
++            "action.ee.x": 0.5,  # ignore (doesn't end with .pos)
++            "misc": "ignore_me",  # ignore (no 'action.' prefix)
++        }
++    }
++
++    out = to_output_robot_action(tr)
++    # Only ".pos" keys with "action." prefix are retained and stripped to base names
++    assert set(out.keys()) == {"j1.pos", "gripper.pos"}
++    # Values converted to float
++    assert isinstance(out["j1.pos"], float)
++    assert isinstance(out["gripper.pos"], float)
++    assert out["j1.pos"] == pytest.approx(11.0)
++    assert out["gripper.pos"] == pytest.approx(33.0)
++
++
++def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
++    # Fabricate dataset features (as stored in dataset.meta["features"])
++    features = {
++        # Action vector: 3 elements in specific order
++        "action": {
++            "dtype": "float32",
++            "shape": (3,),
++            "names": ["j1.pos", "j2.pos", "gripper.pos"],
++        },
++        # Observation state vector: 2 elements
++        "observation.state": {
++            "dtype": "float32",
++            "shape": (2,),
++            "names": ["j1.pos", "j2.pos"],
++        },
++        # Image spec (video/image dtype acceptable): names unimportant here
++        "observation.images.front": {"dtype": "image", "shape": (480, 640, 3), "names": ["h", "w", "c"]},
++    }
++
++    to_out = to_dataset_frame(features)
++
++    # Build two transitions to be merged: teleop (action) and robot obs (state/images)
++    img = np.random.randint(0, 255, size=(480, 640, 3), dtype=np.uint8)
++
++    teleop_transition = {
++        TransitionKey.OBSERVATION: {},
++        TransitionKey.ACTION: {
++            "action.j1.pos": torch.tensor(1.1),  # will be picked in vector order
++            "action.j2.pos": torch.tensor(2.2),
++            # "action.gripper.pos" intentionally missing -> default 0.0
++            "action.ee.x": 0.5,  # should be ignored by final robot_action output, but stored in action vector only if present in names (it's not)
++        },
++        TransitionKey.COMPLEMENTARY_DATA: {
++            "frame_is_pad": True,  # should be copied to batch
++            "task": "Pick cube",  # special 'task' key should be propagated
++        },
++    }
++
++    robot_transition = {
++        TransitionKey.OBSERVATION: {
++            "observation.state.j1.pos": torch.tensor(10.0),
++            "observation.state.j2.pos": torch.tensor(20.0),
++            "observation.images.front": img,  # passthrough
++        },
++        TransitionKey.REWARD: torch.tensor(5.0),
++        TransitionKey.DONE: True,
++        TransitionKey.TRUNCATED: False,
++        TransitionKey.INFO: {"note": "ok"},
++    }
++
++    # Merge two transitions -> to_out should combine action, observation, images, and metadata
++    batch = to_out([teleop_transition, robot_transition])
++
++    # 1) Images are passed through ONLY if declared in features and present in the obs transition
++    assert "observation.images.front" in batch
++    assert batch["observation.images.front"].shape == img.shape
++    assert batch["observation.images.front"].dtype == np.uint8
++    assert np.shares_memory(batch["observation.images.front"], img) or np.array_equal(
++        batch["observation.images.front"], img
++    )
++
++    # 2) observation.state packed as vector in the declared order
++    assert "observation.state" in batch
++    obs_vec = batch["observation.state"]
++    assert isinstance(obs_vec, np.ndarray) and obs_vec.dtype == np.float32
++    assert obs_vec.shape == (2,)
++    assert obs_vec[0] == pytest.approx(10.0)  # j1.pos
++    assert obs_vec[1] == pytest.approx(20.0)  # j2.pos
++
++    # 3) action packed in the declared order with missing default 0.0
++    assert "action" in batch
++    act_vec = batch["action"]
++    assert isinstance(act_vec, np.ndarray) and act_vec.dtype == np.float32
++    assert act_vec.shape == (3,)
++    assert act_vec[0] == pytest.approx(1.1)  # j1.pos
++    assert act_vec[1] == pytest.approx(2.2)  # j2.pos
++    assert act_vec[2] == pytest.approx(0.0)  # gripper.pos missing -> default 0.0
++
++    # 4) next.* metadata
++    assert batch["next.reward"] == pytest.approx(5.0)
++    assert batch["next.done"] is True
++    assert batch["next.truncated"] is False
++    assert batch["info"] == {"note": "ok"}
++
++    # 5) complementary data: *_is_pad and 'task'
++    assert batch["frame_is_pad"] is True
++    assert batch["task"] == "Pick cube"
++
++
++def test_to_dataset_frame_single_transition_works_and_last_writer_wins():
++    features = {
++        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
++        "observation.state": {"dtype": "float32", "shape": (1,), "names": ["x"]},
++    }
++    to_out = to_dataset_frame(features)
++
++    tr1 = {
++        TransitionKey.OBSERVATION: {"observation.state.x": torch.tensor(1.0)},
++        TransitionKey.ACTION: {"action.a": torch.tensor(0.1)},
++        TransitionKey.REWARD: 1.0,
++    }
++    tr2 = {
++        TransitionKey.ACTION: {"action.b": torch.tensor(0.9)},
++        TransitionKey.REWARD: 2.0,  # last writer wins
++    }
++
++    # Single element list
++    b1 = to_out([tr1])
++    assert np.allclose(b1["observation.state"], np.array([1.0], dtype=np.float32))
++    assert np.allclose(b1["action"], np.array([0.1, 0.0], dtype=np.float32))
++    assert b1.get("next.reward", None) == 1.0
++
++    # Merge both - reward should come from tr2 (last)
++    b2 = to_out([tr1, tr2])
++    assert np.allclose(b2["observation.state"], np.array([1.0], dtype=np.float32))
++    assert np.allclose(b2["action"], np.array([0.1, 0.9], dtype=np.float32))
++    assert b2["next.reward"] == 2.0
++
++    # Passing a single transition object (not list) also works
++    b3 = to_out(tr2)
++    assert np.allclose(b3["action"], np.array([0.0, 0.9], dtype=np.float32))
++    assert "observation.state" in b3  # filled with default 0.0
++    assert np.allclose(b3["observation.state"], np.array([0.0], dtype=np.float32))
+diff --git a/tests/utils/test_visualization_utils.py b/tests/utils/test_visualization_utils.py
+new file mode 100644
+index 00000000..7c496c0b
+--- /dev/null
++++ b/tests/utils/test_visualization_utils.py
+@@ -0,0 +1,238 @@
++import importlib
++import sys
++from types import SimpleNamespace
++
++import numpy as np
++import pytest
++
++from lerobot.processor.pipeline import TransitionKey
++
++
++@pytest.fixture
++def mock_rerun(monkeypatch):
++    """
++    Provide a mock `rerun` module so tests don't depend on the real library.
++    Also reload the module-under-test so it binds to this fake `rr`.
++    """
++    calls = []
++
++    class DummyScalar:
++        def __init__(self, value):
++            # ensure we can compare & inspect easily in assertions
++            self.value = float(value)
++
++    class DummyImage:
++        def __init__(self, arr):
++            # store reference for shape checks
++            self.arr = arr
++
++    def dummy_log(key, obj, **kwargs):
++        # Record key, type(obj), content, and any kwargs (e.g., static=True)
++        calls.append((key, obj, kwargs))
++
++    dummy_rr = SimpleNamespace(
++        Scalar=DummyScalar,
++        Image=DummyImage,
++        log=dummy_log,
++        # present but not used in the function under test
++        init=lambda *a, **k: None,
++        spawn=lambda *a, **k: None,
++    )
++
++    # Inject fake module into sys.modules BEFORE importing the module under test
++    monkeypatch.setitem(sys.modules, "rerun", dummy_rr)
++
++    # Now import and reload the module under test, to bind to our fake rr
++    import lerobot.utils.visualization_utils as vu
++
++    importlib.reload(vu)
++
++    # Expose both the reloaded module and our call recorder
++    yield vu, calls
++
++
++def _keys(calls):
++    """Helper to extract just the keys logged to rr.log"""
++    return [k for (k, _obj, _kw) in calls]
++
++
++def _obj_for(calls, key):
++    """Find the first object logged under a given key."""
++    for k, obj, _kw in calls:
++        if k == key:
++            return obj
++    raise KeyError(f"Key {key} not found in calls: {calls}")
++
++
++def _kwargs_for(calls, key):
++    for k, _obj, kw in calls:
++        if k == key:
++            return kw
++    raise KeyError(f"Key {key} not found in calls: {calls}")
++
++
++def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
++    vu, calls = mock_rerun
++
++    # Build EnvTransition-like dict with prefixed keys:
++    obs = {
++        "observation.state.temperature": np.float32(25.0),
++        # CHW image: (C,H,W) -> should be converted to HWC for rr.Image
++        "observation.camera": np.zeros((3, 10, 20), dtype=np.uint8),
++    }
++    act = {
++        "action.throttle": 0.7,
++        # 1D array => should log individual Scalars with suffix _i
++        "action.vector": np.array([1.0, 2.0], dtype=np.float32),
++    }
++    transition = {
++        TransitionKey.OBSERVATION: obs,
++        TransitionKey.ACTION: act,
++    }
++
++    vu.log_rerun_data(transition)
++
++    # We expect:
++    # - observation.state.temperature -> Scalar
++    # - observation.camera -> Image (HWC) with static=True
++    # - action.throttle -> Scalar
++    # - action.vector_0, action.vector_1 -> Scalars
++    expected_keys = {
++        "observation.state.temperature",
++        "observation.camera",
++        "action.throttle",
++        "action.vector_0",
++        "action.vector_1",
++    }
++    assert set(_keys(calls)) == expected_keys
++
++    # Check scalar types and values
++    temp_obj = _obj_for(calls, "observation.state.temperature")
++    assert type(temp_obj).__name__ == "DummyScalar"
++    assert temp_obj.value == pytest.approx(25.0)
++
++    throttle_obj = _obj_for(calls, "action.throttle")
++    assert type(throttle_obj).__name__ == "DummyScalar"
++    assert throttle_obj.value == pytest.approx(0.7)
++
++    v0 = _obj_for(calls, "action.vector_0")
++    v1 = _obj_for(calls, "action.vector_1")
++    assert type(v0).__name__ == "DummyScalar"
++    assert type(v1).__name__ == "DummyScalar"
++    assert v0.value == pytest.approx(1.0)
++    assert v1.value == pytest.approx(2.0)
++
++    # Check image handling: CHW -> HWC
++    img_obj = _obj_for(calls, "observation.camera")
++    assert type(img_obj).__name__ == "DummyImage"
++    assert img_obj.arr.shape == (10, 20, 3)  # transposed
++    # static=True on images
++    assert _kwargs_for(calls, "observation.camera").get("static", False) is True
++
++
++def test_log_rerun_data_plain_list_ordering_and_prefixes(mock_rerun):
++    vu, calls = mock_rerun
++
++    # First dict without prefixes treated as observation
++    # Second dict without prefixes treated as action
++    obs_plain = {
++        "temp": 1.5,
++        # Already HWC image => should stay as-is
++        "img": np.zeros((5, 6, 3), dtype=np.uint8),
++        "none": None,  # should be skipped
++    }
++    act_plain = {
++        "throttle": 0.3,
++        "vec": np.array([9, 8, 7], dtype=np.float32),
++    }
++
++    vu.log_rerun_data([obs_plain, act_plain])
++
++    # Expected keys with auto-prefixes
++    expected = {
++        "observation.temp",
++        "observation.img",
++        "action.throttle",
++        "action.vec_0",
++        "action.vec_1",
++        "action.vec_2",
++    }
++    logged = set(_keys(calls))
++    assert logged == expected
++
++    # Scalars
++    t = _obj_for(calls, "observation.temp")
++    assert type(t).__name__ == "DummyScalar"
++    assert t.value == pytest.approx(1.5)
++
++    throttle = _obj_for(calls, "action.throttle")
++    assert type(throttle).__name__ == "DummyScalar"
++    assert throttle.value == pytest.approx(0.3)
++
++    # Image stays HWC
++    img = _obj_for(calls, "observation.img")
++    assert type(img).__name__ == "DummyImage"
++    assert img.arr.shape == (5, 6, 3)
++    assert _kwargs_for(calls, "observation.img").get("static", False) is True
++
++    # Vector elements
++    for i, val in enumerate([9, 8, 7]):
++        o = _obj_for(calls, f"action.vec_{i}")
++        assert type(o).__name__ == "DummyScalar"
++        assert o.value == pytest.approx(val)
++
++
++def test_log_rerun_data_prefixed_dicts_and_action_flatten(mock_rerun):
++    vu, calls = mock_rerun
++
++    item1 = {"observation.state.speed": np.array([1.0, 2.0], dtype=np.float32)}
++    item2 = {"action.force": np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)}
++    vu.log_rerun_data([item1, item2])
++
++    # observation: 1D => split
++    assert "observation.state.speed_0" in _keys(calls)
++    assert "observation.state.speed_1" in _keys(calls)
++    s0 = _obj_for(calls, "observation.state.speed_0")
++    s1 = _obj_for(calls, "observation.state.speed_1")
++    assert type(s0).__name__ == "DummyScalar"
++    assert type(s1).__name__ == "DummyScalar"
++    assert s0.value == pytest.approx(1.0)
++    assert s1.value == pytest.approx(2.0)
++
++    # action: 2D => flatten then log as scalars
++    expected_force_keys = {f"action.force_{i}" for i in range(4)}
++    assert expected_force_keys.issubset(set(_keys(calls)))
++
++    vals = [1.0, 2.0, 3.0, 4.0]
++    for i, val in enumerate(vals):
++        o = _obj_for(calls, f"action.force_{i}")
++        assert type(o).__name__ == "DummyScalar"
++        assert o.value == pytest.approx(val)
++
++
++def test_log_rerun_data_kwargs_only(mock_rerun):
++    vu, calls = mock_rerun
++
++    vu.log_rerun_data(
++        None,
++        observation={"observation.temp": 10.0, "observation.gray": np.zeros((8, 8, 1), dtype=np.uint8)},
++        action={"action.a": 1.0},
++    )
++
++    keys = set(_keys(calls))
++    assert "observation.temp" in keys
++    assert "observation.gray" in keys
++    assert "action.a" in keys
++
++    temp = _obj_for(calls, "observation.temp")
++    assert type(temp).__name__ == "DummyScalar"
++    assert temp.value == pytest.approx(10.0)
++
++    img = _obj_for(calls, "observation.gray")
++    assert type(img).__name__ == "DummyImage"
++    assert img.arr.shape == (8, 8, 1)  # remains HWC
++    assert _kwargs_for(calls, "observation.gray").get("static", False) is True
++
++    a = _obj_for(calls, "action.a")
++    assert type(a).__name__ == "DummyScalar"
++    assert a.value == pytest.approx(1.0)

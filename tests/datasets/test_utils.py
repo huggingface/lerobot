@@ -14,12 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 from datasets import Dataset
 from huggingface_hub import DatasetCard
 
 from lerobot.datasets.push_dataset_to_hub.utils import calculate_episode_data_index
-from lerobot.datasets.utils import create_lerobot_dataset_card, hf_transform_to_torch
+from lerobot.datasets.utils import create_lerobot_dataset_card, hf_transform_to_torch, merge_grouped_features
 
 
 def test_default_parameters():
@@ -53,3 +54,80 @@ def test_calculate_episode_data_index():
     episode_data_index = calculate_episode_data_index(dataset)
     assert torch.equal(episode_data_index["from"], torch.tensor([0, 2, 3]))
     assert torch.equal(episode_data_index["to"], torch.tensor([2, 3, 6]))
+
+
+def test_merge_simple_vectors():
+    g1 = {
+        "action": {
+            "dtype": "float32",
+            "shape": (2,),
+            "names": ["ee.x", "ee.y"],
+        }
+    }
+    g2 = {
+        "action": {
+            "dtype": "float32",
+            "shape": (2,),
+            "names": ["ee.y", "ee.z"],
+        }
+    }
+
+    out = merge_grouped_features(g1, g2)
+
+    assert "action" in out
+    assert out["action"]["dtype"] == "float32"
+    # names merged with preserved order & de-dup
+    assert out["action"]["names"] == ["ee.x", "ee.y", "ee.z"]
+    # shape recomputed from names length
+    assert out["action"]["shape"] == (3,)
+
+
+def test_merge_multiple_groups_order_and_dedup():
+    g1 = {"action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]}}
+    g2 = {"action": {"dtype": "float32", "shape": (2,), "names": ["b", "c"]}}
+    g3 = {"action": {"dtype": "float32", "shape": (3,), "names": ["a", "c", "d"]}}
+
+    out = merge_grouped_features(g1, g2, g3)
+
+    # Order: from first group, then unseen from subsequent groups
+    assert out["action"]["names"] == ["a", "b", "c", "d"]
+    assert out["action"]["shape"] == (4,)
+
+
+def test_non_vector_last_wins_for_images():
+    # Non-vector (dtype=image) should be overwritten by the last spec
+    g1 = {
+        "observation.images.front": {
+            "dtype": "image",
+            "shape": (3, 480, 640),
+            "names": ["channels", "height", "width"],
+        }
+    }
+    g2 = {
+        "observation.images.front": {
+            "dtype": "image",
+            "shape": (3, 720, 1280),
+            "names": ["channels", "height", "width"],
+        }
+    }
+
+    out = merge_grouped_features(g1, g2)
+    assert out["observation.images.front"]["shape"] == (3, 720, 1280)
+    assert out["observation.images.front"]["dtype"] == "image"
+
+
+def test_dtype_mismatch_raises():
+    g1 = {"action": {"dtype": "float32", "shape": (1,), "names": ["a"]}}
+    g2 = {"action": {"dtype": "float64", "shape": (1,), "names": ["b"]}}
+
+    with pytest.raises(ValueError, match="dtype mismatch for 'action'"):
+        _ = merge_grouped_features(g1, g2)
+
+
+def test_non_dict_passthrough_last_wins():
+    g1 = {"misc": 123}
+    g2 = {"misc": 456}
+
+    out = merge_grouped_features(g1, g2)
+    # Non-dict entries are assigned; last one wins
+    assert out["misc"] == 456

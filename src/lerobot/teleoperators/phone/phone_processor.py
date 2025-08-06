@@ -1,0 +1,90 @@
+# !/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from dataclasses import dataclass, field
+
+from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
+from lerobot.teleoperators.phone.config_phone import PhoneOS
+
+
+@ProcessorStepRegistry.register("map_phone_action_to_robot_action")
+@dataclass
+class MapPhoneActionToRobotAction(ActionProcessor):
+    """
+    Map calibrated phone pose (actions) to the inputs for robot actions
+
+    Expected input ACTION keys:
+    {
+        "action.phone.enabled": bool,
+        "action.phone.pos": np.ndarray,
+        "action.phone.rot": Rotation,
+        "action.phone.raw_inputs": dict,
+    }
+
+    Output ACTION keys:
+    {
+        "action.enabled": bool,
+        "action.ee.{x,y,z,wx,wy,wz}" : float
+        "action.gripper": float,
+    }
+    """
+
+    platform: PhoneOS
+    _enabled_prev: bool = field(default=False, init=False, repr=False)
+
+    def action(self, act: dict | None) -> dict:
+        # Pop them from the action
+        enabled = act.pop("action.phone.enabled", 0)
+        pos = act.pop("action.phone.pos", None)
+        rot = act.pop("action.phone.rot", None)
+        inputs = act.pop("action.phone.raw_inputs", {})
+
+        if pos is None or rot is None:
+            return act
+
+        rotvec = rot.as_rotvec()  # Absolute orientation as rotvec
+
+        # Map certain inputs to certain actions
+        if self.platform == PhoneOS.IOS:
+            gripper = float(inputs.get("a3", 0.0))
+            # x = float(inputs.get("a1", 0.0))
+            # y = float(inputs.get("a2", 0.0))
+            # theta = float(inputs.get("a7", 0.0))
+        else:
+            a = float(inputs.get("reservedButtonA", 0.0))
+            b = float(inputs.get("reservedButtonB", 0.0))
+            gripper = (
+                a - b
+            )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
+            # x = y = theta = 0.0
+
+        # For some actions we need to invert the axis
+        act.update(
+            {
+                "action.enabled": enabled,
+                "action.target_x": -pos[1] if enabled else 0.0,
+                "action.target_y": pos[0] if enabled else 0.0,
+                "action.target_z": pos[2] if enabled else 0.0,
+                "action.target_wx": rotvec[1] if enabled else 0.0,
+                "action.target_wy": rotvec[0] if enabled else 0.0,
+                "action.target_wz": -rotvec[2] if enabled else 0.0,
+                "action.gripper": gripper,  # Still send gripper action when disabled
+                # "action.x": x if enabled else 0.0,
+                # "action.y": y if enabled else 0.0,
+                # "action.theta": theta if enabled else 0.0,
+            }
+        )
+        return act
