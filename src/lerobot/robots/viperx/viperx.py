@@ -18,9 +18,9 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.microphones.utils import make_microphones_from_configs
 from lerobot.constants import OBS_STATE
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.microphones.utils import make_microphones_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
@@ -75,7 +75,7 @@ class ViperX(Robot):
         return {
             cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
         }
-    
+
     @property
     def _microphones_ft(self) -> dict[str, tuple]:
         return {
@@ -93,7 +93,11 @@ class ViperX(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values()) and all(mic.is_connected for mic in self.microphones.values())
+        return (
+            self.bus.is_connected
+            and all(cam.is_connected for cam in self.cameras.values())
+            and all(mic.is_connected for mic in self.microphones.values())
+        )
 
     def connect(self, calibrate: bool = True) -> None:
         """

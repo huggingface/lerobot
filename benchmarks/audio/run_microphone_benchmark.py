@@ -22,9 +22,8 @@ import numpy as np
 from soundfile import read
 
 from lerobot.microphones.configs import MicrophoneConfig
-from lerobot.microphones.portaudio import PortAudioMicrophoneConfig, PortAudioMicrophone
+from lerobot.microphones.portaudio import PortAudioMicrophone, PortAudioMicrophoneConfig
 from lerobot.microphones.utils import (
-    async_microphones_read,
     async_microphones_start_recording,
     async_microphones_stop_recording,
     make_microphones_from_configs,
@@ -32,6 +31,7 @@ from lerobot.microphones.utils import (
 from lerobot.utils.robot_utils import (
     busy_wait,
 )
+
 
 def main(
     microphones_configs: dict[str, MicrophoneConfig],

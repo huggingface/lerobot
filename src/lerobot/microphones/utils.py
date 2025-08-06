@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 from multiprocessing import Barrier
-from queue import Queue
 from threading import Thread
 
-from .microphone import Microphone
 from .configs import MicrophoneConfig
+from .microphone import Microphone
+
 
 def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfig]) -> dict[str, Microphone]:
     microphones = {}

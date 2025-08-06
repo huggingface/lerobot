@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import abc
-from typing import Any
 from pathlib import Path
 from threading import Barrier
+from typing import Any
 
 import numpy as np
 
 from .configs import MicrophoneConfig
+
 
 class Microphone(abc.ABC):
     """Base class for microphone implementations.
