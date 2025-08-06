@@ -14,9 +14,10 @@ echo "4) 2 RealSense RGB + Depth"
 echo "5) 2 RealSense RGB + Kinect RGB"
 echo "6) 2 RealSense RGB + Depth + Kinect RGB + Depth"
 echo "7) No cameras (robot arms only)"
-echo "8) Exit"
+echo "8) 2 RealSense RGB + Depth + Kinect RGB only"
+echo "9) Exit"
 echo ""
-read -p "Enter your choice (1-8): " choice
+read -p "Enter your choice (1-9): " choice
 
 # Activate conda environment
 echo "Activating lerobot environment..."
@@ -375,12 +376,70 @@ case $choice in
         ;;
 
     8)
+        echo ""
+        echo "Recording: 2 RealSense RGB + Depth + Kinect RGB only"
+        echo "===================================================="
+        python -m lerobot.record \
+            --robot.type=$ROBOT_TYPE \
+            --robot.id=$ROBOT_ID \
+            --robot.left_arm_port=$LEFT_ARM_PORT \
+            --robot.right_arm_port=$RIGHT_ARM_PORT \
+            --robot.cameras "{
+                'cam_low': {
+                    'type': 'intelrealsense',
+                    'serial_number_or_name': '$REALSENSE1_SERIAL',
+                    'width': 640,
+                    'height': 480,
+                    'fps': 30,
+                    'use_depth': true,
+                    'depth_colormap': 'jet',
+                    'depth_min_meters': 0.3,
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
+                },
+                'cam_high': {
+                    'type': 'intelrealsense',
+                    'serial_number_or_name': '$REALSENSE2_SERIAL',
+                    'width': 640,
+                    'height': 480,
+                    'fps': 30,
+                    'use_depth': true,
+                    'depth_colormap': 'jet',
+                    'depth_min_meters': 0.3,
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
+                },
+                'cam_kinect': {
+                    'type': 'kinect',
+                    'device_index': 0,
+                    'width': 1920,
+                    'height': 1080,
+                    'fps': 30,
+                    'use_depth': false,
+                    'pipeline': 'cuda',
+                    'enable_bilateral_filter': false,
+                    'enable_edge_filter': false
+                }
+            }" \
+            --teleop.type=$TELEOP_TYPE \
+            --teleop.id=$TELEOP_ID \
+            --teleop.left_arm_port=$TELEOP_LEFT_PORT \
+            --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
+            --display_data=true \
+            --dataset.repo_id=$DATASET_REPO_ID \
+            --dataset.num_episodes=$NUM_EPISODES \
+            --dataset.episode_time_s=$EPISODE_TIME \
+            --dataset.reset_time_s=$RESET_TIME \
+            --dataset.single_task="$TASK_DESCRIPTION"
+        ;;
+
+    9)
         echo "Exiting..."
         exit 0
         ;;
 
     *)
-        echo "Invalid choice. Please select 1-8."
+        echo "Invalid choice. Please select 1-9."
         exit 1
         ;;
 esac
