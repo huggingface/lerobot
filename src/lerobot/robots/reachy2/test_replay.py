@@ -20,12 +20,8 @@ robot_config = Reachy2RobotConfig(
     with_mobile_base=False,
 )
 
-
 # Initialize the robot
 robot = Reachy2Robot(robot_config)
-
-# reachy = ReachySDK(robot_config.ip_address)
-
 
 # Create the dataset
 dataset = LeRobotDataset(repo_id="glannuzel/grab_cube_2", episodes=[0])
