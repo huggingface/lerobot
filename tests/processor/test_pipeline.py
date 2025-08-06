@@ -26,7 +26,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import DatasetFeatureType, FeatureType, PolicyFeature
 from lerobot.processor import EnvTransition, ProcessorStepRegistry, RobotProcessor
 from lerobot.processor.pipeline import TransitionKey
 from tests.conftest import assert_contract_is_typed
@@ -2072,3 +2072,140 @@ def test_dataset_features_remove_from_initial(policy_feature_factory):
     p = RobotProcessor([FeatureContractRemoveStep("drop")])
     out = p.dataset_features(initial_features=initial)
     assert "drop" not in out and out["keep"] == initial["keep"]
+
+
+@dataclass
+class AddActionEEAndJointFeatures:
+    """Adds both EE and JOINT action features."""
+
+    def __call__(self, tr):
+        return tr
+
+    def dataset_features(self, features: dict) -> dict:
+        # EE features
+        features["action.ee.x"] = float
+        features["action.ee.y"] = float
+        # JOINT features
+        features["action.j1.pos"] = float
+        features["action.j2.pos"] = float
+        return features
+
+
+@dataclass
+class AddObservationStateFeatures:
+    """Adds state features (and optionally an image spec to test precedence)."""
+
+    add_front_image: bool = False
+    front_image_shape: tuple = (240, 320, 3)
+
+    def __call__(self, tr):
+        return tr
+
+    def dataset_features(self, features: dict) -> dict:
+        # State features (mix EE and a joint state)
+        features["observation.state.ee.x"] = float
+        features["observation.state.j1.pos"] = float
+        if self.add_front_image:
+            features["observation.images.front"] = self.front_image_shape
+        return features
+
+
+def test_aggregate_joint_action_only():
+    rp = RobotProcessor([AddActionEEAndJointFeatures()])
+    initial = {"front": (480, 640, 3)}  # cameras (should be ignored because include=("action",))
+
+    out = rp.aggregate_dataset_features(
+        initial_features=initial,
+        use_videos=True,
+        include=("action",),
+        action_type=DatasetFeatureType.JOINT,
+    )
+
+    # Expect only "action" with joint names
+    assert "action" in out and "observation.state" not in out
+    assert out["action"]["dtype"] == "float32"
+    assert set(out["action"]["names"]) == {"j1.pos", "j2.pos"}
+    assert out["action"]["shape"] == (len(out["action"]["names"]),)
+
+    # No images because observation wasn't included
+    assert not any(k.startswith("observation.images.") for k in out)
+
+
+def test_aggregate_ee_action_and_observation_with_videos():
+    rp = RobotProcessor([AddActionEEAndJointFeatures(), AddObservationStateFeatures()])
+    initial = {"front": (480, 640, 3), "side": (720, 1280, 3)}
+
+    out = rp.aggregate_dataset_features(
+        initial_features=initial,
+        use_videos=True,
+        include=("action", "observation"),
+        action_type=DatasetFeatureType.EE,  # only EE actions
+    )
+
+    # Action should pack only EE names
+    assert "action" in out
+    assert set(out["action"]["names"]) == {"ee.x", "ee.y"}
+    assert out["action"]["dtype"] == "float32"
+
+    # Observation state should pack both ee.x and j1.pos as a vector
+    assert "observation.state" in out
+    assert set(out["observation.state"]["names"]) == {"ee.x", "j1.pos"}
+    assert out["observation.state"]["dtype"] == "float32"
+
+    # Cameras from initial_features appear as videos
+    for cam in ("front", "side"):
+        key = f"observation.images.{cam}"
+        assert key in out
+        assert out[key]["dtype"] == "video"
+        assert out[key]["shape"] == initial[cam]
+        assert out[key]["names"] == ["height", "width", "channels"]
+
+
+def test_aggregate_both_action_types():
+    rp = RobotProcessor([AddActionEEAndJointFeatures()])
+    out = rp.aggregate_dataset_features(
+        initial_features={},
+        use_videos=True,
+        include=("action",),
+        action_type=[DatasetFeatureType.EE, DatasetFeatureType.JOINT],
+    )
+
+    assert "action" in out
+    expected = {"ee.x", "ee.y", "j1.pos", "j2.pos"}
+    assert set(out["action"]["names"]) == expected
+    assert out["action"]["shape"] == (len(expected),)
+
+
+def test_aggregate_images_when_use_videos_false():
+    rp = RobotProcessor([AddObservationStateFeatures()])
+    initial = {"front": (480, 640, 3)}
+
+    out = rp.aggregate_dataset_features(
+        initial_features=initial,
+        use_videos=False,  # expect "image" dtype
+        include=("observation",),
+        action_type=DatasetFeatureType.JOINT,
+    )
+
+    key = "observation.images.front"
+    assert key in out
+    assert out[key]["dtype"] == "image"
+    assert out[key]["shape"] == initial["front"]
+
+
+def test_initial_camera_not_overridden_by_step_image():
+    # Step explicitly sets a different front image shape; initial has another shape.
+    # aggregate_dataset_features should keep the step's value (setdefault behavior on initial cams).
+    rp = RobotProcessor([AddObservationStateFeatures(add_front_image=True, front_image_shape=(240, 320, 3))])
+    initial = {"front": (480, 640, 3)}  # should NOT override the step-provided (240, 320, 3)
+
+    out = rp.aggregate_dataset_features(
+        initial_features=initial,
+        use_videos=True,
+        include=("observation",),
+        action_type=DatasetFeatureType.JOINT,
+    )
+
+    key = "observation.images.front"
+    assert key in out
+    assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial
