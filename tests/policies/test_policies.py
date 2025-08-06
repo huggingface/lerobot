@@ -30,6 +30,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.utils import cycle, dataset_to_policy_features
 from lerobot.envs.factory import make_env, make_env_config
+from lerobot.envs.utils import preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
 from lerobot.policies.factory import (
@@ -40,7 +41,6 @@ from lerobot.policies.factory import (
 )
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import RobotProcessor, TransitionKey, VanillaObservationProcessor
 from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
@@ -185,12 +185,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     # reset the policy and environment
     policy.reset()
     observation, _ = env.reset(seed=train_cfg.seed)
-
-    # apply transform to normalize the observations
-    obs_processor = RobotProcessor([VanillaObservationProcessor()])
-    transition = (observation, None, None, None, None, None, None)
-    processed_transition = obs_processor(transition)
-    observation = processed_transition[TransitionKey.OBSERVATION]
+    observation = preprocess_observation(observation)
 
     # send observation to device/gpu
     observation = {key: observation[key].to(DEVICE, non_blocking=True) for key in observation}

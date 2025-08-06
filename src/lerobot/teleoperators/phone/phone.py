@@ -28,21 +28,17 @@ from scipy.spatial.transform import Rotation
 from teleop import Teleop
 
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-
-from ..teleoperator import Teleoperator
-from .config_phone import PhoneConfig, PhoneOS
+from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
+from lerobot.teleoperators.teleoperator import Teleoperator
 
 logger = logging.getLogger(__name__)
 
-# -----Tuesday-----
-# TODO(pepijn): Clean up code and tests 12:00
-# TODO(pepijn): Ask for feedback from Adil before writing tests 12:00
-
-# ----Wednesday-----
 # TODO(pepijn): Check tests by running them with broken code 14:00
-# TODO(pepijn): Try teleop, record, replay, and eval of existing policy again 15:00
-# TODO(pepijn): Add to docs with image etc 17:00
-# TODO(pepijn): Create release video 18:00
+# TODO(pepijn): Ask for feedback from Adil 14:00
+# TODO(pepijn): Merge steps with michel 15:00
+# TODO(pepijn): Try teleop, record, replay, and eval of existing policy again 17:00
+# TODO(pepijn): Add to docs with image etc 19:00
+# TODO(pepijn): Create release video 20:00
 
 
 class Phone(Teleoperator):
@@ -222,7 +218,7 @@ class Phone(Teleoperator):
         else:
             enable = bool(raw_inputs.get("move", False))
 
-        # Rising edge then re-capture calibration immediately from *current* raw pose
+        # Rising edge then re-capture calibration immediately from current raw pose
         if enable and not self._enabled:
             self._reapply_position_calibration(raw_pos)
 

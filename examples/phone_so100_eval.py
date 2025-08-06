@@ -17,7 +17,7 @@
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import DatasetFeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import merge_grouped_features
+from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_processor
@@ -39,22 +39,23 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
 
-NUM_EPISODES = 2
+NUM_EPISODES = 5
 FPS = 30
 EPISODE_TIME_SEC = 60
-TASK_DESCRIPTION = "Pickup the blue block"
-HF_REPO_ID = "pepijn223/eval_phone_pipeline_pickup_block4"
+TASK_DESCRIPTION = "My task description"
+HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
+HF_MODEL_ID = "<hf_username>/<model_repo_id>"
 
-# Initialize the robot and teleoperator
+# Initialize the robot with degrees
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
 robot_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem58760434471",
-    id="my_phone_teleop_follower_arm",
+    id="my_awesome_follower_arm",
     cameras=camera_config,
     use_degrees=True,
 )
 
-# Initialize the robot and teleoperator
+# Initialize the robot
 robot = SO100Follower(robot_config)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
@@ -107,7 +108,7 @@ obs_joint = robot_ee_to_joints.aggregate_dataset_features(
     include=("observation",),
     action_type=DatasetFeatureType.JOINT,
 )  # Get gripper pos observation features
-observation_features = merge_grouped_features(obs_ee, obs_joint)
+observation_features = merge_features(obs_ee, obs_joint)
 
 print("All dataset features: ", {**action_ee, **observation_features})
 
@@ -121,9 +122,6 @@ dataset = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
-# Create a function to convert the pipelines output to the dataset format using the expected features
-to_dataset_features = to_dataset_frame(dataset.features)
-
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
 _init_rerun(session_name="recording_phone")
@@ -133,10 +131,10 @@ robot.connect()
 
 episode_idx = 0
 
-policy = ACTPolicy.from_pretrained("pepijn223/phone_pipeline_pickup1_migrated")
+policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 preprocessor, postprocessor = make_processor(
     policy_cfg=policy,
-    pretrained_path="pepijn223/phone_pipeline_pickup1_migrated",
+    pretrained_path=HF_MODEL_ID,
     dataset_stats=dataset.meta.stats,
     preprocessor_overrides={"device_processor": {"device": "mps"}},
 )
@@ -157,9 +155,10 @@ for episode_idx in range(NUM_EPISODES):
         display_data=True,
         robot_action_processor=robot_ee_to_joints,
         robot_observation_processor=robot_joints_to_ee_pose,
-        to_dataset_frame=to_dataset_features,
+        to_dataset_frame=to_dataset_frame(
+            dataset.features
+        ),  # Function to convert pipelines output to the dataset format
     )
-
     dataset.save_episode()
 
 # Clean up

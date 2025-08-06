@@ -18,7 +18,7 @@
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import DatasetFeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import merge_grouped_features
+from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.pipeline import RobotProcessor
 from lerobot.processor.utils import (
@@ -49,14 +49,14 @@ NUM_EPISODES = 10
 FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 30
-TASK_DESCRIPTION = "Pickup the pillow"  # TODO(pepijn): Add back default task description
-HF_REPO_ID = "pepijn223/phone_pipeline_pickup8"
+TASK_DESCRIPTION = "My task description"
+HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
 
 # Initialize the robot and teleoperator
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
 robot_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem58760434471",
-    id="my_phone_teleop_follower_arm",
+    id="my_awesome_follower_arm",
     cameras=camera_config,
     use_degrees=True,
 )
@@ -131,7 +131,7 @@ action_joint = robot_ee_to_joints.aggregate_dataset_features(
     include=("action",),
     action_type=DatasetFeatureType.JOINT,
 )  # Get gripper pos action features
-action_features = merge_grouped_features(action_ee, action_joint)
+action_features = merge_features(action_ee, action_joint)
 
 # Build dataset observation features
 obs_ee = robot_joints_to_ee_pose.aggregate_dataset_features(
@@ -146,9 +146,9 @@ obs_joint = robot_ee_to_joints.aggregate_dataset_features(
     include=("observation",),
     action_type=DatasetFeatureType.JOINT,
 )  # Get gripper pos observation features
-observation_features = merge_grouped_features(obs_ee, obs_joint)
+observation_features = merge_features(obs_ee, obs_joint)
 
-print("All dataset features: ", {**action_features, **observation_features})  # TODO(pepijn): remove
+print("All dataset features: ", {**action_features, **observation_features})
 
 # Create the dataset
 dataset = LeRobotDataset.create(
@@ -172,7 +172,6 @@ robot.connect()
 phone.connect()
 
 episode_idx = 0
-
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 

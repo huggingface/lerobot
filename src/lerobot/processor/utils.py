@@ -59,7 +59,7 @@ def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any],
     return state, images
 
 
-def make_transition(*, obs: dict | None = None, act: dict | None = None) -> EnvTransition:
+def make_obs_act_transition(*, obs: dict | None = None, act: dict | None = None) -> EnvTransition:
     return {
         TransitionKey.OBSERVATION: {} if obs is None else obs,
         TransitionKey.ACTION: {} if act is None else act,
@@ -68,22 +68,19 @@ def make_transition(*, obs: dict | None = None, act: dict | None = None) -> EnvT
 
 def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
     """
-    Convert a raw teleop action dict (provided under 'teleop_action') into an EnvTransition:
-        ACTION -> {f"action.{k}": tensor(v)}
+    Convert a raw teleop action dict into an EnvTransition under the ACTION TransitionKey.
     """
     act_dict: dict[str, Any] = {}
     for k, v in action.items():
         arr = np.array(v) if np.isscalar(v) else v
         act_dict[f"action.{k}"] = _to_tensor(arr)
 
-    return make_transition(act=act_dict)
+    return make_obs_act_transition(act=act_dict)
 
 
 def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransition:
     """
-    Convert a raw robot observation dict (provided under 'robot_observation') into an EnvTransition:
-        OBSERVATION.state  -> scalars/tensors
-        OBSERVATION.images -> pass-through uint8 HWC images
+    Convert a raw robot observation dict into an EnvTransition under the OBSERVATION TransitionKey.
     """
     state, images = _split_obs_to_state_and_images(observation)
 
@@ -93,26 +90,21 @@ def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransitio
         obs_dict[f"observation.state.{k}"] = _to_tensor(arr)
 
     for cam, img in images.items():
-        obs_dict[f"observation.images.{cam}"] = img  # keep raw uint8 HWC
+        obs_dict[f"observation.images.{cam}"] = img
 
-    return make_transition(obs=obs_dict)
+    return make_obs_act_transition(obs=obs_dict)
 
 
 def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
     """
-    Strips 'action.' from keys and ONLY keeps keys ending in '.pos',
-    which correspond to direct motor commands. This prevents intermediate
-    values (like 'ee.x') from being included in the final output.
+    Converts a EnvTransition under the ACTION TransitionKey to a dict with keys ending in '.pos' for raw robot actions.
     """
     out: dict[str, Any] = {}
     action_dict = transition.get(TransitionKey.ACTION) or {}
 
     for k, v in action_dict.items():
-        # Check that the key represents a motor command.
         if isinstance(k, str) and k.startswith("action.") and k.endswith(".pos"):
-            # Strip the 'action.' prefix.
-            out_key = k[len("action.") :]
-            # The value is already a float, no need for _from_tensor if not using tensors.
+            out_key = k[len("action.") :]  # Strip the 'action.' prefix.
             out[out_key] = float(v)
 
     return out
@@ -120,11 +112,21 @@ def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
 
 def to_dataset_frame(features: dict[str, dict]) -> dict[str, any]:
     """
-    Build a to_output(...) function that returns a dataset-ready frame dict.
-    The function can be called with:
-      - a single EnvTransition, or
-      - an iterable of EnvTransitions (which will be merged).
-    The packing order of vectors is taken from features['...']['names'].
+    Converts a dictionary of transitions (or a single transition) into a flat,
+    dataset-friendly dictionary for training or evaluation.
+
+    Args:
+        features (dict[str, dict]):
+            A feature specification dictionary.
+            It can include:
+              - 'action': dict with 'names' (ordered list of action feature names).
+              - 'observation.state': dict with 'names' (ordered list of observation state feature names).
+              - Any keys starting with 'observation.images.' will be treated as image features.
+
+    Returns:
+        to_output (Callable):
+            A function that takes an `EnvTransition` or iterable of `EnvTransition`s and returns
+            a flat dictionary with preprocessed state, action, reward, done, and any extra metadata.
     """
     # Ordered names for vectors
     action_names = (features.get("action", {}) or {}).get("names", [])

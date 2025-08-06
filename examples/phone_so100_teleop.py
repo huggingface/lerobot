@@ -33,7 +33,7 @@ from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAct
 
 # Initialize the robot and teleoperator
 robot_config = SO100FollowerConfig(
-    port="/dev/tty.usbmodem58760434471", id="my_phone_teleop_follower_arm", use_degrees=True
+    port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", use_degrees=True
 )
 teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # or PhoneOS.ANDROID
 
@@ -88,7 +88,6 @@ robot.connect()
 teleop_device.connect()
 
 print("Starting teleop loop. Move your phone to teleoperate the robot.")
-
 while True:
     phone_obs = teleop_device.get_action()
     if not phone_obs:

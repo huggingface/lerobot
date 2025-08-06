@@ -115,6 +115,6 @@ def make_pi0_processor(
         ),
     ]
 
-    return RobotProcessor(steps=input_steps, name="pi0_preprocessor"), RobotProcessor(
-        steps=output_steps, name="pi0_postprocessor"
+    return RobotProcessor(steps=input_steps, name="robot_preprocessor"), RobotProcessor(
+        steps=output_steps, name="robot_postprocessor"
     )

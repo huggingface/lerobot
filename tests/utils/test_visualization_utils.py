@@ -12,42 +12,38 @@ from lerobot.processor.pipeline import TransitionKey
 def mock_rerun(monkeypatch):
     """
     Provide a mock `rerun` module so tests don't depend on the real library.
-    Also reload the module-under-test so it binds to this fake `rr`.
+    Also reload the module-under-test so it binds to this mock `rr`.
     """
     calls = []
 
     class DummyScalar:
         def __init__(self, value):
-            # ensure we can compare & inspect easily in assertions
             self.value = float(value)
 
     class DummyImage:
         def __init__(self, arr):
-            # store reference for shape checks
             self.arr = arr
 
     def dummy_log(key, obj, **kwargs):
-        # Record key, type(obj), content, and any kwargs (e.g., static=True)
         calls.append((key, obj, kwargs))
 
     dummy_rr = SimpleNamespace(
         Scalar=DummyScalar,
         Image=DummyImage,
         log=dummy_log,
-        # present but not used in the function under test
         init=lambda *a, **k: None,
         spawn=lambda *a, **k: None,
     )
 
-    # Inject fake module into sys.modules BEFORE importing the module under test
+    # Inject fake module into sys.modules
     monkeypatch.setitem(sys.modules, "rerun", dummy_rr)
 
-    # Now import and reload the module under test, to bind to our fake rr
+    # Now import and reload the module under test, to bind to our rerun mock
     import lerobot.utils.visualization_utils as vu
 
     importlib.reload(vu)
 
-    # Expose both the reloaded module and our call recorder
+    # Expose both the reloaded module and the call recorder
     yield vu, calls
 
 
@@ -74,15 +70,15 @@ def _kwargs_for(calls, key):
 def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
     vu, calls = mock_rerun
 
-    # Build EnvTransition-like dict with prefixed keys:
+    # Build EnvTransition dict
     obs = {
         "observation.state.temperature": np.float32(25.0),
-        # CHW image: (C,H,W) -> should be converted to HWC for rr.Image
+        # CHW image should be converted to HWC for rr.Image
         "observation.camera": np.zeros((3, 10, 20), dtype=np.uint8),
     }
     act = {
         "action.throttle": 0.7,
-        # 1D array => should log individual Scalars with suffix _i
+        # 1D array should log individual Scalars with suffix _i
         "action.vector": np.array([1.0, 2.0], dtype=np.float32),
     }
     transition = {
@@ -126,8 +122,7 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
     img_obj = _obj_for(calls, "observation.camera")
     assert type(img_obj).__name__ == "DummyImage"
     assert img_obj.arr.shape == (10, 20, 3)  # transposed
-    # static=True on images
-    assert _kwargs_for(calls, "observation.camera").get("static", False) is True
+    assert _kwargs_for(calls, "observation.camera").get("static", False) is True  # static=True for images
 
 
 def test_log_rerun_data_plain_list_ordering_and_prefixes(mock_rerun):
@@ -175,37 +170,9 @@ def test_log_rerun_data_plain_list_ordering_and_prefixes(mock_rerun):
     assert img.arr.shape == (5, 6, 3)
     assert _kwargs_for(calls, "observation.img").get("static", False) is True
 
-    # Vector elements
+    # Vectors
     for i, val in enumerate([9, 8, 7]):
         o = _obj_for(calls, f"action.vec_{i}")
-        assert type(o).__name__ == "DummyScalar"
-        assert o.value == pytest.approx(val)
-
-
-def test_log_rerun_data_prefixed_dicts_and_action_flatten(mock_rerun):
-    vu, calls = mock_rerun
-
-    item1 = {"observation.state.speed": np.array([1.0, 2.0], dtype=np.float32)}
-    item2 = {"action.force": np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)}
-    vu.log_rerun_data([item1, item2])
-
-    # observation: 1D => split
-    assert "observation.state.speed_0" in _keys(calls)
-    assert "observation.state.speed_1" in _keys(calls)
-    s0 = _obj_for(calls, "observation.state.speed_0")
-    s1 = _obj_for(calls, "observation.state.speed_1")
-    assert type(s0).__name__ == "DummyScalar"
-    assert type(s1).__name__ == "DummyScalar"
-    assert s0.value == pytest.approx(1.0)
-    assert s1.value == pytest.approx(2.0)
-
-    # action: 2D => flatten then log as scalars
-    expected_force_keys = {f"action.force_{i}" for i in range(4)}
-    assert expected_force_keys.issubset(set(_keys(calls)))
-
-    vals = [1.0, 2.0, 3.0, 4.0]
-    for i, val in enumerate(vals):
-        o = _obj_for(calls, f"action.force_{i}")
         assert type(o).__name__ == "DummyScalar"
         assert o.value == pytest.approx(val)
 

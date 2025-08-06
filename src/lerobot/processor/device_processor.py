@@ -18,7 +18,6 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
 
@@ -136,6 +135,3 @@ class DeviceProcessor:
     def reset(self) -> None:
         """Reset processor state (no-op for this processor)."""
         pass
-
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features

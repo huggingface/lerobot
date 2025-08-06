@@ -57,9 +57,8 @@ classifiers = [
 keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artificial intelligence"]
 
 dependencies = [
-    "cmake>=3.29.0.1",
-    "datasets>=2.19.0,<4.0.0",
-    "deepdiff>=7.0.1",
+    # Hugging Face dependencies
+    "datasets>=2.19.0,<=3.6.0", # TODO: Bumb dependency
     "diffusers>=0.27.2",
     "huggingface-hub[hf-transfer,cli]>=0.34.2",
 

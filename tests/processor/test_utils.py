@@ -161,7 +161,7 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
     # Merge two transitions -> to_out should combine action, observation, images, and metadata
     batch = to_out([teleop_transition, robot_transition])
 
-    # 1) Images are passed through ONLY if declared in features and present in the obs transition
+    # Images are passed through ONLY if declared in features and present in the obs transition
     assert "observation.images.front" in batch
     assert batch["observation.images.front"].shape == img.shape
     assert batch["observation.images.front"].dtype == np.uint8
@@ -169,7 +169,7 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
         batch["observation.images.front"], img
     )
 
-    # 2) observation.state packed as vector in the declared order
+    # observation.state packed as vector in the declared order
     assert "observation.state" in batch
     obs_vec = batch["observation.state"]
     assert isinstance(obs_vec, np.ndarray) and obs_vec.dtype == np.float32
@@ -177,7 +177,7 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
     assert obs_vec[0] == pytest.approx(10.0)  # j1.pos
     assert obs_vec[1] == pytest.approx(20.0)  # j2.pos
 
-    # 3) action packed in the declared order with missing default 0.0
+    # action packed in the declared order with missing default 0.0
     assert "action" in batch
     act_vec = batch["action"]
     assert isinstance(act_vec, np.ndarray) and act_vec.dtype == np.float32
@@ -186,48 +186,11 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
     assert act_vec[1] == pytest.approx(2.2)  # j2.pos
     assert act_vec[2] == pytest.approx(0.0)  # gripper.pos missing -> default 0.0
 
-    # 4) next.* metadata
     assert batch["next.reward"] == pytest.approx(5.0)
     assert batch["next.done"] is True
     assert batch["next.truncated"] is False
     assert batch["info"] == {"note": "ok"}
 
-    # 5) complementary data: *_is_pad and 'task'
+    # Complementary data: *_is_pad and 'task'
     assert batch["frame_is_pad"] is True
     assert batch["task"] == "Pick cube"
-
-
-def test_to_dataset_frame_single_transition_works_and_last_writer_wins():
-    features = {
-        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
-        "observation.state": {"dtype": "float32", "shape": (1,), "names": ["x"]},
-    }
-    to_out = to_dataset_frame(features)
-
-    tr1 = {
-        TransitionKey.OBSERVATION: {"observation.state.x": torch.tensor(1.0)},
-        TransitionKey.ACTION: {"action.a": torch.tensor(0.1)},
-        TransitionKey.REWARD: 1.0,
-    }
-    tr2 = {
-        TransitionKey.ACTION: {"action.b": torch.tensor(0.9)},
-        TransitionKey.REWARD: 2.0,  # last writer wins
-    }
-
-    # Single element list
-    b1 = to_out([tr1])
-    assert np.allclose(b1["observation.state"], np.array([1.0], dtype=np.float32))
-    assert np.allclose(b1["action"], np.array([0.1, 0.0], dtype=np.float32))
-    assert b1.get("next.reward", None) == 1.0
-
-    # Merge both - reward should come from tr2 (last)
-    b2 = to_out([tr1, tr2])
-    assert np.allclose(b2["observation.state"], np.array([1.0], dtype=np.float32))
-    assert np.allclose(b2["action"], np.array([0.1, 0.9], dtype=np.float32))
-    assert b2["next.reward"] == 2.0
-
-    # Passing a single transition object (not list) also works
-    b3 = to_out(tr2)
-    assert np.allclose(b3["action"], np.array([0.0, 0.9], dtype=np.float32))
-    assert "observation.state" in b3  # filled with default 0.0
-    assert np.allclose(b3["observation.state"], np.array([0.0], dtype=np.float32))

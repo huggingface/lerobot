@@ -168,7 +168,7 @@ class EEBoundsAndSafety(ActionProcessor):
         pos = np.array([x, y, z], dtype=float)
         twist = np.array([wx, wy, wz], dtype=float)
 
-        # clip position
+        # Clip position
         pos = np.clip(pos, self.end_effector_bounds["min"], self.end_effector_bounds["max"])
 
         # Check for jumps in position

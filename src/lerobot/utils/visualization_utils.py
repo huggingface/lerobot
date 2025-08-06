@@ -45,19 +45,15 @@ def log_rerun_data(
     observation: dict[str, Any] | None = None,
     action: dict[str, Any] | None = None,
 ) -> None:
-    # Normalize "data" to a list for uniform parsing
     items = data if isinstance(data, list) else ([data] if data is not None else [])
 
-    # Seed with explicit kwargs (if provided)
     obs = {} if observation is None else dict(observation)
     act = {} if action is None else dict(action)
 
-    # Parse list/dict/EnvTransition inputs
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
             continue
 
-        # EnvTransition-like (TransitionKey keys)
         if any(isinstance(k, TransitionKey) for k in item.keys()):
             o = item.get(TransitionKey.OBSERVATION) or {}
             a = item.get(TransitionKey.ACTION) or {}
@@ -67,7 +63,6 @@ def log_rerun_data(
                 act.update(a)
             continue
 
-        # Plain dict: check for prefixes
         keys = list(item.keys())
         has_obs = any(str(k).startswith("observation.") for k in keys)
         has_act = any(str(k).startswith("action.") for k in keys)
@@ -78,7 +73,7 @@ def log_rerun_data(
             if has_act:
                 act.update(item)
         else:
-            # No prefixes: assume first is observation, second is action, others -> observation
+            # No prefixes: assume first is observation, second is action, others are observation
             if idx == 0:
                 obs.update(item)
             elif idx == 1:
@@ -116,7 +111,7 @@ def log_rerun_data(
                 for i, vi in enumerate(v):
                     rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
             else:
-                # Fall back to flattening higher-d arrays
+                # Fall back to flattening higher-dimensional arrays
                 flat = v.flatten()
                 for i, vi in enumerate(flat):
                     rr.log(f"{key}_{i}", rr.Scalar(float(vi)))

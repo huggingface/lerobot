@@ -57,8 +57,8 @@ def make_smolvla_processor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
-    return RobotProcessor(steps=input_steps, name="smolvla_preprocessor"), RobotProcessor(
-        steps=output_steps, name="smolvla_postprocessor"
+    return RobotProcessor(steps=input_steps, name="robot_preprocessor"), RobotProcessor(
+        steps=output_steps, name="robot_postprocessor"
     )
 
 
