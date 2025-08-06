@@ -29,9 +29,10 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.processor import (
     DeviceProcessor,
-    ImageProcessor,
+    IdentityProcessor,
     RobotProcessor,
-    StateProcessor,
+    ToBatchProcessor,
+    VanillaObservationProcessor,
 )
 from lerobot.processor.hil_processor import (
     GripperPenaltyProcessor,
@@ -64,6 +65,26 @@ from lerobot.utils.utils import log_say
 logging.basicConfig(level=logging.INFO)
 
 
+class DummyTeleopDevice:
+    """
+    A dummy teleop device for simulation environments that provides the same interface
+    as real teleop devices but returns neutral/empty values.
+    """
+
+    @property
+    def action_features(self):
+        """Return action features for dataset recording."""
+        return {"dtype": "float32", "shape": (4,), "names": ["delta_x", "delta_y", "delta_z", "gripper"]}
+
+    def get_action(self):
+        """Return neutral action values."""
+        return {"delta_x": 0.0, "delta_y": 0.0, "delta_z": 0.0, "gripper": 1.0}
+
+    def get_teleop_events(self):
+        """Return empty events."""
+        return {}
+
+
 @dataclass
 class DatasetConfig:
     repo_id: str
@@ -79,6 +100,7 @@ class GymManipulatorConfig:
     env: HILSerlRobotEnvConfig
     dataset: DatasetConfig
     mode: str | None = None  # Either "record", "replay", None
+    device: str = "cpu"
 
 
 def create_transition(
@@ -124,7 +146,7 @@ class RobotEnv(gym.Env):
         robot,
         use_gripper: bool = False,
         display_cameras: bool = False,
-        reset_pose: list[float] = None,
+        reset_pose: list[float] | None = None,
         reset_time_s: float = 5.0,
     ):
         """
@@ -153,7 +175,6 @@ class RobotEnv(gym.Env):
         self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors]
         self._image_keys = self.robot.cameras.keys()
 
-        self.current_observation = None
         self.reset_pose = reset_pose
         self.reset_time_s = reset_time_s
 
@@ -167,7 +188,7 @@ class RobotEnv(gym.Env):
         joint_positions = np.array([obs_dict[name] for name in self._joint_names])
 
         images = {key: obs_dict[key] for key in self._image_keys}
-        self.current_observation = {"agent_pos": joint_positions, "pixels": images}
+        return {"agent_pos": joint_positions, "pixels": images}
 
     def _setup_spaces(self):
         """
@@ -181,26 +202,27 @@ class RobotEnv(gym.Env):
             - The action space is defined as a Box space representing joint position commands. It is defined as relative (delta)
               or absolute, based on the configuration.
         """
-        self._get_observation()
+        current_observation = self._get_observation()
 
         observation_spaces = {}
 
         # Define observation spaces for images and other states.
-        if "pixels" in self.current_observation:
+        if current_observation is not None and "pixels" in current_observation:
             prefix = "observation.images"
             observation_spaces = {
                 f"{prefix}.{key}": gym.spaces.Box(
-                    low=0, high=255, shape=self.current_observation["pixels"][key].shape, dtype=np.uint8
+                    low=0, high=255, shape=current_observation["pixels"][key].shape, dtype=np.uint8
                 )
-                for key in self.current_observation["pixels"]
+                for key in current_observation["pixels"]
             }
 
-        observation_spaces["observation.state"] = gym.spaces.Box(
-            low=0,
-            high=10,
-            shape=self.current_observation["agent_pos"].shape,
-            dtype=np.float32,
-        )
+        if current_observation is not None:
+            observation_spaces["observation.state"] = gym.spaces.Box(
+                low=0,
+                high=10,
+                shape=current_observation["agent_pos"].shape,
+                dtype=np.float32,
+            )
 
         self.observation_space = gym.spaces.Dict(observation_spaces)
 
@@ -222,7 +244,9 @@ class RobotEnv(gym.Env):
             dtype=np.float32,
         )
 
-    def reset(self, seed=None, options=None) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    def reset(
+        self, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         """
         Reset the environment to its initial state.
         This method resets the step counter and clears any episodic data.
@@ -241,7 +265,7 @@ class RobotEnv(gym.Env):
         start_time = time.perf_counter()
         if self.reset_pose is not None:
             log_say("Reset the environment.", play_sounds=True)
-            reset_follower_position(self.robot, self.reset_pose)
+            reset_follower_position(self.robot, np.array(self.reset_pose))
             log_say("Reset the environment done.", play_sounds=True)
 
         busy_wait(self.reset_time_s - (time.perf_counter() - start_time))
@@ -251,11 +275,10 @@ class RobotEnv(gym.Env):
         # Reset episode tracking variables.
         self.current_step = 0
         self.episode_data = None
-        self.current_observation = None
-        self._get_observation()
-        return self.current_observation, {
+        obs = self._get_observation()
+        return obs, {
             "is_intervention": False,
-            "raw_joint_positions": self.current_observation["agent_pos"],
+            "raw_joint_positions": obs["agent_pos"],
         }
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
@@ -263,7 +286,7 @@ class RobotEnv(gym.Env):
 
         self.robot.send_action(joint_targets_dict)
 
-        self._get_observation()
+        obs = self._get_observation()
 
         if self.display_cameras:
             self.render()
@@ -275,11 +298,11 @@ class RobotEnv(gym.Env):
         truncated = False
 
         return (
-            self.current_observation,
+            obs,
             reward,
             terminated,
             truncated,
-            {"is_intervention": False, "raw_joint_positions": self.current_observation["agent_pos"]},
+            {"is_intervention": False, "raw_joint_positions": obs["agent_pos"]},
         )
 
     def render(self):
@@ -288,11 +311,13 @@ class RobotEnv(gym.Env):
         """
         import cv2
 
-        image_keys = [key for key in self.current_observation if "image" in key]
+        current_observation = self._get_observation()
+        if current_observation is not None:
+            image_keys = [key for key in current_observation if "image" in key]
 
-        for key in image_keys:
-            cv2.imshow(key, cv2.cvtColor(self.current_observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            for key in image_keys:
+                cv2.imshow(key, cv2.cvtColor(current_observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                cv2.waitKey(1)
 
     def close(self):
         """
@@ -320,6 +345,23 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
             - A gym environment with all necessary wrappers applied.
             - The teleoperation device for use in action processors.
     """
+    # Check if this is a GymHIL simulation environment
+    if cfg.name == "gym_hil":
+        assert cfg.robot is None and cfg.teleop is None, "GymHIL environment does not support robot or teleop"
+        import gymnasium as gym
+
+        # Create GymHIL environment
+        env = gym.make(
+            f"gym_hil/{cfg.task}",
+            image_obs=True,
+            render_mode="human",
+            use_gripper=cfg.processor.gripper.use_gripper,
+            gripper_penalty=cfg.processor.gripper.gripper_penalty,
+        )
+
+        return env, DummyTeleopDevice()
+
+    # Real robot environment
     robot = make_robot_from_config(cfg.robot)
     teleop_device = make_teleoperator_from_config(cfg.teleop)
     teleop_device.connect()
@@ -335,20 +377,36 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     return env, teleop_device
 
 
-def make_processors(env: RobotEnv, cfg: HILSerlRobotEnvConfig):
+def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu"):
     """
     Factory function to create environment and action processors.
 
     Args:
-        env: The robot environment
+        env: The robot environment (RobotEnv or gym.Env for GymHIL)
         cfg: Configuration object containing processor parameters
 
     Returns:
         tuple: (env_processor, action_processor)
     """
+    # Check if this is a GymHIL simulation environment
+    is_gym_hil = cfg.name == "gym_hil" or (cfg.robot is None and cfg.teleop is None)
+
+    if is_gym_hil:
+        # Minimal processor pipeline for GymHIL simulation
+        env_pipeline_steps = [
+            VanillaObservationProcessor(),
+            ToBatchProcessor(),
+            DeviceProcessor(device=device),
+        ]
+
+        # Use IdentityProcessor for GymHIL as actions are handled by the environment
+        action_pipeline_steps = [IdentityProcessor()]
+
+        return RobotProcessor(steps=env_pipeline_steps), RobotProcessor(steps=action_pipeline_steps)
+
+    # Full processor pipeline for real robot environment
     env_pipeline_steps = [
-        ImageProcessor(),
-        StateProcessor(),
+        VanillaObservationProcessor(),
         JointVelocityProcessor(dt=1.0 / cfg.fps),
         MotorCurrentProcessor(env=env),
         ImageCropResizeProcessor(
@@ -370,15 +428,14 @@ def make_processors(env: RobotEnv, cfg: HILSerlRobotEnvConfig):
         env_pipeline_steps.append(
             RewardClassifierProcessor(
                 pretrained_path=cfg.processor.reward_classifier.pretrained_path,
-                device=cfg.device,
+                device=device,
                 success_threshold=cfg.processor.reward_classifier.success_threshold,
                 success_reward=cfg.processor.reward_classifier.success_reward,
             )
         )
 
-    env_pipeline_steps.append(DeviceProcessor(device=cfg.device))
-
-    env_processor = RobotProcessor(steps=env_pipeline_steps)
+    env_pipeline_steps.append(ToBatchProcessor())
+    env_pipeline_steps.append(DeviceProcessor(device=device))
 
     action_pipeline_steps = [
         InterventionActionProcessor(
@@ -392,9 +449,8 @@ def make_processors(env: RobotEnv, cfg: HILSerlRobotEnvConfig):
             max_gripper_pos=cfg.processor.inverse_kinematics.max_gripper_pos,
         ),
     ]
-    action_processor = RobotProcessor(steps=action_pipeline_steps)
 
-    return env_processor, action_processor
+    return RobotProcessor(steps=env_pipeline_steps), RobotProcessor(steps=action_pipeline_steps)
 
 
 def step_env_and_process_transition(
@@ -412,14 +468,14 @@ def step_env_and_process_transition(
         env: The robot environment
         transition: Current transition state
         action: Action to execute (will be replaced by neutral action in gym_manipulator mode)
-        teleop_device: Teleoperator device for getting intervention signals
+        teleop_device: Teleoperator device for getting intervention signals (DummyTeleopDevice for GymHIL)
         env_processor: Environment processor for observations
         action_processor: Action processor for handling interventions
 
     Returns:
         tuple: (new_transition, terminate_episode)
     """
-    # Get teleoperation action and events
+    # Get teleoperation action and events (DummyTeleopDevice for GymHIL, real device for robots)
     teleop_action = teleop_device.get_action()
     teleop_events = teleop_device.get_teleop_events() if hasattr(teleop_device, "get_teleop_events") else {}
 
@@ -433,7 +489,7 @@ def step_env_and_process_transition(
     action_complementary_data.update(teleop_events)
     action_transition[TransitionKey.COMPLEMENTARY_DATA] = action_complementary_data
 
-    # Process action through action pipeline (handles intervention)
+    # Process action through action pipeline (IdentityProcessor for GymHIL, full pipeline for robots)
     processed_action_transition = action_processor(action_transition)
 
     # Extract processed action and metadata
@@ -446,11 +502,11 @@ def step_env_and_process_transition(
     # Combine rewards from environment and action processor
     reward = reward + processed_action_transition[TransitionKey.REWARD]
 
-    # Process new observation
-    complementary_data = {
-        "raw_joint_positions": info.pop("raw_joint_positions"),
-        **processed_action_transition[TransitionKey.COMPLEMENTARY_DATA],
-    }
+    # Process new observation - handle raw_joint_positions if it exists
+    complementary_data = processed_action_transition[TransitionKey.COMPLEMENTARY_DATA].copy()
+    if "raw_joint_positions" in info:
+        complementary_data["raw_joint_positions"] = info.pop("raw_joint_positions")
+
     info.update(processed_action_transition[TransitionKey.INFO])
 
     new_transition = create_transition(
@@ -478,7 +534,9 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
 
     # Reset environment and processors
     obs, info = env.reset()
-    complementary_data = {"raw_joint_positions": info.pop("raw_joint_positions")}
+    complementary_data = (
+        {"raw_joint_positions": info.pop("raw_joint_positions")} if "raw_joint_positions" in info else {}
+    )
     env_processor.reset()
     action_processor.reset()
 
@@ -551,16 +609,19 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
 
         if cfg.mode == "record":
             observations = {k: v.squeeze(0).cpu() for k, v in transition[TransitionKey.OBSERVATION].items()}
+            # Use teleop_action if available, otherwise use the action from the transition
+            action_to_record = transition[TransitionKey.COMPLEMENTARY_DATA].get(
+                "teleop_action", transition[TransitionKey.ACTION]
+            )
             frame = {
                 **observations,
-                "action": transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"].cpu(),
+                "action": action_to_record.cpu(),
                 "next.reward": np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
                 "next.done": np.array([terminated or truncated], dtype=bool),
             }
             if cfg.env.processor.gripper.use_gripper:
-                frame["complementary_info.discrete_penalty"] = np.array(
-                    [transition[TransitionKey.COMPLEMENTARY_DATA]["discrete_penalty"]], dtype=np.float32
-                )
+                discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
+                frame["complementary_info.discrete_penalty"] = np.array([discrete_penalty], dtype=np.float32)
             dataset.add_frame(frame, task=cfg.dataset.task)
 
         episode_step += 1
@@ -585,7 +646,11 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
 
             # Reset for new episode
             obs, info = env.reset()
-            complementary_data = {"raw_joint_positions": info.pop("raw_joint_positions")}
+            complementary_data = (
+                {"raw_joint_positions": info.pop("raw_joint_positions")}
+                if "raw_joint_positions" in info
+                else {}
+            )
             env_processor.reset()
             action_processor.reset()
 
@@ -623,7 +688,7 @@ def replay_trajectory(env, action_processor, cfg: GymManipulatorConfig):
 @parser.wrap()
 def main(cfg: GymManipulatorConfig):
     env, teleop_device = make_robot_env(cfg.env)
-    env_processor, action_processor = make_processors(env, cfg.env)
+    env_processor, action_processor = make_processors(env, cfg.env, cfg.device)
 
     print("Environment observation space:", env.observation_space)
     print("Environment action space:", env.action_space)

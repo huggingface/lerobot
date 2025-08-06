@@ -239,7 +239,6 @@ class HILSerlRobotEnvConfig(EnvConfig):
     processor: HILSerlProcessorConfig = field(default_factory=HILSerlProcessorConfig)
 
     name: str = "real_robot"
-    device: str = "cuda"
 
     @property
     def gym_kwargs(self) -> dict:

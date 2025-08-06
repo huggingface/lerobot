@@ -243,7 +243,7 @@ def act_with_policy(
     logging.info("make_env online")
 
     online_env, teleop_device = make_robot_env(cfg=cfg.env)
-    env_processor, action_processor = make_processors(online_env, cfg.env)
+    env_processor, action_processor = make_processors(online_env, cfg.env, cfg.policy.device)
 
     set_seed(cfg.seed)
     device = get_safe_torch_device(cfg.policy.device, log=True)
