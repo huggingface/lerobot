@@ -417,21 +417,21 @@ class RobotProcessor(ModelHubMixin):
             transition = processor_step(transition)
             yield transition
 
-    def _save_pretrained(self, destination_path: str, **kwargs):
+    def _save_pretrained(self, save_directory: Path, **kwargs):
         """Internal save method for ModelHubMixin compatibility."""
         # Extract config_filename from kwargs if provided
         config_filename = kwargs.pop("config_filename", None)
-        self.save_pretrained(destination_path, config_filename=config_filename)
+        self.save_pretrained(save_directory, config_filename=config_filename)
 
     def save_pretrained(self, save_directory: str, config_filename: str | None = None, **kwargs):
-        """Serialize the processor definition and parameters to *destination_path*.
+        """Serialize the processor definition and parameters to *save_directory*.
 
         Args:
             save_directory: Directory where the processor will be saved.
             config_filename: Optional custom config filename. If not provided, defaults to
                 "{self.name}.json" where self.name is sanitized for filesystem compatibility.
         """
-        os.makedirs(save_directory, exist_ok=True)
+        os.makedirs(str(save_directory), exist_ok=True)
 
         # Sanitize processor name for use in filenames
         import re
@@ -488,7 +488,7 @@ class RobotProcessor(ModelHubMixin):
                     else:
                         state_filename = f"{sanitized_name}_step_{step_index}.safetensors"
 
-                    save_file(cloned_state, os.path.join(save_directory, state_filename))
+                    save_file(cloned_state, os.path.join(str(save_directory), state_filename))
                     step_entry["state_file"] = state_filename
 
             config["steps"].append(step_entry)
@@ -594,9 +594,9 @@ class RobotProcessor(ModelHubMixin):
             if config_filename is None:
                 # Try common config names
                 common_names = [
+                    "robot_processor.json",
                     "robot_preprocessor.json",
                     "robot_postprocessor.json",
-                    "robot_processor.json",
                 ]
                 config_path = None
                 for name in common_names:
