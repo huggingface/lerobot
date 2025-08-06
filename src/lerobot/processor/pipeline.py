@@ -889,12 +889,6 @@ class RobotProcessor(ModelHubMixin):
                     f"Step {i} ({type(step).__name__}) must define __call__(transition) -> EnvTransition"
                 )
 
-            fc = getattr(step, "feature_contract", None)
-            if not callable(fc):
-                raise TypeError(
-                    f"Step {i} ({type(step).__name__}) must define feature_contract(features) -> dict[str, Any]"
-                )
-
     def dataset_features(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """
         Apply ALL steps in order. Only if a step has a dataset_features method, it will be called.
