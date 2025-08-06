@@ -413,7 +413,12 @@ def hw_to_dataset_features(
 ) -> dict[str, dict]:
     features = {}
     joint_fts = {key: ftype for key, ftype in hw_features.items() if ftype is float}
-    cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
+    cam_fts = {
+        key: shape for key, shape in hw_features.items() if isinstance(shape, tuple) and len(shape) == 3
+    }
+    mic_fts = {
+        key: shape for key, shape in hw_features.items() if isinstance(shape, tuple) and len(shape) == 2
+    }
 
     if joint_fts and prefix == "action":
         features[prefix] = {
@@ -436,6 +441,14 @@ def hw_to_dataset_features(
             "names": ["height", "width", "channels"],
         }
 
+    for key, features in mic_fts.items():
+        features[f"{prefix}.audio.{key}"] = {
+            "dtype": "audio",
+            "shape": (features[1],),
+            "names": ["channels"],
+            "sample_rate": features[0],
+        }
+
     _validate_feature_names(features)
     return features
 
@@ -451,6 +464,8 @@ def build_dataset_frame(
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+        elif ft["dtype"] == "audio":
+            frame[key] = values[key.removeprefix(f"{prefix}.audio.")]
 
     return frame
 
