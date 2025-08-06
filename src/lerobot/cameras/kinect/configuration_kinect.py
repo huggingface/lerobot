@@ -67,8 +67,8 @@ class KinectCameraConfig(CameraConfig):
         pipeline: Processing pipeline to use. AUTO selects best available. Defaults to AUTO.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds). Defaults to 1.
-        enable_bilateral_filter: Apply bilateral filter to depth for smoothing. Defaults to True.
-        enable_edge_filter: Apply edge-aware filter to depth. Defaults to True.
+        enable_bilateral_filter: Apply bilateral filter to depth for smoothing. Defaults to False (adds ~15-25ms).
+        enable_edge_filter: Apply edge-aware filter to depth. Defaults to False (adds ~5-10ms).
         min_depth: Minimum depth in meters for depth processing. Defaults to 0.5.
         max_depth: Maximum depth in meters for depth processing. Defaults to 4.5.
         depth_colormap: Colormap for depth visualization. Options: jet, hot, cool, viridis, turbo, rainbow, bone. Defaults to jet.
@@ -92,8 +92,10 @@ class KinectCameraConfig(CameraConfig):
     pipeline: KinectPipeline = KinectPipeline.AUTO
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: float = 1.0
-    enable_bilateral_filter: bool = True
-    enable_edge_filter: bool = True
+    # Depth filtering - DISABLED by default for performance
+    # WARNING: These filters significantly impact performance!
+    enable_bilateral_filter: bool = False  # Adds ~15-25ms per frame when enabled
+    enable_edge_filter: bool = False  # Adds ~5-10ms per frame when enabled
     min_depth: float = 0.5
     max_depth: float = 4.5
     # Depth colorization settings

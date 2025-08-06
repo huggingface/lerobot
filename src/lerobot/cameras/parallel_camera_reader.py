@@ -158,8 +158,10 @@ class ParallelCameraReader:
 
             # Collect results with individual timeout handling
             collect_time = time.perf_counter()
+            individual_timings = {}
 
             for cam_key, (future, read_type) in futures.items():
+                cam_start = time.perf_counter()
                 try:
                     # Convert timeout from ms to seconds for future.result()
                     timeout_s = timeout_ms / 1000.0
@@ -178,6 +180,8 @@ class ParallelCameraReader:
                     else:
                         # Regular async_read returns the frame directly
                         obs_dict[cam_key] = result
+
+                    individual_timings[cam_key] = (time.perf_counter() - cam_start) * 1000
 
                 except FutureTimeoutError:
                     logger.warning(f"Camera {cam_key} read timeout after {timeout_ms}ms")
@@ -204,12 +208,21 @@ class ParallelCameraReader:
 
         # Log performance metrics if significant
         if total_duration_ms > 10.0 or failed_cameras:
+            # Build detailed timing string
+            timing_details = ""
+            if individual_timings:
+                max_cam = max(individual_timings, key=individual_timings.get)
+                max_time = individual_timings[max_cam]
+                # Show all camera timings for debugging depth performance
+                cam_times = ", ".join([f"{k}:{v:.1f}ms" for k, v in individual_timings.items()])
+                timing_details = f" [Cameras: {cam_times}]"
+
             logger.info(
                 f"Parallel camera read: {len(cameras)} cameras, "
                 f"{total_duration_ms:.1f}ms total "
                 f"(submit: {submit_duration_ms:.1f}ms, "
                 f"collect: {collect_duration_ms:.1f}ms), "
-                f"{len(failed_cameras)} failed"
+                f"{len(failed_cameras)} failed{timing_details}"
             )
 
         # Handle failures in strict mode
