@@ -423,7 +423,7 @@ class RobotProcessor(ModelHubMixin):
         config_filename = kwargs.pop("config_filename", None)
         self.save_pretrained(save_directory, config_filename=config_filename)
 
-    def save_pretrained(self, save_directory: str, config_filename: str | None = None, **kwargs):
+    def save_pretrained(self, save_directory: str | Path, config_filename: str | None = None, **kwargs):
         """Serialize the processor definition and parameters to *save_directory*.
 
         Args:
