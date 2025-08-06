@@ -240,6 +240,7 @@ def record_loop(
     stats_interval = 5.0  # Print stats every 5 seconds
     cpu_sample_interval = 0.5  # Sample CPU every 0.5 seconds
     process = psutil.Process()
+    cpu_count = psutil.cpu_count()  # Get number of CPU cores for normalization
     stats_printed = False
 
     timestamp = 0
@@ -320,12 +321,15 @@ def record_loop(
                 np.array(all_frame_times[-150:]) if len(all_frame_times) > 150 else fps_array
             )  # Last 5s
             avg_cpu = np.mean(cpu_samples) if cpu_samples else 0.0
+            # Get system-wide CPU usage
+            system_cpu = psutil.cpu_percent(interval=None)
 
             # Move to top, print stats, then return to position
             if stats_printed:
                 move_cursor_up(len(sent_action) + 7)
             print(
-                f"\r📊 Stats | Total avg:{fps_array.mean():.1f} | Recent(5s): avg:{recent_fps.mean():.1f} min:{recent_fps.min():.1f} max:{recent_fps.max():.1f} std:{recent_fps.std():.1f} | CPU(avg):{avg_cpu:.1f}%"
+                f"\r📊 Stats | FPS avg:{fps_array.mean():.1f} | Recent: {recent_fps.mean():.1f}±{recent_fps.std():.1f} | "
+                f"Process CPU: {avg_cpu:.1f}% | System CPU: {system_cpu:.1f}%"
             )
             print("" + " " * 80)  # Clear line for clean display
             if not stats_printed:

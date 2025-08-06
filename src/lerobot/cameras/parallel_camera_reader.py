@@ -159,6 +159,8 @@ class ParallelCameraReader:
             # Collect results with individual timeout handling
             collect_time = time.perf_counter()
             individual_timings = {}
+            wait_timings = {}  # Time waiting for hardware
+            process_timings = {}  # Time processing results
 
             for cam_key, (future, read_type) in futures.items():
                 cam_start = time.perf_counter()
@@ -166,10 +168,12 @@ class ParallelCameraReader:
                     # Convert timeout from ms to seconds for future.result()
                     timeout_s = timeout_ms / 1000.0
 
-                    # Get result with timeout
+                    # Get result with timeout (this includes hardware wait time)
                     result = future.result(timeout=timeout_s)
+                    wait_time = time.perf_counter()
+                    wait_timings[cam_key] = (wait_time - cam_start) * 1000
 
-                    # Process result based on read type
+                    # Process result based on read type (this is software overhead)
                     if read_type == "depth" and isinstance(result, dict):
                         # async_read_all returns dict with "color" and possibly "depth_rgb"
                         obs_dict[cam_key] = result.get("color")
@@ -181,6 +185,7 @@ class ParallelCameraReader:
                         # Regular async_read returns the frame directly
                         obs_dict[cam_key] = result
 
+                    process_timings[cam_key] = (time.perf_counter() - wait_time) * 1000
                     individual_timings[cam_key] = (time.perf_counter() - cam_start) * 1000
 
                 except FutureTimeoutError:
@@ -206,24 +211,39 @@ class ParallelCameraReader:
         total_duration_ms = (time.perf_counter() - start_time) * 1000
         self._update_stats(total_duration_ms, len(failed_cameras))
 
-        # Log performance metrics if significant
-        if total_duration_ms > 10.0 or failed_cameras:
-            # Build detailed timing string
-            timing_details = ""
-            if individual_timings:
-                max_cam = max(individual_timings, key=individual_timings.get)
-                max_time = individual_timings[max_cam]
-                # Show all camera timings for debugging depth performance
-                cam_times = ", ".join([f"{k}:{v:.1f}ms" for k, v in individual_timings.items()])
-                timing_details = f" [Cameras: {cam_times}]"
+        # Log performance metrics - always log to understand timing
+        if total_duration_ms > 5.0 or failed_cameras or len(cameras) > 1:
+            # Find bottleneck camera (longest wait time)
+            if wait_timings:
+                bottleneck_cam = max(wait_timings, key=wait_timings.get)
+                bottleneck_wait = wait_timings[bottleneck_cam]
 
-            logger.info(
-                f"Parallel camera read: {len(cameras)} cameras, "
-                f"{total_duration_ms:.1f}ms total "
-                f"(submit: {submit_duration_ms:.1f}ms, "
-                f"collect: {collect_duration_ms:.1f}ms), "
-                f"{len(failed_cameras)} failed{timing_details}"
-            )
+                # Calculate actual parallel efficiency
+                max_wait = max(wait_timings.values())
+                total_process = sum(process_timings.values())
+                overhead = total_duration_ms - max_wait - total_process
+
+                # Build compact timing string showing key metrics
+                timing_str = f"Bottleneck: {bottleneck_cam}={bottleneck_wait:.1f}ms"
+                if with_depth and any("depth" in str(f[1]) for f in futures.values()):
+                    # Show depth processing overhead
+                    depth_cams = [k for k, v in futures.items() if v[1] == "depth"]
+                    depth_overhead = sum(process_timings.get(k, 0) for k in depth_cams)
+                    timing_str += f" | Depth proc: {depth_overhead:.1f}ms"
+
+                logger.info(
+                    f"📊 Parallel read: {len(cameras)} cams in {total_duration_ms:.1f}ms | "
+                    f"HW wait: {max_wait:.1f}ms | SW overhead: {total_process + overhead:.1f}ms | "
+                    f"{timing_str}"
+                )
+            else:
+                logger.info(
+                    f"Parallel camera read: {len(cameras)} cameras, "
+                    f"{total_duration_ms:.1f}ms total "
+                    f"(submit: {submit_duration_ms:.1f}ms, "
+                    f"collect: {collect_duration_ms:.1f}ms), "
+                    f"{len(failed_cameras)} failed"
+                )
 
         # Handle failures in strict mode
         if not return_partial and failed_cameras:
