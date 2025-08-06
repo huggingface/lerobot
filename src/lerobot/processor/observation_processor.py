@@ -28,8 +28,20 @@ from lerobot.processor.pipeline import ObservationProcessor, ProcessorStepRegist
 @dataclass
 @ProcessorStepRegistry.register(name="observation_processor")
 class VanillaObservationProcessor(ObservationProcessor):
-    """Complete observation processor that combines image and state processing.
-    Convert environment observation to LeRobot format observation
+    """
+    Processes environment observations into the LeRobot format by handling both images and states.
+
+    Image processing:
+        - Converts channel-last (H, W, C) images to channel-first (C, H, W)
+        - Normalizes uint8 images ([0, 255]) to float32 ([0, 1])
+        - Adds a batch dimension if missing
+        - Supports single images and image dictionaries
+
+    State processing:
+        - Maps 'environment_state' to observation.environment_state
+        - Maps 'agent_pos' to observation.state
+        - Converts numpy arrays to tensors
+        - Adds a batch dimension if missing
     """
 
     def _process_single_image(self, img: np.ndarray) -> Tensor:
