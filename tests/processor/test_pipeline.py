@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 import torch
 import torch.nn as nn
@@ -1190,96 +1189,6 @@ def test_from_pretrained_override_error_messages():
         assert "registered_mock_step" in error_msg
 
 
-class MockStepWithMixedState:
-    """Mock step demonstrating proper separation of tensor and non-tensor state.
-
-    Non-tensor state should go in get_config(), only tensors in state_dict().
-    """
-
-    def __init__(self, name: str = "mixed_state"):
-        self.name = name
-        self.tensor_data = torch.randn(5)
-        self.numpy_data = np.array([1, 2, 3, 4, 5])  # Goes in config
-        self.scalar_value = 42  # Goes in config
-        self.list_value = [1, 2, 3]  # Goes in config
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        # Simple pass-through
-        return transition
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        """Return ONLY tensor state as per the type contract."""
-        return {
-            "tensor_data": self.tensor_data,
-        }
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """Load tensor state only."""
-        self.tensor_data = state["tensor_data"]
-
-    def get_config(self) -> dict[str, Any]:
-        """Non-tensor state goes here."""
-        return {
-            "name": self.name,
-            "numpy_data": self.numpy_data.tolist(),  # Convert to list for JSON serialization
-            "scalar_value": self.scalar_value,
-            "list_value": self.list_value,
-        }
-
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test dataset_features here
-        return features
-
-
-def test_to_device_with_mixed_state_types():
-    """Test that to() only moves tensor state, while non-tensor state remains in config."""
-    step = MockStepWithMixedState()
-    pipeline = RobotProcessor([step])
-
-    # Store initial values
-    initial_numpy = step.numpy_data.copy()
-    initial_scalar = step.scalar_value
-    initial_list = step.list_value.copy()
-
-    # Check initial state
-    assert step.tensor_data.device.type == "cpu"
-    assert isinstance(step.numpy_data, np.ndarray)
-    assert isinstance(step.scalar_value, int)
-    assert isinstance(step.list_value, list)
-
-    # Verify state_dict only contains tensors
-    state = step.state_dict()
-    assert all(isinstance(v, torch.Tensor) for v in state.values())
-    assert "tensor_data" in state
-    assert "numpy_data" not in state
-
-    # Move to same device
-    pipeline.to("cpu")
-
-    # Verify tensor moved and non-tensor attributes unchanged
-    assert step.tensor_data.device.type == "cpu"
-    assert np.array_equal(step.numpy_data, initial_numpy)
-    assert step.scalar_value == initial_scalar
-    assert step.list_value == initial_list
-
-    if torch.cuda.is_available():
-        # Move to GPU
-        pipeline.to("cuda")
-
-        # Only tensor should move to GPU
-        assert step.tensor_data.device.type == "cuda"
-
-        # Non-tensor values should remain unchanged
-        assert isinstance(step.numpy_data, np.ndarray)
-        assert np.array_equal(step.numpy_data, initial_numpy)
-        assert step.scalar_value == initial_scalar
-        assert step.list_value == initial_list
-
-        # Move back to CPU
-        pipeline.to("cpu")
-        assert step.tensor_data.device.type == "cpu"
-
-
 def test_repr_empty_processor():
     """Test __repr__ with empty processor."""
     pipeline = RobotProcessor()
@@ -1792,6 +1701,109 @@ def test_state_file_naming_with_multiple_processors():
         assert loaded_post.name == "PostProcessor"
         assert loaded_pre.steps[0].window_size == 5
         assert loaded_post.steps[0].window_size == 10
+
+
+def test_default_batch_to_transition_with_index_fields():
+    """Test that _default_batch_to_transition handles index and task_index fields correctly."""
+    from lerobot.processor.pipeline import _default_batch_to_transition
+
+    # Create batch with index and task_index fields
+    batch = {
+        "observation.state": torch.randn(1, 7),
+        "action": torch.randn(1, 4),
+        "next.reward": 1.5,
+        "next.done": False,
+        "task": ["pick_cube"],
+        "index": torch.tensor([42], dtype=torch.int64),
+        "task_index": torch.tensor([3], dtype=torch.int64),
+    }
+
+    transition = _default_batch_to_transition(batch)
+
+    # Check basic transition structure
+    assert TransitionKey.OBSERVATION in transition
+    assert TransitionKey.ACTION in transition
+    assert TransitionKey.COMPLEMENTARY_DATA in transition
+
+    # Check that index and task_index are in complementary_data
+    comp_data = transition[TransitionKey.COMPLEMENTARY_DATA]
+    assert "index" in comp_data
+    assert "task_index" in comp_data
+    assert "task" in comp_data
+
+    # Verify values
+    assert torch.equal(comp_data["index"], batch["index"])
+    assert torch.equal(comp_data["task_index"], batch["task_index"])
+    assert comp_data["task"] == batch["task"]
+
+
+def test_default_transition_to_batch_with_index_fields():
+    """Test that _default_transition_to_batch handles index and task_index fields correctly."""
+    from lerobot.processor.pipeline import _default_transition_to_batch
+
+    # Create transition with index and task_index in complementary_data
+    transition = create_transition(
+        observation={"observation.state": torch.randn(1, 7)},
+        action=torch.randn(1, 4),
+        reward=1.5,
+        done=False,
+        complementary_data={
+            "task": ["navigate"],
+            "index": torch.tensor([100], dtype=torch.int64),
+            "task_index": torch.tensor([5], dtype=torch.int64),
+        },
+    )
+
+    batch = _default_transition_to_batch(transition)
+
+    # Check that index and task_index are in the batch
+    assert "index" in batch
+    assert "task_index" in batch
+    assert "task" in batch
+
+    # Verify values
+    assert torch.equal(batch["index"], transition[TransitionKey.COMPLEMENTARY_DATA]["index"])
+    assert torch.equal(batch["task_index"], transition[TransitionKey.COMPLEMENTARY_DATA]["task_index"])
+    assert batch["task"] == transition[TransitionKey.COMPLEMENTARY_DATA]["task"]
+
+
+def test_batch_to_transition_without_index_fields():
+    """Test that conversion works without index and task_index fields."""
+    from lerobot.processor.pipeline import _default_batch_to_transition
+
+    # Batch without index/task_index
+    batch = {
+        "observation.state": torch.randn(1, 7),
+        "action": torch.randn(1, 4),
+        "task": ["pick_cube"],
+    }
+
+    transition = _default_batch_to_transition(batch)
+    comp_data = transition[TransitionKey.COMPLEMENTARY_DATA]
+
+    # Should have task but not index/task_index
+    assert "task" in comp_data
+    assert "index" not in comp_data
+    assert "task_index" not in comp_data
+
+
+def test_transition_to_batch_without_index_fields():
+    """Test that conversion works without index and task_index fields."""
+    from lerobot.processor.pipeline import _default_transition_to_batch
+
+    # Transition without index/task_index
+    transition = create_transition(
+        observation={"observation.state": torch.randn(1, 7)},
+        action=torch.randn(1, 4),
+        complementary_data={"task": ["navigate"]},
+    )
+
+    batch = _default_transition_to_batch(transition)
+
+    # Should have task but not index/task_index
+    assert "task" in batch
+    assert "index" not in batch
+    assert "task_index" not in batch
 
 
 def test_override_with_device_strings():

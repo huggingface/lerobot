@@ -18,6 +18,7 @@ from typing import Any
 
 import torch
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
 
@@ -104,8 +105,37 @@ class DeviceProcessor:
         if truncated is not None and isinstance(truncated, torch.Tensor):
             new_transition[TransitionKey.TRUNCATED] = self._process_tensor(truncated)
 
+        # Process complementary data tensors
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is not None:
+            new_complementary_data = {}
+
+            # Process all items in complementary_data
+            for key, value in complementary_data.items():
+                if isinstance(value, torch.Tensor):
+                    new_complementary_data[key] = self._process_tensor(value)
+                else:
+                    new_complementary_data[key] = value
+
+            new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
+
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
         """Return configuration for serialization."""
-        return {"device": self.device}
+        return {"device": self.device, "float_dtype": self.float_dtype}
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Return state dictionary (empty for this processor)."""
+        return {}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Load state dictionary (no-op for this processor)."""
+        pass
+
+    def reset(self) -> None:
+        """Reset processor state (no-op for this processor)."""
+        pass
+
+    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features

@@ -604,6 +604,213 @@ def test_float_dtype_with_cuda():
     assert result[TransitionKey.ACTION].dtype == torch.float16
 
 
+def test_complementary_data_index_fields():
+    """Test processing of index and task_index fields in complementary_data."""
+    processor = DeviceProcessor(device="cpu")
+
+    # Create transition with index and task_index in complementary_data
+    complementary_data = {
+        "task": ["pick_cube"],
+        "index": torch.tensor([42], dtype=torch.int64),
+        "task_index": torch.tensor([3], dtype=torch.int64),
+        "episode_id": 123,  # Non-tensor field
+    }
+    transition = create_transition(
+        observation={"observation.state": torch.randn(1, 7)},
+        action=torch.randn(1, 4),
+        complementary_data=complementary_data,
+    )
+
+    result = processor(transition)
+
+    # Check that tensors in complementary_data are processed
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+
+    # Check index tensor
+    assert isinstance(processed_comp_data["index"], torch.Tensor)
+    assert processed_comp_data["index"].device.type == "cpu"
+    assert torch.equal(processed_comp_data["index"], complementary_data["index"])
+
+    # Check task_index tensor
+    assert isinstance(processed_comp_data["task_index"], torch.Tensor)
+    assert processed_comp_data["task_index"].device.type == "cpu"
+    assert torch.equal(processed_comp_data["task_index"], complementary_data["task_index"])
+
+    # Check non-tensor fields remain unchanged
+    assert processed_comp_data["task"] == ["pick_cube"]
+    assert processed_comp_data["episode_id"] == 123
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_complementary_data_index_fields_cuda():
+    """Test moving index and task_index fields to CUDA."""
+    processor = DeviceProcessor(device="cuda:0")
+
+    # Create CPU tensors
+    complementary_data = {
+        "index": torch.tensor([100, 101], dtype=torch.int64),
+        "task_index": torch.tensor([5], dtype=torch.int64),
+    }
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+
+    # Check tensors moved to CUDA
+    assert processed_comp_data["index"].device.type == "cuda"
+    assert processed_comp_data["index"].device.index == 0
+    assert processed_comp_data["task_index"].device.type == "cuda"
+    assert processed_comp_data["task_index"].device.index == 0
+
+
+def test_complementary_data_without_index_fields():
+    """Test that complementary_data without index/task_index fields works correctly."""
+    processor = DeviceProcessor(device="cpu")
+
+    complementary_data = {
+        "task": ["navigate"],
+        "episode_id": 456,
+    }
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+
+    # Should process without errors and preserve non-tensor fields
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert processed_comp_data["task"] == ["navigate"]
+    assert processed_comp_data["episode_id"] == 456
+
+
+def test_complementary_data_mixed_tensors():
+    """Test complementary_data with mix of tensors and non-tensors."""
+    processor = DeviceProcessor(device="cpu")
+
+    complementary_data = {
+        "task": ["pick_and_place"],
+        "index": torch.tensor([42], dtype=torch.int64),
+        "task_index": torch.tensor([3], dtype=torch.int64),
+        "metrics": [1.0, 2.0, 3.0],  # List, not tensor
+        "config": {"speed": "fast"},  # Dict
+        "episode_id": 789,  # Int
+    }
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+
+    # Check tensors are processed
+    assert isinstance(processed_comp_data["index"], torch.Tensor)
+    assert isinstance(processed_comp_data["task_index"], torch.Tensor)
+
+    # Check non-tensors remain unchanged
+    assert processed_comp_data["task"] == ["pick_and_place"]
+    assert processed_comp_data["metrics"] == [1.0, 2.0, 3.0]
+    assert processed_comp_data["config"] == {"speed": "fast"}
+    assert processed_comp_data["episode_id"] == 789
+
+
+def test_complementary_data_float_dtype_conversion():
+    """Test that float dtype conversion doesn't affect int tensors in complementary_data."""
+    processor = DeviceProcessor(device="cpu", float_dtype="float16")
+
+    complementary_data = {
+        "index": torch.tensor([42], dtype=torch.int64),
+        "task_index": torch.tensor([3], dtype=torch.int64),
+        "float_tensor": torch.tensor([1.5, 2.5], dtype=torch.float32),  # Should be converted
+    }
+    transition = create_transition(complementary_data=complementary_data)
+
+    result = processor(transition)
+
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+
+    # Int tensors should keep their dtype
+    assert processed_comp_data["index"].dtype == torch.int64
+    assert processed_comp_data["task_index"].dtype == torch.int64
+
+    # Float tensor should be converted
+    assert processed_comp_data["float_tensor"].dtype == torch.float16
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_complementary_data_full_pipeline_cuda():
+    """Test full transition with complementary_data on CUDA."""
+    processor = DeviceProcessor(device="cuda:0", float_dtype="float16")
+
+    # Create full transition with mixed CPU tensors
+    observation = {"observation.state": torch.randn(1, 7, dtype=torch.float32)}
+    action = torch.randn(1, 4, dtype=torch.float32)
+    reward = torch.tensor(1.5, dtype=torch.float32)
+    done = torch.tensor(False)
+    complementary_data = {
+        "task": ["reach_target"],
+        "index": torch.tensor([1000], dtype=torch.int64),
+        "task_index": torch.tensor([10], dtype=torch.int64),
+    }
+
+    transition = create_transition(
+        observation=observation,
+        action=action,
+        reward=reward,
+        done=done,
+        complementary_data=complementary_data,
+    )
+
+    result = processor(transition)
+
+    # Check all components moved to CUDA
+    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
+    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.REWARD].device.type == "cuda"
+    assert result[TransitionKey.DONE].device.type == "cuda"
+
+    # Check complementary_data tensors
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert processed_comp_data["index"].device.type == "cuda"
+    assert processed_comp_data["task_index"].device.type == "cuda"
+
+    # Check float conversion happened for float tensors
+    assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.float16
+    assert result[TransitionKey.ACTION].dtype == torch.float16
+    assert result[TransitionKey.REWARD].dtype == torch.float16
+
+    # Check int tensors kept their dtype
+    assert processed_comp_data["index"].dtype == torch.int64
+    assert processed_comp_data["task_index"].dtype == torch.int64
+
+
+def test_complementary_data_empty():
+    """Test empty complementary_data handling."""
+    processor = DeviceProcessor(device="cpu")
+
+    transition = create_transition(
+        observation={"observation.state": torch.randn(1, 7)},
+        complementary_data={},
+    )
+
+    result = processor(transition)
+
+    # Should have empty dict
+    assert result[TransitionKey.COMPLEMENTARY_DATA] == {}
+
+
+def test_complementary_data_none():
+    """Test None complementary_data handling."""
+    processor = DeviceProcessor(device="cpu")
+
+    transition = create_transition(
+        observation={"observation.state": torch.randn(1, 7)},
+        complementary_data=None,
+    )
+
+    result = processor(transition)
+
+    # Complementary data should not be in the result (same as input)
+    assert TransitionKey.COMPLEMENTARY_DATA not in result
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_policy_processor_integration():
     """Test integration with policy processors - input on GPU, output on CPU."""

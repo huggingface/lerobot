@@ -106,6 +106,18 @@ class ToBatchProcessor:
             if isinstance(task_value, str):
                 complementary_data["task"] = [task_value]
 
+        # Process index field - add batch dim if 0D
+        if "index" in complementary_data:
+            index_value = complementary_data["index"]
+            if isinstance(index_value, Tensor) and index_value.dim() == 0:
+                complementary_data["index"] = index_value.unsqueeze(0)
+
+        # Process task_index field - add batch dim if 0D
+        if "task_index" in complementary_data:
+            task_index_value = complementary_data["task_index"]
+            if isinstance(task_index_value, Tensor) and task_index_value.dim() == 0:
+                complementary_data["task_index"] = task_index_value.unsqueeze(0)
+
     def get_config(self) -> dict[str, Any]:
         """Return configuration for serialization."""
         return {}
