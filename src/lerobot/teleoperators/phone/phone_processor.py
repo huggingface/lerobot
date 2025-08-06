@@ -60,16 +60,12 @@ class MapPhoneActionToRobotAction(ActionProcessor):
         # Map certain inputs to certain actions
         if self.platform == PhoneOS.IOS:
             gripper = float(inputs.get("a3", 0.0))
-            # x = float(inputs.get("a1", 0.0))
-            # y = float(inputs.get("a2", 0.0))
-            # theta = float(inputs.get("a7", 0.0))
         else:
             a = float(inputs.get("reservedButtonA", 0.0))
             b = float(inputs.get("reservedButtonB", 0.0))
             gripper = (
                 a - b
             )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
-            # x = y = theta = 0.0
 
         # For some actions we need to invert the axis
         act.update(
@@ -82,9 +78,6 @@ class MapPhoneActionToRobotAction(ActionProcessor):
                 "action.target_wy": rotvec[0] if enabled else 0.0,
                 "action.target_wz": -rotvec[2] if enabled else 0.0,
                 "action.gripper": gripper,  # Still send gripper action when disabled
-                # "action.x": x if enabled else 0.0,
-                # "action.y": y if enabled else 0.0,
-                # "action.theta": theta if enabled else 0.0,
             }
         )
         return act

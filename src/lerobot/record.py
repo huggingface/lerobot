@@ -79,7 +79,7 @@ from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
 from lerobot.processor.normalize_processor import rename_stats
-from lerobot.processor.pipeline import TransitionKey
+from lerobot.processor.pipeline import IdentityProcessor, TransitionKey
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -211,6 +211,13 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
 ):
+    if teleop_action_processor is None:
+        teleop_action_processor = RobotProcessor(steps=[IdentityProcessor()])
+    if robot_action_processor is None:
+        robot_action_processor = RobotProcessor(steps=[IdentityProcessor()])
+    if robot_observation_processor is None:
+        robot_observation_processor = RobotProcessor(steps=[IdentityProcessor()])
+
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
@@ -239,13 +246,10 @@ def record_loop(
     if postprocessor is not None:
         postprocessor.reset()
 
-    # Reset custom pipelines if provided
-    if teleop_action_processor is not None:
-        teleop_action_processor.reset()
-    if robot_action_processor is not None:
-        robot_action_processor.reset()
-    if robot_observation_processor is not None:
-        robot_observation_processor.reset()
+    # Reset custom pipelines
+    teleop_action_processor.reset()
+    robot_action_processor.reset()
+    robot_observation_processor.reset()
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -256,20 +260,20 @@ def record_loop(
             events["exit_early"] = False
             break
 
-        teleop_transition = None
-        robot_action_to_send = None
-        joints_transition = None
+        # Get robot observation
+        obs = robot.get_observation()
 
+        # robot_observation_processor() applies a pipeline to the raw robot observation.
+        # By default it is an IdentityProcessor that does nothing.
+        obs_transition = robot_observation_processor(obs)
+
+        # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
-            observation = robot.get_observation()
             if dataset is not None:
-                if robot_observation_processor is not None:
-                    observation = robot_observation_processor(observation)
-                    observation_frame = to_dataset_frame(observation)
+                if to_dataset_frame is not None:
+                    observation_frame = to_dataset_frame(obs_transition)
                 else:
-                    observation_frame = build_dataset_frame(
-                        dataset.features, observation, prefix="observation"
-                    )
+                    observation_frame = build_dataset_frame(dataset.features, obs, prefix="observation")
 
             action_values = predict_action(
                 observation=observation_frame,
@@ -282,30 +286,19 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
-            if robot_action_processor is not None:
-                action_names = dataset.features["action"]["names"]
-                policy_action = {
-                    f"action.{name}": float(action_values[i]) for i, name in enumerate(action_names)
-                }
-                policy_transition = {
-                    TransitionKey.ACTION: policy_action,
-                    TransitionKey.COMPLEMENTARY_DATA: {},
-                }
-            else:
-                policy_action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-
-            robot_action_to_send = policy_action
+            action_names = dataset.features["action"]["names"]
+            policy_action = {f"action.{name}": float(action_values[i]) for i, name in enumerate(action_names)}
+            policy_transition = {
+                TransitionKey.ACTION: policy_action,
+                TransitionKey.COMPLEMENTARY_DATA: {},
+            }
 
         elif isinstance(teleop, Teleoperator):
             raw_teleop_action = teleop.get_action()
 
-            if teleop_action_processor is not None:
-                # teleop_pipeline is expected to define how to get a transition from the raw teleop dict
-                # (e.g., via to_transition_teleop_action). It may also add complementary data.
-                teleop_transition = teleop_action_processor(raw_teleop_action)
-            else:
-                # No pipeline: send raw teleop action directly (legacy behavior)
-                robot_action_to_send = raw_teleop_action
+            # teleop_action_processor() applies a pipeline to the raw teleop action.
+            # By default it is an IdentityProcessor that does nothing.
+            teleop_transition = teleop_action_processor(raw_teleop_action)
 
         elif isinstance(teleop, list):
             arm_action = teleop_arm.get_action()
@@ -321,33 +314,19 @@ def record_loop(
             )
             # Still continue to next loop to respect timing
 
-        # Before robot pipeline: turn (EE/etc) action into robot command and send
-        if robot_action_processor is not None and teleop_transition is not None:
-            # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
-            joints_transition = robot_action_processor(teleop_transition)
-            robot_action_to_send = robot_action_processor.to_output(joints_transition)
-
-        if (
-            robot_action_processor is not None and policy_transition is not None
-        ):  # TODO(pepijn): merge these two if statements
-            joints_transition = robot_action_processor(policy_transition)
-            robot_action_to_send = robot_action_processor.to_output(joints_transition)
-
-        if robot_action_to_send:
-            # Action can eventually be clipped using `max_relative_target`,
-            # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-            sent_action = robot.send_action(robot_action_to_send)
+        # Apply robot action processor to the action
+        if policy_transition is not None:
+            robot_action_to_send = robot_action_processor(policy_transition)
         else:
-            sent_action = None
+            # Before robot pipeline: turn (EE/etc) action into robot command and send
+            # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
+            robot_action_to_send = robot_action_processor(teleop_transition)
 
-        # Read robot observation and run optional AFTER-ROBOT pipeline
-        observation = robot.get_observation()
-
-        obs_transition = None
-        if robot_observation_processor is not None:
-            # observation_pipeline is expected to know how to read a raw robot obs dict
-            # (e.g., via to_transition_robot_observation)
-            obs_transition = robot_observation_processor(observation)
+        # Send action to robot
+        # Action can eventually be clipped using `max_relative_target`,
+        # so action actually sent is saved in the dataset. action = postprocessor.process(action)
+        # TODO(pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
+        sent_action = robot.send_action(robot_action_to_send)
 
         # Write to dataset
         # Prefer pipelines if provided (merge transitions), otherwise fall back to old behavior for compatibility.
@@ -368,7 +347,7 @@ def record_loop(
                 dataset.add_frame(frame, task=single_task)
             else:
                 # No pipeline: store raw observation + sent action
-                observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
+                observation_frame = build_dataset_frame(dataset.features, obs, prefix="observation")
                 action_frame = {}
                 if sent_action is not None:
                     action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
@@ -376,7 +355,7 @@ def record_loop(
                 dataset.add_frame(frame, task=single_task)
 
         if display_data:
-            log_rerun_data([obs_transition or observation, teleop_transition or sent_action])
+            log_rerun_data([obs_transition or obs, teleop_transition or sent_action])
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)

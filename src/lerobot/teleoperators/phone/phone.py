@@ -33,15 +33,6 @@ from lerobot.teleoperators.teleoperator import Teleoperator
 
 logger = logging.getLogger(__name__)
 
-# TODO(pepijn): Check tests by running them with broken code 14:00
-# TODO(pepijn): Ask for feedback from Adil 14:00
-# TODO(pepijn): Merge steps with michel 16:00
-
-# TODO(pepijn): PR feedback from Adil 9:00
-# TODO(pepijn): Add to docs with image etc 11:30
-# TODO(pepijn): Try teleop, record, replay, and eval of existing policy again 13:00
-# TODO(pepijn): Create release video 15:00
-
 
 class Phone(Teleoperator):
     """

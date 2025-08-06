@@ -479,35 +479,38 @@ def merge_features(*dicts: dict) -> dict:
     """
     out: dict = {}
     for d in dicts:
-        for k, spec in d.items():
-            if not isinstance(spec, dict):
-                out[k] = spec
+        for key, value in d.items():
+            if not isinstance(value, dict):
+                out[key] = value
                 continue
 
-            dtype = spec.get("dtype")
-            shape = spec.get("shape")
+            dtype = value.get("dtype")
+            shape = value.get("shape")
             is_vector = (
                 dtype not in ("image", "video", "string")
                 and isinstance(shape, tuple)
                 and len(shape) == 1
-                and "names" in spec
+                and "names" in value
             )
 
             if is_vector:
-                tgt = out.setdefault(k, {"dtype": dtype, "names": [], "shape": (0,)})
-                if "dtype" in tgt and dtype != tgt["dtype"]:
-                    raise ValueError(f"dtype mismatch for '{k}': {tgt['dtype']} vs {dtype}")
+                # Initialize or retrieve the accumulating dict for this feature key
+                target = out.setdefault(key, {"dtype": dtype, "names": [], "shape": (0,)})
+                # Ensure consistent data types across merged entries
+                if "dtype" in target and dtype != target["dtype"]:
+                    raise ValueError(f"dtype mismatch for '{key}': {target['dtype']} vs {dtype}")
 
-                # Merge names
-                seen = set(tgt["names"])
-                for n in spec["names"]:
+                # Merge feature names: append only new ones to preserve order without duplicates
+                seen = set(target["names"])
+                for n in value["names"]:
                     if n not in seen:
-                        tgt["names"].append(n)
+                        target["names"].append(n)
                         seen.add(n)
-                tgt["shape"] = (len(tgt["names"]),)
+                # Recompute the shape to reflect the updated number of features
+                target["shape"] = (len(target["names"]),)
             else:
-                # Images/videos and any non-1D entries: copy
-                out[k] = spec
+                # For images/videos and non-1D entries: override with the latest definition
+                out[key] = value
     return out
 
 

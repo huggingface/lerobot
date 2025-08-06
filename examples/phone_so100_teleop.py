@@ -17,7 +17,7 @@ import time
 
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotProcessor
-from lerobot.processor.utils import to_output_robot_action, to_transition_teleop_action
+from lerobot.processor.converters import to_output_robot_action, to_transition_teleop_action
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
@@ -101,10 +101,7 @@ while True:
     ee_transition = phone_to_robot_ee_pose(phone_obs)
 
     # EE pose to Joints transition
-    joints_transition = robot_ee_to_joints(ee_transition)
-
-    # Transition to action dict expected by the robot
-    joint_action = robot_ee_to_joints.to_output(joints_transition)
+    joint_action = robot_ee_to_joints(ee_transition)
 
     if joint_action:
         robot.send_action(joint_action)

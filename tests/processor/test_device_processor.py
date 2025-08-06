@@ -286,18 +286,18 @@ def test_serialization_methods():
     assert processor.device == "cuda"
 
 
-def test_dataset_features():
-    """Test that dataset_features returns features unchanged."""
+def test_features():
+    """Test that features returns features unchanged."""
     processor = DeviceProcessor(device="cpu")
 
-    features = {
+    feat = {
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,)),
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
     }
 
-    result = processor.dataset_features(features)
-    assert result == features
-    assert result is features  # Should return the same object
+    result = processor.features(feat)
+    assert result == feat
+    assert result is feat  # Should return the same object
 
 
 def test_integration_with_robot_processor():

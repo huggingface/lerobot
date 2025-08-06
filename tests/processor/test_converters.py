@@ -2,13 +2,13 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.processor.pipeline import TransitionKey
-from lerobot.processor.utils import (
+from lerobot.processor.converters import (
     to_dataset_frame,
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
 )
+from lerobot.processor.pipeline import TransitionKey
 
 
 def test_to_transition_teleop_action_prefix_and_tensor_conversion():

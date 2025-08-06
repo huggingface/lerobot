@@ -135,5 +135,5 @@ class ToBatchProcessor:
         """Reset processor state (no-op for this processor)."""
         pass
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features

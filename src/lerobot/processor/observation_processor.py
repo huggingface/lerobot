@@ -111,7 +111,7 @@ class ImageProcessor:
         """Reset processor state (no-op for this processor)."""
         pass
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """No dataset features for this processor."""
         pass
 
@@ -174,8 +174,7 @@ class StateProcessor:
         """Reset processor state (no-op for this processor)."""
         pass
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        """No dataset features for this processor."""
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 

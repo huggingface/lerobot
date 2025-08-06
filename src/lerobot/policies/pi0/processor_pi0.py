@@ -65,8 +65,8 @@ class Pi0NewLineProcessor(ProcessorStep):
 
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        """Add tokenized task features to the feature contract."""
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """Add tokenized task features to the features."""
         return features
 
     def state_dict(self) -> dict[str, torch.Tensor]:

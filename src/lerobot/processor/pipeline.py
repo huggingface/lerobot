@@ -30,8 +30,7 @@ from huggingface_hub import ModelHubMixin, hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file, save_file
 
-from lerobot.configs.types import DatasetFeatureType, PolicyFeature
-from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.configs.types import PolicyFeature
 
 
 class TransitionKey(str, Enum):
@@ -158,7 +157,7 @@ class ProcessorStep(Protocol):
     * ``load_state_dict(state)`` – Inverse of ``state_dict``. Receives a dict
       containing torch tensors only.
     * ``reset()`` – Clear internal buffers at episode boundaries.
-    * ``dataset_features(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
+    * ``features(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
     If present, this method will be called to aggregate the dataset features of all steps.
 
     Example separation:
@@ -176,7 +175,7 @@ class ProcessorStep(Protocol):
 
     def reset(self) -> None: ...
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
 
 
 def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
@@ -360,7 +359,10 @@ class RobotProcessor(ModelHubMixin):
                 hook(idx, current_transition)
 
         # Convert back to original format if needed
-        return self.to_output(current_transition) if called_with_batch else current_transition
+        if called_with_batch or self.to_output is not _default_transition_to_batch:
+            return self.to_output(current_transition)
+        else:
+            return current_transition
 
     def _prepare_transition(self, data: EnvTransition | dict[str, Any]) -> tuple[EnvTransition, bool]:
         """Prepare and validate transition data for processing.
@@ -889,83 +891,18 @@ class RobotProcessor(ModelHubMixin):
                     f"Step {i} ({type(step).__name__}) must define __call__(transition) -> EnvTransition"
                 )
 
-    def dataset_features(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """
-        Apply ALL steps in order. Only if a step has a dataset_features method, it will be called.
+        Apply ALL steps in order. Only if a step has a features method, it will be called.
         We aggregate the dataset features of all steps.
         """
         features: dict[str, PolicyFeature] = deepcopy(initial_features)
 
         for _, step in enumerate(self.steps):
-            if hasattr(step, "dataset_features"):
-                out = step.dataset_features(features)
-                if not isinstance(out, dict):
-                    raise TypeError(f"{step.__class__.__name__}.dataset_features must return dict[str, Any]")
+            if hasattr(step, "features"):
+                out = step.features(features)
                 features = out
         return features
-
-    def aggregate_dataset_features(
-        self,
-        initial_features: dict[str, Any],
-        *,
-        use_videos: bool = True,
-        include: tuple[str, ...] = ("action", "observation"),
-        action_type: DatasetFeatureType | list[DatasetFeatureType] = DatasetFeatureType.JOINT,
-    ) -> dict[str, dict]:
-        """
-        Aggregates the pipeline's dataset_features and returns a features dict that is ready to be stored in the dataset.
-
-        - Filters to keys under requested spaces.
-        - Adds camera keys from the initial_features (robot.observation_features).
-        - Filters ACTION features by `action_type` (EE, JOINT, or both).
-        """
-        # Allow list or single enum
-        if not isinstance(action_type, (list, tuple, set)):
-            action_types = {action_type}
-        else:
-            action_types = set(action_type)
-
-        def _is_hw_image(v: Any) -> bool:
-            # robot.observation_features uses tuples for images: (H, W, C)
-            return isinstance(v, tuple) and len(v) == 3 and v[-1] in (1, 3)
-
-        fc = self.dataset_features(initial_features)
-
-        action_hw: dict[str, Any] = {}
-        obs_hw: dict[str, Any] = {}
-
-        # Collect from dataset_features outputs
-        for k, v in fc.items():
-            if k.startswith("action.") and "action" in include:
-                # Strip prefix and filter by action_type
-                subk = k[len("action.") :]
-                is_ee = subk.startswith("ee.")
-                is_joint = subk.endswith(".pos") and not subk.startswith("ee.")
-                if is_ee and DatasetFeatureType.EE in action_types:
-                    action_hw[subk] = v
-                elif is_joint and DatasetFeatureType.JOINT in action_types:
-                    action_hw[subk] = v
-
-            elif k.startswith("observation.state.") and "observation" in include:
-                obs_hw[k[len("observation.state.") :]] = v
-
-            elif k.startswith("observation.images.") and "observation" in include:
-                obs_hw[k[len("observation.images.") :]] = v
-
-        # Add cameras from initial_features (if observation requested)
-        if "observation" in include:
-            for k, v in (initial_features or {}).items():
-                if _is_hw_image(v):
-                    # e.g. "front": (H, W, 3)
-                    obs_hw.setdefault(k, v)
-
-        # Convert to dataset features
-        out: dict[str, dict] = {}
-        if action_hw and "action" in include:
-            out.update(hw_to_dataset_features(action_hw, "action", use_videos))
-        if obs_hw and "observation" in include:
-            out.update(hw_to_dataset_features(obs_hw, "observation", use_videos))
-        return out
 
 
 class ObservationProcessor:
@@ -1020,7 +957,7 @@ class ObservationProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1077,7 +1014,7 @@ class ActionProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1133,7 +1070,7 @@ class RewardProcessor:
     def reset(self) -> None:
         pass
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1194,7 +1131,7 @@ class DoneProcessor:
     def reset(self) -> None:
         pass
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1251,7 +1188,7 @@ class TruncatedProcessor:
     def reset(self) -> None:
         pass
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1313,7 +1250,7 @@ class InfoProcessor:
     def reset(self) -> None:
         pass
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1356,7 +1293,7 @@ class ComplementaryDataProcessor:
     def reset(self) -> None:
         pass
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1378,5 +1315,5 @@ class IdentityProcessor:
     def reset(self) -> None:
         pass
 
-    def dataset_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features

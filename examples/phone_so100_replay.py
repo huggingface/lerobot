@@ -19,8 +19,8 @@ import time
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
+from lerobot.processor.converters import to_output_robot_action
 from lerobot.processor.pipeline import RobotProcessor
-from lerobot.processor.utils import to_output_robot_action
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
@@ -50,7 +50,8 @@ kinematics_solver = RobotKinematics(
 )
 
 
-def to_transition_from_action(action: dict):
+# This method converts the action from the dataset to a transition for pipeline
+def action_to_transition(action: dict):
     act = {}
 
     # EE pose
@@ -83,7 +84,7 @@ robot_ee_to_joints = RobotProcessor(
             initial_guess_current_joints=False,  # Because replay is open loop
         ),
     ],
-    to_transition=to_transition_from_action,
+    to_transition=action_to_transition,
     to_output=to_output_robot_action,
 )
 
