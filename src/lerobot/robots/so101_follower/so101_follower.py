@@ -19,6 +19,7 @@ import time
 from functools import cached_property
 from typing import Any
 
+from lerobot.cameras.parallel_camera_reader import ParallelCameraReader
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -59,6 +60,9 @@ class SO101Follower(Robot):
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
+
+        # Initialize parallel camera reader for performance
+        self.camera_reader = ParallelCameraReader(persistent_executor=True)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -174,12 +178,19 @@ class SO101Follower(Robot):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
-        # Capture images from cameras
-        for cam_key, cam in self.cameras.items():
+        # Capture images from all cameras in parallel
+        if self.cameras:
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
+            camera_data = self.camera_reader.read_cameras_parallel(
+                self.cameras,
+                timeout_ms=1000,
+                with_depth=False,  # SO101 doesn't use depth
+                return_partial=True,
+            )
+            obs_dict.update(camera_data)
             dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            if dt_ms > 10:  # Only log if slow
+                logger.debug(f"{self} parallel camera read: {dt_ms:.1f}ms for {len(self.cameras)} cameras")
 
         return obs_dict
 
