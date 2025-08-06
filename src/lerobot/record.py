@@ -60,7 +60,7 @@ python -m lerobot.record \
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
 
@@ -78,6 +78,7 @@ from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
+from lerobot.processor.normalize_processor import rename_stats
 from lerobot.processor.pipeline import TransitionKey
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -152,6 +153,8 @@ class DatasetRecordConfig:
     # Number of episodes to record before batch encoding videos
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
+    # Rename map for the observation to override the image and state keys
+    rename_map: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.single_task is None:
@@ -431,7 +434,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         preprocessor, postprocessor = make_processor(
             policy_cfg=cfg.policy,
             pretrained_path=cfg.policy.pretrained_path,
-            dataset_stats=dataset.meta.stats,
+            dataset_stats=rename_stats(dataset.meta.stats, cfg.dataset.rename_map),
+            preprocessor_overrides={
+                "device_processor": {"device": cfg.policy.device},
+                "rename_processor": {"rename_map": cfg.dataset.rename_map},
+            },
         )
 
     robot.connect()
