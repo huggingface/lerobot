@@ -13,43 +13,18 @@ import numpy as np
 import time
 
 
-REACHY2_MOTORS = {
-    "neck_yaw.pos": "head.neck.yaw",
-    "neck_pitch.pos": "head.neck.pitch",
-    "neck_roll.pos": "head.neck.roll",
-    "r_shoulder_pitch.pos": "r_arm.shoulder.pitch",
-    "r_shoulder_roll.pos": "r_arm.shoulder.roll",
-    "r_elbow_yaw.pos": "r_arm.elbow.yaw",
-    "r_elbow_pitch.pos": "r_arm.elbow.pitch",
-    "r_wrist_roll.pos": "r_arm.wrist.roll",
-    "r_wrist_pitch.pos": "r_arm.wrist.pitch",
-    "r_wrist_yaw.pos": "r_arm.wrist.yaw",
-    "r_gripper.pos": "r_arm.gripper",
-    "l_shoulder_pitch.pos": "l_arm.shoulder.pitch",
-    "l_shoulder_roll.pos": "l_arm.shoulder.roll",
-    "l_elbow_yaw.pos": "l_arm.elbow.yaw",
-    "l_elbow_pitch.pos": "l_arm.elbow.pitch",
-    "l_wrist_roll.pos": "l_arm.wrist.roll",
-    "l_wrist_pitch.pos": "l_arm.wrist.pitch",
-    "l_wrist_yaw.pos": "l_arm.wrist.yaw",
-    "l_gripper.pos": "l_arm.gripper",
-    "l_antenna.pos": "head.l_antenna",
-    "r_antenna.pos": "head.r_antenna",
-}
-
 # Create the robot configuration
 robot_config = Reachy2RobotConfig(
-    # ip_address="localhost",
-    # ip_address="172.18.131.66",
     ip_address="192.168.0.199",
     id="reachy2-pvt02",
+    with_mobile_base=False,
 )
+
 
 # Initialize the robot
 robot = Reachy2Robot(robot_config)
 
-
-reachy = ReachySDK(robot_config.ip_address)
+# reachy = ReachySDK(robot_config.ip_address)
 
 
 # Create the dataset
@@ -59,6 +34,7 @@ actions = dataset.hf_dataset.select_columns("action")
 # Connect the robot
 robot.connect()
 
+# Go smoothly to the first action
 action_array = actions[0]["action"]
 action = {}
 for i, name in enumerate(dataset.features["action"]["names"]):
@@ -80,9 +56,9 @@ l_arm_goal = [action["l_shoulder_pitch.pos"],
               action["l_wrist_pitch.pos"],
               action["l_wrist_yaw.pos"]]
 
-reachy.head.goto(neck_goal)
-reachy.r_arm.goto(r_arm_goal)
-reachy.l_arm.goto(l_arm_goal, wait=True)
+robot.reachy.head.goto(neck_goal)
+robot.reachy.r_arm.goto(r_arm_goal)
+robot.reachy.l_arm.goto(l_arm_goal, wait=True)
 
 for idx in range(dataset.num_frames):
     start_episode_t = time.perf_counter()
@@ -98,4 +74,4 @@ for idx in range(dataset.num_frames):
     busy_wait(1 / dataset.fps - dt_s)
 
 # Clean up
-# robot.disconnect()
+robot.disconnect()

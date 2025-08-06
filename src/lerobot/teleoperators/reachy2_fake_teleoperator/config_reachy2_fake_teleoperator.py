@@ -24,3 +24,4 @@ from ..config import TeleoperatorConfig
 class Reachy2FakeTeleoperatorConfig(TeleoperatorConfig):
     # Port to connect to the arm
     ip_address: str | None = "localhost"
+    with_mobile_base: bool = True

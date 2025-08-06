@@ -78,13 +78,16 @@ class Reachy2FakeTeleoperator(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
-        return {**dict.fromkeys(
-            REACHY2_JOINTS.keys(),
-            float,
-        ), **dict.fromkeys(
-            REACHY2_VEL.keys(),
-            float,
-        )}
+        if self.config.with_mobile_base:
+            return {**dict.fromkeys(
+                REACHY2_JOINTS.keys(),
+                float,
+            ), **dict.fromkeys(
+                REACHY2_VEL.keys(),
+                float,
+            )}
+        else:
+            return dict.fromkeys(REACHY2_JOINTS.keys(), float)
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -114,6 +117,10 @@ class Reachy2FakeTeleoperator(Teleoperator):
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
         joint_action = {k: self.reachy.joints[v].goal_position for k, v in REACHY2_JOINTS.items()}
+        if not self.config.with_mobile_base:
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read action: {dt_ms:.1f}ms")
+            return joint_action
         vel_action = {k: self.reachy.mobile_base.last_cmd_vel[v] for k, v in REACHY2_VEL.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")

@@ -17,14 +17,13 @@ TASK_DESCRIPTION = "Grab a cube in Mujoco simulation"
 
 # Create the robot and teleoperator configurations
 robot_config = Reachy2RobotConfig(
-    # ip_address="localhost",
-    # ip_address="172.18.131.66",
-    ip_address="192.168.0.200",
+    ip_address="192.168.0.199",
     id="test_reachy",
+    with_mobile_base=False,
 )
 teleop_config = Reachy2FakeTeleoperatorConfig(
-    # ip_address="172.18.131.66",
-    ip_address="192.168.0.200",
+    ip_address="192.168.0.199",
+    with_mobile_base=False,
 )
 
 # Initialize the robot and teleoperator

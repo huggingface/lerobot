@@ -1,7 +1,8 @@
 from lerobot.robots.reachy2 import Reachy2Robot, Reachy2RobotConfig
 import time
 
-REACHY2_MOTORS = {
+# {lerobot_keys: reachy2_sdk_keys}
+REACHY2_JOINTS = {
     "neck_yaw.pos": "head.neck.yaw",
     "neck_pitch.pos": "head.neck.pitch",
     "neck_roll.pos": "head.neck.roll",
@@ -23,9 +24,12 @@ REACHY2_MOTORS = {
     "l_gripper.pos": "l_arm.gripper",
     "l_antenna.pos": "head.l_antenna",
     "r_antenna.pos": "head.r_antenna",
-    # "mobile_base.vx": "mobile_base.vx",
-    # "mobile_base.vy": "mobile_base.vy",
-    # "mobile_base.vtheta": "mobile_base.vtheta",
+}
+
+REACHY2_VEL = {
+    "mobile_base.vx": "vx",
+    "mobile_base.vy": "vy",
+    "mobile_base.vtheta": "vtheta",
 }
 
 
@@ -45,10 +49,9 @@ print(f"action_features: {robot.action_features}\n")
 
 
 def get_action(robot):
-    my_keys = REACHY2_MOTORS.keys()
-    my_values = [robot.reachy.joints[motor].present_position for motor in REACHY2_MOTORS.values()]
-    action = dict(zip(my_keys, my_values))
-    return action
+    pos_dict = {k: robot.reachy.joints[v].present_position for k, v in REACHY2_JOINTS.items()}
+    vel_dict = {k: robot.reachy.mobile_base.odometry[v] for k, v in REACHY2_VEL.items()}
+    return {**pos_dict, **vel_dict}
 
 
 action = get_action(robot)

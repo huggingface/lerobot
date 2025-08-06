@@ -20,10 +20,6 @@ import numpy as np
 from reachy2_sdk import ReachySDK
 from typing import Any
 
-# from stretch_body.gamepad_teleop import GamePadTeleop
-# from stretch_body.robot import Robot as StretchAPI
-# from stretch_body.robot_params import RobotParams
-
 from lerobot.cameras.utils import make_cameras_from_configs
 
 from ..robot import Robot
@@ -97,13 +93,16 @@ class Reachy2Robot(Robot):
 
     @property
     def motors_features(self) -> dict:
-        return {**dict.fromkeys(
-            REACHY2_JOINTS.keys(),
-            float,
-        ), **dict.fromkeys(
-            REACHY2_VEL.keys(),
-            float,
-        )}
+        if self.config.with_mobile_base:
+            return {**dict.fromkeys(
+                REACHY2_JOINTS.keys(),
+                float,
+            ), **dict.fromkeys(
+                REACHY2_VEL.keys(),
+                float,
+            )}
+        else:
+            return dict.fromkeys(REACHY2_JOINTS.keys(), float)
 
     @property
     def is_connected(self) -> bool:
@@ -133,6 +132,8 @@ class Reachy2Robot(Robot):
 
     def _get_state(self) -> dict:
         pos_dict = {k: self.reachy.joints[v].present_position for k, v in REACHY2_JOINTS.items()}
+        if not self.config.with_mobile_base:
+            return pos_dict
         vel_dict = {k: self.reachy.mobile_base.odometry[v] for k, v in REACHY2_VEL.items()}
         return {**pos_dict, **vel_dict}
 
@@ -165,12 +166,15 @@ class Reachy2Robot(Robot):
                     vel[REACHY2_VEL[key]] = val
             else:
                 self.reachy.joints[REACHY2_JOINTS[key]].goal_position = val
-        self.reachy.mobile_base.set_goal_speed(vel["vx"], vel["vy"], vel["vtheta"])
+
+        if self.config.with_mobile_base:
+            self.reachy.mobile_base.set_goal_speed(vel["vx"], vel["vy"], vel["vtheta"])
 
         # We don't send the goal positions if we control Reachy 2 externally
         if not self.use_external_commands:
             self.reachy.send_goal_positions()
-            self.reachy.mobile_base.send_speed_command()
+            if self.config.with_mobile_base:
+                self.reachy.mobile_base.send_speed_command()
 
         self.logs["write_pos_dt_s"] = time.perf_counter() - before_write_t
         return action
