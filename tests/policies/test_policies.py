@@ -185,6 +185,8 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     # reset the policy and environment
     policy.reset()
     observation, _ = env.reset(seed=train_cfg.seed)
+
+    # apply transform to normalize the observations
     observation = preprocess_observation(observation)
 
     # send observation to device/gpu

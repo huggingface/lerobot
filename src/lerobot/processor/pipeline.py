@@ -493,7 +493,7 @@ class RobotProcessor(ModelHubMixin):
 
             config["steps"].append(step_entry)
 
-        with open(os.path.join(save_directory, config_filename), "w") as file_pointer:
+        with open(os.path.join(str(save_directory), config_filename), "w") as file_pointer:
             json.dump(config, file_pointer, indent=2)
 
     @classmethod
