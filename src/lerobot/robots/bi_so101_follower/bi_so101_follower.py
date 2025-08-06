@@ -140,8 +140,6 @@ class BiSO101Follower(Robot):
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
         for cam_key, cam in self.cameras.items():
-            # start = time.perf_counter()
-
             # Check if this camera has depth enabled
             if hasattr(cam, "use_depth") and cam.use_depth and hasattr(cam, "async_read_all"):
                 # Get all streams (RGB and depth)
@@ -153,15 +151,9 @@ class BiSO101Follower(Robot):
                 # Add depth frame with "_depth" suffix
                 if "depth_rgb" in all_frames and all_frames["depth_rgb"] is not None:
                     obs_dict[f"{cam_key}_depth"] = all_frames["depth_rgb"]
-                else:
-                    # Log as warning, not error, since this can happen during startup
-                    pass  # logger.warning(f"{self} depth frame missing or None for {cam_key}_depth")
             else:
                 # Regular camera without depth
                 obs_dict[cam_key] = cam.async_read(timeout_ms=1000)
-
-            # dt_ms = (time.perf_counter() - start) * 1e3
-            # logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 

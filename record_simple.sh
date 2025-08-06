@@ -350,8 +350,7 @@ case $choice in
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
-            --dataset.single_task="$TASK_DESCRIPTION" \
-            --verbose_camera_logs=true
+            --dataset.single_task="$TASK_DESCRIPTION"
         ;;
 
     7)
