@@ -55,13 +55,12 @@ from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
-from typing import Callable
+from collections.abc import Callable
 
 import einops
 import gymnasium as gym
 import numpy as np
 import torch
-from termcolor import colored
 from torch import Tensor, nn
 from tqdm import trange
 
@@ -73,7 +72,6 @@ from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
 from lerobot.utils.io_utils import write_video
-from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
@@ -456,6 +454,7 @@ def _compile_episode_data(
 
     return data_dict
 
+
 @parser.wrap()
 def eval(cfg: EvalPipelineConfig):
     logging.info(pformat(asdict(cfg)))
@@ -523,6 +522,7 @@ def eval(cfg: EvalPipelineConfig):
 
     logging.info("End of eval")
 
+
 def eval_policy_multitask(
     envs: dict[str, dict[str, gym.vector.VectorEnv]],
     policy,
@@ -545,7 +545,14 @@ def eval_policy_multitask(
         """Evaluates a single task in parallel."""
         print(f"Evaluating: task_group: {task_group}, task_id: {task_id} ...")
         task_result = eval_policy(
-            env, policy, n_episodes, max_episodes_rendered, videos_dir, return_episode_data, start_seed, verbose=verbose
+            env,
+            policy,
+            n_episodes,
+            max_episodes_rendered,
+            videos_dir,
+            return_episode_data,
+            start_seed,
+            verbose=verbose,
         )
 
         per_episode = task_result["per_episode"]
@@ -628,6 +635,7 @@ def eval_policy_multitask(
     }
 
     return results
+
 
 if __name__ == "__main__":
     init_logging()

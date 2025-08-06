@@ -272,6 +272,7 @@ class HILEnvConfig(EnvConfig):
             "gripper_penalty": self.gripper_penalty,
         }
 
+
 @EnvConfig.register_subclass("libero")
 @dataclass
 class LiberoEnv(EnvConfig):
