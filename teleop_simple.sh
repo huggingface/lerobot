@@ -32,7 +32,7 @@ TELEOP_TYPE="bi_so101_leader"
 TELEOP_ID="my_bimanual_leader"
 TELEOP_LEFT_PORT="COM11"
 TELEOP_RIGHT_PORT="COM3"
-FPS="60"
+FPS="30"
 
 # RealSense serial numbers
 REALSENSE1_SERIAL="218622270973"
@@ -278,7 +278,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=true
+            --display_data=false
         ;;
 
     7)
