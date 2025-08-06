@@ -1,9 +1,9 @@
 import math
 import os
 from collections import defaultdict
+from collections.abc import Callable
 from itertools import chain
 from typing import Any
-from collections.abc import Callable
 
 import gymnasium as gym
 import numpy as np
