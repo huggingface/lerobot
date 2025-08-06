@@ -1,15 +1,6 @@
 # Installation
 
-## Install LeRobot
-
-Currently only available from source.
-
-Download our source code:
-
-```bash
-git clone https://github.com/huggingface/lerobot.git
-cd lerobot
-```
+## Environment Setup
 
 Create a virtual environment with Python 3.10, using [`Miniconda`](https://docs.anaconda.com/miniconda/install/#quick-command-line-install)
 
@@ -40,11 +31,48 @@ conda install ffmpeg -c conda-forge
 >
 > - _[On Linux only]_ If you want to bring your own ffmpeg: Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 
-Install 🤗 LeRobot:
+## Install LeRobot 🤗
+
+### From Source
+
+First, clone the repository and navigate into the directory:
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+```
+
+Then, install the library in editable mode. This is useful if you plan to contribute to the code.
 
 ```bash
 pip install -e .
 ```
+
+### Installation from PyPI
+
+**Core Library:**
+Install the base package with:
+
+```bash
+pip install lerobot
+```
+
+_This installs only the default dependencies._
+
+**Extra Features:**
+To install additional functionality, use one of the following:
+
+```bash
+pip install 'lerobot[all]'          # All available features
+pip install 'lerobot[aloha,pusht]'  # Specific features (Aloha & Pusht)
+pip install 'lerobot[feetech]'      # Feetech motor support
+```
+
+_Replace `[...]` with your desired features._
+
+**Available Tags:**
+For a full list of optional dependencies, see:
+https://pypi.org/project/lerobot/
 
 ### Troubleshooting
 
