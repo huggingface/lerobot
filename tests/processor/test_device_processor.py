@@ -843,7 +843,7 @@ def test_policy_processor_integration():
     # Create input processor (preprocessor) that moves to GPU
     input_processor = RobotProcessor(
         steps=[
-            NormalizerProcessor(features=features, norm_map=norm_map, stats=stats),
+            NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats),
             ToBatchProcessor(),
             DeviceProcessor(device="cuda"),
         ],
@@ -854,7 +854,7 @@ def test_policy_processor_integration():
     output_processor = RobotProcessor(
         steps=[
             DeviceProcessor(device="cpu"),
-            UnnormalizerProcessor(features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
+            UnnormalizerProcessor(norm_features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
         ],
         name="test_postprocessor",
     )
