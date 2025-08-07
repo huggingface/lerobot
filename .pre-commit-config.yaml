@@ -36,26 +36,32 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: end-of-file-fixer
+        exclude: ^(outputs/|examples/hil_serl_simulation_training/outputs/)
       - id: trailing-whitespace
+        exclude: ^(outputs/|examples/hil_serl_simulation_training/outputs/)
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.12.4
     hooks:
       - id: ruff-format
+        exclude: ^(outputs/|examples/hil_serl_simulation_training/outputs/)
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
+        exclude: ^(outputs/|examples/hil_serl_simulation_training/outputs/)
 
   - repo: https://github.com/adhtruong/mirrors-typos
     rev: v1.34.0
     hooks:
       - id: typos
         args: [--force-exclude]
+        exclude: ^(outputs/|examples/hil_serl_simulation_training/outputs/)
 
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.20.0
     hooks:
     -   id: pyupgrade
         args: [--py310-plus]
+        exclude: ^(outputs/|examples/hil_serl_simulation_training/outputs/)
 
   ##### Markdown Quality #####
   - repo: https://github.com/rbubley/mirrors-prettier

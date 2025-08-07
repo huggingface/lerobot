@@ -232,6 +232,7 @@ class HILEnvConfig(EnvConfig):
     action_dim: int = 4
     fps: int = 100
     episode_length: int = 100
+    random_block_position: bool = False  # Add flag to randomize cube position
     video_record: VideoRecordConfig = field(default_factory=VideoRecordConfig)
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
@@ -270,4 +271,5 @@ class HILEnvConfig(EnvConfig):
             "use_viewer": self.use_viewer,
             "use_gamepad": self.use_gamepad,
             "gripper_penalty": self.gripper_penalty,
+            "random_block_position": self.random_block_position,  # Pass the flag to gym environment
         }

@@ -285,6 +285,15 @@ def act_with_policy(
         else:
             action = online_env.action_space.sample()
 
+        # Debug logging for action generation
+        if interaction_step % 100 == 0:  # Log every 100 steps to avoid spam
+            action_np = action.detach().cpu().numpy() if hasattr(action, "detach") else action
+            logging.info(f"[ACTOR] Step {interaction_step}: Action = {action_np}")
+            if len(action_np) >= 4:
+                logging.info(
+                    f"[ACTOR] Gripper action (4th dim): {action_np[3]:.3f} (0=close, 1=stay, 2=open)"
+                )
+
         next_obs, reward, done, truncated, info = online_env.step(action)
 
         sum_reward_episode += float(reward)
