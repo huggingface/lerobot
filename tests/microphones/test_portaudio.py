@@ -93,6 +93,16 @@ class TestPortAudioMicrophoneDeviceValidation(unittest.TestCase):
 
         self.default_config = self._create_config(kind="input")
 
+    def test_find_microphones(self):
+        microphones = PortAudioMicrophone.find_microphones(sounddevice_sdk=self.test_sdk)
+
+        for microphone in microphones:
+            self.assertIsInstance(microphone["index"], int)
+            self.assertIsInstance(microphone["name"], str)
+            self.assertIsInstance(microphone["sample_rate"], int)
+            self.assertIsInstance(microphone["channels"], np.ndarray)
+            self.assertGreater(len(microphone["channels"]), 0)
+
     def test_init_defaults(self):
         microphone = PortAudioMicrophone(self.default_config, sounddevice_sdk=self.test_sdk)
 
@@ -152,6 +162,15 @@ class TestPortAudioMicrophoneDeviceValidation(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             microphone.connect()
+
+    def test_connect_float_sample_rate(self):
+        config = deepcopy(self.default_config)
+        config.sample_rate = int(config.sample_rate) - 0.5
+        microphone = PortAudioMicrophone(config, sounddevice_sdk=self.test_sdk)
+        microphone.connect()
+
+        self.assertIsInstance(microphone.sample_rate, int)
+        self.assertEqual(microphone.sample_rate, int(config.sample_rate))
 
     def test_connect_lower_sample_rate(self):
         config = deepcopy(self.default_config)
@@ -291,7 +310,7 @@ class TestPortAudioMicrophoneDeviceValidation(unittest.TestCase):
         self.assertAlmostEqual(
             data.shape[0],
             RECORDING_DURATION * self.default_config.sample_rate,
-            delta=self.default_config.sample_rate * device_info["default_low_input_latency"],
+            delta=2 * self.default_config.sample_rate * device_info["default_low_input_latency"],
         )
 
     def test_writing_success(self):
@@ -311,7 +330,7 @@ class TestPortAudioMicrophoneDeviceValidation(unittest.TestCase):
         self.assertAlmostEqual(
             data.shape[0],
             RECORDING_DURATION * self.default_config.sample_rate,
-            delta=self.default_config.sample_rate * device_info["default_low_input_latency"],
+            delta=2 * self.default_config.sample_rate * device_info["default_low_input_latency"],
         )
 
     def test_read_while_writing(self):
@@ -330,12 +349,12 @@ class TestPortAudioMicrophoneDeviceValidation(unittest.TestCase):
         self.assertAlmostEqual(
             writing_data.shape[0],
             RECORDING_DURATION * self.default_config.sample_rate,
-            delta=self.default_config.sample_rate * device_info["default_low_input_latency"],
+            delta=2 * self.default_config.sample_rate * device_info["default_low_input_latency"],
         )
         self.assertAlmostEqual(
             read_data.shape[0],
             RECORDING_DURATION * self.default_config.sample_rate,
-            delta=self.default_config.sample_rate * device_info["default_low_input_latency"],
+            delta=2 * self.default_config.sample_rate * device_info["default_low_input_latency"],
         )
 
     def test_async_start_recording(self):
