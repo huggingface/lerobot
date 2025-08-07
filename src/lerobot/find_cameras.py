@@ -20,7 +20,7 @@ Helper to find the camera devices available in your system.
 Example:
 
 ```shell
-python -m lerobot.find_cameras
+lerobot-find-cameras
 ```
 """
 
