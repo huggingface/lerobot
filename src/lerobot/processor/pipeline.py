@@ -23,7 +23,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
@@ -132,6 +132,7 @@ class ProcessorStepRegistry:
         cls._registry.clear()
 
 
+@runtime_checkable
 class ProcessorStep(Protocol):
     """Structural typing interface for a single processor step.
 
@@ -157,7 +158,7 @@ class ProcessorStep(Protocol):
     * ``load_state_dict(state)`` – Inverse of ``state_dict``. Receives a dict
       containing torch tensors only.
     * ``reset()`` – Clear internal buffers at episode boundaries.
-    * ``features(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
+    * ``transform_features(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
     If present, this method will be called to aggregate the dataset features of all steps.
 
     Example separation:
@@ -175,7 +176,7 @@ class ProcessorStep(Protocol):
 
     def reset(self) -> None: ...
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
 
 
 def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
@@ -823,7 +824,7 @@ class RobotProcessor(ModelHubMixin):
                     f"Step {i} ({type(step).__name__}) must define __call__(transition) -> EnvTransition"
                 )
 
-    def features(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """
         Apply ALL steps in order. Only if a step has a features method, it will be called.
         We aggregate the dataset features of all steps.
@@ -831,7 +832,7 @@ class RobotProcessor(ModelHubMixin):
         features: dict[str, PolicyFeature] = deepcopy(initial_features)
 
         for _, step in enumerate(self.steps):
-            out = step.features(features)
+            out = step.transform_features(features)
             features = out
         return features
 
@@ -891,7 +892,7 @@ class ObservationProcessor:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -951,7 +952,7 @@ class ActionProcessor:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1010,7 +1011,7 @@ class RewardProcessor:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1074,7 +1075,7 @@ class DoneProcessor:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1134,7 +1135,7 @@ class TruncatedProcessor:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1199,7 +1200,7 @@ class InfoProcessor:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1245,7 +1246,7 @@ class ComplementaryDataProcessor:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1267,5 +1268,5 @@ class IdentityProcessor:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features

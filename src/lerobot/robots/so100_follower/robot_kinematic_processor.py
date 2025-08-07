@@ -197,7 +197,7 @@ class EEBoundsAndSafety(ActionProcessor):
     def reset(self):
         self._last_pos = None
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # Because this is last step we specify the dataset features of this step that we want to be stored in the dataset
         features["action.ee.x"] = float
         features["action.ee.y"] = float
@@ -291,7 +291,7 @@ class InverseKinematicsEEToJoints:
         transition[TransitionKey.ACTION] = new_act
         return transition
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We specify the dataset features of this step that we want to be stored in the dataset
         features["action.ee.x"] = float
         features["action.ee.y"] = float
@@ -362,7 +362,7 @@ class GripperVelocityToJoint:
         transition[TransitionKey.OBSERVATION] = obs
         return transition
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We specify the dataset features of this step that we want to be stored in the dataset
         features["observation.state.gripper.pos"] = float
         features["action.gripper.pos"] = float
@@ -410,7 +410,7 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
         )
         return obs
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
             features[f"observation.state.ee.{k}"] = float

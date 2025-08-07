@@ -418,7 +418,7 @@ def test_features_basic_renaming(policy_feature_factory):
         "c": policy_feature_factory(FeatureType.ENV, (1,)),
     }
 
-    out = processor.features(features.copy())
+    out = processor.transform_features(features.copy())
 
     # Values preserved and typed
     assert out["x"] == features["a"]
@@ -437,7 +437,7 @@ def test_features_overlapping_keys(policy_feature_factory):
         "a": policy_feature_factory(FeatureType.STATE, (1,)),
         "b": policy_feature_factory(FeatureType.STATE, (2,)),
     }
-    out = processor.features(features)
+    out = processor.transform_features(features)
 
     assert set(out) == {"b", "c"}
     assert out["b"] == features["a"]  # 'a' renamed to'b'
@@ -458,7 +458,7 @@ def test_features_chained_processors(policy_feature_factory):
         "img": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "extra": policy_feature_factory(FeatureType.ENV, (1,)),
     }
-    out = pipeline.features(initial_features=spec)
+    out = pipeline.transform_features(initial_features=spec)
 
     assert set(out) == {"observation.state", "observation.image", "extra"}
     assert out["observation.state"] == spec["pos"]

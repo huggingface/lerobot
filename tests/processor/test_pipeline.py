@@ -91,7 +91,7 @@ class MockStep:
     def reset(self) -> None:
         self.counter = 0
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test features here
         return features
 
@@ -113,7 +113,7 @@ class MockStepWithoutOptionalMethods:
 
         return transition
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test features here
         return features
 
@@ -169,7 +169,7 @@ class MockStepWithTensorState:
         self.running_mean.zero_()
         self.running_count.zero_()
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test features here
         return features
 
@@ -663,7 +663,7 @@ class MockModuleStep(nn.Module):
         self.running_mean.zero_()
         self.counter = 0
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test features here
         return features
 
@@ -745,7 +745,7 @@ class MockNonModuleStepWithState:
         self.step_count.zero_()
         self.history.clear()
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test features here
         return features
 
@@ -800,7 +800,7 @@ class MockStepWithNonSerializableParam:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test features here
         return features
 
@@ -839,7 +839,7 @@ class RegisteredMockStep:
     def reset(self) -> None:
         pass
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We do not test features here
         return features
 
@@ -1383,7 +1383,7 @@ def test_state_file_naming_with_registry():
         def load_state_dict(self, state):
             self.state_tensor = state["state_tensor"]
 
-        def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             # We do not test features here
             return features
 
@@ -1440,7 +1440,7 @@ def test_override_with_nested_config():
         def get_config(self):
             return {"name": self.name, "simple_param": self.simple_param, "nested_config": self.nested_config}
 
-        def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             # We do not test features here
             return features
 
@@ -1532,7 +1532,7 @@ def test_override_with_callables():
         def get_config(self):
             return {"name": self.name}
 
-        def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             # We do not test features here
             return features
 
@@ -1767,7 +1767,7 @@ def test_override_with_device_strings():
         def load_state_dict(self, state):
             self.buffer = state["buffer"]
 
-        def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             # We do not test features here
             return features
 
@@ -1870,7 +1870,7 @@ class NonCompliantStep:
 class NonCallableStep:
     """Intentionally non-compliant: missing __call__."""
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1889,7 +1889,7 @@ class FeatureContractAddStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features[self.key] = self.value
         return features
 
@@ -1904,7 +1904,7 @@ class FeatureContractMutateStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features[self.key] = self.fn(features.get(self.key))
         return features
 
@@ -1916,7 +1916,7 @@ class FeatureContractBadReturnStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return ["not-a-dict"]
 
 
@@ -1929,7 +1929,7 @@ class FeatureContractRemoveStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features.pop(self.key, None)
         return features
 
@@ -1942,7 +1942,7 @@ def test_features_orders_and_merges(policy_feature_factory):
             FeatureContractAddStep("b", policy_feature_factory(FeatureType.ENV, (2,))),
         ]
     )
-    out = p.features({})
+    out = p.transform_features({})
 
     assert out["a"].type == FeatureType.STATE and out["a"].shape == (3,)
     assert out["b"].type == FeatureType.ENV and out["b"].shape == (2,)
@@ -1962,7 +1962,7 @@ def test_features_respects_initial_without_mutation(policy_feature_factory):
             ),
         ]
     )
-    out = p.features(initial_features=initial)
+    out = p.transform_features(initial_features=initial)
 
     assert out["seed"].shape == (8,)
     assert out["nested"].shape == (5,)
@@ -1981,13 +1981,13 @@ def test_features_execution_order_tracking():
         def __call__(self, transition: EnvTransition) -> EnvTransition:
             return transition
 
-        def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             code = {"A": 1, "B": 2, "C": 3}[self.label]
             pf = features.get("order", PolicyFeature(type=FeatureType.ENV, shape=()))
             features["order"] = PolicyFeature(type=pf.type, shape=pf.shape + (code,))
             return features
 
-    out = RobotProcessor([Track("A"), Track("B"), Track("C")]).features({})
+    out = RobotProcessor([Track("A"), Track("B"), Track("C")]).transform_features({})
     assert out["order"].shape == (1, 2, 3)
 
 
@@ -1998,7 +1998,7 @@ def test_features_remove_key(policy_feature_factory):
             FeatureContractRemoveStep("a"),
         ]
     )
-    out = p.features({})
+    out = p.transform_features({})
     assert "a" not in out
 
 
@@ -2008,7 +2008,7 @@ def test_features_remove_from_initial(policy_feature_factory):
         "drop": policy_feature_factory(FeatureType.STATE, (1,)),
     }
     p = RobotProcessor([FeatureContractRemoveStep("drop")])
-    out = p.features(initial_features=initial)
+    out = p.transform_features(initial_features=initial)
     assert "drop" not in out and out["keep"] == initial["keep"]
 
 
@@ -2019,7 +2019,7 @@ class AddActionEEAndJointFeatures:
     def __call__(self, tr):
         return tr
 
-    def features(self, features: dict) -> dict:
+    def transform_features(self, features: dict) -> dict:
         # EE features
         features["action.ee.x"] = float
         features["action.ee.y"] = float
@@ -2039,7 +2039,7 @@ class AddObservationStateFeatures:
     def __call__(self, tr):
         return tr
 
-    def features(self, features: dict) -> dict:
+    def transform_features(self, features: dict) -> dict:
         # State features (mix EE and a joint state)
         features["observation.state.ee.x"] = float
         features["observation.state.j1.pos"] = float

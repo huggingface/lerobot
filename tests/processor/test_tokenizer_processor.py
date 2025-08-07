@@ -480,7 +480,7 @@ def test_features_basic():
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
     }
 
-    output_features = processor.features(input_features)
+    output_features = processor.transform_features(input_features)
 
     # Check that original features are preserved
     assert "observation.state" in output_features
@@ -507,7 +507,7 @@ def test_features_with_custom_max_length():
     processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=64)
 
     input_features = {}
-    output_features = processor.features(input_features)
+    output_features = processor.transform_features(input_features)
 
     # Check that features use correct max_length
     assert f"{OBS_LANGUAGE}.tokens" in output_features
@@ -531,7 +531,7 @@ def test_features_existing_features():
         f"{OBS_LANGUAGE}.attention_mask": PolicyFeature(type=FeatureType.LANGUAGE, shape=(100,)),
     }
 
-    output_features = processor.features(input_features)
+    output_features = processor.transform_features(input_features)
 
     # Should not overwrite existing features
     assert output_features[f"{OBS_LANGUAGE}.tokens"].shape == (100,)  # Original shape preserved

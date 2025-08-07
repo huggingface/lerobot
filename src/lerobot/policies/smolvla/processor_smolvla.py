@@ -88,7 +88,7 @@ class SmolVLANewLineProcessor(ProcessorStep):
 
         return transition
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Adds nothing to the features."""
         return features
 

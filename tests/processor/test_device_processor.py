@@ -297,7 +297,7 @@ def test_features():
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
     }
 
-    result = processor.features(features)
+    result = processor.transform_features(features)
     assert result == features
     assert result is features  # Should return the same object
 

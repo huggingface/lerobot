@@ -416,7 +416,7 @@ def test_image_processor_features_pixels_to_image(policy_feature_factory):
         "pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
     }
-    out = processor.features(features.copy())
+    out = processor.transform_features(features.copy())
 
     assert OBS_IMAGE in out and out[OBS_IMAGE] == features["pixels"]
     assert "pixels" not in out
@@ -430,7 +430,7 @@ def test_image_processor_features_observation_pixels_to_image(policy_feature_fac
         "observation.pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
     }
-    out = processor.features(features.copy())
+    out = processor.transform_features(features.copy())
 
     assert OBS_IMAGE in out and out[OBS_IMAGE] == features["observation.pixels"]
     assert "observation.pixels" not in out
@@ -446,7 +446,7 @@ def test_image_processor_features_multi_camera_and_prefixed(policy_feature_facto
         "observation.pixels.rear": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "keep": policy_feature_factory(FeatureType.ENV, (7,)),
     }
-    out = processor.features(features.copy())
+    out = processor.transform_features(features.copy())
 
     assert f"{OBS_IMAGES}.front" in out and out[f"{OBS_IMAGES}.front"] == features["pixels.front"]
     assert f"{OBS_IMAGES}.wrist" in out and out[f"{OBS_IMAGES}.wrist"] == features["pixels.wrist"]
@@ -463,7 +463,7 @@ def test_state_processor_features_environment_and_agent_pos(policy_feature_facto
         "agent_pos": policy_feature_factory(FeatureType.STATE, (7,)),
         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
     }
-    out = processor.features(features.copy())
+    out = processor.transform_features(features.copy())
 
     assert OBS_ENV_STATE in out and out[OBS_ENV_STATE] == features["environment_state"]
     assert OBS_STATE in out and out[OBS_STATE] == features["agent_pos"]
@@ -478,7 +478,7 @@ def test_state_processor_features_prefixed_inputs(policy_feature_factory):
         "observation.environment_state": policy_feature_factory(FeatureType.STATE, (2,)),
         "observation.agent_pos": policy_feature_factory(FeatureType.STATE, (4,)),
     }
-    out = proc.features(features.copy())
+    out = proc.transform_features(features.copy())
 
     assert OBS_ENV_STATE in out and out[OBS_ENV_STATE] == features["observation.environment_state"]
     assert OBS_STATE in out and out[OBS_STATE] == features["observation.agent_pos"]

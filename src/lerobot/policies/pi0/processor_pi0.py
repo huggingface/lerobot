@@ -65,7 +65,7 @@ class Pi0NewLineProcessor(ProcessorStep):
 
         return transition
 
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Add tokenized task features to the features."""
         return features
 

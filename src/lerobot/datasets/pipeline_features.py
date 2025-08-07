@@ -38,7 +38,7 @@ def aggregate_pipeline_dataset_features(
     import re
 
     # Gather everything the pipeline features specifies, seeded with hardware cams:
-    all_features = pipeline.features(initial_features)
+    all_features = pipeline.transform_features(initial_features)
 
     # Helper to decide which action/state keys survive the `patterns` filter:
     def keep(key: str) -> bool:
