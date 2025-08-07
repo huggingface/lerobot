@@ -6,7 +6,7 @@
 
 <div align="center">
 
-[![Tests](https://github.com/huggingface/lerobot/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/nighty.yml?query=branch%3Amain)
+[![Tests](https://github.com/huggingface/lerobot/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/nightly.yml?query=branch%3Amain)
 [![Python versions](https://img.shields.io/pypi/pyversions/lerobot)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/huggingface/lerobot/blob/main/LICENSE)
 [![Status](https://img.shields.io/pypi/status/lerobot)](https://pypi.org/project/lerobot/)
@@ -276,7 +276,7 @@ Check out [example 2](https://github.com/huggingface/lerobot/blob/main/examples/
 We also provide a more capable script to parallelize the evaluation over multiple environments during the same rollout. Here is an example with a pretrained model hosted on [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht):
 
 ```bash
-python -m lerobot.scripts.eval \
+lerobot-eval \
     --policy.path=lerobot/diffusion_pusht \
     --env.type=pusht \
     --eval.batch_size=10 \
@@ -288,10 +288,10 @@ python -m lerobot.scripts.eval \
 Note: After training your own policy, you can re-evaluate the checkpoints with:
 
 ```bash
-python -m lerobot.scripts.eval --policy.path={OUTPUT_DIR}/checkpoints/last/pretrained_model
+lerobot-eval --policy.path={OUTPUT_DIR}/checkpoints/last/pretrained_model
 ```
 
-See `python -m lerobot.scripts.eval --help` for more instructions.
+See `lerobot-eval --help` for more instructions.
 
 ### Train your own policy
 
@@ -303,7 +303,7 @@ A link to the wandb logs for the run will also show up in yellow in your termina
 
 \<img src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/wandb.png" alt="WandB logs example"\>
 
-Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `--eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python -m lerobot.scripts.eval --help` for more instructions.
+Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `--eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `lerobot-eval --help` for more instructions.
 
 #### Reproduce state-of-the-art (SOTA)
 
@@ -311,7 +311,7 @@ We provide some pretrained policies on our [hub page](https://huggingface.co/ler
 You can reproduce their training by loading the config from their run. Simply running:
 
 ```bash
-python -m lerobot.scripts.train --config_path=lerobot/diffusion_pusht
+lerobot-train --config_path=lerobot/diffusion_pusht
 ```
 
 reproduces SOTA results for Diffusion Policy on the PushT task.
