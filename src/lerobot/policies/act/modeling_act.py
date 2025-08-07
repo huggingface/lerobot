@@ -108,7 +108,7 @@ class ACTPolicy(PreTrainedPolicy):
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor],  force_model_run: bool = False) -> tuple[Tensor, Tensor]:
+    def select_action(self, batch: dict[str, Tensor], force_model_run: bool = False) -> tuple[Tensor, Tensor]:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -191,7 +191,7 @@ class ACTPolicy(PreTrainedPolicy):
                 reward_loss = F.mse_loss(
                     reward_preds_clamped,  # (batch_size, 1) - clamped to [0, 1]
                     reward_targets,  # (batch_size, 1)
-                    reduction="mean"
+                    reduction="mean",
                 )
             else:
                 reward_loss = torch.tensor(0.0, device=actions_hat.device)

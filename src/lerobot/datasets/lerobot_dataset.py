@@ -464,7 +464,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.reward_start_pct = reward_start_pct
         self.reward_end_pct = reward_end_pct
 
-
         # Unused attributes
         self.image_writer = None
         self.episode_buffer = None
@@ -741,19 +740,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_length = self.meta.episodes[ep_idx]["length"]
             ep_start = self.episode_data_index["from"][ep_idx]
             frame_index_in_episode = idx - ep_start.item()
-            
+
             # Calculate progress as a fraction of the episode (0.0 to 1.0)
             progress = frame_index_in_episode / (episode_length - 1) if episode_length > 1 else 0.0
-            
+
             if progress <= self.reward_start_pct:
                 reward = 0.0
             elif progress >= self.reward_end_pct:
                 reward = 1.0
             else:
                 # Linear interpolation between start and end percentages
-                interpolation_progress = (progress - self.reward_start_pct) / (self.reward_end_pct - self.reward_start_pct)
+                interpolation_progress = (progress - self.reward_start_pct) / (
+                    self.reward_end_pct - self.reward_start_pct
+                )
                 reward = interpolation_progress
-            
+
             item["reward"] = torch.tensor(reward, dtype=torch.float32)
 
         return item
