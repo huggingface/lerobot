@@ -108,29 +108,51 @@ class ACTPolicy(PreTrainedPolicy):
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor],  force_model_run: bool = False) -> tuple[Tensor, Tensor]:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
+
+        Returns:
+            Tuple of (action, reward_pred)
+
         """
         self.eval()  # keeping the policy in eval mode as it could be set to train mode while queue is consumed
 
         if self.config.temporal_ensemble_coeff is not None:
-            actions = self.predict_action_chunk(batch)
+            actions, reward_preds = self.predict_action_chunk(batch)
             action = self.temporal_ensembler.update(actions)
-            return action
+            if self.config.use_reward_head and reward_preds is not None:
+                reward_pred = torch.clamp(reward_preds[0, 0], 0.0, 1.0)  # Clamp to [0, 1] range
+                return action, reward_pred
+            else:
+                return action, None
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            actions, reward_preds = self.predict_action_chunk(batch)
+            actions = actions[:, : self.config.n_action_steps]
+
+            if self.config.use_reward_head and reward_preds is not None:
+                # Store the current reward prediction (single value, not a sequence)
+                current_reward_pred = torch.clamp(reward_preds[0, 0], 0.0, 1.0)  # Clamp to [0, 1] range
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+        elif force_model_run:
+            # predict and throw away:
+            _, reward_preds = self.predict_action_chunk(batch)
+            if self.config.use_reward_head and reward_preds is not None:
+                current_reward_pred = torch.clamp(reward_preds[0, 0], 0.0, 1.0)  # Clamp to [0, 1] range
+
+        if self.config.use_reward_head:
+            return self._action_queue.popleft(), current_reward_pred
+        else:
+            return self._action_queue.popleft(), None
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
@@ -142,9 +164,9 @@ class ACTPolicy(PreTrainedPolicy):
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
-        actions = self.model(batch)[0]
+        actions, reward_preds, _ = self.model(batch)
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
-        return actions
+        return actions, reward_preds
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
@@ -154,13 +176,30 @@ class ACTPolicy(PreTrainedPolicy):
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
         batch = self.normalize_targets(batch)
-        actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
+        actions_hat, reward_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
         l1_loss = (
             F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
         ).mean()
 
-        loss_dict = {"l1_loss": l1_loss.item()}
+        if self.config.use_reward_head and reward_hat is not None:
+            # Reward prediction loss - use MSE for continuous values
+            if "reward" in batch:
+                reward_targets = batch["reward"]  # (B, 1) - current reward only
+                # Clamp predictions to [0, 1] range for loss computation
+                reward_preds_clamped = torch.clamp(reward_hat.squeeze(), 0.0, 1.0)
+                reward_loss = F.mse_loss(
+                    reward_preds_clamped,  # (batch_size, 1) - clamped to [0, 1]
+                    reward_targets,  # (batch_size, 1)
+                    reduction="mean"
+                )
+            else:
+                reward_loss = torch.tensor(0.0, device=actions_hat.device)
+
+        loss_dict = {
+            "l1_loss": l1_loss.item(),
+            "reward_loss": reward_loss.item() * self.config.reward_loss_weight,
+        }
         if self.config.use_vae:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
@@ -170,7 +209,7 @@ class ACTPolicy(PreTrainedPolicy):
                 (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
             )
             loss_dict["kld_loss"] = mean_kld.item()
-            loss = l1_loss + mean_kld * self.config.kl_weight
+            loss = l1_loss + self.config.reward_loss_weight * reward_loss + mean_kld * self.config.kl_weight
         else:
             loss = l1_loss
 
@@ -382,6 +421,18 @@ class ACT(nn.Module):
         # Final action regression head on the output of the transformer's decoder.
         self.action_head = nn.Linear(config.dim_model, self.config.action_feature.shape[0])
 
+        if config.use_reward_head:
+            # Reward prediction head: predicts continuous values between 0 and 1
+            self.reward_head = nn.Sequential(
+                nn.Linear(config.dim_model, config.dim_model // 2),
+                nn.ReLU(),
+                nn.Linear(config.dim_model // 2, config.dim_model // 4),
+                nn.ReLU(),
+                nn.Linear(config.dim_model // 4, 1),
+                nn.Sigmoid(),
+                # No activation - let the network learn the full range naturally
+            )
+
         self._reset_parameters()
 
     def _reset_parameters(self):
@@ -527,7 +578,13 @@ class ACT(nn.Module):
 
         actions = self.action_head(decoder_out)
 
-        return actions, (mu, log_sigma_x2)
+        if self.config.use_reward_head:
+            # Only predict reward for the current timestep (first position in chunk)
+            reward_preds = self.reward_head(decoder_out[:, 0:1, :])  # (B, 1, 1) - only first timestep
+        else:
+            reward_preds = None
+
+        return actions, reward_preds, (mu, log_sigma_x2)
 
 
 class ACTEncoder(nn.Module):
