@@ -36,6 +36,7 @@ from lerobot.configs.types import PolicyFeature
 class TransitionKey(str, Enum):
     """Keys for accessing EnvTransition dictionary components."""
 
+    # TODO(Steven): Use consts
     OBSERVATION = "observation"
     ACTION = "action"
     REWARD = "reward"
@@ -45,19 +46,18 @@ class TransitionKey(str, Enum):
     COMPLEMENTARY_DATA = "complementary_data"
 
 
-class EnvTransition(TypedDict, total=False):
-    """Environment transition data structure.
-
-    All fields are optional (total=False) to allow flexible usage.
-    """
-
-    observation: dict[str, Any] | None
-    action: Any | torch.Tensor | None
-    reward: float | torch.Tensor | None
-    done: bool | torch.Tensor | None
-    truncated: bool | torch.Tensor | None
-    info: dict[str, Any] | None
-    complementary_data: dict[str, Any] | None
+EnvTransition = TypedDict(
+    "EnvTransition",
+    {
+        TransitionKey.OBSERVATION.value: dict[str, Any] | None,
+        TransitionKey.ACTION.value: Any | torch.Tensor | None,
+        TransitionKey.REWARD.value: float | torch.Tensor | None,
+        TransitionKey.DONE.value: bool | torch.Tensor | None,
+        TransitionKey.TRUNCATED.value: bool | torch.Tensor | None,
+        TransitionKey.INFO.value: dict[str, Any] | None,
+        TransitionKey.COMPLEMENTARY_DATA.value: dict[str, Any] | None,
+    },
+)
 
 
 class ProcessorStepRegistry:
@@ -135,8 +135,8 @@ class ProcessorStepRegistry:
 class ProcessorStep(Protocol):
     """Structural typing interface for a single processor step.
 
-    A step is any callable accepting a full `EnvTransition` tuple and
-    returning a (possibly modified) tuple of the same structure. Implementers
+    A step is any callable accepting a full `EnvTransition` dict and
+    returning a (possibly modified) dict of the same structure. Implementers
     are encouraged—but not required—to expose the optional helper methods
     listed below. When present, these hooks let `RobotProcessor`
     automatically serialise the step's configuration and learnable state using
@@ -267,24 +267,22 @@ class RobotProcessor(ModelHubMixin):
     Composable, debuggable post-processing processor for robot transitions.
 
     The class orchestrates an ordered collection of small, functional transforms—steps—executed
-    left-to-right on each incoming `EnvTransition`. It can process both `EnvTransition` tuples
+    left-to-right on each incoming `EnvTransition`. It can process both `EnvTransition` dicts
     and batch dictionaries, automatically converting between formats as needed.
 
     Args:
         steps: Ordered list of processing steps executed on every call. Defaults to empty list.
         name: Human-readable identifier that is persisted inside the JSON config.
             Defaults to "RobotProcessor".
-        seed: Global seed forwarded to steps that choose to consume it. Defaults to None.
-        to_transition: Function to convert batch dict to EnvTransition tuple.
+        to_transition: Function to convert batch dict to EnvTransition dict.
             Defaults to _default_batch_to_transition.
-        to_output: Function to convert EnvTransition tuple to the desired output format.
-            Usually it is a batch dict or EnvTransition tuple.
+        to_output: Function to convert EnvTransition dict to the desired output format.
+            Usually it is a batch dict or EnvTransition dict.
             Defaults to _default_transition_to_batch.
         before_step_hooks: List of hooks called before each step. Each hook receives the step
             index and transition, and can optionally return a modified transition.
         after_step_hooks: List of hooks called after each step. Each hook receives the step
             index and transition, and can optionally return a modified transition.
-        reset_hooks: List of hooks called during processor reset.
 
     Hook Semantics:
         - Hooks are executed sequentially in the order they were registered. There is no way to
@@ -303,7 +301,6 @@ class RobotProcessor(ModelHubMixin):
 
     steps: Sequence[ProcessorStep] = field(default_factory=list)
     name: str = "RobotProcessor"
-    seed: int | None = None
 
     to_transition: Callable[[dict[str, Any]], EnvTransition] = field(
         default_factory=lambda: _default_batch_to_transition, repr=False
@@ -316,7 +313,6 @@ class RobotProcessor(ModelHubMixin):
     # Hooks do not modify transitions - they are called for logging, debugging, or monitoring purposes
     before_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
     after_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
-    reset_hooks: list[Callable[[], None]] = field(default_factory=list, repr=False)
 
     def __call__(self, data: EnvTransition | dict[str, Any]):
         """Process data through all steps.
@@ -447,7 +443,6 @@ class RobotProcessor(ModelHubMixin):
 
         config: dict[str, Any] = {
             "name": self.name,
-            "seed": self.seed,
             "steps": [],
         }
 
@@ -743,7 +738,7 @@ class RobotProcessor(ModelHubMixin):
                 f"Make sure override keys match exact step class names or registry names."
             )
 
-        return cls(steps, loaded_config.get("name", "RobotProcessor"), loaded_config.get("seed"))
+        return cls(steps, loaded_config.get("name", "RobotProcessor"))
 
     def __len__(self) -> int:
         """Return the number of steps in the processor."""
@@ -755,7 +750,7 @@ class RobotProcessor(ModelHubMixin):
         * ``slice`` – returns a new RobotProcessor with the sliced steps.
         """
         if isinstance(idx, slice):
-            return RobotProcessor(self.steps[idx], self.name, self.seed)
+            return RobotProcessor(self.steps[idx], self.name)
         return self.steps[idx]
 
     def register_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):
@@ -798,71 +793,11 @@ class RobotProcessor(ModelHubMixin):
                 f"Hook {fn} not found in after_step_hooks. Make sure to pass the exact same function reference."
             ) from None
 
-    def register_reset_hook(self, fn: Callable[[], None]):
-        """Attach fn to be executed when reset is called."""
-        self.reset_hooks.append(fn)
-
-    def unregister_reset_hook(self, fn: Callable[[], None]):
-        """Remove a previously registered reset hook.
-
-        Args:
-            fn: The exact function reference that was registered. Must be the same object.
-
-        Raises:
-            ValueError: If the hook is not found in the registered hooks.
-        """
-        try:
-            self.reset_hooks.remove(fn)
-        except ValueError:
-            raise ValueError(
-                f"Hook {fn} not found in reset_hooks. Make sure to pass the exact same function reference."
-            ) from None
-
     def reset(self):
         """Clear state in every step that implements ``reset()`` and fire registered hooks."""
         for step in self.steps:
             if hasattr(step, "reset"):
                 step.reset()  # type: ignore[attr-defined]
-        for fn in self.reset_hooks:
-            fn()
-
-    def profile_steps(
-        self, transition: EnvTransition, num_runs: int = 100, warmup_runs: int = 5
-    ) -> dict[str, float]:
-        """Profile the execution time of each step for performance optimization."""
-        import copy
-        import time
-
-        profile_results = {}
-
-        # Make a copy to avoid altering the original transition
-        transition_copy = copy.deepcopy(transition)
-
-        # Get intermediate transitions for each step using step_through
-        intermediate_transitions = list(self.step_through(transition_copy))
-
-        for idx, processor_step in enumerate(self.steps):
-            step_name = f"step_{idx}_{processor_step.__class__.__name__}"
-
-            # Use the appropriate input transition for this step
-            input_transition = intermediate_transitions[idx]
-
-            # Warm up - copy transition for each run to ensure consistent conditions
-            for _ in range(warmup_runs):
-                transition_copy = copy.deepcopy(input_transition)
-                _ = processor_step(transition_copy)
-
-            # Time the step - copy transition for each run to ensure consistent conditions
-            start_time = time.perf_counter()
-            for _ in range(num_runs):
-                transition_copy = copy.deepcopy(input_transition)
-                _ = processor_step(transition_copy)
-            end_time = time.perf_counter()
-
-            avg_time = (end_time - start_time) / num_runs * 1000  # Convert to milliseconds
-            profile_results[step_name] = avg_time
-
-        return profile_results
 
     def __repr__(self) -> str:
         """Return a readable string representation of the processor."""
@@ -878,9 +813,6 @@ class RobotProcessor(ModelHubMixin):
             steps_repr = f"steps={len(step_names)}: [{displayed}]"
 
         parts = [f"name='{self.name}'", steps_repr]
-
-        if self.seed is not None:
-            parts.append(f"seed={self.seed}")
 
         return f"RobotProcessor({', '.join(parts)})"
 
@@ -939,6 +871,9 @@ class ObservationProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
+        if observation is None:
+            return transition
+
         processed_observation = self.observation(observation)
         # Create a new transition dict with the processed observation
         new_transition = transition.copy()
@@ -996,6 +931,9 @@ class ActionProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+
         processed_action = self.action(action)
         # Create a new transition dict with the processed action
         new_transition = transition.copy()
@@ -1052,6 +990,9 @@ class RewardProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         reward = transition.get(TransitionKey.REWARD)
+        if reward is None:
+            return transition
+
         processed_reward = self.reward(reward)
         # Create a new transition dict with the processed reward
         new_transition = transition.copy()
@@ -1113,6 +1054,9 @@ class DoneProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         done = transition.get(TransitionKey.DONE)
+        if done is None:
+            return transition
+
         processed_done = self.done(done)
         # Create a new transition dict with the processed done flag
         new_transition = transition.copy()
@@ -1170,6 +1114,9 @@ class TruncatedProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         truncated = transition.get(TransitionKey.TRUNCATED)
+        if truncated is None:
+            return transition
+
         processed_truncated = self.truncated(truncated)
         # Create a new transition dict with the processed truncated flag
         new_transition = transition.copy()
@@ -1232,6 +1179,9 @@ class InfoProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         info = transition.get(TransitionKey.INFO)
+        if info is None:
+            return transition
+
         processed_info = self.info(info)
         # Create a new transition dict with the processed info
         new_transition = transition.copy()
@@ -1275,6 +1225,9 @@ class ComplementaryDataProcessor:
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            return transition
+
         processed_complementary_data = self.complementary_data(complementary_data)
         # Create a new transition dict with the processed complementary data
         new_transition = transition.copy()

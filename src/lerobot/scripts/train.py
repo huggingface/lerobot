@@ -294,6 +294,10 @@ def train(cfg: TrainPipelineConfig):
             postprocessor.push_to_hub(cfg.policy.repo_id)
 
 
-if __name__ == "__main__":
+def main():
     init_logging()
     train()
+
+
+if __name__ == "__main__":
+    main()

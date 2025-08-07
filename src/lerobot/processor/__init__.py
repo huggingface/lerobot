@@ -17,11 +17,7 @@
 from .batch_processor import ToBatchProcessor
 from .device_processor import DeviceProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
-from .observation_processor import (
-    ImageProcessor,
-    StateProcessor,
-    VanillaObservationProcessor,
-)
+from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessor,
     DoneProcessor,
@@ -45,7 +41,6 @@ __all__ = [
     "DoneProcessor",
     "EnvTransition",
     "IdentityProcessor",
-    "ImageProcessor",
     "InfoProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
@@ -56,7 +51,6 @@ __all__ = [
     "RenameProcessor",
     "RewardProcessor",
     "RobotProcessor",
-    "StateProcessor",
     "ToBatchProcessor",
     "TokenizerProcessor",
     "TransitionKey",

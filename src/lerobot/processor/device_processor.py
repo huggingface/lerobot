@@ -20,6 +20,7 @@ import torch
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.utils.utils import get_safe_torch_device
 
 
 @ProcessorStepRegistry.register("device_processor")
@@ -35,9 +36,45 @@ class DeviceProcessor:
 
     device: str = "cpu"
     float_dtype: str | None = None
+    _device: torch.device | None = None
 
     def __post_init__(self):
-        self.non_blocking = "cuda" in self.device
+        self._device = get_safe_torch_device(self.device)
+        self.device = self._device.type
+        self.non_blocking = "cuda" in str(self.device)
+
+        # Validate and convert float_dtype string to torch dtype
+        if self.float_dtype is not None:
+            dtype_mapping = {
+                "float16": torch.float16,
+                "float32": torch.float32,
+                "float64": torch.float64,
+                "bfloat16": torch.bfloat16,
+                "half": torch.float16,
+                "float": torch.float32,
+                "double": torch.float64,
+            }
+
+            if self.float_dtype not in dtype_mapping:
+                available_dtypes = list(dtype_mapping.keys())
+                raise ValueError(
+                    f"Invalid float_dtype '{self.float_dtype}'. Available options: {available_dtypes}"
+                )
+
+            self._target_float_dtype = dtype_mapping[self.float_dtype]
+        else:
+            self._target_float_dtype = None
+
+    def _process_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Process a tensor by moving to device and optionally converting float dtype."""
+        # Move to device first
+        tensor = tensor.to(self.device, non_blocking=self.non_blocking)
+
+        # Convert float dtype if specified and tensor is floating point
+        if self._target_float_dtype is not None and tensor.is_floating_point():
+            tensor = tensor.to(dtype=self._target_float_dtype)
+
+        return tensor
 
         # Validate and convert float_dtype string to torch dtype
         if self.float_dtype is not None:

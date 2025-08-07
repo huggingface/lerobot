@@ -27,6 +27,7 @@ from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.constants import ACTION, OBS_STATE
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.hub import HubMixin
@@ -118,8 +119,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def robot_state_feature(self) -> PolicyFeature | None:
-        for _, ft in self.input_features.items():
-            if ft.type is FeatureType.STATE:
+        for ft_name, ft in self.input_features.items():
+            if ft.type is FeatureType.STATE and ft_name == OBS_STATE:
                 return ft
         return None
 
@@ -136,8 +137,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def action_feature(self) -> PolicyFeature | None:
-        for _, ft in self.output_features.items():
-            if ft.type is FeatureType.ACTION:
+        for ft_name, ft in self.output_features.items():
+            if ft.type is FeatureType.ACTION and ft_name == ACTION:
                 return ft
         return None
 

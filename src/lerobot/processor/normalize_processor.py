@@ -270,7 +270,6 @@ class UnnormalizerProcessor:
     features: dict[str, PolicyFeature]
     norm_map: dict[FeatureType, NormalizationMode]
     stats: dict[str, dict[str, Any]] | None = None
-    eps: float = 1e-8
 
     _tensor_stats: dict[str, dict[str, Tensor]] = field(default_factory=dict, init=False, repr=False)
 
@@ -280,10 +279,8 @@ class UnnormalizerProcessor:
         dataset: LeRobotDataset,
         features: dict[str, PolicyFeature],
         norm_map: dict[FeatureType, NormalizationMode],
-        *,
-        eps: float = 1e-8,
     ) -> UnnormalizerProcessor:
-        return cls(features=features, norm_map=norm_map, stats=dataset.meta.stats, eps=eps)
+        return cls(features=features, norm_map=norm_map, stats=dataset.meta.stats)
 
     def __post_init__(self):
         # Handle deserialization from JSON config
@@ -413,7 +410,6 @@ class UnnormalizerProcessor:
 
     def get_config(self) -> dict[str, Any]:
         return {
-            "eps": self.eps,
             "features": {
                 key: {"type": ft.type.value, "shape": ft.shape} for key, ft in self.features.items()
             },
@@ -435,6 +431,9 @@ class UnnormalizerProcessor:
 
     def reset(self):
         pass
+
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
 
 
 def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, Any]]) -> RobotProcessor:
