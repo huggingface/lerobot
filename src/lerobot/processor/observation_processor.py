@@ -14,14 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
-from typing import Any
 
 import einops
 import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.configs.types import PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.processor.pipeline import ObservationProcessor, ProcessorStepRegistry
 
@@ -69,26 +67,6 @@ class VanillaObservationProcessor(ObservationProcessor):
         img_tensor = img_tensor.type(torch.float32) / 255.0
 
         return img_tensor
-
-    def get_config(self) -> dict[str, Any]:
-        """Return configuration for serialization."""
-        return {}
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        """Return state dictionary (empty for this processor)."""
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """Load state dictionary (no-op for this processor)."""
-        pass
-
-    def reset(self) -> None:
-        """Reset processor state (no-op for this processor)."""
-        pass
-
-    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        """No dataset features for this processor."""
-        pass
 
     def _process_observation(self, observation):
         """
