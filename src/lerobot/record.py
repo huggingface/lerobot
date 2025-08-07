@@ -77,7 +77,12 @@ from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
-from lerobot.processor.converters import to_dataset_frame
+from lerobot.processor.converters import (
+    to_dataset_frame,
+    to_output_robot_action,
+    to_transition_robot_observation,
+    to_transition_teleop_action,
+)
 from lerobot.processor.normalize_processor import rename_stats
 from lerobot.processor.pipeline import IdentityProcessor, TransitionKey
 from lerobot.robots import (  # noqa: F401
@@ -193,6 +198,36 @@ class RecordConfig:
         return ["policy"]
 
 
+""" --------------- record_loop() data flow --------------------------
+       [ Robot ]
+           V
+     [ robot.get_observation() ] ---> raw_obs
+           V
+     [ robot_observation_processor ] ---> obs_transition
+           V
+     .-----( ACTION LOGIC )------------------.
+     V                                       V
+     [ From Teleoperator ]                   [ From Policy ]
+     |                                       |
+     |  [teleop.get_action] -> raw_action    |   [predict_action]
+     |          |                            |          |
+     |          V                            |          V
+     | [teleop_action_processor]             |          |
+     |          |                            |          |
+     '---> teleop_transition                 '---> policy_transition
+     |                                       |
+     '-------------------------.-------------'
+                               V
+                  [ robot_action_processor ] --> robot_action_to_send
+                               V
+                    [ robot.send_action() ] -- (Robot Executes)
+                               V
+        ( Transitions are merged & added to Dataset )
+                               V
+                  ( Rerun Log / Loop Wait )
+"""
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -210,10 +245,15 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
 ):
-    default_processor = lambda: RobotProcessor(steps=[IdentityProcessor()])  # noqa: E731
-    teleop_action_processor = teleop_action_processor or default_processor()
-    robot_action_processor = robot_action_processor or default_processor()
-    robot_observation_processor = robot_observation_processor or default_processor()
+    teleop_action_processor = teleop_action_processor or RobotProcessor(
+        steps=[IdentityProcessor()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
+    )
+    robot_action_processor = robot_action_processor or RobotProcessor(
+        steps=[IdentityProcessor()], to_transition=lambda tr: tr, to_output=to_output_robot_action
+    )
+    robot_observation_processor = robot_observation_processor or RobotProcessor(
+        steps=[IdentityProcessor()], to_transition=to_transition_robot_observation, to_output=lambda tr: tr
+    )
 
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
