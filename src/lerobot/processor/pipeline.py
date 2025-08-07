@@ -831,9 +831,8 @@ class RobotProcessor(ModelHubMixin):
         features: dict[str, PolicyFeature] = deepcopy(initial_features)
 
         for _, step in enumerate(self.steps):
-            if hasattr(step, "features"):
-                out = step.features(features)
-                features = out
+            out = step.features(features)
+            features = out
         return features
 
 
