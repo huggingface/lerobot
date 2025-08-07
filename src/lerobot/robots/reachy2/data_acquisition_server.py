@@ -211,18 +211,28 @@ class DataAcquisitionServicer():
         obs_features = hw_to_dataset_features(self.robot.observation_features, "observation")
         dataset_features = {**action_features, **obs_features}
 
-        # Create the dataset
-        self.dataset = LeRobotDataset.create(
-            repo_id=request.dataset_name,
-            fps=self.fps,
-            features=dataset_features,
-            robot_type=self.robot.name,
-            use_videos=True,
-            image_writer_threads=4,
-        )
+        print(f"Dataset name: {request.dataset_name}")
 
-        current_dataset = self.create_dataset(request.dataset_name, DatasetPushState.LOCAL_ONLY, 0)
-        self.add_dataset_to_json_file(current_dataset, self.dataset_list_path)
+        if request.resume:
+            self.dataset = LeRobotDataset(
+                request.dataset_name,
+                root="/home/demo/.cache/huggingface/lerobot/" + request.dataset_name,
+            )
+            if hasattr(self.robot, "cameras") and len(self.robot.cameras) > 0:
+                self.dataset.start_image_writer()
+        else:
+            # Create the dataset
+            self.dataset = LeRobotDataset.create(
+                repo_id=request.dataset_name,
+                fps=self.fps,
+                features=dataset_features,
+                robot_type=self.robot.name,
+                use_videos=True,
+                image_writer_threads=4,
+            )
+
+            current_dataset = self.create_dataset(request.dataset_name, DatasetPushState.LOCAL_ONLY, 0)
+            self.add_dataset_to_json_file(current_dataset, self.dataset_list_path)
 
         # Connect the robot and teleoperator
         if not self.robot.is_connected:
