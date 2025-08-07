@@ -183,7 +183,6 @@ class InverseKinematicsConfig:
     target_frame_name: str | None = None
     end_effector_bounds: dict[str, list[float]] | None = None
     end_effector_step_sizes: dict[str, float] | None = None
-    max_gripper_pos: float | None = None
 
 
 @dataclass
@@ -213,7 +212,6 @@ class ResetConfig:
     reset_time_s: float = 5.0
     control_time_s: float = 20.0
     terminate_on_success: bool = True
-    number_of_steps_after_success: int = 0
 
 
 @dataclass
@@ -221,12 +219,13 @@ class HILSerlProcessorConfig:
     """Configuration for environment processing pipeline."""
 
     control_mode: str = "gamepad"
-    observation: ObservationConfig = field(default_factory=ObservationConfig)
-    image_preprocessing: ImagePreprocessingConfig = field(default_factory=ImagePreprocessingConfig)
-    gripper: GripperConfig = field(default_factory=GripperConfig)
-    reset: ResetConfig = field(default_factory=ResetConfig)
-    inverse_kinematics: InverseKinematicsConfig = field(default_factory=InverseKinematicsConfig)
-    reward_classifier: RewardClassifierConfig = field(default_factory=RewardClassifierConfig)
+    observation: ObservationConfig | None = None
+    image_preprocessing: ImagePreprocessingConfig | None = None
+    gripper: GripperConfig | None = None
+    reset: ResetConfig | None = None
+    inverse_kinematics: InverseKinematicsConfig | None = None
+    reward_classifier: RewardClassifierConfig | None = None
+    max_gripper_pos: float | None = 100.0
 
 
 @EnvConfig.register_subclass(name="gym_manipulator")

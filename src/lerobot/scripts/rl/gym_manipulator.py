@@ -182,7 +182,7 @@ class RobotEnv(gym.Env):
 
         self._setup_spaces()
 
-    def _get_observation(self) -> dict[str, np.ndarray]:
+    def _get_observation(self) -> dict[str, np.ndarray | dict[str, np.ndarray]]:
         """Helper to convert a dictionary from bus.sync_read to an ordered numpy array."""
         obs_dict = self.robot.get_observation()
         joint_positions = np.array([obs_dict[name] for name in self._joint_names])
@@ -349,29 +349,39 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     if cfg.name == "gym_hil":
         assert cfg.robot is None and cfg.teleop is None, "GymHIL environment does not support robot or teleop"
         import gymnasium as gym
-
-        # Create GymHIL environment
+        
+        # Extract gripper settings with defaults
+        use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+        gripper_penalty = cfg.processor.gripper.gripper_penalty if cfg.processor.gripper is not None else 0.0
+        
         env = gym.make(
             f"gym_hil/{cfg.task}",
             image_obs=True,
             render_mode="human",
-            use_gripper=cfg.processor.gripper.use_gripper,
-            gripper_penalty=cfg.processor.gripper.gripper_penalty,
+            use_gripper=use_gripper,
+            gripper_penalty=gripper_penalty,
         )
 
         return env, DummyTeleopDevice()
 
     # Real robot environment
+    assert cfg.robot is not None, "Robot config must be provided for real robot environment"
+    assert cfg.teleop is not None, "Teleop config must be provided for real robot environment"
+    
     robot = make_robot_from_config(cfg.robot)
     teleop_device = make_teleoperator_from_config(cfg.teleop)
     teleop_device.connect()
 
-    # Create base environment
+    # Create base environment with safe defaults
+    use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+    display_cameras = cfg.processor.observation.display_cameras if cfg.processor.observation is not None else False
+    reset_pose = cfg.processor.reset.fixed_reset_joint_positions if cfg.processor.reset is not None else None
+    
     env = RobotEnv(
         robot=robot,
-        use_gripper=cfg.processor.gripper.use_gripper,
-        display_cameras=cfg.processor.observation.display_cameras,
-        reset_pose=cfg.processor.reset.fixed_reset_joint_positions,
+        use_gripper=use_gripper,
+        display_cameras=display_cameras,
+        reset_pose=reset_pose,
     )
 
     return env, teleop_device
@@ -389,9 +399,7 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
         tuple: (env_processor, action_processor)
     """
     # Check if this is a GymHIL simulation environment
-    is_gym_hil = cfg.name == "gym_hil" or (cfg.robot is None and cfg.teleop is None)
-
-    if is_gym_hil:
+    if cfg.name == "gym_hil":
         # Minimal processor pipeline for GymHIL simulation
         env_pipeline_steps = [
             VanillaObservationProcessor(),
@@ -407,24 +415,42 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
     # Full processor pipeline for real robot environment
     env_pipeline_steps = [
         VanillaObservationProcessor(),
-        JointVelocityProcessor(dt=1.0 / cfg.fps),
-        MotorCurrentProcessor(env=env),
-        ImageCropResizeProcessor(
-            crop_params_dict=cfg.processor.image_preprocessing.crop_params_dict,
-            resize_size=cfg.processor.image_preprocessing.resize_size,
-        ),
-        TimeLimitProcessor(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps)),
     ]
-    if cfg.processor.gripper.use_gripper:
+    
+    # Add observation-based processors if observation config exists
+    if cfg.processor.observation is not None:
+        if cfg.processor.observation.add_joint_velocity_to_observation:
+            env_pipeline_steps.append(JointVelocityProcessor(dt=1.0 / cfg.fps))
+        if cfg.processor.observation.add_current_to_observation:
+            env_pipeline_steps.append(MotorCurrentProcessor(env=env))
+    
+    # Add image preprocessing if config exists
+    if cfg.processor.image_preprocessing is not None:
+        env_pipeline_steps.append(
+            ImageCropResizeProcessor(
+                crop_params_dict=cfg.processor.image_preprocessing.crop_params_dict,
+                resize_size=cfg.processor.image_preprocessing.resize_size,
+            )
+        )
+    
+    # Add time limit processor if reset config exists
+    if cfg.processor.reset is not None:
+        env_pipeline_steps.append(
+            TimeLimitProcessor(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
+        )
+    
+    # Add gripper penalty processor if gripper config exists and enabled
+    if cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
         env_pipeline_steps.append(
             GripperPenaltyProcessor(
                 penalty=cfg.processor.gripper.gripper_penalty,
-                max_gripper_pos=cfg.processor.inverse_kinematics.max_gripper_pos,
+                max_gripper_pos=cfg.processor.max_gripper_pos,
             )
         )
 
     # Add reward classifier processor if configured
-    if cfg.processor.reward_classifier.pretrained_path is not None:
+    if (cfg.processor.reward_classifier is not None and 
+        cfg.processor.reward_classifier.pretrained_path is not None):
         env_pipeline_steps.append(
             RewardClassifierProcessor(
                 pretrained_path=cfg.processor.reward_classifier.pretrained_path,
@@ -437,18 +463,23 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
     env_pipeline_steps.append(ToBatchProcessor())
     env_pipeline_steps.append(DeviceProcessor(device=device))
 
+
     action_pipeline_steps = [
         InterventionActionProcessor(
-            use_gripper=cfg.processor.gripper.use_gripper,
-        ),
-        InverseKinematicsProcessor(
-            urdf_path=cfg.processor.inverse_kinematics.urdf_path,
-            target_frame_name=cfg.processor.inverse_kinematics.target_frame_name,
-            end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
-            end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
-            max_gripper_pos=cfg.processor.inverse_kinematics.max_gripper_pos,
+            use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
         ),
     ]
+    
+    if cfg.processor.inverse_kinematics is not None:
+        action_pipeline_steps.append(
+            InverseKinematicsProcessor(
+                urdf_path=cfg.processor.inverse_kinematics.urdf_path,
+                target_frame_name=cfg.processor.inverse_kinematics.target_frame_name,
+                end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
+                end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
+                max_gripper_pos=cfg.processor.max_gripper_pos,
+            )
+        )
 
     return RobotProcessor(steps=env_pipeline_steps), RobotProcessor(steps=action_pipeline_steps)
 
@@ -544,6 +575,10 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
     transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
     transition = env_processor(transition)
 
+    # Determine if gripper is used
+    use_gripper = cfg.env.processor.gripper.use_gripper if cfg.env.processor.gripper is not None else True
+    
+    dataset = None
     if cfg.mode == "record":
         action_features = teleop_device.action_features
         features = {
@@ -551,7 +586,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
             "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
             "next.done": {"dtype": "bool", "shape": (1,), "names": None},
         }
-        if cfg.env.processor.gripper.use_gripper:
+        if use_gripper:
             features["complementary_info.discrete_penalty"] = {
                 "dtype": "float32",
                 "shape": (1,),
@@ -592,7 +627,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
 
         # Create a neutral action (no movement)
         neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
-        if cfg.env.processor.gripper.use_gripper:
+        if use_gripper:
             neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
 
         # Use the new step function
@@ -619,10 +654,11 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
                 "next.reward": np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
                 "next.done": np.array([terminated or truncated], dtype=bool),
             }
-            if cfg.env.processor.gripper.use_gripper:
+            if use_gripper:
                 discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
                 frame["complementary_info.discrete_penalty"] = np.array([discrete_penalty], dtype=np.float32)
-            dataset.add_frame(frame, task=cfg.dataset.task)
+            if dataset is not None:
+                dataset.add_frame(frame, task=cfg.dataset.task)
 
         episode_step += 1
 
@@ -635,7 +671,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
             episode_step = 0
             episode_idx += 1
 
-            if cfg.mode == "record":
+            if dataset is not None:
                 if transition[TransitionKey.INFO].get("rerecord_episode", False):
                     logging.info(f"Re-recording episode {episode_idx}")
                     dataset.clear_episode_buffer()
@@ -660,7 +696,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
         # Maintain fps timing
         busy_wait(dt - (time.perf_counter() - step_start_time))
 
-    if cfg.mode == "record" and cfg.dataset.push_to_hub:
+    if dataset is not None and cfg.dataset.push_to_hub:
         logging.info("Pushing dataset to hub")
         dataset.push_to_hub()
 
@@ -675,13 +711,13 @@ def replay_trajectory(env, action_processor, cfg: GymManipulatorConfig):
     dataset_actions = dataset.hf_dataset.select_columns(["action"])
     _, info = env.reset()
 
-    for _, action in enumerate(dataset_actions):
+    for action_data in dataset_actions:
         start_time = time.perf_counter()
         transition = create_transition(
-            action=action["action"], complementary_data={"raw_joint_positions": info["raw_joint_positions"]}
+            action=action_data["action"], complementary_data={"raw_joint_positions": info["raw_joint_positions"]}
         )
         transition = action_processor(transition)
-        env.step(transition[TransitionKey.ACTION])
+        _, _, _, _, info = env.step(transition[TransitionKey.ACTION])
         busy_wait(1 / cfg.env.fps - (time.perf_counter() - start_time))
 
 
