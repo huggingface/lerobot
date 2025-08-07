@@ -1016,11 +1016,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 audio_path = self._get_raw_audio_file_path(
                     episode_index=self.episode_buffer["episode_index"][0], audio_key=key
                 )
+                audio_path.parent.mkdir(parents=True, exist_ok=True)
                 with SoundFile(
                     audio_path,
                     mode="w",
                     samplerate=self.meta.features[key]["info"]["sample_rate"],
-                    channels=self.meta.features[key]["shape"][0],
+                    channels=self.meta.features[key]["shape"][1],
+                    format="WAV",
+                    subtype="FLOAT",
                 ) as file:
                     file.write(episode_buffer[key])
 
