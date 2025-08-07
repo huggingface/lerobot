@@ -62,4 +62,7 @@ Make sure cameras index or path is appropriately matched. Doesn't have to be lis
     "top":     {"type": "opencv", "index_or_path": 1, "width": 1280, "height": 720, "fps": 30}
   }' \
 
+Run with flags :
+--log=true for outputing CSV file of servo encoding values
+--resume=true after first run otherwise run rm -r "file_path" for the output dataset (eval_your_dataset_name_)
 
