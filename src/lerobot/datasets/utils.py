@@ -690,7 +690,7 @@ def hw_to_dataset_features(
             "dtype": "audio",
             "shape": (features[1],),
             "names": ["channels"],
-            "sample_rate": features[0],
+            "info": {"sample_rate": features[0]},
         }
 
     _validate_feature_names(features)
