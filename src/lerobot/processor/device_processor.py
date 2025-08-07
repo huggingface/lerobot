@@ -141,5 +141,5 @@ class DeviceProcessor:
         """Reset processor state (no-op for this processor)."""
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features

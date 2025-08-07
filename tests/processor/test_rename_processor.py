@@ -410,7 +410,7 @@ def test_value_types_preserved():
     assert processed_obs["old_list"] == [1, 2, 3]
 
 
-def test_feature_contract_basic_renaming(policy_feature_factory):
+def test_features_basic_renaming(policy_feature_factory):
     processor = RenameProcessor(rename_map={"a": "x", "b": "y"})
     features = {
         "a": policy_feature_factory(FeatureType.STATE, (2,)),
@@ -418,7 +418,7 @@ def test_feature_contract_basic_renaming(policy_feature_factory):
         "c": policy_feature_factory(FeatureType.ENV, (1,)),
     }
 
-    out = processor.feature_contract(features.copy())
+    out = processor.transform_features(features.copy())
 
     # Values preserved and typed
     assert out["x"] == features["a"]
@@ -430,14 +430,14 @@ def test_feature_contract_basic_renaming(policy_feature_factory):
     assert set(features) == {"a", "b", "c"}
 
 
-def test_feature_contract_overlapping_keys(policy_feature_factory):
+def test_features_overlapping_keys(policy_feature_factory):
     # Overlapping renames: both 'a' and 'b' exist. 'a'->'b', 'b'->'c'
     processor = RenameProcessor(rename_map={"a": "b", "b": "c"})
     features = {
         "a": policy_feature_factory(FeatureType.STATE, (1,)),
         "b": policy_feature_factory(FeatureType.STATE, (2,)),
     }
-    out = processor.feature_contract(features)
+    out = processor.transform_features(features)
 
     assert set(out) == {"b", "c"}
     assert out["b"] == features["a"]  # 'a' renamed to'b'
@@ -445,7 +445,7 @@ def test_feature_contract_overlapping_keys(policy_feature_factory):
     assert_contract_is_typed(out)
 
 
-def test_feature_contract_chained_processors(policy_feature_factory):
+def test_features_chained_processors(policy_feature_factory):
     # Chain two rename processors at the contract level
     processor1 = RenameProcessor(rename_map={"pos": "agent_position", "img": "camera_image"})
     processor2 = RenameProcessor(
@@ -458,7 +458,7 @@ def test_feature_contract_chained_processors(policy_feature_factory):
         "img": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "extra": policy_feature_factory(FeatureType.ENV, (1,)),
     }
-    out = pipeline.feature_contract(initial_features=spec)
+    out = pipeline.transform_features(initial_features=spec)
 
     assert set(out) == {"observation.state", "observation.image", "extra"}
     assert out["observation.state"] == spec["pos"]

@@ -26,6 +26,7 @@ import torch
 import torch.nn as nn
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
 from lerobot.processor import EnvTransition, ProcessorStepRegistry, RobotProcessor
 from lerobot.processor.pipeline import TransitionKey
 from tests.conftest import assert_contract_is_typed
@@ -90,8 +91,8 @@ class MockStep:
     def reset(self) -> None:
         self.counter = 0
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We do not test features here
         return features
 
 
@@ -112,8 +113,8 @@ class MockStepWithoutOptionalMethods:
 
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We do not test features here
         return features
 
 
@@ -168,8 +169,8 @@ class MockStepWithTensorState:
         self.running_mean.zero_()
         self.running_count.zero_()
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We do not test features here
         return features
 
 
@@ -662,8 +663,8 @@ class MockModuleStep(nn.Module):
         self.running_mean.zero_()
         self.counter = 0
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We do not test features here
         return features
 
 
@@ -744,8 +745,8 @@ class MockNonModuleStepWithState:
         self.step_count.zero_()
         self.history.clear()
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We do not test features here
         return features
 
 
@@ -799,8 +800,8 @@ class MockStepWithNonSerializableParam:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We do not test features here
         return features
 
 
@@ -838,8 +839,8 @@ class RegisteredMockStep:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # We do not test features here
         return features
 
 
@@ -1382,8 +1383,8 @@ def test_state_file_naming_with_registry():
         def load_state_dict(self, state):
             self.state_tensor = state["state_tensor"]
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-            # We do not test feature_contract here
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+            # We do not test features here
             return features
 
     try:
@@ -1439,8 +1440,8 @@ def test_override_with_nested_config():
         def get_config(self):
             return {"name": self.name, "simple_param": self.simple_param, "nested_config": self.nested_config}
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-            # We do not test feature_contract here
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+            # We do not test features here
             return features
 
     try:
@@ -1531,8 +1532,8 @@ def test_override_with_callables():
         def get_config(self):
             return {"name": self.name}
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-            # We do not test feature_contract here
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+            # We do not test features here
             return features
 
     try:
@@ -1766,8 +1767,8 @@ def test_override_with_device_strings():
         def load_state_dict(self, state):
             self.buffer = state["buffer"]
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-            # We do not test feature_contract here
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+            # We do not test features here
             return features
 
     try:
@@ -1860,21 +1861,16 @@ def test_save_load_with_custom_converter_functions():
 
 
 class NonCompliantStep:
-    """Intentionally non-compliant: missing feature_contract."""
+    """Intentionally non-compliant: missing features."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
 
-def test_construction_rejects_step_without_feature_contract():
-    with pytest.raises(TypeError, match=r"must define feature_contract\(features\) -> dict\[str, Any\]"):
-        RobotProcessor([NonCompliantStep()])
-
-
 class NonCallableStep:
     """Intentionally non-compliant: missing __call__."""
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1893,7 +1889,7 @@ class FeatureContractAddStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features[self.key] = self.value
         return features
 
@@ -1908,7 +1904,7 @@ class FeatureContractMutateStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features[self.key] = self.fn(features.get(self.key))
         return features
 
@@ -1920,7 +1916,7 @@ class FeatureContractBadReturnStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return ["not-a-dict"]
 
 
@@ -1933,12 +1929,12 @@ class FeatureContractRemoveStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features.pop(self.key, None)
         return features
 
 
-def test_feature_contract_orders_and_merges(policy_feature_factory):
+def test_features_orders_and_merges(policy_feature_factory):
     p = RobotProcessor(
         [
             FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
@@ -1946,14 +1942,14 @@ def test_feature_contract_orders_and_merges(policy_feature_factory):
             FeatureContractAddStep("b", policy_feature_factory(FeatureType.ENV, (2,))),
         ]
     )
-    out = p.feature_contract({})
+    out = p.transform_features({})
 
     assert out["a"].type == FeatureType.STATE and out["a"].shape == (3,)
     assert out["b"].type == FeatureType.ENV and out["b"].shape == (2,)
     assert_contract_is_typed(out)
 
 
-def test_feature_contract_respects_initial_without_mutation(policy_feature_factory):
+def test_features_respects_initial_without_mutation(policy_feature_factory):
     initial = {
         "seed": policy_feature_factory(FeatureType.STATE, (7,)),
         "nested": policy_feature_factory(FeatureType.ENV, (0,)),
@@ -1966,7 +1962,7 @@ def test_feature_contract_respects_initial_without_mutation(policy_feature_facto
             ),
         ]
     )
-    out = p.feature_contract(initial_features=initial)
+    out = p.transform_features(initial_features=initial)
 
     assert out["seed"].shape == (8,)
     assert out["nested"].shape == (5,)
@@ -1977,13 +1973,7 @@ def test_feature_contract_respects_initial_without_mutation(policy_feature_facto
     assert_contract_is_typed(out)
 
 
-def test_feature_contract_type_error_on_bad_step():
-    p = RobotProcessor([FeatureContractAddStep(), FeatureContractBadReturnStep()])
-    with pytest.raises(TypeError, match=r"\w+\.feature_contract must return dict\[str, Any\]"):
-        _ = p.feature_contract({})
-
-
-def test_feature_contract_execution_order_tracking():
+def test_features_execution_order_tracking():
     class Track:
         def __init__(self, label):
             self.label = label
@@ -1991,32 +1981,186 @@ def test_feature_contract_execution_order_tracking():
         def __call__(self, transition: EnvTransition) -> EnvTransition:
             return transition
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
             code = {"A": 1, "B": 2, "C": 3}[self.label]
             pf = features.get("order", PolicyFeature(type=FeatureType.ENV, shape=()))
             features["order"] = PolicyFeature(type=pf.type, shape=pf.shape + (code,))
             return features
 
-    out = RobotProcessor([Track("A"), Track("B"), Track("C")]).feature_contract({})
+    out = RobotProcessor([Track("A"), Track("B"), Track("C")]).transform_features({})
     assert out["order"].shape == (1, 2, 3)
 
 
-def test_feature_contract_remove_key(policy_feature_factory):
+def test_features_remove_key(policy_feature_factory):
     p = RobotProcessor(
         [
             FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
             FeatureContractRemoveStep("a"),
         ]
     )
-    out = p.feature_contract({})
+    out = p.transform_features({})
     assert "a" not in out
 
 
-def test_feature_contract_remove_from_initial(policy_feature_factory):
+def test_features_remove_from_initial(policy_feature_factory):
     initial = {
         "keep": policy_feature_factory(FeatureType.STATE, (1,)),
         "drop": policy_feature_factory(FeatureType.STATE, (1,)),
     }
     p = RobotProcessor([FeatureContractRemoveStep("drop")])
-    out = p.feature_contract(initial_features=initial)
+    out = p.transform_features(initial_features=initial)
     assert "drop" not in out and out["keep"] == initial["keep"]
+
+
+@dataclass
+class AddActionEEAndJointFeatures:
+    """Adds both EE and JOINT action features."""
+
+    def __call__(self, tr):
+        return tr
+
+    def transform_features(self, features: dict) -> dict:
+        # EE features
+        features["action.ee.x"] = float
+        features["action.ee.y"] = float
+        # JOINT features
+        features["action.j1.pos"] = float
+        features["action.j2.pos"] = float
+        return features
+
+
+@dataclass
+class AddObservationStateFeatures:
+    """Adds state features (and optionally an image spec to test precedence)."""
+
+    add_front_image: bool = False
+    front_image_shape: tuple = (240, 320, 3)
+
+    def __call__(self, tr):
+        return tr
+
+    def transform_features(self, features: dict) -> dict:
+        # State features (mix EE and a joint state)
+        features["observation.state.ee.x"] = float
+        features["observation.state.j1.pos"] = float
+        if self.add_front_image:
+            features["observation.images.front"] = self.front_image_shape
+        return features
+
+
+def test_aggregate_joint_action_only():
+    rp = RobotProcessor([AddActionEEAndJointFeatures()])
+    initial = {"front": (480, 640, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features=initial,
+        use_videos=True,
+        patterns=["action.j1.pos", "action.j2.pos"],
+    )
+
+    # Expect only "action" with joint names
+    assert "action" in out and "observation.state" not in out
+    assert out["action"]["dtype"] == "float32"
+    assert set(out["action"]["names"]) == {"j1.pos", "j2.pos"}
+    assert out["action"]["shape"] == (len(out["action"]["names"]),)
+
+
+def test_aggregate_ee_action_and_observation_with_videos():
+    rp = RobotProcessor([AddActionEEAndJointFeatures(), AddObservationStateFeatures()])
+    initial = {"front": (480, 640, 3), "side": (720, 1280, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features=initial,
+        use_videos=True,
+        patterns=["action.ee", "observation.state"],
+    )
+
+    # Action should pack only EE names
+    assert "action" in out
+    assert set(out["action"]["names"]) == {"ee.x", "ee.y"}
+    assert out["action"]["dtype"] == "float32"
+
+    # Observation state should pack both ee.x and j1.pos as a vector
+    assert "observation.state" in out
+    assert set(out["observation.state"]["names"]) == {"ee.x", "j1.pos"}
+    assert out["observation.state"]["dtype"] == "float32"
+
+    # Cameras from initial_features appear as videos
+    for cam in ("front", "side"):
+        key = f"observation.images.{cam}"
+        assert key in out
+        assert out[key]["dtype"] == "video"
+        assert out[key]["shape"] == initial[cam]
+        assert out[key]["names"] == ["height", "width", "channels"]
+
+
+def test_aggregate_both_action_types():
+    rp = RobotProcessor([AddActionEEAndJointFeatures()])
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features={},
+        use_videos=True,
+        patterns=["action.ee", "action.j1", "action.j2.pos"],
+    )
+
+    assert "action" in out
+    expected = {"ee.x", "ee.y", "j1.pos", "j2.pos"}
+    assert set(out["action"]["names"]) == expected
+    assert out["action"]["shape"] == (len(expected),)
+
+
+def test_aggregate_images_when_use_videos_false():
+    rp = RobotProcessor([AddObservationStateFeatures(add_front_image=True)])
+    initial = {"back": (480, 640, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features=initial,
+        use_videos=False,  # expect "image" dtype
+        patterns=None,
+    )
+
+    key = "observation.images.back"
+    key_front = "observation.images.front"
+    assert key not in out
+    assert key_front not in out
+
+
+def test_aggregate_images_when_use_videos_true():
+    rp = RobotProcessor([AddObservationStateFeatures(add_front_image=True)])
+    initial = {"back": (480, 640, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features=initial,
+        use_videos=True,
+        patterns=None,
+    )
+
+    key = "observation.images.front"
+    key_back = "observation.images.back"
+    assert key in out
+    assert key_back in out
+    assert out[key]["dtype"] == "video"
+    assert out[key_back]["dtype"] == "video"
+    assert out[key_back]["shape"] == initial["back"]
+
+
+def test_initial_camera_not_overridden_by_step_image():
+    # Step explicitly sets a different front image shape; initial has another shape.
+    # aggregate_pipeline_dataset_features should keep the step's value (setdefault behavior on initial cams).
+    rp = RobotProcessor([AddObservationStateFeatures(add_front_image=True, front_image_shape=(240, 320, 3))])
+    initial = {"front": (480, 640, 3)}  # should NOT override the step-provided (240, 320, 3)
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features=initial,
+        use_videos=True,
+        patterns=["observation.images.front"],
+    )
+
+    key = "observation.images.front"
+    assert key in out
+    assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial

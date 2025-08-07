@@ -106,9 +106,8 @@ class VanillaObservationProcessor(ObservationProcessor):
     def observation(self, observation):
         return self._process_observation(observation)
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Transforms feature keys to a standardized contract.
-
         This method handles several renaming patterns:
         - Exact matches (e.g., 'pixels' -> 'OBS_IMAGE').
         - Prefixed exact matches (e.g., 'observation.pixels' -> 'OBS_IMAGE').

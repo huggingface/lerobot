@@ -72,12 +72,19 @@ from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
+from lerobot.processor.converters import (
+    to_dataset_frame,
+    to_output_robot_action,
+    to_transition_robot_observation,
+    to_transition_teleop_action,
+)
 from lerobot.processor.normalize_processor import rename_stats
+from lerobot.processor.pipeline import IdentityProcessor, TransitionKey
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -191,6 +198,36 @@ class RecordConfig:
         return ["policy"]
 
 
+""" --------------- record_loop() data flow --------------------------
+       [ Robot ]
+           V
+     [ robot.get_observation() ] ---> raw_obs
+           V
+     [ robot_observation_processor ] ---> obs_transition
+           V
+     .-----( ACTION LOGIC )------------------.
+     V                                       V
+     [ From Teleoperator ]                   [ From Policy ]
+     |                                       |
+     |  [teleop.get_action] -> raw_action    |   [predict_action]
+     |          |                            |          |
+     |          V                            |          V
+     | [teleop_action_processor]             |          |
+     |          |                            |          |
+     '---> teleop_transition                 '---> policy_transition
+     |                                       |
+     '-------------------------.-------------'
+                               V
+                  [ robot_action_processor ] --> robot_action_to_send
+                               V
+                    [ robot.send_action() ] -- (Robot Executes)
+                               V
+        ( Transitions are merged & added to Dataset )
+                               V
+                  ( Rerun Log / Loop Wait )
+"""
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -202,14 +239,27 @@ def record_loop(
     preprocessor: RobotProcessor | None = None,
     postprocessor: RobotProcessor | None = None,
     control_time_s: int | None = None,
+    teleop_action_processor: RobotProcessor | None = None,  # runs after teleop
+    robot_action_processor: RobotProcessor | None = None,  # runs before robot
+    robot_observation_processor: RobotProcessor | None = None,  # runs after robot
     single_task: str | None = None,
     display_data: bool = False,
 ):
+    teleop_action_processor = teleop_action_processor or RobotProcessor(
+        steps=[IdentityProcessor()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
+    )
+    robot_action_processor = robot_action_processor or RobotProcessor(
+        steps=[IdentityProcessor()], to_transition=lambda tr: tr, to_output=to_output_robot_action
+    )
+    robot_observation_processor = robot_observation_processor or RobotProcessor(
+        steps=[IdentityProcessor()], to_transition=to_transition_robot_observation, to_output=lambda tr: tr
+    )
+
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
     teleop_arm = teleop_keyboard = None
-    if isinstance(teleop, list):
+    if isinstance(teleop, list):  # For LeKiwi
         teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
         teleop_arm = next(
             (
@@ -226,10 +276,19 @@ def record_loop(
             )
 
     # Reset policy and processor if they are provided
-    if policy is not None or preprocessor is not None:
+    if policy is not None and preprocessor is not None and postprocessor is not None:
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
+
+    # Reset custom pipelines
+    teleop_action_processor.reset()
+    robot_action_processor.reset()
+    robot_observation_processor.reset()
+
+    policy_transition = None
+    teleop_transition = None
+    obs_transition = None
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -240,12 +299,19 @@ def record_loop(
             events["exit_early"] = False
             break
 
-        observation = robot.get_observation()
+        # Get robot observation
+        obs = robot.get_observation()
 
-        if policy is not None or dataset is not None:
-            observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
+        # Applies a pipeline to the raw robot observation, default is IdentityProcessor
+        obs_transition = robot_observation_processor(obs)
 
-        if policy is not None or preprocessor is not None:
+        # Get action from either policy or teleop
+        if policy is not None and preprocessor is not None and postprocessor is not None:
+            if dataset is not None:
+                observation_frame = to_dataset_frame(
+                    obs_transition, dataset.features
+                )  # Convert the observation to the dataset format
+
             action_values = predict_action(
                 observation=observation_frame,
                 policy=policy,
@@ -256,37 +322,64 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
-            action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-        elif policy is None and isinstance(teleop, Teleoperator):
-            action = teleop.get_action()
-        elif policy is None and isinstance(teleop, list):
-            # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
+
+            action_names = dataset.features["action"]["names"]
+            policy_action = {f"action.{name}": float(action_values[i]) for i, name in enumerate(action_names)}
+            policy_transition = {
+                TransitionKey.ACTION: policy_action,
+                TransitionKey.COMPLEMENTARY_DATA: {},
+            }
+
+        elif isinstance(teleop, Teleoperator):
+            act = teleop.get_action()
+
+            # Applies a pipeline to the raw teleop action, default is IdentityProcessor
+            teleop_transition = teleop_action_processor(act)
+
+        elif isinstance(teleop, list):
             arm_action = teleop_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-
             keyboard_action = teleop_keyboard.get_action()
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
-
-            action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+            act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+            teleop_transition = teleop_action_processor(act)
         else:
             logging.info(
-                "No policy or teleoperator provided, skipping action generation."
-                "This is likely to happen when resetting the environment without a teleop device."
-                "The robot won't be at its rest position at the start of the next episode."
+                "No policy or teleoperator provided, skipping action generation. "
+                "This is likely to happen during environment reset."
             )
-            continue
+            # Still continue to next loop to respect timing
 
+        # Applies a pipeline to the action, default is IdentityProcessor
+        # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
+        if policy_transition is not None:
+            robot_action_to_send = robot_action_processor(policy_transition)
+        else:
+            robot_action_to_send = robot_action_processor(teleop_transition)
+
+        # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-        sent_action = robot.send_action(action)
+        # TODO(pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
+        _ = robot.send_action(robot_action_to_send)
 
+        # Write to dataset
         if dataset is not None:
-            action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
-            frame = {**observation_frame, **action_frame}
+            # If to_dataset_frame is provided, use it to merge the transitions.
+            merged = []
+            if obs_transition is not None:  # The observation from the robot
+                merged.append(obs_transition)
+            if teleop_transition is not None:  # The action from teleop
+                merged.append(teleop_transition)
+            if policy_transition is not None:  # The action from policy
+                merged.append(policy_transition)
+            frame = to_dataset_frame(
+                merged if len(merged) > 1 else merged[0], dataset.features
+            )  # Convert the observation to the dataset format
             dataset.add_frame(frame, task=single_task)
 
         if display_data:
-            log_rerun_data(observation, action)
+            log_rerun_data([obs_transition, teleop_transition or policy_transition])
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -417,9 +510,5 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     return dataset
 
 
-def main():
-    record()
-
-
 if __name__ == "__main__":
-    main()
+    record()

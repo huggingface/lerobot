@@ -17,6 +17,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
@@ -134,6 +135,5 @@ class ToBatchProcessor:
         """Reset processor state (no-op for this processor)."""
         pass
 
-    def feature_contract(self, features: dict[str, Any]) -> dict[str, Any]:
-        """Return features (no-op for this processor)."""
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
