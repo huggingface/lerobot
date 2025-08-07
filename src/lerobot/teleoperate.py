@@ -105,11 +105,13 @@ def teleop_loop(
     teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
 ):
     import numpy as np
+    
+    perf_logger = logging.getLogger("performance")
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
 
-    # Lightweight stats tracking - compound average
+    # Lightweight stats tracking
     all_frame_times = []
     last_stats_time = start
     stats_interval = 5.0  # Print stats every 5 seconds
@@ -130,38 +132,35 @@ def teleop_loop(
         loop_s = loop_end - loop_start
         all_frame_times.append(1 / loop_s if loop_s > 0 else 0)
 
-        # Print statistics every 5 seconds at the top (persistent)
+        # Log performance stats to file
         if loop_end - last_stats_time >= stats_interval and len(all_frame_times) > 0:
-            fps_array = np.array(all_frame_times)  # All frames for compound average
-            recent_fps = (
-                np.array(all_frame_times[-150:]) if len(all_frame_times) > 150 else fps_array
-            )  # Last 5s
-
-            # Move to top, print stats, then return to position
-            if stats_printed:
-                move_cursor_up(len(action) + 6)
-            print(
-                f"\r📊 FPS Stats (5s): avg={recent_fps.mean():.1f} | min={recent_fps.min():.1f} | "
+            fps_array = np.array(all_frame_times)
+            recent_fps = np.array(all_frame_times[-150:]) if len(all_frame_times) > 150 else fps_array
+            perf_logger.info(
+                f"FPS Stats (5s): avg={recent_fps.mean():.1f} | min={recent_fps.min():.1f} | "
                 f"max={recent_fps.max():.1f} | std={recent_fps.std():.1f} | Total avg={fps_array.mean():.1f}"
             )
-            print("" + " " * 80)  # Clear line for clean display
-            if not stats_printed:
-                stats_printed = True
             last_stats_time = loop_end
-        elif stats_printed:
-            # Account for stats lines when moving cursor
-            move_cursor_up(2)
-
-        print("\n" + "-" * (display_len + 10))
-        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        
+        # In-place console telemetry
+        if stats_printed:
+            move_cursor_up(len(action) + 4)
+            
+        print("-" * (display_len + 12))
+        print(f"| {'NAME':<{display_len}} | {'VALUE':>7} |")
+        print(f"|{'─' * (display_len + 12)}|")
         for motor, value in action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+            print(f"| {motor:<{display_len}} | {value:>7.2f} |")
+        print("-" * (display_len + 12))
+        print(f"Loop: {loop_s * 1e3:.2f}ms ({1 / loop_s if loop_s > 0 else 0:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
+            
+        if not stats_printed:
+            stats_printed = True
 
-        move_cursor_up(len(action) + 6)
+        move_cursor_up(len(action) + 5)
 
 
 @draccus.wrap()

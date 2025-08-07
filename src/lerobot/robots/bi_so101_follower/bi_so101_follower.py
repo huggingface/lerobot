@@ -67,7 +67,7 @@ class BiSO101Follower(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
 
         # Initialize parallel camera reader for performance
-        self.camera_reader = ParallelCameraReader(persistent_executor=True)
+        # self.camera_reader = ParallelCameraReader(persistent_executor=True)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -143,15 +143,14 @@ class BiSO101Follower(Robot):
         right_obs = self.right_arm.get_observation()
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
-        # Read all cameras in parallel for 3x performance improvement
+        # Read all cameras sequentially
         if self.cameras:
-            camera_data = self.camera_reader.read_cameras_parallel(
-                self.cameras,
-                timeout_ms=1000,
-                with_depth=True,
-                return_partial=True,  # Continue even if some cameras fail
-            )
-            obs_dict.update(camera_data)
+            for cam_key, cam in self.cameras.items():
+                frames = cam.async_read_all(timeout_ms=1000)
+                obs_dict[cam_key] = frames.get("color")
+                if "depth_rgb" in frames and frames["depth_rgb"] is not None:
+                    obs_dict[f"{cam_key}_depth"] = frames.get("depth_rgb")
+
 
         return obs_dict
 

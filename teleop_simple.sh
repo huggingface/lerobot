@@ -27,13 +27,13 @@ conda activate lerobot
 # Common parameters
 ROBOT_TYPE="bi_so101_follower"
 ROBOT_ID="my_bimanual"
-LEFT_ARM_PORT="COM4"
-RIGHT_ARM_PORT="COM9"
+LEFT_ARM_PORT="COM6"
+RIGHT_ARM_PORT="COM3"
 TELEOP_TYPE="bi_so101_leader"
 TELEOP_ID="my_bimanual_leader"
-TELEOP_LEFT_PORT="COM11"
-TELEOP_RIGHT_PORT="COM3"
-FPS="30"
+TELEOP_LEFT_PORT="COM5"
+TELEOP_RIGHT_PORT="COM4"
+FPS="60"
 
 # RealSense serial numbers
 REALSENSE1_SERIAL="218622270973"
@@ -53,8 +53,8 @@ case $choice in
                 'cam_main': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': false,
                     'pipeline': 'cuda',
@@ -83,8 +83,8 @@ case $choice in
                 'cam_main': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
@@ -207,8 +207,8 @@ case $choice in
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': false,
                     'pipeline': 'cuda',
@@ -261,8 +261,8 @@ case $choice in
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
@@ -350,13 +350,13 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=false
+            --display_data=true
         ;;
 
     9)
         echo "Exiting..."
         exit 0
-        ;;
+        ;;P
 
     *)
         echo "Invalid choice. Please select 1-9."

@@ -76,6 +76,7 @@ class KinectCameraConfig(CameraConfig):
         depth_max_meters: Maximum depth in meters for colorization. Defaults to 4.5.
         depth_clipping: Whether to clip depth values outside min/max range. Defaults to True.
 
+
     Note:
         - Kinect v2 has fixed resolutions: Color (1920x1080), Depth/IR (512x424)
         - Pipeline selection order: CUDA > OpenCL > OpenGL > CPU
@@ -100,9 +101,10 @@ class KinectCameraConfig(CameraConfig):
     max_depth: float = 4.5
     # Depth colorization settings
     depth_colormap: str = "jet"
-    depth_min_meters: float = 0.5
-    depth_max_meters: float = 4.5
+    depth_min_meters: float = 0.5  # Kinect v2 minimum: 0.5m
+    depth_max_meters: float = 4.5  # Kinect v2 maximum: 4.5m
     depth_clipping: bool = True
+
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
@@ -134,11 +136,10 @@ class KinectCameraConfig(CameraConfig):
 
         # Validate Kinect v2 specific constraints
         if self.width is not None and self.height is not None:
-            # Color stream resolution
-            if (self.width, self.height) not in [(1920, 1080), (512, 424)]:
+            # Color stream resolution must be <= native resolution
+            if self.width > 1920 or self.height > 1080:
                 raise ValueError(
-                    f"Kinect v2 supports fixed resolutions: Color (1920x1080), Depth/IR (512x424). "
-                    f"Got ({self.width}x{self.height})"
+                    f"Requested resolution ({self.width}x{self.height}) exceeds Kinect v2's native color resolution (1920x1080)."
                 )
 
         if self.fps is not None and self.fps > 30:

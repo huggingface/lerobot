@@ -37,108 +37,10 @@ from ..utils import get_cv2_rotation
 from .configuration_realsense import RealSenseCameraConfig
 
 logger = logging.getLogger(__name__)
+perf_logger = logging.getLogger("performance")
 
 
-class RealSenseDepthColorizer:
-    """
-    Ultra-fast LUT-based depth colorizer optimized for real-time performance.
-    Reduces colorization from ~5ms to <0.5ms using pre-computed lookup tables.
-    """
 
-    def __init__(self, colormap: str = "jet", min_depth_m: float = 0.3, max_depth_m: float = 1.5):
-        """
-        Initialize the depth colorizer with pre-computed LUT.
-
-        Args:
-            colormap: Color scheme for depth visualization (default: "jet")
-            min_depth_m: Minimum depth in meters (0.3m for D405 wrist cameras)
-            max_depth_m: Maximum depth in meters (1.5m for D405 close-range work)
-        """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        # Map colormap names to OpenCV constants
-        self.colormap_dict = {
-            "jet": cv2.COLORMAP_JET,
-            "hot": cv2.COLORMAP_HOT,
-            "cool": cv2.COLORMAP_COOL,
-            "viridis": cv2.COLORMAP_VIRIDIS,
-            "plasma": cv2.COLORMAP_PLASMA,
-            "inferno": cv2.COLORMAP_INFERNO,
-            "rainbow": cv2.COLORMAP_RAINBOW,
-            "hsv": cv2.COLORMAP_HSV,
-        }
-
-        self.colormap = self.colormap_dict.get(colormap.lower(), cv2.COLORMAP_JET)
-        self.min_depth_m = min_depth_m
-        self.max_depth_m = max_depth_m
-
-        # Convert to millimeters for uint16 depth
-        self.min_depth_mm = int(min_depth_m * 1000)
-        self.max_depth_mm = int(max_depth_m * 1000)
-
-        # Build LUT for 16-bit depth values (0-65535)
-        # This is the key optimization - compute once, use many times
-        lut_start = time.perf_counter()
-        self._build_lut()
-        lut_time = (time.perf_counter() - lut_start) * 1000
-        logger.info(f"Built depth LUT in {lut_time:.1f}ms for range {min_depth_m}-{max_depth_m}m")
-
-    def _build_lut(self):
-        """
-        Pre-compute color lookup table for all possible depth values.
-        This eliminates per-pixel calculations during colorization.
-        """
-        # Create LUT for all possible uint16 values (0-65535)
-        # Most values will map to black (out of range) or the colormap
-        self.lut = np.zeros((65536, 3), dtype=np.uint8)
-
-        # Only compute colors for valid depth range
-        depth_range = self.max_depth_mm - self.min_depth_mm
-        if depth_range <= 0:
-            return
-
-        # Create normalized values for the valid range
-        for depth_mm in range(self.min_depth_mm, self.max_depth_mm + 1):
-            # Normalize to 0-255
-            normalized = int(((depth_mm - self.min_depth_mm) / depth_range) * 255)
-            normalized = min(255, max(0, normalized))
-
-            # Apply colormap to get BGR color
-            bgr_color = cv2.applyColorMap(np.array([[normalized]], dtype=np.uint8), self.colormap)[0, 0]
-
-            # Store as RGB in LUT
-            self.lut[depth_mm] = [bgr_color[2], bgr_color[1], bgr_color[0]]  # BGR to RGB
-
-        # Set out-of-range values
-        # Below minimum - show as closest color (blue in jet)
-        if self.min_depth_mm > 0:
-            self.lut[: self.min_depth_mm] = self.lut[self.min_depth_mm]
-
-        # Above maximum - show as furthest color (red in jet)
-        if self.max_depth_mm < 65535:
-            self.lut[self.max_depth_mm + 1 :] = self.lut[self.max_depth_mm]
-
-    def colorize(self, depth_frame) -> np.ndarray:
-        """
-        Ultra-fast depth colorization using pre-computed LUT.
-
-        Args:
-            depth_frame: RealSense depth frame object
-
-        Returns:
-            Colorized depth as RGB numpy array
-        """
-        # Convert RealSense frame to numpy array (uint16)
-        depth_array = np.asanyarray(depth_frame.get_data())
-
-        # Direct LUT indexing - this is the magic!
-        # Each depth value directly indexes into the pre-computed color table
-        # This is ~100x faster than computing colors per-pixel
-        depth_rgb = self.lut[depth_array]
-
-        return depth_rgb
 
 
 class RealSenseCamera(Camera):
@@ -229,13 +131,11 @@ class RealSenseCamera(Camera):
         self.warmup_s = config.warmup_s
 
         # Initialize depth colorizer if depth is enabled (OpenCV is thread-safe)
-        self.depth_colorizer: RealSenseDepthColorizer | None = None
+        self.depth_colorizer: rs.colorizer | None = None
         if self.use_depth:
-            self.depth_colorizer = RealSenseDepthColorizer(
-                colormap=config.depth_colormap,
-                min_depth_m=config.depth_min_meters,
-                max_depth_m=config.depth_max_meters,
-            )
+            self.depth_colorizer = rs.colorizer()
+            # Optionally configure the colorizer
+            # self.depth_colorizer.set_option(rs.option.color_scheme, 2)  # 0=Jet, 2=Classic
         self.depth_clipping = config.depth_clipping
 
         self.rs_pipeline: rs.pipeline | None = None
@@ -680,14 +580,14 @@ class RealSenseCamera(Camera):
                                     pass  # logger.warning(f"{self}: Received non-depth frame in depth stream")
                                     depth_rgb = None
                                 else:
-                                    # Colorize the depth frame using OpenCV
-                                    depth_rgb = self.depth_colorizer.colorize(depth_frame)
+                                    # Colorize the depth frame using the RealSense SDK's colorizer
+                                    colorized_depth = self.depth_colorizer.colorize(depth_frame)
+                                    depth_rgb = np.asanyarray(colorized_depth.get_data())
                                     colorize_time = (time.perf_counter() - colorize_start) * 1000
 
-                                    # Convert to appropriate color mode if needed
-                                    if self.color_mode == ColorMode.BGR:
-                                        # OpenCV colorizer outputs RGB, convert to BGR
-                                        depth_rgb = cv2.cvtColor(depth_rgb, cv2.COLOR_RGB2BGR)
+                                    # The SDK colorizer outputs BGR, convert to RGB if needed
+                                    #if self.color_mode == ColorMode.RGB:
+                                    #    depth_rgb = cv2.cvtColor(depth_rgb, cv2.COLOR_BGR2RGB)
 
                                     # Apply rotation if configured
                                     if self.rotation is not None:
@@ -718,7 +618,7 @@ class RealSenseCamera(Camera):
                     avg_colorize = total_colorize_time / frame_count if self.use_depth else 0
 
                     if self.use_depth:
-                        logger.info(
+                        perf_logger.info(
                             f"{self} timing (avg over {frame_count} frames): "
                             f"capture={avg_capture:.1f}ms, depth_process={avg_depth:.1f}ms, "
                             f"colorize={avg_colorize:.1f}ms, total={avg_capture + avg_depth + avg_colorize:.1f}ms"

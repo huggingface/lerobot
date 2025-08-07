@@ -27,12 +27,13 @@ conda activate lerobot
 # Common parameters
 ROBOT_TYPE="bi_so101_follower"
 ROBOT_ID="my_bimanual"
-LEFT_ARM_PORT="COM4"
-RIGHT_ARM_PORT="COM9"
+LEFT_ARM_PORT="COM6"
+RIGHT_ARM_PORT="COM3"
 TELEOP_TYPE="bi_so101_leader"
 TELEOP_ID="my_bimanual_leader"
-TELEOP_LEFT_PORT="COM11"
-TELEOP_RIGHT_PORT="COM3"
+TELEOP_LEFT_PORT="COM5"
+TELEOP_RIGHT_PORT="COM4"
+FPS=30
 
 # RealSense serial numbers
 REALSENSE1_SERIAL="218622270973"
@@ -101,8 +102,8 @@ case $choice in
                 'cam_main': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': false,
                     'pipeline': 'cuda',
@@ -119,7 +120,8 @@ case $choice in
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
-            --dataset.single_task="$TASK_DESCRIPTION"
+            --dataset.single_task="$TASK_DESCRIPTION"\
+            --dataset.fps=$FPS
         ;;
 
     2)
@@ -135,8 +137,8 @@ case $choice in
                 'cam_main': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
@@ -157,7 +159,8 @@ case $choice in
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
-            --dataset.single_task="$TASK_DESCRIPTION"
+            --dataset.single_task="$TASK_DESCRIPTION"\
+            --dataset.fps=$FPS
         ;;
 
     3)
@@ -194,7 +197,8 @@ case $choice in
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
-            --dataset.single_task="$TASK_DESCRIPTION"
+            --dataset.single_task="$TASK_DESCRIPTION"\
+            --dataset.fps=$FPS
         ;;
 
     4)
@@ -215,8 +219,8 @@ case $choice in
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
-                    'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0,
+                    'depth_min_meters': 0.07,
+                    'depth_max_meters': 0.5,
                     'depth_clipping': true
                 },
                 'cam_high': {
@@ -227,8 +231,8 @@ case $choice in
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
-                    'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0,
+                    'depth_min_meters': 0.07,
+                    'depth_max_meters': 0.5,
                     'depth_clipping': true
                 }
             }" \
@@ -241,7 +245,8 @@ case $choice in
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
-            --dataset.single_task="$TASK_DESCRIPTION"
+            --dataset.single_task="$TASK_DESCRIPTION"\
+            --dataset.fps=$FPS
         ;;
 
     5)
@@ -271,8 +276,8 @@ case $choice in
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': false,
                     'pipeline': 'cuda',
@@ -289,7 +294,8 @@ case $choice in
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
-            --dataset.single_task="$TASK_DESCRIPTION"
+            --dataset.single_task="$TASK_DESCRIPTION"\
+            --dataset.fps=$FPS
         ;;
 
     6)
@@ -310,8 +316,8 @@ case $choice in
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
-                    'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0,
+                    'depth_min_meters': 0.07,
+                    'depth_max_meters': 0.5,
                     'depth_clipping': true
                 },
                 'cam_high': {
@@ -322,15 +328,15 @@ case $choice in
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
-                    'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0,
+                    'depth_min_meters': 0.07,
+                    'depth_max_meters': 0.5,
                     'depth_clipping': true
                 },
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
@@ -351,7 +357,8 @@ case $choice in
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
-            --dataset.single_task="$TASK_DESCRIPTION"
+            --dataset.single_task="$TASK_DESCRIPTION"\
+            --dataset.fps=$FPS
         ;;
 
     7)
@@ -372,7 +379,8 @@ case $choice in
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
-            --dataset.single_task="$TASK_DESCRIPTION"
+            --dataset.single_task="$TASK_DESCRIPTION"\
+            --dataset.fps=$FPS
         ;;
 
     8)
@@ -393,8 +401,8 @@ case $choice in
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
-                    'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0,
+                    'depth_min_meters': 0.07,
+                    'depth_max_meters': 0.5,
                     'depth_clipping': true
                 },
                 'cam_high': {
@@ -405,15 +413,15 @@ case $choice in
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
-                    'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0,
+                    'depth_min_meters': 0.07,
+                    'depth_max_meters': 0.5,
                     'depth_clipping': true
                 },
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': false,
                     'pipeline': 'cuda',
@@ -425,12 +433,13 @@ case $choice in
             --teleop.id=$TELEOP_ID \
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
-            --display_data=true \
+            --display_data=false \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
-            --dataset.single_task="$TASK_DESCRIPTION"
+            --dataset.single_task="$TASK_DESCRIPTION"\
+            --dataset.fps=$FPS
         ;;
 
     9)

@@ -222,19 +222,18 @@ def record_loop(
                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
             )
 
-    # if policy is given it needs cleaning up
     if policy is not None:
         policy.reset()
 
     import numpy as np
+    
+    perf_logger = logging.getLogger("performance")
 
-    # Calculate display length for telemetry
     display_len = max(len(key) for key in robot.action_features) if robot.action_features else 20
-
-    # Lightweight stats tracking - compound average
+    
     all_frame_times = []
     last_stats_time = time.perf_counter()
-    stats_interval = 5.0  # Print stats every 5 seconds
+    stats_interval = 5.0
     stats_printed = False
 
     timestamp = 0
@@ -264,24 +263,17 @@ def record_loop(
         elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
         elif policy is None and isinstance(teleop, list):
-            # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
             arm_action = teleop_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-
             keyboard_action = teleop_keyboard.get_action()
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
-
             action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
         else:
             logging.info(
-                "No policy or teleoperator provided, skipping action generation."
-                "This is likely to happen when resetting the environment without a teleop device."
-                "The robot won't be at its rest position at the start of the next episode."
+                "No policy or teleoperator provided, skipping action generation. The robot won't be at its rest position at the start of the next episode."
             )
             continue
 
-        # Action can eventually be clipped using `max_relative_target`,
-        # so action actually sent is saved in the dataset.
         sent_action = robot.send_action(action)
 
         if dataset is not None:
@@ -300,37 +292,36 @@ def record_loop(
         loop_s = loop_end_t - start_loop_t
         all_frame_times.append(1 / loop_s if loop_s > 0 else 0)
 
-        # Print statistics every 5 seconds at the top (persistent)
+        # Log performance stats to file
         if loop_end_t - last_stats_time >= stats_interval and len(all_frame_times) > 0:
-            fps_array = np.array(all_frame_times)  # All frames for compound average
-            recent_fps = (
-                np.array(all_frame_times[-150:]) if len(all_frame_times) > 150 else fps_array
-            )  # Last 5s
-
-            # Move to top, print stats, then return to position
-            if stats_printed:
-                move_cursor_up(len(sent_action) + 7)
-            print(
-                f"\r📊 FPS Stats (5s): avg={recent_fps.mean():.1f} | min={recent_fps.min():.1f} | "
+            fps_array = np.array(all_frame_times)
+            recent_fps = fps_array[-150:] if len(all_frame_times) > 150 else fps_array
+            perf_logger.info(
+                f"FPS Stats (5s): avg={recent_fps.mean():.1f} | min={recent_fps.min():.1f} | "
                 f"max={recent_fps.max():.1f} | std={recent_fps.std():.1f} | Total avg={fps_array.mean():.1f}"
             )
-            print("" + " " * 80)  # Clear line for clean display
+            last_stats_time = loop_end_t
             if not stats_printed:
                 stats_printed = True
-            last_stats_time = loop_end_t
-        elif stats_printed:
-            # Account for stats lines when moving cursor
-            move_cursor_up(2)
 
-        # Display telemetry like in teleoperate
-        print("\n" + "-" * (display_len + 10))
-        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        # In-place console telemetry
+        if stats_printed:
+            move_cursor_up(len(sent_action) + 4)
+
+        print("-" * (display_len + 12))
+        print(f"| {'NAME':<{display_len}} | {'VALUE':>7} |")
+        print(f"|{'─' * (display_len + 12)}|")
         for motor, value in sent_action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
-        print(f"Episode: {timestamp:.1f}s / {control_time_s:.1f}s")
-
-        move_cursor_up(len(sent_action) + 7)  # +1 for episode progress line
+            print(f"| {motor:<{display_len}} | {value:>7.2f} |")
+        print("-" * (display_len + 12))
+        print(
+            f"Loop: {loop_s * 1e3:.1f}ms ({1 / loop_s if loop_s > 0 else 0:.0f} Hz) | "
+            f"Episode: {timestamp:.1f}s / {control_time_s:.1f}s"
+        )
+        if not stats_printed:
+            stats_printed = True
+        
+        move_cursor_up(len(sent_action) + 5)
 
 
 @parser.wrap()
@@ -346,6 +337,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     action_features = hw_to_dataset_features(robot.action_features, "action", cfg.dataset.video)
     obs_features = hw_to_dataset_features(robot.observation_features, "observation", cfg.dataset.video)
+
+
     dataset_features = {**action_features, **obs_features}
 
     if cfg.resume:

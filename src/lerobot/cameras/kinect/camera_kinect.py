@@ -53,114 +53,11 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
 from ..configs import ColorMode
-from ..utils import get_cv2_rotation
+from ..utils import DepthColorizer, get_cv2_rotation
 from .configuration_kinect import KinectCameraConfig, KinectPipeline
 
 logger = logging.getLogger(__name__)
-
-
-class DepthColorizer:
-    """
-    Ultra-fast LUT-based depth colorizer for Kinect v2.
-    Optimized for overhead camera with 0.5-4.5m range.
-    Reduces colorization from ~3ms to <0.3ms using pre-computed lookup tables.
-    """
-
-    COLORMAP_MAPPING = {
-        "jet": cv2.COLORMAP_JET,
-        "hot": cv2.COLORMAP_HOT,
-        "cool": cv2.COLORMAP_COOL,
-        "viridis": cv2.COLORMAP_VIRIDIS,
-        "turbo": cv2.COLORMAP_TURBO,
-        "rainbow": cv2.COLORMAP_RAINBOW,
-        "bone": cv2.COLORMAP_BONE,
-    }
-
-    def __init__(
-        self, colormap: str = "jet", min_depth_m: float = 0.5, max_depth_m: float = 4.5, clipping: bool = True
-    ):
-        """
-        Initialize the depth colorizer with pre-computed LUT.
-
-        Args:
-            colormap: Name of the colormap to use
-            min_depth_m: Minimum depth in meters (0.5m for Kinect overhead view)
-            max_depth_m: Maximum depth in meters (4.5m for full workspace coverage)
-            clipping: Whether to clip values outside the min/max range
-        """
-        self.colormap = self.COLORMAP_MAPPING.get(colormap, cv2.COLORMAP_JET)
-        self.min_depth_mm = min_depth_m * 1000
-        self.max_depth_mm = max_depth_m * 1000
-        self.clipping = clipping
-
-        # Build LUT for float32 depth values converted to uint16 range
-        # Kinect depth is float32 in mm, we'll quantize to uint16 for LUT
-        self._build_lut()
-        logger.info(f"Kinect depth LUT built for range {min_depth_m}-{max_depth_m}m")
-
-    def _build_lut(self):
-        """
-        Pre-compute color lookup table for all possible depth values.
-        Uses uint16 quantization for float32 depth data.
-        """
-        # Create LUT for quantized depth (0-65535)
-        self.lut = np.zeros((65536, 3), dtype=np.uint8)
-
-        # Map depth range to uint16 range
-        depth_range = self.max_depth_mm - self.min_depth_mm
-        if depth_range <= 0:
-            return
-
-        # Pre-compute colors for each possible quantized value
-        for i in range(65536):
-            # Convert uint16 index back to depth in mm
-            depth_mm = (i / 65535.0) * depth_range + self.min_depth_mm
-
-            # Normalize to 0-255 for colormap
-            if self.clipping:
-                depth_mm = np.clip(depth_mm, self.min_depth_mm, self.max_depth_mm)
-
-            normalized = int(((depth_mm - self.min_depth_mm) / depth_range) * 255)
-            normalized = min(255, max(0, normalized))
-
-            # Apply colormap to get BGR color
-            bgr_color = cv2.applyColorMap(np.array([[normalized]], dtype=np.uint8), self.colormap)[0, 0]
-
-            # Store as BGR (Kinect uses BGR mode)
-            self.lut[i] = bgr_color
-
-    def colorize(self, depth_data: np.ndarray) -> np.ndarray:
-        """
-        Ultra-fast depth colorization using pre-computed LUT.
-
-        Args:
-            depth_data: Depth map in millimeters as float32
-
-        Returns:
-            BGR image as uint8 with shape (H, W, 3)
-        """
-        # Handle empty or invalid data
-        if depth_data is None or depth_data.size == 0:
-            return np.zeros((depth_data.shape[0], depth_data.shape[1], 3), dtype=np.uint8)
-
-        # Quantize float32 depth to uint16 for LUT indexing
-        # Map depth range to 0-65535
-        depth_range = self.max_depth_mm - self.min_depth_mm
-        if depth_range > 0:
-            # Normalize and quantize to uint16
-            depth_quantized = (depth_data - self.min_depth_mm) / depth_range * 65535
-
-            if self.clipping:
-                depth_quantized = np.clip(depth_quantized, 0, 65535)
-
-            depth_indices = depth_quantized.astype(np.uint16)
-        else:
-            depth_indices = np.zeros_like(depth_data, dtype=np.uint16)
-
-        # Direct LUT indexing - ultra fast!
-        depth_colorized = self.lut[depth_indices]
-
-        return depth_colorized
+perf_logger = logging.getLogger("performance")
 
 
 class KinectCamera(Camera):
@@ -264,6 +161,7 @@ class KinectCamera(Camera):
         self.enable_edge_filter = config.enable_edge_filter
         self.min_depth = config.min_depth
         self.max_depth = config.max_depth
+
 
         # Kinect v2 fixed resolutions
         self.color_width = 1920
@@ -738,15 +636,20 @@ class KinectCamera(Camera):
     def _read_loop(self):
         """
         Internal loop run by the background thread for asynchronous reading.
+        Optimized for minimal latency and maximum throughput.
         """
         # Pre-allocate buffers for zero-copy operation
+        # IMPORTANT: This buffer MUST match the native hardware resolution (1920x1080)
         color_buffer = np.empty((1080, 1920, 3), dtype=np.uint8)
         depth_buffer = np.empty((424, 512), dtype=np.float32)
         
         # Timing stats
         frame_count = 0
         total_wait_time = 0
-        total_process_time = 0
+        total_color_time = 0
+        total_depth_time = 0
+        total_colorize_time = 0
+        total_lock_time = 0
 
         while not self.stop_event.is_set():
             try:
@@ -754,10 +657,11 @@ class KinectCamera(Camera):
                 # Use shorter timeout for more responsive shutdown
                 wait_start = time.perf_counter()
                 if self.listener.waitForNewFrame(frames, 100):
-                    wait_time = time.perf_counter() - wait_start
-                    total_wait_time += wait_time
+                    wait_time = (time.perf_counter() - wait_start) * 1000
+                    
                     try:
-                        # Read color frame using optimized method
+                        # Process color frame
+                        color_start = time.perf_counter()
                         color_frame = frames[FrameType.Color]
 
                         # Check if asarray_optimized is available
@@ -772,16 +676,32 @@ class KinectCamera(Camera):
                             else:
                                 color_data = color_raw.copy()
 
-                        if self.color_mode == ColorMode.RGB:
-                            color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
+                        # Perform center crop if requested resolution is smaller than native
+                        if self.width < self.color_width or self.height < self.color_height:
+                            left = (self.color_width - self.width) // 2
+                            top = (self.color_height - self.height) // 2
+                            right = left + self.width
+                            bottom = top + self.height
+                            color_data = color_data[top:bottom, left:right]
 
+                        #if self.color_mode == ColorMode.RGB:
+                        #    color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
+
+
+                            
                         if self.rotation is not None:
                             color_data = cv2.rotate(color_data, self.rotation)
+                        
+                        color_time = (time.perf_counter() - color_start) * 1000
 
-                        # Read depth if enabled
+                        # Process depth if enabled
                         depth_data = None
                         depth_rgb = None
+                        depth_time = 0
+                        colorize_time = 0
+                        
                         if self.use_depth:
+                            depth_start = time.perf_counter()
                             depth_frame = frames[FrameType.Depth]
 
                             # Use optimized method if available
@@ -790,6 +710,7 @@ class KinectCamera(Camera):
                             else:
                                 depth_data = depth_frame.asarray().copy()
 
+                            # Apply filters only if enabled (disabled by default for performance)
                             if self.enable_bilateral_filter:
                                 depth_data = cv2.bilateralFilter(depth_data.astype(np.float32), 5, 50, 50)
 
@@ -801,21 +722,32 @@ class KinectCamera(Camera):
 
                             # Apply depth range limits before colorization
                             depth_data = np.clip(depth_data, self.min_depth * 1000, self.max_depth * 1000)
-
-                            # Colorize the depth data
-                            if self.depth_colorizer is not None:
-                                depth_rgb = self.depth_colorizer.colorize(depth_data)
-
-                                # Convert BGR to RGB if needed (OpenCV colormaps return BGR)
-                                if self.color_mode == ColorMode.RGB:
-                                    depth_rgb = cv2.cvtColor(depth_rgb, cv2.COLOR_BGR2RGB)
-
+                            
                             if self.rotation is not None:
                                 depth_data = cv2.rotate(depth_data, self.rotation)
-                                if depth_rgb is not None:
-                                    depth_rgb = cv2.rotate(depth_rgb, self.rotation)
+                            
+                            depth_time = (time.perf_counter() - depth_start) * 1000
 
-                        # Read IR if enabled
+                            # Colorize depth OUTSIDE the lock for better parallelism
+                            if self.depth_colorizer is not None:
+                                colorize_start = time.perf_counter()
+                                try:
+                                    # Colorize the already-rotated depth data
+                                    depth_rgb = self.depth_colorizer.colorize(depth_data)
+                                    
+                                    # Convert BGR to RGB if needed (OpenCV colormaps return BGR)
+                                    #if self.color_mode == ColorMode.RGB:
+                                    #    depth_rgb = cv2.cvtColor(depth_rgb, cv2.COLOR_BGR2RGB)
+                                    
+                                    # Note: rotation already applied to depth_data before colorization
+                                    # No need to rotate depth_rgb again
+                                    
+                                    colorize_time = (time.perf_counter() - colorize_start) * 1000
+                                except Exception as e:
+                                    logger.warning(f"Depth colorization failed for {self}: {e}")
+                                    depth_rgb = None
+
+                        # Process IR if enabled
                         ir_data = None
                         if self.use_ir:
                             ir_frame = frames[FrameType.Ir]
@@ -833,39 +765,68 @@ class KinectCamera(Camera):
                             if self.rotation is not None:
                                 ir_data = cv2.rotate(ir_data, self.rotation)
 
-                        # Store frames thread-safely
+                        # Store frames thread-safely (minimal time in lock)
+                        lock_start = time.perf_counter()
                         with self.frame_lock:
                             self.latest_frame = color_data
                             self.latest_depth = depth_data
                             self.latest_depth_rgb = depth_rgb
                             self.latest_ir = ir_data
                         self.new_frame_event.set()
+                        lock_time = (time.perf_counter() - lock_start) * 1000
 
                         # Track timing stats
-                        process_time = time.perf_counter() - wait_start - wait_time
-                        total_process_time += process_time
                         frame_count += 1
+                        total_wait_time += wait_time
+                        total_color_time += color_time
+                        total_depth_time += depth_time
+                        total_colorize_time += colorize_time
+                        total_lock_time += lock_time
                         
                         # Log stats every 500 frames (about 16 seconds at 30fps) to reduce log spam
-                        if frame_count % 500 == 0:
-                            avg_wait = (total_wait_time / frame_count) * 1000
-                            avg_process = (total_process_time / frame_count) * 1000
-                            logger.debug(
-                                f"Kinect thread stats (100 frames): "
-                                f"avg wait={avg_wait:.1f}ms, avg process={avg_process:.1f}ms"
-                            )
-                            # Reset counters
+                        if frame_count % 500 == 0 and frame_count > 0:
+                            avg_wait = total_wait_time / frame_count
+                            avg_color = total_color_time / frame_count
+                            avg_depth = total_depth_time / frame_count if self.use_depth else 0
+                            avg_colorize = total_colorize_time / frame_count if self.use_depth else 0
+                            avg_lock = total_lock_time / frame_count
+                            total_avg = avg_wait + avg_color + avg_depth + avg_colorize + avg_lock
+                            
+                            if self.use_depth:
+                                perf_logger.info(
+                                    f"{self} timing (avg over {frame_count} frames): "
+                                    f"wait={avg_wait:.1f}ms, color={avg_color:.1f}ms, "
+                                    f"depth={avg_depth:.1f}ms, colorize={avg_colorize:.1f}ms, "
+                                    f"lock={avg_lock:.1f}ms, total={total_avg:.1f}ms"
+                                )
+                            else:
+                                perf_logger.info(
+                                    f"{self} timing (avg over {frame_count} frames): "
+                                    f"wait={avg_wait:.1f}ms, color={avg_color:.1f}ms, "
+                                    f"lock={avg_lock:.1f}ms, total={total_avg:.1f}ms"
+                                )
+                            
+                            # Reset counters for fresh averages
                             frame_count = 0
                             total_wait_time = 0
-                            total_process_time = 0
+                            total_color_time = 0
+                            total_depth_time = 0
+                            total_colorize_time = 0
+                            total_lock_time = 0
 
                     finally:
                         self.listener.release(frames)
 
             except DeviceNotConnectedError:
+                logger.info(f"{self} disconnected, stopping read loop")
                 break
-            except Exception:
-                pass  # Silently ignore frame read errors
+            except Exception as e:
+                # Log the full traceback for debugging, but only periodically to avoid spam
+                if frame_count % 100 == 0:
+                    logger.exception(f"Error in Kinect read loop for {self}: {e}")
+                else:
+                    logger.warning(f"Error in Kinect read loop for {self}: {e}")
+                time.sleep(0.1)  # Prevent busy-looping on repeated errors
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
@@ -924,9 +885,9 @@ class KinectCamera(Camera):
         # This is the key optimization for parallel reading
         with self.frame_lock:
             if self.latest_frame is not None:
-                # Clear the event for next read
-                self.new_frame_event.clear()
-                return self.latest_frame.copy()
+                frame = self.latest_frame.copy()
+                # Don't clear the event here - other threads might be waiting
+                return frame
         
         # Only wait if no frame is available yet
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
@@ -938,8 +899,7 @@ class KinectCamera(Camera):
 
         with self.frame_lock:
             # Always return color frame, depth is accessed via async_read_all()
-            frame = self.latest_frame
-            self.new_frame_event.clear()
+            frame = self.latest_frame.copy() if self.latest_frame is not None else None
 
         if frame is None:
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
@@ -992,15 +952,14 @@ class KinectCamera(Camera):
         # This is the key optimization for parallel reading
         with self.frame_lock:
             if self.latest_frame is not None:
-                # Build result dict immediately
+                # Build result dict immediately with copies
                 frames = {"color": self.latest_frame.copy()}
                 
                 # Add colorized depth if available
                 if self.use_depth and self.latest_depth_rgb is not None:
                     frames["depth_rgb"] = self.latest_depth_rgb.copy()
                 
-                # Clear the event for next read
-                self.new_frame_event.clear()
+                # Don't clear the event - other threads might be waiting
                 return frames
         
         # Only wait if no frames are available yet
@@ -1012,14 +971,12 @@ class KinectCamera(Camera):
             )
 
         with self.frame_lock:
-            # Always include color frame
-            frames = {"color": self.latest_frame}
+            # Always include color frame (with copy to prevent race conditions)
+            frames = {"color": self.latest_frame.copy() if self.latest_frame is not None else None}
 
             # Add colorized depth if available
             if self.use_depth and self.latest_depth_rgb is not None:
-                frames["depth_rgb"] = self.latest_depth_rgb
-
-            self.new_frame_event.clear()
+                frames["depth_rgb"] = self.latest_depth_rgb.copy()
 
         # Validate we have at least the color frame
         if frames["color"] is None:

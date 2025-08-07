@@ -14,14 +14,127 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import platform
+import time
 from pathlib import Path
 from typing import TypeAlias
+
+import cv2
+import numpy as np
 
 from .camera import Camera
 from .configs import CameraConfig, Cv2Rotation
 
 IndexOrPath: TypeAlias = int | Path
+
+logger = logging.getLogger(__name__)
+perf_logger = logging.getLogger("performance")
+
+
+class DepthColorizer:
+    """
+    Ultra-fast, vectorized, LUT-based depth colorizer.
+
+    This utility pre-computes a lookup table (LUT) for depth colorization,
+    which is significantly faster (~100x) than per-frame calculations. It supports
+    both uint16 (e.g., RealSense) and float32 (e.g., Kinect) depth inputs.
+    """
+
+    COLORMAP_MAPPING = {
+        "jet": cv2.COLORMAP_JET,
+        "hot": cv2.COLORMAP_HOT,
+        "cool": cv2.COLORMAP_COOL,
+        "viridis": cv2.COLORMAP_VIRIDIS,
+        "turbo": cv2.COLORMAP_TURBO,
+        "rainbow": cv2.COLORMAP_RAINBOW,
+        "bone": cv2.COLORMAP_BONE,
+    }
+
+    def __init__(
+        self,
+        colormap: str = "jet",
+        min_depth_m: float = 0.5,
+        max_depth_m: float = 4.5,
+        clipping: bool = True,
+    ):
+        self.colormap = self.COLORMAP_MAPPING.get(colormap.lower(), cv2.COLORMAP_JET)
+        self.min_depth_mm = min_depth_m * 1000
+        self.max_depth_mm = max_depth_m * 1000
+        self.clipping = clipping
+
+        # Build LUT for all possible 16-bit depth values (0-65535)
+        lut_start = time.perf_counter()
+        self._build_lut()
+        lut_time = (time.perf_counter() - lut_start) * 1000
+        perf_logger.info(f"Built depth LUT in {lut_time:.1f}ms for range {min_depth_m}-{max_depth_m}m")
+
+    def _build_lut(self):
+        """Pre-compute the color lookup table using vectorized NumPy operations."""
+        depth_range = self.max_depth_mm - self.min_depth_mm
+        if depth_range <= 0:
+            self.lut = np.zeros((65536, 3), dtype=np.uint8)
+            return
+
+        # Create all possible uint16 values at once (vectorized)
+        all_values = np.arange(65536, dtype=np.float32)
+        
+        # Map from uint16 range to actual depth values in mm
+        depth_values = (all_values / 65535.0) * depth_range + self.min_depth_mm
+        
+        # Normalize to 0-255 for colormap
+        normalized = ((depth_values - self.min_depth_mm) / depth_range * 255).astype(np.uint8)
+        
+        # Apply colormap in one vectorized operation
+        # Note: normalized needs to be reshaped for cv2.applyColorMap
+        normalized_2d = normalized.reshape(-1, 1)
+        bgr_lut = cv2.applyColorMap(normalized_2d, self.colormap)
+        
+        # Convert BGR to RGB (most cameras expect RGB)
+        self.lut = cv2.cvtColor(bgr_lut, cv2.COLOR_BGR2RGB).reshape(65536, 3)
+        
+        # Handle out-of-range values for better visualization
+        if self.clipping:
+            # Values below minimum depth - use minimum color
+            min_idx = int(self.min_depth_mm * 65535 / depth_range) if depth_range > 0 else 0
+            if min_idx > 0:
+                self.lut[:min_idx] = self.lut[min_idx]
+            
+            # Values above maximum depth - use maximum color  
+            max_idx = int((self.max_depth_mm - self.min_depth_mm) * 65535 / depth_range) if depth_range > 0 else 65535
+            if max_idx < 65535:
+                self.lut[max_idx + 1:] = self.lut[max_idx]
+
+    def colorize(self, depth_data: np.ndarray) -> np.ndarray:
+        """
+        Colorize a depth map using the pre-computed LUT.
+
+        Args:
+            depth_data: Depth map as either float32 (mm) or uint16 (mm).
+
+        Returns:
+            Colorized depth as an RGB numpy array.
+        """
+        if depth_data is None or depth_data.size == 0:
+            return np.zeros((depth_data.shape[0], depth_data.shape[1], 3), dtype=np.uint8)
+
+        # Convert float32 depth to uint16 for LUT indexing if necessary.
+        if depth_data.dtype == np.float32:
+            # Quantize float32 depth to uint16 for LUT indexing
+            depth_range = self.max_depth_mm - self.min_depth_mm
+            if depth_range > 0:
+                depth_quantized = (depth_data - self.min_depth_mm) / depth_range * 65535
+                if self.clipping:
+                    depth_quantized = np.clip(depth_quantized, 0, 65535)
+                depth_indices = depth_quantized.astype(np.uint16)
+            else:
+                depth_indices = np.zeros_like(depth_data, dtype=np.uint16)
+        else:
+            # Assume uint16 input
+            depth_indices = depth_data.astype(np.uint16)
+
+        # Direct LUT indexing - this is the key optimization.
+        return self.lut[depth_indices]
 
 
 def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[str, Camera]:

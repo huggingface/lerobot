@@ -1,275 +1,313 @@
 #!/usr/bin/env python3
 """
-Camera Performance Testing Script
-Tests various optimization approaches for multi-camera systems.
+Performance testing script for optimized camera drivers.
+Tests parallel reading performance with multiple cameras.
 """
 
-import logging
 import time
-
+import logging
+import argparse
+from pathlib import Path
 import numpy as np
-import psutil
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
-
-def test_current_performance():
-    """Test baseline performance with current implementation."""
-    from lerobot.cameras.kinect import KinectCamera, KinectCameraConfig
+def test_camera_performance(camera_configs, num_frames=100, with_depth=True):
+    """
+    Test camera performance with the specified configuration.
+    
+    Args:
+        camera_configs: Dictionary of camera configurations
+        num_frames: Number of frames to capture for testing
+        with_depth: Whether to capture depth data
+    """
+    from lerobot.cameras.utils import make_cameras_from_configs
     from lerobot.cameras.parallel_camera_reader import ParallelCameraReader
-    from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
-
-    print("\n" + "=" * 60)
-    print("BASELINE PERFORMANCE TEST")
-    print("=" * 60)
-
-    # Configure cameras
-    configs = {
-        "cam_low": RealSenseCameraConfig(
-            serial_number_or_name="218622270973",
-            width=640,
-            height=480,
-            fps=30,
-            use_depth=True,
-            depth_colormap="jet",
-        ),
-        "cam_high": RealSenseCameraConfig(
-            serial_number_or_name="218622278797",
-            width=640,
-            height=480,
-            fps=30,
-            use_depth=True,
-            depth_colormap="jet",
-        ),
-        "cam_kinect": KinectCameraConfig(
-            device_index=0,
-            fps=30,
-            use_depth=False,  # RGB only for baseline
-        ),
-    }
 
     # Create cameras
-    cameras = {}
-    for name, config in configs.items():
-        if "kinect" in name:
-            cameras[name] = KinectCamera(config)
-        else:
-            cameras[name] = RealSenseCamera(config)
-
-    # Connect cameras
-    print("\nConnecting cameras...")
+    logger.info(f"Creating {len(camera_configs)} cameras...")
+    cameras = make_cameras_from_configs(camera_configs)
+    
+    # Connect all cameras
+    logger.info("Connecting cameras...")
     for name, cam in cameras.items():
-        print(f"  Connecting {name}...")
-        cam.connect()
+        logger.info(f"  Connecting {name}: {cam}")
+        cam.connect(warmup=True)
 
-    # Test parallel reading
-    print("\nTesting parallel camera reading...")
+    # Create parallel reader
     reader = ParallelCameraReader(persistent_executor=True)
 
-    # Warmup
-    print("Warming up...")
-    for _ in range(10):
-        reader.read_cameras_parallel(cameras, timeout_ms=1000, with_depth=True)
-
-    # Actual test
-    print("\nRunning performance test (30 seconds)...")
-    start_time = time.perf_counter()
+    # Warmup phase
+    logger.info("Warming up cameras (10 frames)...")
+    for i in range(10):
+        frames = reader.read_cameras_parallel(cameras, with_depth=with_depth)
+        time.sleep(0.033)  # ~30 FPS
+    
+    # Performance testing
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Starting performance test: {num_frames} frames")
+    logger.info(f"{'='*60}")
+    
     frame_times = []
-    cpu_samples = []
-    process = psutil.Process()
-
-    test_duration = 30.0  # 30 seconds
-    while time.perf_counter() - start_time < test_duration:
-        frame_start = time.perf_counter()
-
-        # Read cameras
-        frames = reader.read_cameras_parallel(cameras, timeout_ms=1000, with_depth=True)
-
-        frame_time = (time.perf_counter() - frame_start) * 1000
-        frame_times.append(frame_time)
-
-        # Sample CPU periodically
-        if len(frame_times) % 10 == 0:
-            cpu_samples.append(process.cpu_percent(interval=None))
+    camera_times = {name: [] for name in cameras.keys()}
+    
+    for i in range(num_frames):
+        start = time.perf_counter()
+        
+        # Read all cameras in parallel
+        frames = reader.read_cameras_parallel(cameras, with_depth=with_depth)
+        
+        elapsed = (time.perf_counter() - start) * 1000
+        frame_times.append(elapsed)
+        
+        # Log progress every 20 frames
+        if (i + 1) % 20 == 0:
+            recent_avg = np.mean(frame_times[-20:])
+            logger.info(f"Frame {i+1}/{num_frames}: Last 20 frames avg: {recent_avg:.1f}ms")
 
     # Calculate statistics
-    frame_times = np.array(frame_times)
-    fps = 1000.0 / frame_times
-
-    print("\n" + "=" * 60)
-    print("RESULTS:")
-    print("=" * 60)
-    print(f"Frame Time: {frame_times.mean():.1f}ms ± {frame_times.std():.1f}ms")
-    print(f"Min/Max: {frame_times.min():.1f}ms / {frame_times.max():.1f}ms")
-    print(f"FPS: {fps.mean():.1f} ± {fps.std():.1f}")
-    print(f"Process CPU: {np.mean(cpu_samples):.1f}%")
-    print(f"System CPU: {psutil.cpu_percent(interval=1):.1f}%")
-
-    # Get reader stats
-    stats = reader.get_stats()
-    print("\nParallel Reader Stats:")
-    print(f"  Total reads: {stats['total_reads']}")
-    print(f"  Failed reads: {stats['failed_reads']}")
-    print(f"  Avg time: {stats['avg_time_ms']:.1f}ms")
-    print(f"  Max time: {stats['max_time_ms']:.1f}ms")
-
-    # Cleanup
-    print("\nDisconnecting cameras...")
-    for cam in cameras.values():
+    frame_times_np = np.array(frame_times)
+    
+    logger.info(f"\n{'='*60}")
+    logger.info("PERFORMANCE RESULTS")
+    logger.info(f"{'='*60}")
+    logger.info(f"Total frames captured: {num_frames}")
+    logger.info(f"Average frame time: {frame_times_np.mean():.2f}ms")
+    logger.info(f"Median frame time: {np.median(frame_times_np):.2f}ms")
+    logger.info(f"Min frame time: {frame_times_np.min():.2f}ms")
+    logger.info(f"Max frame time: {frame_times_np.max():.2f}ms")
+    logger.info(f"Std deviation: {frame_times_np.std():.2f}ms")
+    
+    # Calculate effective FPS
+    avg_time_s = frame_times_np.mean() / 1000.0
+    effective_fps = 1.0 / avg_time_s if avg_time_s > 0 else 0
+    logger.info(f"Effective FPS: {effective_fps:.1f} Hz")
+    
+    # Show percentiles
+    logger.info(f"\nPercentiles:")
+    for p in [50, 75, 90, 95, 99]:
+        val = np.percentile(frame_times_np, p)
+        logger.info(f"  {p}th percentile: {val:.2f}ms")
+    
+    # Get final stats from reader
+    reader_stats = reader.get_stats()
+    logger.info(f"\nReader statistics:")
+    logger.info(f"  Total reads: {reader_stats['total_reads']}")
+    logger.info(f"  Failed reads: {reader_stats['failed_reads']}")
+    logger.info(f"  Average time: {reader_stats['avg_time_ms']:.2f}ms")
+    logger.info(f"  Max time: {reader_stats['max_time_ms']:.2f}ms")
+    
+    # Disconnect cameras
+    logger.info("\nDisconnecting cameras...")
+    for name, cam in cameras.items():
         cam.disconnect()
-
-    return frame_times.mean(), np.mean(cpu_samples)
-
-
-def test_thread_pool_sizes():
-    """Test different thread pool sizes."""
-    print("\n" + "=" * 60)
-    print("THREAD POOL SIZE OPTIMIZATION TEST")
-    print("=" * 60)
-
-    from lerobot.cameras.parallel_camera_reader import ParallelCameraReader
-
-    thread_counts = [3, 6, 8, 12, 16]
-    results = {}
-
-    for thread_count in thread_counts:
-        print(f"\nTesting with {thread_count} threads...")
-
-        # Create reader with specific thread count
-        reader = ParallelCameraReader(max_workers=thread_count, persistent_executor=True)
-
-        # Run simplified test (mock cameras for speed)
-        class MockCamera:
-            def __init__(self, delay_ms=30):
-                self.delay = delay_ms / 1000.0
-                self.use_depth = True
-
-            def async_read(self, timeout_ms=1000):
-                time.sleep(self.delay)  # Simulate camera read time
-                return np.zeros((480, 640, 3), dtype=np.uint8)
-
-            def async_read_all(self, timeout_ms=1000):
-                time.sleep(self.delay)
-                return {
-                    "color": np.zeros((480, 640, 3), dtype=np.uint8),
-                    "depth_rgb": np.zeros((480, 640, 3), dtype=np.uint8),
-                }
-
-        # Create mock cameras
-        cameras = {
-            "cam1": MockCamera(30),  # 30ms read time (30fps)
-            "cam2": MockCamera(30),
-            "cam3": MockCamera(30),
-        }
-
-        # Test
-        times = []
-        for _ in range(100):
-            start = time.perf_counter()
-            reader.read_cameras_parallel(cameras, timeout_ms=1000, with_depth=True)
-            times.append((time.perf_counter() - start) * 1000)
-
-        avg_time = np.mean(times)
-        results[thread_count] = avg_time
-        print(f"  Average time: {avg_time:.1f}ms")
-
-    # Find optimal thread count
-    best_threads = min(results, key=results.get)
-    print(f"\n✅ Optimal thread count: {best_threads} ({results[best_threads]:.1f}ms)")
-
-    return results
-
-
-def test_memory_optimization():
-    """Test pre-allocated memory buffers."""
-    print("\n" + "=" * 60)
-    print("MEMORY OPTIMIZATION TEST")
-    print("=" * 60)
-
-    # Test memory allocation overhead
-    sizes = [(480, 640, 3), (1080, 1920, 3), (424, 512, 1)]  # Common camera resolutions
-
-    for size in sizes:
-        # Test allocation time
-        alloc_times = []
-        for _ in range(1000):
-            start = time.perf_counter()
-            arr = np.zeros(size, dtype=np.uint8)
-            alloc_times.append((time.perf_counter() - start) * 1000)
-
-        print(f"Resolution {size}: {np.mean(alloc_times):.3f}ms per allocation")
-
-    # Test with pre-allocated buffers
-    print("\nTesting with pre-allocated buffers...")
-    buffer_pool = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(10)]
-
-    copy_times = []
-    for _ in range(1000):
-        src = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        dst = buffer_pool[0]
-
-        start = time.perf_counter()
-        np.copyto(dst, src)
-        copy_times.append((time.perf_counter() - start) * 1000)
-
-    print(f"Pre-allocated buffer copy: {np.mean(copy_times):.3f}ms")
-
-    return np.mean(alloc_times), np.mean(copy_times)
+        logger.info(f"  Disconnected {name}")
+    
+    return frame_times_np, effective_fps
 
 
 def main():
-    """Run all performance tests."""
-    print("\n" + "=" * 60)
-    print("CAMERA SYSTEM PERFORMANCE ANALYZER")
-    print("=" * 60)
-    print(f"CPU Cores: {psutil.cpu_count()}")
-    print(f"CPU Frequency: {psutil.cpu_freq().current:.0f}MHz")
-    print(f"Memory: {psutil.virtual_memory().total / (1024**3):.1f}GB")
-
-    results = {}
-
-    # Test 1: Baseline performance
+    parser = argparse.ArgumentParser(description='Test camera performance')
+    parser.add_argument('--config', type=int, default=6,
+                        help='Configuration number (1-8, matching record_simple.sh)')
+    parser.add_argument('--frames', type=int, default=100,
+                        help='Number of frames to capture')
+    parser.add_argument('--no-depth', action='store_true',
+                        help='Disable depth capture')
+    args = parser.parse_args()
+    
+    # Camera configurations matching record_simple.sh
+    from lerobot.cameras.kinect import KinectCameraConfig
+    from lerobot.cameras.realsense import RealSenseCameraConfig
+    from lerobot.cameras import ColorMode
+    
+    # RealSense serial numbers
+    REALSENSE1_SERIAL = "218622270973"
+    REALSENSE2_SERIAL = "218622278797"
+    
+    configs = {
+        1: {  # Kinect RGB only
+            "top": KinectCameraConfig(
+                device_index=0,
+                fps=30,
+                color_mode=ColorMode.RGB,
+                use_depth=False
+            )
+        },
+        2: {  # Kinect RGB + Depth
+            "top": KinectCameraConfig(
+                device_index=0,
+                fps=30,
+                color_mode=ColorMode.RGB,
+                use_depth=True,
+                depth_colormap="jet"
+            )
+        },
+        3: {  # 2 RealSense RGB only
+            "left": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE1_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=False
+            ),
+            "right": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE2_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=False
+            )
+        },
+        4: {  # 2 RealSense RGB + Depth
+            "left": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE1_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=True,
+                depth_colormap="jet",
+                depth_min_meters=0.07,  # D405 min range
+                depth_max_meters=0.5    # D405 max range
+            ),
+            "right": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE2_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=True,
+                depth_colormap="jet",
+                depth_min_meters=0.07,  # D405 min range
+                depth_max_meters=0.5    # D405 max range
+            )
+        },
+        5: {  # 2 RealSense RGB + Kinect RGB
+            "left": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE1_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=False
+            ),
+            "right": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE2_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=False
+            ),
+            "top": KinectCameraConfig(
+                device_index=0,
+                fps=30,
+                color_mode=ColorMode.RGB,
+                use_depth=False
+            )
+        },
+        6: {  # 2 RealSense RGB + Depth + Kinect RGB + Depth
+            "left": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE1_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=True,
+                depth_colormap="jet",
+                depth_min_meters=0.07,  # D405 min range
+                depth_max_meters=0.5    # D405 max range
+            ),
+            "right": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE2_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=True,
+                depth_colormap="jet",
+                depth_min_meters=0.07,  # D405 min range
+                depth_max_meters=0.5    # D405 max range
+            ),
+            "top": KinectCameraConfig(
+                device_index=0,
+                fps=30,
+                color_mode=ColorMode.RGB,
+                use_depth=True,
+                depth_colormap="jet"
+            )
+        },
+        8: {  # 2 RealSense RGB + Depth + Kinect RGB only
+            "left": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE1_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=True,
+                depth_colormap="jet",
+                depth_min_meters=0.07,  # D405 min range
+                depth_max_meters=0.5    # D405 max range
+            ),
+            "right": RealSenseCameraConfig(
+                serial_number_or_name=REALSENSE2_SERIAL,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                use_depth=True,
+                depth_colormap="jet",
+                depth_min_meters=0.07,  # D405 min range
+                depth_max_meters=0.5    # D405 max range
+            ),
+            "top": KinectCameraConfig(
+                device_index=0,
+                fps=30,
+                color_mode=ColorMode.RGB,
+                use_depth=False
+            )
+        }
+    }
+    
+    if args.config not in configs:
+        logger.error(f"Invalid configuration {args.config}. Choose from: {list(configs.keys())}")
+        return 1
+    
+    camera_configs = configs[args.config]
+    with_depth = not args.no_depth
+    
+    logger.info(f"Testing configuration {args.config}:")
+    for name, cfg in camera_configs.items():
+        logger.info(f"  {name}: {cfg.type} (depth={'enabled' if cfg.use_depth else 'disabled'})")
+    
     try:
-        avg_time, avg_cpu = test_current_performance()
-        results["baseline"] = {"time": avg_time, "cpu": avg_cpu}
-    except Exception as e:
-        print(f"❌ Baseline test failed: {e}")
-
-    # Test 2: Thread pool sizes
-    try:
-        thread_results = test_thread_pool_sizes()
-        results["threads"] = thread_results
-    except Exception as e:
-        print(f"❌ Thread pool test failed: {e}")
-
-    # Test 3: Memory optimization
-    try:
-        alloc_time, copy_time = test_memory_optimization()
-        results["memory"] = {"alloc": alloc_time, "copy": copy_time}
-    except Exception as e:
-        print(f"❌ Memory test failed: {e}")
-
-    # Summary
-    print("\n" + "=" * 60)
-    print("PERFORMANCE SUMMARY")
-    print("=" * 60)
-
-    if "baseline" in results:
-        print(f"Baseline: {results['baseline']['time']:.1f}ms @ {results['baseline']['cpu']:.1f}% CPU")
-
-    if "threads" in results:
-        best_threads = min(results["threads"], key=results["threads"].get)
-        print(f"Best thread count: {best_threads} ({results['threads'][best_threads]:.1f}ms)")
-
-    if "memory" in results:
-        print(
-            f"Memory overhead: {results['memory']['alloc']:.3f}ms alloc, {results['memory']['copy']:.3f}ms copy"
+        frame_times, fps = test_camera_performance(
+            camera_configs, 
+            num_frames=args.frames,
+            with_depth=with_depth
         )
-
-    print("\n✅ Testing complete! Check camera_optimization_tracker.md for next steps.")
+        
+        # Success message
+        logger.info(f"\n{'='*60}")
+        logger.info(f"TEST COMPLETED SUCCESSFULLY")
+        logger.info(f"Achieved {fps:.1f} FPS with {len(camera_configs)} cameras")
+        logger.info(f"{'='*60}")
+        
+        return 0
+        
+    except Exception as e:
+        logger.error(f"Test failed: {e}", exc_info=True)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    exit(main())

@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import Any
 
 logger = logging.getLogger(__name__)
+perf_logger = logging.getLogger("performance")
 
 
 class ParallelCameraReader:
@@ -160,7 +161,7 @@ class ParallelCameraReader:
 
             submit_duration_ms = (time.perf_counter() - submit_time) * 1000
             if submit_duration_ms > 1.0:  # Warn if submission takes too long
-                logger.warning(
+                perf_logger.warning(
                     f"Camera read submission took {submit_duration_ms:.1f}ms for {len(cameras)} cameras"
                 )
 
@@ -203,13 +204,13 @@ class ParallelCameraReader:
                     individual_timings[cam_key] = (time.perf_counter() - cam_start) * 1000
 
                 except FutureTimeoutError:
-                    logger.warning(f"Camera {cam_key} read timeout after {timeout_ms}ms")
+                    perf_logger.warning(f"Camera {cam_key} read timeout after {timeout_ms}ms")
                     failed_cameras.append(cam_key)
                     if return_partial:
                         obs_dict[cam_key] = None
 
                 except Exception as e:
-                    logger.warning(f"Camera {cam_key} read failed: {e}")
+                    perf_logger.warning(f"Camera {cam_key} read failed: {e}")
                     failed_cameras.append(cam_key)
                     if return_partial:
                         obs_dict[cam_key] = None
@@ -256,8 +257,8 @@ class ParallelCameraReader:
             # Calculate average stats over the interval
             avg_time = self._stats["total_time_ms"] / self._stats["total_reads"] if self._stats["total_reads"] > 0 else 0
 
-            logger.info(
-                f"📊 Camera Stats (5s avg): {avg_time:.1f}ms | Last: {total_duration_ms:.1f}ms | "
+            perf_logger.info(
+                f"Camera Stats (5s avg): {avg_time:.1f}ms | Last: {total_duration_ms:.1f}ms | "
                 f"Breakdown: [{timing_str}] | Reads: {self._read_count}"
             )
             
