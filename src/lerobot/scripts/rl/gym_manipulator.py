@@ -27,9 +27,11 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlRobotEnvConfig
+from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
     DeviceProcessor,
     IdentityProcessor,
+    MapDeltaActionToRobotAction,
     RobotProcessor,
     ToBatchProcessor,
     VanillaObservationProcessor,
@@ -42,17 +44,21 @@ from lerobot.processor.hil_processor import (
     TimeLimitProcessor,
 )
 from lerobot.processor.pipeline import TransitionKey
-from lerobot.processor.robot_processor import (
-    InverseKinematicsProcessor,
-    JointVelocityProcessor,
-    MotorCurrentProcessor,
-)
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     so100_follower,
 )
+from lerobot.robots.joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
 from lerobot.robots.robot import Robot
+from lerobot.robots.so100_follower.robot_kinematic_processor import (
+    AddRobotObservationAsComplimentaryData,
+    EEBoundsAndSafety,
+    EEReferenceAndDelta,
+    ForwardKinematicsJointsToEE,
+    GripperVelocityToJoint,
+    InverseKinematicsEEToJoints,
+)
 from lerobot.teleoperators import (
     gamepad,  # noqa: F401
     keyboard,  # noqa: F401
@@ -182,7 +188,7 @@ class RobotEnv(gym.Env):
 
         self._setup_spaces()
 
-    def _get_observation(self) -> dict[str, np.ndarray | dict[str, np.ndarray]]:
+    def _get_observation(self) -> dict[str, Any]:
         """Helper to convert a dictionary from bus.sync_read to an ordered numpy array."""
         obs_dict = self.robot.get_observation()
         joint_positions = np.array([obs_dict[name] for name in self._joint_names])
@@ -217,10 +223,11 @@ class RobotEnv(gym.Env):
             }
 
         if current_observation is not None:
+            agent_pos = current_observation["agent_pos"]
             observation_spaces["observation.state"] = gym.spaces.Box(
                 low=0,
                 high=10,
-                shape=current_observation["agent_pos"].shape,
+                shape=agent_pos.shape,
                 dtype=np.float32,
             )
 
@@ -245,8 +252,8 @@ class RobotEnv(gym.Env):
         )
 
     def reset(
-        self, seed: int | None = None, options: dict[str, Any] | None = None
-    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """
         Reset the environment to its initial state.
         This method resets the step counter and clears any episodic data.
@@ -282,7 +289,9 @@ class RobotEnv(gym.Env):
         }
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
-        joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
+        joint_targets_dict = {
+            f"{key}.pos": action[f"action.{key}.pos"] for key in self.robot.bus.motors.keys()
+        }
 
         self.robot.send_action(joint_targets_dict)
 
@@ -348,7 +357,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     # Check if this is a GymHIL simulation environment
     if cfg.name == "gym_hil":
         assert cfg.robot is None and cfg.teleop is None, "GymHIL environment does not support robot or teleop"
-        import gymnasium as gym
+        import gym_hil  # noqa: F401
 
         # Extract gripper settings with defaults
         use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
@@ -415,18 +424,36 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
         return RobotProcessor(steps=env_pipeline_steps), RobotProcessor(steps=action_pipeline_steps)
 
     # Full processor pipeline for real robot environment
+    # Get robot and motor information for kinematics
+    motor_names = list(env.robot.bus.motors.keys())
+
+    # Set up kinematics solver if inverse kinematics is configured
+    kinematics_solver = None
+    if cfg.processor.inverse_kinematics is not None:
+        kinematics_solver = RobotKinematics(
+            urdf_path=cfg.processor.inverse_kinematics.urdf_path,
+            target_frame_name=cfg.processor.inverse_kinematics.target_frame_name,
+            joint_names=motor_names,
+        )
+
     env_pipeline_steps = [
         VanillaObservationProcessor(),
     ]
 
-    # Add observation-based processors if observation config exists
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
             env_pipeline_steps.append(JointVelocityProcessor(dt=1.0 / cfg.fps))
         if cfg.processor.observation.add_current_to_observation:
             env_pipeline_steps.append(MotorCurrentProcessor(env=env))
 
-    # Add image preprocessing if config exists
+    if kinematics_solver is not None:
+        env_pipeline_steps.append(
+            ForwardKinematicsJointsToEE(
+                kinematics=kinematics_solver,
+                motor_names=motor_names,
+            )
+        )
+
     if cfg.processor.image_preprocessing is not None:
         env_pipeline_steps.append(
             ImageCropResizeProcessor(
@@ -473,16 +500,40 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
         ),
     ]
 
-    if cfg.processor.inverse_kinematics is not None:
-        action_pipeline_steps.append(
-            InverseKinematicsProcessor(
-                urdf_path=cfg.processor.inverse_kinematics.urdf_path,
-                target_frame_name=cfg.processor.inverse_kinematics.target_frame_name,
-                end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
-                end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
-                max_gripper_pos=cfg.processor.max_gripper_pos,
-            )
+    # Add robot observation to complementary data for kinematics
+    action_pipeline_steps.append(AddRobotObservationAsComplimentaryData(robot=env.robot))
+
+    # Add delta action processor for gamepad/keyboard inputs
+    action_pipeline_steps.append(
+        MapDeltaActionToRobotAction(
+            position_scale=1.0,  # Can be adjusted based on needs
+            rotation_scale=0.0,  # No rotation for gamepad/keyboard
         )
+    )
+
+    # Replace InverseKinematicsProcessor with new kinematic processors
+    if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
+        # Add EE bounds and safety processor
+        inverse_kinematics_steps = [
+            EEReferenceAndDelta(
+                kinematics=kinematics_solver,
+                end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
+                motor_names=motor_names,
+            ),
+            EEBoundsAndSafety(
+                end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
+            ),
+            InverseKinematicsEEToJoints(
+                kinematics=kinematics_solver,
+                motor_names=motor_names,
+                initial_guess_current_joints=False,
+            ),
+            GripperVelocityToJoint(
+                motor_names=motor_names,
+                clip_max=cfg.processor.max_gripper_pos,
+            ),
+        ]
+        action_pipeline_steps.extend(inverse_kinematics_steps)
 
     return RobotProcessor(steps=env_pipeline_steps), RobotProcessor(steps=action_pipeline_steps)
 

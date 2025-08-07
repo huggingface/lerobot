@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from .batch_processor import ToBatchProcessor
+from .delta_action_processor import MapDeltaActionToRobotAction
 from .device_processor import DeviceProcessor
 from .hil_processor import (
     GripperPenaltyProcessor,
@@ -39,27 +40,19 @@ from .pipeline import (
     TruncatedProcessor,
 )
 from .rename_processor import RenameProcessor
-from .robot_processor import (
-    InverseKinematicsProcessor,
-    JointVelocityProcessor,
-    MotorCurrentProcessor,
-)
 from .tokenizer_processor import TokenizerProcessor
 
 __all__ = [
     "ActionProcessor",
     "DeviceProcessor",
     "DoneProcessor",
+    "MapDeltaActionToRobotAction",
     "EnvTransition",
     "GripperPenaltyProcessor",
     "IdentityProcessor",
     "ImageCropResizeProcessor",
-    "ImageProcessor",
     "InfoProcessor",
     "InterventionActionProcessor",
-    "InverseKinematicsProcessor",
-    "JointVelocityProcessor",
-    "MotorCurrentProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
     "hotswap_stats",

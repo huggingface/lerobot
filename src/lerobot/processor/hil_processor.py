@@ -8,6 +8,8 @@ import torchvision.transforms.functional as F  # noqa: N812
 from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
+GRIPPER_POS_KEY = "action.gripper.pos"
+
 
 @dataclass
 @ProcessorStepRegistry.register("image_crop_resize_processor")
@@ -124,7 +126,7 @@ class GripperPenaltyProcessor:
         if current_gripper_pos is None:
             return transition
 
-        gripper_action = action[-1].item()
+        gripper_action = action[GRIPPER_POS_KEY]
         gripper_action_normalized = gripper_action / self.max_gripper_pos
 
         # Normalize gripper state and action
