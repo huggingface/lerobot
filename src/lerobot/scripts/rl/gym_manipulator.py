@@ -349,11 +349,11 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     if cfg.name == "gym_hil":
         assert cfg.robot is None and cfg.teleop is None, "GymHIL environment does not support robot or teleop"
         import gymnasium as gym
-        
+
         # Extract gripper settings with defaults
         use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
         gripper_penalty = cfg.processor.gripper.gripper_penalty if cfg.processor.gripper is not None else 0.0
-        
+
         env = gym.make(
             f"gym_hil/{cfg.task}",
             image_obs=True,
@@ -367,16 +367,18 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     # Real robot environment
     assert cfg.robot is not None, "Robot config must be provided for real robot environment"
     assert cfg.teleop is not None, "Teleop config must be provided for real robot environment"
-    
+
     robot = make_robot_from_config(cfg.robot)
     teleop_device = make_teleoperator_from_config(cfg.teleop)
     teleop_device.connect()
 
     # Create base environment with safe defaults
     use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
-    display_cameras = cfg.processor.observation.display_cameras if cfg.processor.observation is not None else False
+    display_cameras = (
+        cfg.processor.observation.display_cameras if cfg.processor.observation is not None else False
+    )
     reset_pose = cfg.processor.reset.fixed_reset_joint_positions if cfg.processor.reset is not None else None
-    
+
     env = RobotEnv(
         robot=robot,
         use_gripper=use_gripper,
@@ -416,14 +418,14 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
     env_pipeline_steps = [
         VanillaObservationProcessor(),
     ]
-    
+
     # Add observation-based processors if observation config exists
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
             env_pipeline_steps.append(JointVelocityProcessor(dt=1.0 / cfg.fps))
         if cfg.processor.observation.add_current_to_observation:
             env_pipeline_steps.append(MotorCurrentProcessor(env=env))
-    
+
     # Add image preprocessing if config exists
     if cfg.processor.image_preprocessing is not None:
         env_pipeline_steps.append(
@@ -432,13 +434,13 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
                 resize_size=cfg.processor.image_preprocessing.resize_size,
             )
         )
-    
+
     # Add time limit processor if reset config exists
     if cfg.processor.reset is not None:
         env_pipeline_steps.append(
             TimeLimitProcessor(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
         )
-    
+
     # Add gripper penalty processor if gripper config exists and enabled
     if cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
         env_pipeline_steps.append(
@@ -449,8 +451,10 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
         )
 
     # Add reward classifier processor if configured
-    if (cfg.processor.reward_classifier is not None and 
-        cfg.processor.reward_classifier.pretrained_path is not None):
+    if (
+        cfg.processor.reward_classifier is not None
+        and cfg.processor.reward_classifier.pretrained_path is not None
+    ):
         env_pipeline_steps.append(
             RewardClassifierProcessor(
                 pretrained_path=cfg.processor.reward_classifier.pretrained_path,
@@ -463,13 +467,12 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
     env_pipeline_steps.append(ToBatchProcessor())
     env_pipeline_steps.append(DeviceProcessor(device=device))
 
-
     action_pipeline_steps = [
         InterventionActionProcessor(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
         ),
     ]
-    
+
     if cfg.processor.inverse_kinematics is not None:
         action_pipeline_steps.append(
             InverseKinematicsProcessor(
@@ -577,7 +580,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
 
     # Determine if gripper is used
     use_gripper = cfg.env.processor.gripper.use_gripper if cfg.env.processor.gripper is not None else True
-    
+
     dataset = None
     if cfg.mode == "record":
         action_features = teleop_device.action_features
@@ -714,7 +717,8 @@ def replay_trajectory(env, action_processor, cfg: GymManipulatorConfig):
     for action_data in dataset_actions:
         start_time = time.perf_counter()
         transition = create_transition(
-            action=action_data["action"], complementary_data={"raw_joint_positions": info["raw_joint_positions"]}
+            action=action_data["action"],
+            complementary_data={"raw_joint_positions": info["raw_joint_positions"]},
         )
         transition = action_processor(transition)
         _, _, _, _, info = env.step(transition[TransitionKey.ACTION])
