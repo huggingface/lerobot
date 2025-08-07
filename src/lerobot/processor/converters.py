@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from copy import deepcopy
 from typing import Any
 
@@ -27,7 +27,7 @@ from scipy.spatial.transform import Rotation
 from .pipeline import EnvTransition, TransitionKey
 
 
-def _to_tensor(x: Any):
+def _to_tensor(x: torch.Tensor | np.ndarray | Sequence[int | float]):
     if isinstance(x, torch.Tensor):
         return x
     if isinstance(x, np.ndarray):
@@ -60,10 +60,17 @@ def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any],
     return state, images
 
 
-def make_obs_act_transition(*, obs: dict | None = None, act: dict | None = None) -> EnvTransition:
+def make_obs_act_transition(
+    *, obs: dict[str, Any] | None = None, act: dict[str, Any] | None = None
+) -> EnvTransition:
     return {
         TransitionKey.OBSERVATION: {} if obs is None else obs,
         TransitionKey.ACTION: {} if act is None else act,
+        TransitionKey.INFO: {},
+        TransitionKey.COMPLEMENTARY_DATA: {},
+        TransitionKey.REWARD: None,
+        TransitionKey.DONE: None,
+        TransitionKey.TRUNCATED: None,
     }
 
 
@@ -84,6 +91,7 @@ def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
     return make_obs_act_transition(act=act_dict)
 
 
+# TODO(Adil, Pepijn): Overtime we can maybe add these converters to pipeline.py itself
 def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransition:
     """
     Convert a raw robot observation dict into an EnvTransition under the OBSERVATION TransitionKey.

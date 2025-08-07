@@ -20,6 +20,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.processor.pipeline import ObservationProcessor, ProcessorStepRegistry
 
@@ -104,3 +105,52 @@ class VanillaObservationProcessor(ObservationProcessor):
 
     def observation(self, observation):
         return self._process_observation(observation)
+
+    def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """Transforms feature keys to a standardized contract.
+        This method handles several renaming patterns:
+        - Exact matches (e.g., 'pixels' -> 'OBS_IMAGE').
+        - Prefixed exact matches (e.g., 'observation.pixels' -> 'OBS_IMAGE').
+        - Prefix matches (e.g., 'pixels.cam1' -> 'OBS_IMAGES.cam1').
+        - Prefixed prefix matches (e.g., 'observation.pixels.cam1' -> 'OBS_IMAGES.cam1').
+        - environment_state -> OBS_ENV_STATE,
+        - agent_pos -> OBS_STATE,
+        - observation.environment_state -> OBS_ENV_STATE,
+        - observation.agent_pos -> OBS_STATE
+        """
+        exact_pairs = {
+            "pixels": OBS_IMAGE,
+            "environment_state": OBS_ENV_STATE,
+            "agent_pos": OBS_STATE,
+        }
+
+        prefix_pairs = {
+            "pixels.": f"{OBS_IMAGES}.",
+        }
+
+        for key in list(features.keys()):
+            matched_prefix = False
+            for old_prefix, new_prefix in prefix_pairs.items():
+                prefixed_old = f"observation.{old_prefix}"
+                if key.startswith(prefixed_old):
+                    suffix = key[len(prefixed_old) :]
+                    features[f"{new_prefix}{suffix}"] = features.pop(key)
+                    matched_prefix = True
+                    break
+
+                if key.startswith(old_prefix):
+                    suffix = key[len(old_prefix) :]
+                    features[f"{new_prefix}{suffix}"] = features.pop(key)
+                    matched_prefix = True
+                    break
+
+            if matched_prefix:
+                continue
+
+            for old, new in exact_pairs.items():
+                if key == old or key == f"observation.{old}":
+                    if key in features:
+                        features[new] = features.pop(key)
+                        break
+
+        return features

@@ -288,8 +288,8 @@ def test_serialization_methods():
     assert processor.device == device
 
 
-def test_feature_contract():
-    """Test that feature_contract returns features unchanged."""
+def test_features():
+    """Test that features returns features unchanged."""
     processor = DeviceProcessor(device="cpu")
 
     features = {
@@ -297,7 +297,7 @@ def test_feature_contract():
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
     }
 
-    result = processor.feature_contract(features)
+    result = processor.features(features)
     assert result == features
     assert result is features  # Should return the same object
 
@@ -843,7 +843,7 @@ def test_policy_processor_integration():
     # Create input processor (preprocessor) that moves to GPU
     input_processor = RobotProcessor(
         steps=[
-            NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats),
+            NormalizerProcessor(features=features, norm_map=norm_map, stats=stats),
             ToBatchProcessor(),
             DeviceProcessor(device="cuda"),
         ],
@@ -854,7 +854,7 @@ def test_policy_processor_integration():
     output_processor = RobotProcessor(
         steps=[
             DeviceProcessor(device="cpu"),
-            UnnormalizerProcessor(norm_features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
+            UnnormalizerProcessor(features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
         ],
         name="test_postprocessor",
     )

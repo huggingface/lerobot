@@ -143,7 +143,7 @@ def observation_normalizer(observation_stats):
     """Return a NormalizerProcessor that only has observation stats (no action)."""
     features = _create_observation_features()
     norm_map = _create_observation_norm_map()
-    return NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=observation_stats)
+    return NormalizerProcessor(features=features, norm_map=norm_map, stats=observation_stats)
 
 
 def test_mean_std_normalization(observation_normalizer):
@@ -203,7 +203,7 @@ def test_selective_normalization(observation_stats):
 def test_device_compatibility(observation_stats):
     features = _create_observation_features()
     norm_map = _create_observation_norm_map()
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=observation_stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=observation_stats)
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]).cuda(),
     }
@@ -246,7 +246,7 @@ def test_state_dict_save_load(observation_normalizer):
     # Create new normalizer and load state
     features = _create_observation_features()
     norm_map = _create_observation_norm_map()
-    new_normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats={})
+    new_normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats={})
     new_normalizer.load_state_dict(state_dict)
 
     # Test that it works the same
@@ -298,7 +298,7 @@ def test_mean_std_unnormalization(action_stats_mean_std):
     features = _create_action_features()
     norm_map = _create_action_norm_map_mean_std()
     unnormalizer = UnnormalizerProcessor(
-        norm_features=features, norm_map=norm_map, stats={"action": action_stats_mean_std}
+        features=features, norm_map=norm_map, stats={"action": action_stats_mean_std}
     )
 
     normalized_action = torch.tensor([1.0, -0.5, 2.0])
@@ -316,7 +316,7 @@ def test_min_max_unnormalization(action_stats_min_max):
     features = _create_action_features()
     norm_map = _create_action_norm_map_min_max()
     unnormalizer = UnnormalizerProcessor(
-        norm_features=features, norm_map=norm_map, stats={"action": action_stats_min_max}
+        features=features, norm_map=norm_map, stats={"action": action_stats_min_max}
     )
 
     # Actions in [-1, 1]
@@ -360,7 +360,7 @@ def test_none_action(action_stats_mean_std):
     features = _create_action_features()
     norm_map = _create_action_norm_map_mean_std()
     unnormalizer = UnnormalizerProcessor(
-        norm_features=features, norm_map=norm_map, stats={"action": action_stats_mean_std}
+        features=features, norm_map=norm_map, stats={"action": action_stats_mean_std}
     )
 
     transition = create_transition()
@@ -418,7 +418,7 @@ def _create_full_norm_map():
 def normalizer_processor(full_stats):
     features = _create_full_features()
     norm_map = _create_full_norm_map()
-    return NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=full_stats)
+    return NormalizerProcessor(features=features, norm_map=norm_map, stats=full_stats)
 
 
 def test_combined_normalization(normalizer_processor):
@@ -527,7 +527,7 @@ def test_empty_observation():
     stats = {"observation.image": {"mean": [0.5], "std": [0.2]}}
     features = {"observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96))}
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     transition = create_transition()
     result = normalizer(transition)
@@ -538,7 +538,7 @@ def test_empty_observation():
 def test_empty_stats():
     features = {"observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96))}
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats={})
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats={})
     observation = {"observation.image": torch.tensor([0.5])}
     transition = create_transition(observation=observation)
 
@@ -554,7 +554,7 @@ def test_partial_stats():
     stats = {"observation.image": {"mean": [0.5]}}  # Missing std / (min,max)
     features = {"observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96))}
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
     observation = {"observation.image": torch.tensor([0.7])}
     transition = create_transition(observation=observation)
 
@@ -645,7 +645,7 @@ def test_identity_normalization_observations():
         "observation.state": {"mean": [0.0, 0.0], "std": [1.0, 1.0]},
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]),
@@ -670,7 +670,7 @@ def test_identity_normalization_actions():
     norm_map = {FeatureType.ACTION: NormalizationMode.IDENTITY}
     stats = {"action": {"mean": [0.0, 0.0], "std": [1.0, 2.0]}}
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     action = torch.tensor([1.0, -0.5])
     transition = create_transition(action=action)
@@ -696,7 +696,7 @@ def test_identity_unnormalization_observations():
         "observation.state": {"min": [-1.0, -1.0], "max": [1.0, 1.0]},
     }
 
-    unnormalizer = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]),
@@ -723,7 +723,7 @@ def test_identity_unnormalization_actions():
     norm_map = {FeatureType.ACTION: NormalizationMode.IDENTITY}
     stats = {"action": {"min": [-1.0, -2.0], "max": [1.0, 2.0]}}
 
-    unnormalizer = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     action = torch.tensor([0.5, -0.8])  # Normalized values
     transition = create_transition(action=action)
@@ -746,8 +746,8 @@ def test_identity_with_missing_stats():
     }
     stats = {}  # No stats provided
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
-    unnormalizer = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     observation = {"observation.image": torch.tensor([0.7, 0.5, 0.3])}
     action = torch.tensor([1.0, -0.5])
@@ -787,7 +787,7 @@ def test_identity_mixed_with_other_modes():
         "action": {"min": [-1.0, -1.0], "max": [1.0, 1.0]},
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]),
@@ -829,7 +829,7 @@ def test_identity_defaults_when_not_in_norm_map():
         "observation.state": {"mean": [0.0, 0.0], "std": [1.0, 1.0]},
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]),
@@ -863,8 +863,8 @@ def test_identity_roundtrip():
         "action": {"min": [-1.0, -1.0], "max": [1.0, 1.0]},
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
-    unnormalizer = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     original_observation = {"observation.image": torch.tensor([0.7, 0.5, 0.3])}
     original_action = torch.tensor([0.5, -0.2])
@@ -896,7 +896,7 @@ def test_identity_config_serialization():
         "action": {"mean": [0.0, 0.0], "std": [1.0, 1.0]},
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     # Get config
     config = normalizer.get_config()
@@ -944,7 +944,7 @@ def test_unsupported_normalization_mode_error():
     norm_map = {FeatureType.STATE: NormalizationMode.MEAN_STD}
     stats = {"observation.state": {"mean": [0.0, 0.0], "std": [1.0, 1.0]}}
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     # Manually inject an invalid mode to test error handling
     normalizer.norm_map[FeatureType.STATE] = "INVALID_MODE"
@@ -981,8 +981,8 @@ def test_hotswap_stats_basic_functionality():
     }
 
     # Create processors
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
-    unnormalizer = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
+    unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
     identity = IdentityProcessor()
 
     # Create robot processor
@@ -1022,7 +1022,7 @@ def test_hotswap_stats_deep_copy():
     }
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
     original_processor = RobotProcessor(steps=[normalizer])
 
     # Store reference to original stats
@@ -1062,8 +1062,8 @@ def test_hotswap_stats_only_affects_normalizer_steps():
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
 
     # Create mixed steps
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
-    unnormalizer = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
     identity = IdentityProcessor()
 
     robot_processor = RobotProcessor(steps=[normalizer, identity, unnormalizer])
@@ -1092,7 +1092,7 @@ def test_hotswap_stats_empty_stats():
     }
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
     robot_processor = RobotProcessor(steps=[normalizer])
 
     # Hotswap with empty stats
@@ -1183,10 +1183,10 @@ def test_hotswap_stats_multiple_normalizer_types():
     }
 
     # Create multiple normalizers and unnormalizers
-    normalizer1 = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
-    normalizer2 = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
-    unnormalizer1 = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
-    unnormalizer2 = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
+    normalizer1 = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
+    normalizer2 = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
+    unnormalizer1 = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
+    unnormalizer2 = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
 
     robot_processor = RobotProcessor(steps=[normalizer1, unnormalizer1, normalizer2, unnormalizer2])
 
@@ -1235,7 +1235,7 @@ def test_hotswap_stats_with_different_data_types():
         FeatureType.ACTION: NormalizationMode.MEAN_STD,
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
     robot_processor = RobotProcessor(steps=[normalizer])
 
     # Hotswap stats
@@ -1289,7 +1289,7 @@ def test_normalization_info_tracking():
         },
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]),
@@ -1335,7 +1335,7 @@ def test_unnormalization_info_tracking():
         },
     }
 
-    unnormalizer = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     observation = {"observation.image": torch.tensor([0.7, 0.5, 0.3])}
     action = torch.tensor([0.0, -0.5])
@@ -1374,7 +1374,7 @@ def test_normalization_info_with_missing_stats():
         },
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]),
@@ -1467,8 +1467,8 @@ def test_normalization_info_preserved_in_pipeline():
         },
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
-    unnormalizer = UnnormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     # Create pipeline
     pipeline = RobotProcessor([normalizer, unnormalizer])
@@ -1514,7 +1514,7 @@ def test_normalization_info_empty_transition():
         "action": {"min": [-1.0], "max": [1.0]},
     }
 
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     # Empty transition
     transition = create_transition()
@@ -1558,7 +1558,7 @@ def test_hotswap_stats_functional_test():
     }
 
     # Create original processor
-    normalizer = NormalizerProcessor(norm_features=features, norm_map=norm_map, stats=initial_stats)
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
     original_processor = RobotProcessor(steps=[normalizer])
 
     # Process with original stats
