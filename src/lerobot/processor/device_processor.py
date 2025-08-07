@@ -65,6 +65,17 @@ class DeviceProcessor:
         else:
             self._target_float_dtype = None
 
+    def _process_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Process a tensor by moving to device and optionally converting float dtype."""
+        # Move to device first
+        tensor = tensor.to(self.device, non_blocking=self.non_blocking)
+
+        # Convert float dtype if specified and tensor is floating point
+        if self._target_float_dtype is not None and tensor.is_floating_point():
+            tensor = tensor.to(dtype=self._target_float_dtype)
+
+        return tensor
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         # Create a copy of the transition
         new_transition = transition.copy()
