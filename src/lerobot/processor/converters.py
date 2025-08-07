@@ -204,19 +204,22 @@ def to_dataset_frame(
         batch["action"] = np.asarray(vals, dtype=np.float32)
 
     # Next.* fields
-    if TransitionKey.REWARD in tr:
+    if tr.get(TransitionKey.REWARD) is not None:
         batch["next.reward"] = _from_tensor(tr[TransitionKey.REWARD])
-    if TransitionKey.DONE in tr:
+    if tr.get(TransitionKey.DONE) is not None:
         batch["next.done"] = _from_tensor(tr[TransitionKey.DONE])
-    if TransitionKey.TRUNCATED in tr:
+    if tr.get(TransitionKey.TRUNCATED) is not None:
         batch["next.truncated"] = _from_tensor(tr[TransitionKey.TRUNCATED])
 
     # Complementary data flags and task
-    comp = tr.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
-    for k, v in comp.items():
-        if k.endswith("_is_pad"):
-            batch[k] = v
-    if "task" in comp:
-        batch["task"] = comp["task"]
+    comp = tr.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+    if comp:
+        # pad flags
+        for k, v in comp.items():
+            if k.endswith("_is_pad"):
+                batch[k] = v
+        # task label
+        if comp.get("task") is not None:
+            batch["task"] = comp["task"]
 
     return batch

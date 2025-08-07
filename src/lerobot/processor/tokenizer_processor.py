@@ -10,7 +10,7 @@ from typing import Any
 import torch
 from transformers import AutoTokenizer
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import OBS_LANGUAGE
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
@@ -188,4 +188,23 @@ class TokenizerProcessor:
         pass
 
     def features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """Add tokenized task features to the feature contract.
+
+        Args:
+            features: Input feature dictionary.
+
+        Returns:
+            Updated feature dictionary with tokenized task features added.
+        """
+        # Add features for tokenized output if they don't exist
+        # Standard tokenizer output includes tokens and attention_mask
+        tokens_key = f"{OBS_LANGUAGE}.tokens"
+        attention_mask_key = f"{OBS_LANGUAGE}.attention_mask"
+
+        if tokens_key not in features:
+            features[tokens_key] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
+
+        if attention_mask_key not in features:
+            features[attention_mask_key] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
+
         return features
