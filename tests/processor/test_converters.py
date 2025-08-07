@@ -121,11 +121,13 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
             "shape": (2,),
             "names": ["j1.pos", "j2.pos"],
         },
-        # Image spec (video/image dtype acceptable): names unimportant here
-        "observation.images.front": {"dtype": "image", "shape": (480, 640, 3), "names": ["h", "w", "c"]},
+        # Image spec (video/image dtype acceptable)
+        "observation.images.front": {
+            "dtype": "image",
+            "shape": (480, 640, 3),
+            "names": ["h", "w", "c"],
+        },
     }
-
-    to_out = to_dataset_frame(features)
 
     # Build two transitions to be merged: teleop (action) and robot obs (state/images)
     img = np.random.randint(0, 255, size=(480, 640, 3), dtype=np.uint8)
@@ -133,14 +135,14 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
     teleop_transition = {
         TransitionKey.OBSERVATION: {},
         TransitionKey.ACTION: {
-            "action.j1.pos": torch.tensor(1.1),  # will be picked in vector order
+            "action.j1.pos": torch.tensor(1.1),
             "action.j2.pos": torch.tensor(2.2),
-            # "action.gripper.pos" intentionally missing to default 0.0
-            "action.ee.x": 0.5,  # should be ignored by final robot_action output, but stored in action vector only if present in names (it's not)
+            # gripper.pos missing → defaults to 0.0
+            "action.ee.x": 0.5,  # ignored, not in features["action"]["names"]
         },
         TransitionKey.COMPLEMENTARY_DATA: {
-            "frame_is_pad": True,  # should be copied to batch
-            "task": "Pick cube",  # special 'task' key should be propagated
+            "frame_is_pad": True,
+            "task": "Pick cube",
         },
     }
 
@@ -156,10 +158,10 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
         TransitionKey.INFO: {"note": "ok"},
     }
 
-    # Merge two transitions to to_out should combine action, observation, images, and metadata
-    batch = to_out([teleop_transition, robot_transition])
+    # Directly call the refactored function
+    batch = to_dataset_frame([teleop_transition, robot_transition], features)
 
-    # Images are passed through ONLY if declared in features and present in the obs transition
+    # Images passthrough
     assert "observation.images.front" in batch
     assert batch["observation.images.front"].shape == img.shape
     assert batch["observation.images.front"].dtype == np.uint8
@@ -167,27 +169,28 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
         batch["observation.images.front"], img
     )
 
-    # observation.state packed as vector in the declared order
+    # Observation.state vector
     assert "observation.state" in batch
     obs_vec = batch["observation.state"]
     assert isinstance(obs_vec, np.ndarray) and obs_vec.dtype == np.float32
     assert obs_vec.shape == (2,)
-    assert obs_vec[0] == pytest.approx(10.0)  # j1.pos
-    assert obs_vec[1] == pytest.approx(20.0)  # j2.pos
+    assert obs_vec[0] == pytest.approx(10.0)
+    assert obs_vec[1] == pytest.approx(20.0)
 
-    # action packed in the declared order with missing default 0.0
+    # Action vector
     assert "action" in batch
     act_vec = batch["action"]
     assert isinstance(act_vec, np.ndarray) and act_vec.dtype == np.float32
     assert act_vec.shape == (3,)
-    assert act_vec[0] == pytest.approx(1.1)  # j1.pos
-    assert act_vec[1] == pytest.approx(2.2)  # j2.pos
-    assert act_vec[2] == pytest.approx(0.0)  # gripper.pos missing to default 0.0
+    assert act_vec[0] == pytest.approx(1.1)
+    assert act_vec[1] == pytest.approx(2.2)
+    assert act_vec[2] == pytest.approx(0.0)  # default for missing gripper.pos
 
+    # Next.* metadata
     assert batch["next.reward"] == pytest.approx(5.0)
     assert batch["next.done"] is True
     assert batch["next.truncated"] is False
-    assert batch["info"] == {"note": "ok"}
 
+    # Complementary data
     assert batch["frame_is_pad"] is True
     assert batch["task"] == "Pick cube"

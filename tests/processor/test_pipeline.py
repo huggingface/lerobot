@@ -2114,7 +2114,7 @@ class AddObservationStateFeatures:
 
 def test_aggregate_joint_action_only():
     rp = RobotProcessor([AddActionEEAndJointFeatures()])
-    initial = {"front": (480, 640, 3)}  # cameras (should be ignored because include=("action",))
+    initial = {"front": (480, 640, 3)}
 
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
@@ -2128,9 +2128,6 @@ def test_aggregate_joint_action_only():
     assert out["action"]["dtype"] == "float32"
     assert set(out["action"]["names"]) == {"j1.pos", "j2.pos"}
     assert out["action"]["shape"] == (len(out["action"]["names"]),)
-
-    # No images because observation wasn't included
-    assert not any(k.startswith("observation.images.") for k in out)
 
 
 def test_aggregate_ee_action_and_observation_with_videos():

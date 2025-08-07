@@ -22,7 +22,6 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_processor
 from lerobot.processor.converters import (
-    to_dataset_frame,
     to_output_robot_action,
     to_transition_robot_observation,
 )
@@ -43,8 +42,8 @@ NUM_EPISODES = 5
 FPS = 30
 EPISODE_TIME_SEC = 60
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
 HF_MODEL_ID = "<hf_username>/<model_repo_id>"
+HF_DATASET_ID = "<hf_username>/<dataset_repo_id>"
 
 # Initialize the robot with degrees
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -72,6 +71,7 @@ robot_ee_to_joints = RobotProcessor(
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
+            initial_guess_current_joints=True,
         ),
     ],
     to_transition=lambda tr: tr,
@@ -109,7 +109,7 @@ print("All dataset features: ", dataset_features)
 
 # Create the dataset
 dataset = LeRobotDataset.create(
-    repo_id=HF_REPO_ID,
+    repo_id=HF_DATASET_ID,
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,
@@ -131,7 +131,6 @@ preprocessor, postprocessor = make_processor(
     policy_cfg=policy,
     pretrained_path=HF_MODEL_ID,
     dataset_stats=dataset.meta.stats,
-    preprocessor_overrides={"device_processor": {"device": policy.device}},
 )
 
 for episode_idx in range(NUM_EPISODES):
@@ -150,9 +149,6 @@ for episode_idx in range(NUM_EPISODES):
         display_data=True,
         robot_action_processor=robot_ee_to_joints,
         robot_observation_processor=robot_joints_to_ee_pose,
-        to_dataset_frame=to_dataset_frame(
-            dataset.features
-        ),  # Function to convert pipelines output to the dataset format
     )
     dataset.save_episode()
 

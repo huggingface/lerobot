@@ -414,14 +414,14 @@ def main():
         NormalizerProcessor(features=output_features, norm_map=norm_map, stats=stats),
         ToBatchProcessor(),
     ]
-    preprocessor = RobotProcessor(preprocessor_steps, name="preprocessor")
+    preprocessor = RobotProcessor(preprocessor_steps, name="robot_preprocessor")
 
     # Create postprocessor with unnormalizer for outputs only
     postprocessor_steps = [
         UnnormalizerProcessor(features=output_features, norm_map=norm_map, stats=stats),
         ToBatchProcessor(),
     ]
-    postprocessor = RobotProcessor(postprocessor_steps, name="postprocessor")
+    postprocessor = RobotProcessor(postprocessor_steps, name="robot_postprocessor")
 
     # Determine hub repo ID if pushing to hub
     if args.push_to_hub:

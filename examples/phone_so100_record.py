@@ -21,7 +21,6 @@ from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_featur
 from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.converters import (
-    to_dataset_frame,
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
@@ -99,6 +98,7 @@ robot_ee_to_joints = RobotProcessor(
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
+            initial_guess_current_joints=True,
         ),
         GripperVelocityToJoint(
             motor_names=list(robot.bus.motors.keys()),
@@ -156,9 +156,6 @@ dataset = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
-# Create a function to convert the pipelines output to the dataset format using the expected features
-to_dataset_features = to_dataset_frame(dataset.features)
-
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
 _init_rerun(session_name="recording_phone")
@@ -183,7 +180,6 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         teleop_action_processor=phone_to_robot_ee_pose,
         robot_action_processor=robot_ee_to_joints,
         robot_observation_processor=robot_joints_to_ee_pose,
-        to_dataset_frame=to_dataset_features,
     )
 
     # Reset the environment if not stopping or re-recording
@@ -200,7 +196,6 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             teleop_action_processor=phone_to_robot_ee_pose,
             robot_action_processor=robot_ee_to_joints,
             robot_observation_processor=robot_joints_to_ee_pose,
-            to_dataset_frame=to_dataset_features,
         )
 
     if events["rerecord_episode"]:

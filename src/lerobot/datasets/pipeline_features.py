@@ -28,43 +28,67 @@ def aggregate_pipeline_dataset_features(
 ) -> dict[str, dict]:
     """
     Aggregates the pipeline's features and returns a features dict ready for the dataset,
-    filtered to only those keys matching any of the given patterns.
+    filtered to only those keys matching any of the given patterns (for action/state only).
 
-    - `initial_features`: hardware features from the robot.
-    - `use_videos`: whether to treat image features as video.
-    - `patterns`: list of substrings or regexes to match against full feature names
-                  (e.g. 'ee', 'pos', 'observation.state.ee.x'). If None, no filtering.
+    - `initial_features`: raw camera specs, e.g. {"front": (h,w,c), ...}
+    - `use_videos`: whether to treat image features as video streams
+    - `patterns`: regexes to filter action & state features; images are included
+                  whenever use_videos=True, regardless of patterns.
     """
     import re
 
+    # Gather everything the pipeline features specifies, seeded with hardware cams:
     all_features = pipeline.features(initial_features)
 
+    # Helper to decide which action/state keys survive the `patterns` filter:
     def keep(key: str) -> bool:
         if patterns is None:
             return True
         return any(re.search(pat, key) for pat in patterns)
 
-    hw: dict[str, Any] = {}
-    for full_key, ty in all_features.items():
-        # full_key is for example: "action.ee.x" or "observation.state.joint.pos"
-        if full_key.startswith("action."):
-            name = full_key[len("action.") :]
-            prefix = "action"
-        elif full_key.startswith("observation.state."):
-            name = full_key[len("observation.state.") :]
-            prefix = "observation"
-        elif full_key.startswith("observation.images."):
-            name = full_key[len("observation.images.") :]
-            prefix = "observation"
-        else:
-            continue
+    # Start with hardware dict, injecting initial cameras if videos are ON:
+    hw: dict[str, dict[str, Any]] = {}
+    if use_videos:
+        cams = {
+            name: shape
+            for name, shape in initial_features.items()
+            if isinstance(shape, tuple) and len(shape) == 3
+        }
+        if cams:
+            hw["observation"] = dict(cams)
 
-        if keep(full_key):
-            hw.setdefault(prefix, {})[name] = ty
+    # Go over every feature from the pipeline and merge:
+    for full_key, ty in all_features.items():
+        if full_key.startswith("action."):
+            # action.<feat>
+            if not keep(full_key):
+                continue
+            name = full_key[len("action.") :]
+            hw.setdefault("action", {})[name] = ty
+
+        elif full_key.startswith("observation.state."):
+            # observation.state.<feat>
+            if not keep(full_key):
+                continue
+            name = full_key[len("observation.state.") :]
+            hw.setdefault("observation", {})[name] = ty
+
+        elif full_key.startswith("observation.images."):
+            # observation.images.<cam>
+            # images obey ONLY the use_videos flag, not patterns
+            if not use_videos:
+                continue
+            name = full_key[len("observation.images.") :]
+            hw.setdefault("observation", {})[name] = ty
+
+        else:
+            # anything else (e.g. policy-only features) is ignored here
+            continue
 
     out: dict[str, dict] = {}
     if "action" in hw:
         out.update(hw_to_dataset_features(hw["action"], "action", use_videos))
     if "observation" in hw:
         out.update(hw_to_dataset_features(hw["observation"], "observation", use_videos))
+
     return out
