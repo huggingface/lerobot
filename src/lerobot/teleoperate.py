@@ -95,7 +95,7 @@ class TeleoperateConfig:
     teleop: TeleoperatorConfig
     robot: RobotConfig
     # Limit the maximum frames per second.
-    fps: int = 60
+    fps: int = 30
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
@@ -117,10 +117,19 @@ def teleop_loop(
     stats_interval = 5.0  # Print stats every 5 seconds
     stats_printed = False
 
+    # Telemetry and logging throttling
+    frame_counter = 0
+    rerun_log_interval = 6  # Log to Rerun every 6 frames to reduce CPU overhead further
+    console_update_interval_s = 1.0  # Update console every 1 second
+    last_console_update_time = start
+
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
-        if display_data:
+        
+        frame_counter += 1
+        
+        if display_data and (frame_counter % rerun_log_interval == 0):
             observation = robot.get_observation()
             log_rerun_data(observation, action)
 
@@ -142,25 +151,25 @@ def teleop_loop(
             )
             last_stats_time = loop_end
         
-        # In-place console telemetry
-        if stats_printed:
-            move_cursor_up(len(action) + 4)
-            
-        print("-" * (display_len + 12))
-        print(f"| {'NAME':<{display_len}} | {'VALUE':>7} |")
-        print(f"|{'─' * (display_len + 12)}|")
-        for motor, value in action.items():
-            print(f"| {motor:<{display_len}} | {value:>7.2f} |")
-        print("-" * (display_len + 12))
-        print(f"Loop: {loop_s * 1e3:.2f}ms ({1 / loop_s if loop_s > 0 else 0:.0f} Hz)")
+        # In-place console telemetry (throttled)
+        if loop_end - last_console_update_time >= console_update_interval_s:
+            if stats_printed:
+                move_cursor_up(len(action) + 4)
+                
+            print("-" * (display_len + 12))
+            print(f"| {'NAME':<{display_len}} | {'VALUE':>7} |")
+            print(f"|{'─' * (display_len + 12)}|")
+            for motor, value in action.items():
+                print(f"| {motor:<{display_len}} | {value:>7.2f} |")
+            print("-" * (display_len + 12))
+            print(f"Loop: {loop_s * 1e3:.2f}ms ({1 / loop_s if loop_s > 0 else 0:.0f} Hz)")
 
-        if duration is not None and time.perf_counter() - start >= duration:
-            return
-            
-        if not stats_printed:
-            stats_printed = True
+            if not stats_printed:
+                stats_printed = True
 
-        move_cursor_up(len(action) + 5)
+            move_cursor_up(len(action) + 5)
+            last_console_update_time = loop_end
+
 
 
 @draccus.wrap()

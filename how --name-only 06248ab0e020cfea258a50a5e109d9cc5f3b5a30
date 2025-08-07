@@ -1,0 +1,16 @@
+[33mcommit 80383126ee03eebc044d5244204243f07e616333[m
+Author: Madav Lodha <madhavlodha2503@gmail.com>
+Date:   Wed Jul 30 02:22:52 2025 +0800
+
+    Added bi_so101 arm class
+
+src/lerobot/record.py
+src/lerobot/robots/bi_so101_follower/__init__.py
+src/lerobot/robots/bi_so101_follower/bi_so101_follower.py
+src/lerobot/robots/bi_so101_follower/config_bi_so101_follower.py
+src/lerobot/robots/utils.py
+src/lerobot/teleoperate.py
+src/lerobot/teleoperators/bi_so101_leader/__init__.py
+src/lerobot/teleoperators/bi_so101_leader/bi_so101_leader.py
+src/lerobot/teleoperators/bi_so101_leader/config_bi_so101_leader.py
+src/lerobot/teleoperators/utils.py

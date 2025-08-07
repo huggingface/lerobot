@@ -33,7 +33,7 @@ TELEOP_TYPE="bi_so101_leader"
 TELEOP_ID="my_bimanual_leader"
 TELEOP_LEFT_PORT="COM5"
 TELEOP_RIGHT_PORT="COM4"
-FPS="60"
+FPS="30"
 
 # RealSense serial numbers
 REALSENSE1_SERIAL="218622270973"
@@ -261,8 +261,8 @@ case $choice in
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 640,
-                    'height': 480,
+                    'width': 1920,
+                    'height': 1080,
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
@@ -279,7 +279,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=false
+            --display_data=true
         ;;
 
     7)
@@ -349,15 +349,13 @@ case $choice in
             --teleop.id=$TELEOP_ID \
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
-            --fps=$FPS \
             --display_data=true
         ;;
 
     9)
         echo "Exiting..."
         exit 0
-        ;;P
-
+        ;;
     *)
         echo "Invalid choice. Please select 1-9."
         exit 1

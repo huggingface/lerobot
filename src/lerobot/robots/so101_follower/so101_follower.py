@@ -19,7 +19,6 @@ import time
 from functools import cached_property
 from typing import Any
 
-from lerobot.cameras.parallel_camera_reader import ParallelCameraReader
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -60,9 +59,6 @@ class SO101Follower(Robot):
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
-
-        # Initialize parallel camera reader for performance
-        self.camera_reader = ParallelCameraReader(persistent_executor=True)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -178,19 +174,27 @@ class SO101Follower(Robot):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
-        # Capture images from all cameras in parallel
+        # Get camera observations
         if self.cameras:
-            start = time.perf_counter()
-            camera_data = self.camera_reader.read_cameras_parallel(
-                self.cameras,
-                timeout_ms=1000,
-                with_depth=False,  # SO101 doesn't use depth
-                return_partial=True,
-            )
-            obs_dict.update(camera_data)
-            dt_ms = (time.perf_counter() - start) * 1e3
-            if dt_ms > 10:  # Only log if slow
-                logger.debug(f"{self} parallel camera read: {dt_ms:.1f}ms for {len(self.cameras)} cameras")
+            for cam_key, cam in self.cameras.items():
+                # Check if camera has depth capability
+                if hasattr(cam, "use_depth") and cam.use_depth:
+                    # Use async_read_all for cameras with depth
+                    all_frames = cam.async_read_all(timeout_ms=50)
+                    # Add color frame
+                    obs_dict[cam_key] = all_frames.get("color")
+
+                    # Add depth frame with "_depth" suffix
+                    if "depth_rgb" in all_frames and all_frames["depth_rgb"] is not None:
+                        obs_dict[f"{cam_key}_depth"] = all_frames["depth_rgb"]
+                    elif "depth" in all_frames and all_frames["depth"] is not None:
+                        obs_dict[f"{cam_key}_depth"] = all_frames["depth"]
+                    else:
+                        # Log as warning, not error, since this can happen during startup
+                        logger.warning(f"{self} depth frame missing or None for {cam_key}_depth")
+                else:
+                    # Regular camera without depth
+                    obs_dict[cam_key] = cam.async_read(timeout_ms=50)
 
         return obs_dict
 

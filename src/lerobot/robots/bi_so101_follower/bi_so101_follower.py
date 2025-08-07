@@ -15,10 +15,10 @@
 # limitations under the License.
 
 import logging
+import time
 from functools import cached_property
 from typing import Any
 
-from lerobot.cameras.parallel_camera_reader import ParallelCameraReader
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.robots.so101_follower import SO101Follower
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
@@ -66,9 +66,6 @@ class BiSO101Follower(Robot):
         self.right_arm = SO101Follower(right_arm_config)
         self.cameras = make_cameras_from_configs(config.cameras)
 
-        # Initialize parallel camera reader for performance
-        # self.camera_reader = ParallelCameraReader(persistent_executor=True)
-
     @property
     def _motors_ft(self) -> dict[str, type]:
         return {f"left_{motor}.pos": float for motor in self.left_arm.bus.motors} | {
@@ -84,11 +81,12 @@ class BiSO101Follower(Robot):
 
             # Add depth stream if enabled
             if hasattr(cam, "use_depth") and cam.use_depth:
-                # Depth has fixed resolution for Kinect (512x424)
-                if hasattr(cam_config, "type") and cam_config.type == "kinect":
+                # Check if this is a Kinect camera by looking at the camera class name
+                if "kinect" in cam_key.lower():
+                    # Kinect depth has fixed resolution (height=424, width=512)
                     ft[f"{cam_key}_depth"] = (424, 512, 3)
                 else:
-                    # For other cameras, use same resolution as color
+                    # For other cameras (RealSense), use same resolution as color
                     ft[f"{cam_key}_depth"] = (cam_config.height, cam_config.width, 3)
 
         return ft
@@ -143,14 +141,27 @@ class BiSO101Follower(Robot):
         right_obs = self.right_arm.get_observation()
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
-        # Read all cameras sequentially
+        # Get camera observations
         if self.cameras:
             for cam_key, cam in self.cameras.items():
-                frames = cam.async_read_all(timeout_ms=1000)
-                obs_dict[cam_key] = frames.get("color")
-                if "depth_rgb" in frames and frames["depth_rgb"] is not None:
-                    obs_dict[f"{cam_key}_depth"] = frames.get("depth_rgb")
+                # Check if camera has depth capability
+                if hasattr(cam, "use_depth") and cam.use_depth:
+                    # Use async_read_all for cameras with depth
+                    all_frames = cam.async_read_all(timeout_ms=50)
+                    # Add color frame
+                    obs_dict[cam_key] = all_frames.get("color")
 
+                    # Add depth frame with "_depth" suffix
+                    if "depth_rgb" in all_frames and all_frames["depth_rgb"] is not None:
+                        obs_dict[f"{cam_key}_depth"] = all_frames["depth_rgb"]
+                    elif "depth" in all_frames and all_frames["depth"] is not None:
+                        obs_dict[f"{cam_key}_depth"] = all_frames["depth"]
+                    else:
+                        # Log as warning, not error, since this can happen during startup
+                        logger.warning(f"{self} depth frame missing or None for {cam_key}_depth")
+                else:
+                    # Regular camera without depth
+                    obs_dict[cam_key] = cam.async_read(timeout_ms=50)
 
         return obs_dict
 

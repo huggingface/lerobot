@@ -16,6 +16,7 @@
 import contextlib
 import logging
 import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -803,8 +804,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
-                self._save_image(frame[key], img_path)
-                self.episode_buffer[key].append(str(img_path))
+                
+                # Check if this is raw depth data (2D array with float32 or uint16)
+                data = frame[key]
+                if isinstance(data, np.ndarray) and data.ndim == 2 and data.dtype in [np.float32, np.uint16]:
+                    # Save raw depth as .npy instead of .png
+                    npy_path = img_path.with_suffix('.npy')
+                    np.save(npy_path, data)
+                    self.episode_buffer[key].append(str(npy_path))
+                else:
+                    # Save as image (existing behavior)
+                    self._save_image(data, img_path)
+                    self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
 
@@ -972,6 +983,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
             img_dir = self._get_image_file_path(
                 episode_index=episode_index, image_key=key, frame_index=0
             ).parent
+            
+            # Check if this is a depth stream by looking for .npy files
+            npy_files = list(img_dir.glob("*.npy"))
+            if npy_files:
+                # This is a depth stream with raw depth data - run colorization
+                logger.info(f"Colorizing depth stream '{key}' for episode {episode_index}")
+                
+                # Run the colorization script
+                colorize_script = Path(__file__).parent / "scripts" / "colorize_depth.py"
+                result = subprocess.run(
+                    ["python", str(colorize_script), str(img_dir)],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode != 0:
+                    logger.error(f"Depth colorization failed: {result.stderr}")
+                    raise RuntimeError(f"Failed to colorize depth stream '{key}': {result.stderr}")
+            
             encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
             shutil.rmtree(img_dir)
 
