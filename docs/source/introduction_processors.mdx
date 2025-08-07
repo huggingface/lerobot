@@ -118,7 +118,7 @@ class MyProcessorStep:
 The `RobotProcessor` chains multiple `ProcessorStep` instances together, executing them sequentially. It provides automatic format conversion to handle both batch dictionaries (from datasets) and EnvTransition dictionaries:
 
 ```python
-from lerobot.processor.pipeline import RobotProcessor
+from lerobot.processor.pipeline import RobotProcessor, _default_batch_to_transition, _default_transition_to_batch
 
 # Create a processing pipeline
 processor = RobotProcessor(
@@ -130,8 +130,8 @@ processor = RobotProcessor(
     name="my_preprocessing_pipeline",
 
     # Optional: Custom converters for input/output formats
-    to_transition=custom_batch_to_transition,  # How to convert batch dict → EnvTransition
-    to_output=custom_transition_to_batch       # How to convert EnvTransition → output format
+    to_transition=_default_batch_to_transition,  # How to convert batch dict → EnvTransition
+    to_output=_default_transition_to_batch       # How to convert EnvTransition → output format
 )
 
 # The processor automatically handles different input formats:
@@ -150,6 +150,83 @@ output = processor(transition)  # Stays as EnvTransition throughout
 
 The `to_transition` and `to_output` converters enable seamless integration with existing codebases.
 By default, they handle the standard LeRobot batch format, but you can customize them for different data structures.
+
+### Additional Converter Functions
+
+LeRobot provides several specialized converter functions for common robotics scenarios:
+
+```python
+from lerobot.processor.converters import (
+    to_transition_teleop_action,
+    to_transition_robot_observation, 
+    to_output_robot_action,
+    to_dataset_frame
+)
+```
+
+**`to_transition_teleop_action`** - Converts teleoperation device actions to EnvTransitions:
+```python
+# Use case: Phone, gamepad, or other teleop device control
+phone_action = {"x": 0.1, "y": -0.2, "gripper": 0.8}
+transition = to_transition_teleop_action(phone_action)
+# Creates: {ACTION: {"action.x": 0.1, "action.y": -0.2, "action.gripper": 0.8}, ...}
+```
+
+**`to_transition_robot_observation`** - Converts robot sensor data to EnvTransitions:
+```python
+# Use case: Live robot observation during inference
+robot_obs = {
+    "joint_1": 0.5, "joint_2": -0.3,  # joint positions
+    "camera_0": image_array            # camera images
+}
+transition = to_transition_robot_observation(robot_obs)
+# Creates: {OBSERVATION: {"observation.state.joint_1": 0.5, "observation.images.camera_0": image, ...}}
+```
+
+**`to_output_robot_action`** - Extracts robot-executable actions from EnvTransitions:
+```python
+# Use case: Converting model outputs back to robot commands
+model_transition = {ACTION: {"action.joint_1": 0.2, "action.joint_2": 0.1}}
+robot_action = to_output_robot_action(model_transition)
+# Returns: {"joint_1": 0.2, "joint_2": 0.1} - ready for robot.send_action()
+```
+
+**`to_dataset_frame`** - Converts transitions to dataset-compatible format:
+```python
+# Use case: Saving processed data or creating training batches
+features = {
+    "action": {"names": ["joint_1", "joint_2"]},
+    "observation.state": {"names": ["joint_1", "joint_2"]},
+    "observation.images.camera0": {...}
+}
+batch = to_dataset_frame(transition, features)
+# Returns: {"action": [0.2, 0.1], "observation.state": [0.5, -0.3], ...}
+```
+
+These converters are particularly useful when integrating with real robots, as shown in the examples:
+
+```python
+# Example from phone_so100_teleop.py - Real robot teleoperation
+phone_to_robot_ee_pose = RobotProcessor(
+    steps=[...],
+    to_transition=to_transition_teleop_action,  # Phone → EnvTransition
+    to_output=lambda tr: tr                     # Keep as EnvTransition
+)
+
+# Example from phone_so100_eval.py - Robot action execution  
+robot_ee_to_joints = RobotProcessor(
+    steps=[...],
+    to_transition=lambda tr: tr,                # Already EnvTransition
+    to_output=to_output_robot_action           # EnvTransition → Robot action
+)
+
+# Example from phone_so100_record.py - Dataset recording
+robot_joints_to_ee_pose = RobotProcessor(
+    steps=[...],
+    to_transition=to_transition_robot_observation,  # Robot obs → EnvTransition
+    to_output=lambda tr: tr                         # Keep as EnvTransition for dataset
+)
+```
 
 ### Data Format Conversion
 
