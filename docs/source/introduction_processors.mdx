@@ -3,16 +3,19 @@
 In robotics, there's a fundamental mismatch between the data that robots and humans produce and what machine learning models expect. This creates several translation challenges:
 
 **Raw Robot Data → Model Input:**
+
 - Robots output raw sensor data (camera images, joint positions, force readings) that need normalization, batching, and device placement before models can process them
 - Language instructions from humans ("pick up the red cube") must be tokenized into numerical representations
 - Different robots use different coordinate systems and units that need standardization
 
 **Model Output → Robot Commands:**
+
 - Models might output end-effector positions, but robots need joint-space commands
 - Teleoperators (like gamepads) produce relative movements (delta positions), but robots expect absolute commands
 - Model predictions are often normalized and need to be converted back to real-world scales
 
 **Cross-Domain Translation:**
+
 - Training data from one robot setup needs adaptation for deployment on different hardware
 - Models trained with specific camera configurations must work with new camera arrangements
 - Datasets with different naming conventions need harmonization
@@ -24,6 +27,7 @@ Processors are the data transformation backbone of LeRobot. They handle all the 
 ## What are Processors?
 
 In robotics, data comes in many forms - images from cameras, joint positions from sensors, text instructions from users, and more. Each type of data requires specific transformations before a model can use it effectively. Models need this data to be:
+
 - **Normalized**: Scaled to appropriate ranges for neural network processing
 - **Batched**: Organized with proper dimensions for batch processing
 - **Tokenized**: Text converted to numerical representations
@@ -63,6 +67,7 @@ transition: EnvTransition = {
 ```
 
 Each key in the transition has a specific purpose:
+
 - **OBSERVATION**: All sensor data (images, states, proprioception)
 - **ACTION**: The action to execute or that was executed
 - **REWARD**: Reinforcement learning signal
@@ -82,27 +87,27 @@ import torch
 
 class MyProcessorStep:
     """Example processor step interface - all methods must be implemented."""
-    
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Transform the transition - this is the main processing logic."""
         raise NotImplementedError
-    
+
     def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Declare how this step transforms feature shapes/types."""
         raise NotImplementedError
-    
+
     def get_config(self) -> dict[str, Any]:
         """Return JSON-serializable configuration for saving/loading."""
         raise NotImplementedError
-    
+
     def state_dict(self) -> dict[str, torch.Tensor]:
         """Return any learnable parameters (tensors only)."""
         raise NotImplementedError
-    
+
     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
         """Load learnable parameters from saved state."""
         raise NotImplementedError
-    
+
     def reset(self) -> None:
         """Reset any internal state between episodes."""
         raise NotImplementedError
@@ -123,7 +128,7 @@ processor = RobotProcessor(
         step3   # Third transformation
     ],
     name="my_preprocessing_pipeline",
-    
+
     # Optional: Custom converters for input/output formats
     to_transition=custom_batch_to_transition,  # How to convert batch dict → EnvTransition
     to_output=custom_transition_to_batch       # How to convert EnvTransition → output format
@@ -145,7 +150,6 @@ output = processor(transition)  # Stays as EnvTransition throughout
 
 The `to_transition` and `to_output` converters enable seamless integration with existing codebases.
 By default, they handle the standard LeRobot batch format, but you can customize them for different data structures.
-
 
 ### Data Format Conversion
 
@@ -191,7 +195,7 @@ processor = RobotProcessor(
 
 ## Common Processor Steps
 
-LeRobot provides a rich set of pre-built processor steps for common transformations. 
+LeRobot provides a rich set of pre-built processor steps for common transformations.
 Let's explore each in detail:
 
 ### Data Normalization
@@ -351,6 +355,7 @@ Different datasets and models may use different naming conventions.
 The `RenameProcessor` solves this mismatch:
 
 **Why is this useful?**
+
 - When loading a model trained on a different dataset with different key names
 - When using foundation models that expect specific key naming conventions
 - When standardizing datasets from different sources
@@ -414,17 +419,17 @@ preprocessor = RobotProcessor(
                 "observation.images.wrist": "observation.images.camera1"
             }
         ),
-        
+
         # 2. Add batch dimensions for model
         ToBatchProcessor(),
-        
+
         # 3. Tokenize language instructions if present
         TokenizerProcessor(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=64,
             task_key="task"
         ),
-        
+
         # 4. Normalize numerical data
         NormalizerProcessor(
             features=policy_features,
@@ -435,7 +440,7 @@ preprocessor = RobotProcessor(
             },
             stats=dataset.meta.stats
         ),
-        
+
         # 5. Move to GPU and convert to half precision
         DeviceProcessor(
             device="cuda:0",
@@ -450,7 +455,7 @@ postprocessor = RobotProcessor(
     steps=[
         # 1. Move back to CPU for robot hardware
         DeviceProcessor(device="cpu"),
-        
+
         # 2. Denormalize actions to original scale
         UnnormalizerProcessor(
             features=policy_features,
@@ -489,15 +494,15 @@ for epoch in range(num_epochs):
     for batch in dataloader:
         # Preprocess batch
         processed_batch = preprocessor(batch)
-        
+
         # Forward pass - returns loss and optional metrics
         loss, metrics = model.forward(processed_batch)
-        
+
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        
+
         # Log metrics if available
         if metrics:
             wandb.log(metrics)
@@ -515,7 +520,7 @@ preprocessor = RobotProcessor.from_pretrained(
     config_filename="robot_preprocessor.json"
 )
 postprocessor = RobotProcessor.from_pretrained(
-    "path/to/model", 
+    "path/to/model",
     config_filename="robot_postprocessor.json"
 )
 
@@ -534,34 +539,34 @@ with torch.no_grad():
     while not done:
         # Get observation from robot
         observation = robot.get_observation()
-        
+
         # Build dataset-compatible frame
         observation_frame = build_dataset_frame(
-            dataset.features, 
-            observation, 
+            dataset.features,
+            observation,
             prefix="observation"
         )
-        
+
         # Add task instruction to complementary data
         observation_frame["task"] = "pick up the red cube"
-        
+
         # Preprocess for model
         model_input = preprocessor(observation_frame)
-        
+
         # Run policy
         raw_action = policy.select_action(model_input)
-        
+
         # Postprocess action
         action_transition = {TransitionKey.ACTION: raw_action}
         processed = postprocessor(action_transition)
         action = processed[TransitionKey.ACTION]
-        
+
         # Convert to robot action format
         robot_action = {
-            key: action[i].item() 
+            key: action[i].item()
             for i, key in enumerate(robot.action_features)
         }
-        
+
         # Execute on robot
         robot.send_action(robot_action)
 ```
@@ -632,10 +637,10 @@ processor = RobotProcessor.from_pretrained(
     overrides={
         # Change device for different hardware
         "device_processor": {"device": "cuda:1"},
-        
+
         # Update statistics for new dataset
         "normalizer_processor": {"stats": new_dataset.meta.stats},
-        
+
         # Provide non-serializable objects (like tokenizers)
         "tokenizer_processor": {"tokenizer": custom_tokenizer}
     }
@@ -669,16 +674,16 @@ from lerobot.processor.pipeline import ProcessorStepRegistry, ObservationProcess
 @ProcessorStepRegistry.register("my_company/gaussian_noise")
 class GaussianNoiseProcessor(ObservationProcessor):
     """Add Gaussian noise to observations for robustness training."""
-    
+
     noise_std: float = 0.01
     training_only: bool = True
     is_training: bool = True
-    
+
     def observation(self, observation):
         """Add noise to observation tensors."""
         if not self.is_training and self.training_only:
             return observation
-        
+
         noisy_obs = {}
         for key, value in observation.items():
             if isinstance(value, torch.Tensor) and "image" not in key:
@@ -687,9 +692,9 @@ class GaussianNoiseProcessor(ObservationProcessor):
                 noisy_obs[key] = value + noise
             else:
                 noisy_obs[key] = value
-        
+
         return noisy_obs
-    
+
     def get_config(self):
         return {
             "noise_std": self.noise_std,
@@ -716,15 +721,15 @@ from lerobot.processor import ActionProcessor
 @ProcessorStepRegistry.register("my_company/action_clipper")
 class ActionClipProcessor(ActionProcessor):
     """Clip actions to safe ranges."""
-    
+
     min_value: float = -1.0
     max_value: float = 1.0
-    
+
     def action(self, action):
         """Process only the action component."""
         # No need to handle transition dict - base class does it
         return torch.clamp(action, self.min_value, self.max_value)
-    
+
     def get_config(self):
         return {"min_value": self.min_value, "max_value": self.max_value}
 ```
@@ -776,7 +781,7 @@ Use `step_through()` for detailed debugging of the transformation pipeline:
 # Inspect data at each transformation stage
 for i, intermediate in enumerate(processor.step_through(data)):
     print(f"\n=== After step {i} ===")
-    
+
     # Check observation shapes
     obs = intermediate.get(TransitionKey.OBSERVATION)
     if obs:
@@ -786,7 +791,7 @@ for i, intermediate in enumerate(processor.step_through(data)):
                       f"dtype={value.dtype}, "
                       f"device={value.device}, "
                       f"range=[{value.min():.3f}, {value.max():.3f}]")
-    
+
     # Check action if present
     action = intermediate.get(TransitionKey.ACTION)
     if action is not None and isinstance(action, torch.Tensor):
@@ -818,6 +823,7 @@ variant_processor = RobotProcessor(
 ### 1. Order Matters
 
 The sequence of processors is crucial. Follow this general order:
+
 ```python
 # Preprocessing: Raw → Model-ready
 1. Rename (standardize keys)
@@ -851,6 +857,7 @@ print(ProcessorStepRegistry.list())  # See all registered processors
 ### 3. Common Pitfalls and Solutions
 
 **Tensor Device Mismatch:**
+
 ```python
 # Problem: RuntimeError: Expected all tensors on same device
 # Solution: Ensure DeviceProcessor is in pipeline
@@ -863,6 +870,7 @@ preprocessor = RobotProcessor(
 ```
 
 **Missing Statistics:**
+
 ```python
 # Problem: NormalizerProcessor has no stats
 # Solution 1: Compute stats from dataset
@@ -897,6 +905,6 @@ Processors are the unsung heroes of robotics pipelines, handling the critical tr
 - Create custom transformations for specialized tasks
 
 Remember: good preprocessing is often the difference between a model that works in theory
-and one that works in practice! 
-The modular pipeline approach ensures your transformations are testable, reproducible, 
+and one that works in practice!
+The modular pipeline approach ensures your transformations are testable, reproducible,
 and portable across different robots and environments.
