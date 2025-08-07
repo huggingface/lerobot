@@ -288,8 +288,8 @@ def test_serialization_methods():
     assert processor.device == device
 
 
-def test_feature_contract():
-    """Test that feature_contract returns features unchanged."""
+def test_features():
+    """Test that features returns features unchanged."""
     processor = DeviceProcessor(device="cpu")
 
     features = {
@@ -297,7 +297,7 @@ def test_feature_contract():
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
     }
 
-    result = processor.feature_contract(features)
+    result = processor.transform_features(features)
     assert result == features
     assert result is features  # Should return the same object
 

@@ -470,7 +470,7 @@ def test_registry_functionality():
 
 
 @require_package("transformers")
-def test_feature_contract_basic():
+def test_features_basic():
     """Test basic feature contract functionality."""
     mock_tokenizer = MockTokenizer(vocab_size=100)
     processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=128)
@@ -480,7 +480,7 @@ def test_feature_contract_basic():
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
     }
 
-    output_features = processor.feature_contract(input_features)
+    output_features = processor.transform_features(input_features)
 
     # Check that original features are preserved
     assert "observation.state" in output_features
@@ -501,13 +501,13 @@ def test_feature_contract_basic():
 
 
 @require_package("transformers")
-def test_feature_contract_with_custom_max_length():
+def test_features_with_custom_max_length():
     """Test feature contract with custom max_length."""
     mock_tokenizer = MockTokenizer(vocab_size=100)
     processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=64)
 
     input_features = {}
-    output_features = processor.feature_contract(input_features)
+    output_features = processor.transform_features(input_features)
 
     # Check that features use correct max_length
     assert f"{OBS_LANGUAGE}.tokens" in output_features
@@ -521,7 +521,7 @@ def test_feature_contract_with_custom_max_length():
 
 
 @require_package("transformers")
-def test_feature_contract_existing_features():
+def test_features_existing_features():
     """Test feature contract when tokenized features already exist."""
     mock_tokenizer = MockTokenizer(vocab_size=100)
     processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=256)
@@ -531,7 +531,7 @@ def test_feature_contract_existing_features():
         f"{OBS_LANGUAGE}.attention_mask": PolicyFeature(type=FeatureType.LANGUAGE, shape=(100,)),
     }
 
-    output_features = processor.feature_contract(input_features)
+    output_features = processor.transform_features(input_features)
 
     # Should not overwrite existing features
     assert output_features[f"{OBS_LANGUAGE}.tokens"].shape == (100,)  # Original shape preserved

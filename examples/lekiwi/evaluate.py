@@ -1,6 +1,7 @@
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.factory import make_processor
 from lerobot.record import record_loop
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.utils.control_utils import init_keyboard_listener
@@ -11,12 +12,14 @@ NUM_EPISODES = 2
 FPS = 30
 EPISODE_TIME_SEC = 60
 TASK_DESCRIPTION = "My task description"
+HF_MODEL_ID = "<hf_username>/<model_repo_id>"
+HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
 
 # Create the robot and teleoperator configurations
 robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
 robot = LeKiwiClient(robot_config)
 
-policy = ACTPolicy.from_pretrained("<hf_username>/<policy_repo_id>")
+policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 
 # Configure the dataset features
 action_features = hw_to_dataset_features(robot.action_features, "action")
@@ -25,7 +28,7 @@ dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
 dataset = LeRobotDataset.create(
-    repo_id="<hf_username>/<eval_dataset_repo_id>",
+    repo_id=HF_DATASET_ID,
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,
@@ -43,6 +46,12 @@ listener, events = init_keyboard_listener()
 if not robot.is_connected:
     raise ValueError("Robot is not connected!")
 
+preprocessor, postprocessor = make_processor(
+    policy_cfg=policy,
+    pretrained_path=HF_MODEL_ID,
+    dataset_stats=dataset.meta.stats,
+)
+
 recorded_episodes = 0
 while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Running inference, recording eval episode {recorded_episodes} of {NUM_EPISODES}")
@@ -53,6 +62,8 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
         events=events,
         fps=FPS,
         policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,

@@ -621,10 +621,19 @@ def test_serialization_roundtrip(full_stats):
     assert torch.allclose(result1[TransitionKey.ACTION], result2[TransitionKey.ACTION])
 
     # Verify features and norm_map are correctly reconstructed
-    assert new_processor.features.keys() == original_processor.features.keys()
-    for key in new_processor.features:
-        assert new_processor.features[key].type == original_processor.features[key].type
-        assert new_processor.features[key].shape == original_processor.features[key].shape
+    assert (
+        new_processor.transform_features(features).keys()
+        == original_processor.transform_features(features).keys()
+    )
+    for key in new_processor.transform_features(features):
+        assert (
+            new_processor.transform_features(features)[key].type
+            == original_processor.transform_features(features)[key].type
+        )
+        assert (
+            new_processor.transform_features(features)[key].shape
+            == original_processor.transform_features(features)[key].shape
+        )
 
     assert new_processor.norm_map == original_processor.norm_map
 
