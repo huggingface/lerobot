@@ -131,6 +131,9 @@ class EEReferenceAndDelta:
         transition[TransitionKey.ACTION] = act
         return transition
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
+
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
 @dataclass
@@ -439,3 +442,6 @@ class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessor):
             if isinstance(k, str) and k.endswith(".pos")
         }
         return comp
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features

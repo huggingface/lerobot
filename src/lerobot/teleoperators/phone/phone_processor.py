@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass, field
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
@@ -81,3 +82,6 @@ class MapPhoneActionToRobotAction(ActionProcessor):
             }
         )
         return act
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
