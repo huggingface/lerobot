@@ -158,13 +158,14 @@ LeRobot provides several specialized converter functions for common robotics sce
 ```python
 from lerobot.processor.converters import (
     to_transition_teleop_action,
-    to_transition_robot_observation, 
+    to_transition_robot_observation,
     to_output_robot_action,
     to_dataset_frame
 )
 ```
 
 **`to_transition_teleop_action`** - Converts teleoperation device actions to EnvTransitions:
+
 ```python
 # Use case: Phone, gamepad, or other teleop device control
 phone_action = {"x": 0.1, "y": -0.2, "gripper": 0.8}
@@ -173,6 +174,7 @@ transition = to_transition_teleop_action(phone_action)
 ```
 
 **`to_transition_robot_observation`** - Converts robot sensor data to EnvTransitions:
+
 ```python
 # Use case: Live robot observation during inference
 robot_obs = {
@@ -184,6 +186,7 @@ transition = to_transition_robot_observation(robot_obs)
 ```
 
 **`to_output_robot_action`** - Extracts robot-executable actions from EnvTransitions:
+
 ```python
 # Use case: Converting model outputs back to robot commands
 model_transition = {ACTION: {"action.joint_1": 0.2, "action.joint_2": 0.1}}
@@ -192,6 +195,7 @@ robot_action = to_output_robot_action(model_transition)
 ```
 
 **`to_dataset_frame`** - Converts transitions to dataset-compatible format:
+
 ```python
 # Use case: Saving processed data or creating training batches
 features = {
@@ -213,7 +217,7 @@ phone_to_robot_ee_pose = RobotProcessor(
     to_output=lambda tr: tr                     # Keep as EnvTransition
 )
 
-# Example from phone_so100_eval.py - Robot action execution  
+# Example from phone_so100_eval.py - Robot action execution
 robot_ee_to_joints = RobotProcessor(
     steps=[...],
     to_transition=lambda tr: tr,                # Already EnvTransition
