@@ -129,6 +129,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
+from lerobot.utils.audio_utils import rolling_vstack
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
@@ -351,17 +352,9 @@ def record_loop(
         # (1) ensure that the audio buffers are filled with enough data
         # (2) add additional initial samples to the dataset in case of variable audio chunk duration during training
         busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
-
         for microphone_name, microphone in robot.microphones.items():
             audio_chunk = microphone.read()
-
-            buffer_size = audio_buffer[microphone_name].shape[0]
-            # Remove as many old audio samples as needed
-            audio_buffer[microphone_name] = audio_buffer[microphone_name][len(audio_chunk) :]
-            # Add new audio samples, only the newest if the buffer is already full
-            audio_buffer[microphone_name] = np.vstack(
-                (audio_buffer[microphone_name], audio_chunk[-buffer_size:])
-            )
+            audio_buffer[microphone_name] = rolling_vstack(audio_buffer[microphone_name], audio_chunk)
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -386,15 +379,8 @@ def record_loop(
             # Transform instantaneous audio samples into a buffer of fixed size
             buffered_observation_frame = copy(observation_frame)
             for name in audio_buffer:
-                buffer_size = audio_buffer[name].shape[0]
-                # Remove as many old audio samples as needed
-                audio_buffer[name] = audio_buffer[name][len(buffered_observation_frame[name]) :]
-                # Add new audio samples
-                audio_buffer[name] = np.vstack(
-                    (audio_buffer[name], buffered_observation_frame[name][-buffer_size:])
-                )
                 # Add the audio buffer to the observation
-                buffered_observation_frame[name] = audio_buffer[name]
+                buffered_observation_frame[name] = rolling_vstack(audio_buffer[name], observation_frame[name])
 
             action_values = predict_action(
                 observation=buffered_observation_frame,
