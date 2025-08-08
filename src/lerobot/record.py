@@ -86,7 +86,7 @@ multi_config = MultiRecordConfig(
     robot=robot_config,
     multi_dataset=MultiDatasetRecordConfig(
         datasets=[pick_config, place_config],
-        stage_switch_keys=["space", "tab"]  # Space for pick, Tab for place
+        use_numeric_keys=True  # Use numeric keys 1-9 for stage switching
     ),
     teleop=teleop_config
 )
@@ -96,7 +96,8 @@ datasets = multi_record(multi_config)
 ```
 
 During multi-dataset recording:
-- Press the configured keys (e.g., SPACE, TAB) to switch between recording stages
+- Press numeric keys (1-9) to switch directly to the corresponding recording stage
+- Pressing the same key multiple times creates separate episodes for that dataset
 - Press RIGHT ARROW to finish the current episode
 - Press LEFT ARROW to re-record the current episode
 - Press ESC to stop recording completely
@@ -205,18 +206,15 @@ class DatasetRecordConfig:
 class MultiDatasetRecordConfig:
     # List of dataset configurations for each stage/phase of the motion
     datasets: list[DatasetRecordConfig]
-    # Key sequence to switch between dataset stages (e.g., ['space', 'tab'])
-    stage_switch_keys: list[str] | None = None
+    # Whether to use numeric keys (1-9) for stage switching. If False, uses legacy key binding system
+    use_numeric_keys: bool = True
 
     def __post_init__(self):
         if not self.datasets:
             raise ValueError("At least one dataset configuration must be provided")
-        if self.stage_switch_keys is None:
-            # Default keys for switching stages
-            self.stage_switch_keys = ["space", "tab", "enter"][: len(self.datasets)]
-        elif len(self.stage_switch_keys) < len(self.datasets):
+        if len(self.datasets) > 9:
             raise ValueError(
-                f"Number of stage_switch_keys ({len(self.stage_switch_keys)}) must be at least the number of datasets ({len(self.datasets)})"
+                f"Maximum of 9 datasets supported when using numeric keys. Found: {len(self.datasets)}"
             )
 
 
@@ -381,8 +379,8 @@ def record_loop(
         timestamp = time.perf_counter() - start_episode_t
 
 
-def init_multi_keyboard_listener(stage_switch_keys: list[str]):
-    """Initialize keyboard listener for multi-dataset recording with stage switching."""
+def init_multi_keyboard_listener(num_datasets: int):
+    """Initialize keyboard listener for multi-dataset recording with numeric stage switching."""
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
@@ -416,38 +414,16 @@ def init_multi_keyboard_listener(stage_switch_keys: list[str]):
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
-            elif hasattr(key, "char") and key.char:
-                # Handle stage switching keys
-                if key.char == " " and "space" in stage_switch_keys:
-                    stage_idx = stage_switch_keys.index("space")
+            elif hasattr(key, "char") and key.char and key.char.isdigit():
+                # Handle numeric stage switching keys (1-9)
+                stage_num = int(key.char)
+                if 1 <= stage_num <= num_datasets:
+                    stage_idx = stage_num - 1  # Convert to 0-based index
                     events["current_stage"] = stage_idx
                     events["switch_stage"] = True
-                    print(f"Switched to dataset stage {stage_idx}")
-                elif key.char == "\t" and "tab" in stage_switch_keys:
-                    stage_idx = stage_switch_keys.index("tab")
-                    events["current_stage"] = stage_idx
-                    events["switch_stage"] = True
-                    print(f"Switched to dataset stage {stage_idx}")
-                elif key.char == "\r" and "enter" in stage_switch_keys:
-                    stage_idx = stage_switch_keys.index("enter")
-                    events["current_stage"] = stage_idx
-                    events["switch_stage"] = True
-                    print(f"Switched to dataset stage {stage_idx}")
-            elif key == keyboard.Key.space and "space" in stage_switch_keys:
-                stage_idx = stage_switch_keys.index("space")
-                events["current_stage"] = stage_idx
-                events["switch_stage"] = True
-                print(f"Switched to dataset stage {stage_idx}")
-            elif key == keyboard.Key.tab and "tab" in stage_switch_keys:
-                stage_idx = stage_switch_keys.index("tab")
-                events["current_stage"] = stage_idx
-                events["switch_stage"] = True
-                print(f"Switched to dataset stage {stage_idx}")
-            elif key == keyboard.Key.enter and "enter" in stage_switch_keys:
-                stage_idx = stage_switch_keys.index("enter")
-                events["current_stage"] = stage_idx
-                events["switch_stage"] = True
-                print(f"Switched to dataset stage {stage_idx}")
+                    print(f"Switched to dataset stage {stage_idx + 1}")
+                else:
+                    print(f"Invalid stage number {stage_num}. Available stages: 1-{num_datasets}")
         except Exception as e:
             print(f"Error handling key press: {e}")
 
@@ -499,9 +475,15 @@ def multi_record_loop(
     current_stage = events["current_stage"]
     current_dataset = datasets[current_stage] if current_stage < len(datasets) else None
 
-    print(f"Starting recording with stage {current_stage}")
-    print(f"Available stages: {[f'Stage {i}: {ds.meta.repo_id}' for i, ds in enumerate(datasets)]}")
+    logging.info(f"Starting recording with stage {current_stage}")
+    logging.info(f"Available stages: {[f'Stage {i}: {ds.meta.repo_id}' for i, ds in enumerate(datasets)]}")
     from tqdm import tqdm
+
+    # log say to speak the current stage
+    log_say(
+        f"Starting recording with stage {current_stage}: {current_dataset.meta.repo_id}",
+        play_sounds=True,
+    )
 
     pbar = tqdm(
         total=control_time_s,
@@ -531,9 +513,33 @@ def multi_record_loop(
             events["switch_stage"] = False
             new_stage = events["current_stage"]
             if new_stage < len(datasets):
+                # Check if we're switching to a dataset that already has data in this episode
+                new_dataset = datasets[new_stage]
+                if (new_dataset.episode_buffer is not None and 
+                    new_dataset.episode_buffer.get("size", 0) > 0 and 
+                    new_stage != current_stage):
+                    # Save the current episode for the dataset we're switching to
+                    try:
+                        print(f"Saving previous episode for dataset {new_stage} before recording new data")
+                        new_dataset.save_episode()
+                        print(f"Saved episode for dataset {new_stage}: {dataset_configs[new_stage].repo_id}")
+                    except Exception as e:
+                        print(f"Error saving previous episode for dataset {new_stage}: {e}")
+                        # Clear the buffer to avoid issues
+                        try:
+                            new_dataset.clear_episode_buffer()
+                        except Exception as clear_error:
+                            print(f"Warning: Error clearing episode buffer for dataset {new_stage}: {clear_error}")
+                            new_dataset.episode_buffer = None
+                
                 current_stage = new_stage
                 current_dataset = datasets[current_stage]
-                print(f"Recording switched to stage {current_stage}: {current_dataset.meta.repo_id}")
+                print(f"Recording switched to stage {current_stage + 1}: {current_dataset.meta.repo_id}")
+                # log say for stage switch
+                log_say(
+                    f"Switched to stage {current_stage + 1}: {current_dataset.meta.repo_id}",
+                    play_sounds=True,
+                )
 
         observation = robot.get_observation()
 
@@ -667,17 +673,20 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
         teleop.connect()
 
     # Use custom keyboard listener for stage switching
-    listener, events = init_multi_keyboard_listener(cfg.multi_dataset.stage_switch_keys)
+    listener, events = init_multi_keyboard_listener(len(cfg.multi_dataset.datasets))
 
     # Reset to stage 0 at the beginning
     events["current_stage"] = 0
 
     # Print instructions for the user
     print("\n=== Multi-Dataset Recording Instructions ===")
-    for i, (key, dataset_cfg) in enumerate(
-        zip(cfg.multi_dataset.stage_switch_keys, cfg.multi_dataset.datasets, strict=False)
-    ):
-        print(f"Press '{key}' to record to stage {i}: {dataset_cfg.repo_id} ({dataset_cfg.single_task})")
+    if cfg.multi_dataset.use_numeric_keys:
+        for i, dataset_cfg in enumerate(cfg.multi_dataset.datasets):
+            print(f"Press '{i + 1}' to record to stage {i + 1}: {dataset_cfg.repo_id} ({dataset_cfg.single_task})")
+        print("Note: Pressing the same key multiple times creates separate episodes for that dataset")
+    else:
+        # Legacy key binding system (if needed for backward compatibility)
+        print("Legacy key binding mode - using predefined keys for stage switching")
     print("Press -> (right arrow) to exit current episode")
     print("Press <- (left arrow) to re-record current episode")
     print("Press ESC to stop recording")
@@ -700,9 +709,9 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
 
             log_say(f"Recording multi-stage episode {recorded_episodes + 1}", cfg.play_sounds)
             print(
-                f"Starting episode {recorded_episodes + 1} - Currently at stage 0: {cfg.multi_dataset.datasets[0].repo_id}"
+                f"Starting episode {recorded_episodes + 1} - Currently at stage 1: {cfg.multi_dataset.datasets[0].repo_id}"
             )
-            print("Use the configured keys to switch between recording stages during the episode.")
+            print("Use numeric keys (1-9) to switch between recording stages during the episode.")
 
             # Record the multi-stage episode
             multi_record_loop(
@@ -740,9 +749,14 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
                 log_say("Re-record episode", cfg.play_sounds)
                 events["rerecord_episode"] = False
                 events["exit_early"] = False
-                # Clear episode buffers for all datasets
-                for dataset in datasets:
-                    dataset.clear_episode_buffer()
+                # Clear episode buffers for all datasets with error handling
+                for i, dataset in enumerate(datasets):
+                    try:
+                        dataset.clear_episode_buffer()
+                    except Exception as clear_error:
+                        print(f"Warning: Error clearing episode buffer for dataset {i} during re-record: {clear_error}")
+                        # Force reset the episode buffer to None to avoid further issues
+                        dataset.episode_buffer = None
                 continue
 
             # Save episodes only for datasets that have frames recorded
@@ -757,12 +771,22 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
                         print(f"Saved episode for dataset {i}: {cfg.multi_dataset.datasets[i].repo_id}")
                     except Exception as e:
                         print(f"Error saving episode for dataset {i}: {e}")
-                        # Clear the buffer to avoid issues
-                        dataset.clear_episode_buffer()
+                        # Clear the buffer to avoid issues - but handle potential errors here too
+                        try:
+                            dataset.clear_episode_buffer()
+                        except Exception as clear_error:
+                            print(f"Warning: Error clearing episode buffer for dataset {i}: {clear_error}")
+                            # Force reset the episode buffer to None to avoid further issues
+                            dataset.episode_buffer = None
                 else:
                     # Clear empty buffer to avoid issues
                     if dataset.episode_buffer is not None:
-                        dataset.clear_episode_buffer()
+                        try:
+                            dataset.clear_episode_buffer()
+                        except Exception as clear_error:
+                            print(f"Warning: Error clearing empty episode buffer for dataset {i}: {clear_error}")
+                            # Force reset the episode buffer to None to avoid further issues
+                            dataset.episode_buffer = None
                     print(f"No data recorded for dataset {i}: {cfg.multi_dataset.datasets[i].repo_id}")
 
             if saved_any_dataset:

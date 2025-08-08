@@ -6,6 +6,12 @@ This example shows how to record data for multiple datasets sequentially within 
 For instance, you can record "pick" and "place" motions as separate datasets but within the same
 continuous episode.
 
+The new system uses numeric keys (1-9) for direct stage switching:
+- Press '1' to switch to the first dataset
+- Press '2' to switch to the second dataset
+- Press '3' to switch to the third dataset
+- etc.
+
 Usage:
 ```shell
 python examples/multi_dataset_recording_example.py
@@ -28,10 +34,10 @@ def create_multi_record_config():
 
     # Define the robot configuration
     robot_config = SO101FollowerConfig(
-        port="/dev/ttyACM0",  # Adjust to your robot's port
+        port="/dev/ttyACM1",  # Adjust to your robot's port
         cameras={
             "up": OpenCVCameraConfig(index_or_path=2, width=640, height=480, fps=30),
-            "side": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+            "side": OpenCVCameraConfig(index_or_path=4, width=640, height=480, fps=30),
         },
         id="follower_arm",
     )
@@ -43,11 +49,11 @@ def create_multi_record_config():
     )
 
     episodes = 2  # Number of episodes should be the same for both datasets
-
+    
     # Define multiple dataset configurations for different stages
     dataset_configs = [
         DatasetRecordConfig(
-            repo_id="maelic/pick_knife",
+            repo_id="pick_knife",
             single_task="Pick up the knife from the table.",
             fps=30,
             episode_time_s=60,  # 30 seconds for pick motion
@@ -58,8 +64,30 @@ def create_multi_record_config():
             private=True,  # Set to True if you want to keep the dataset private
         ),
         DatasetRecordConfig(
-            repo_id="maelic/place_left_knife",
+            repo_id="place_left_knife",
             single_task="Place the knife to the left of the plate.",
+            fps=30,
+            episode_time_s=60,  # 30 seconds for place motion
+            reset_time_s=10,
+            num_episodes=episodes,
+            video=True,
+            push_to_hub=False,  # Set to True if you want to upload
+            private=True,  # Set to True if you want to keep the dataset private
+        ),
+        DatasetRecordConfig(
+            repo_id="place_right_knife",
+            single_task="Place the knife to the right of the plate.",
+            fps=30,
+            episode_time_s=60,  # 30 seconds for place motion
+            reset_time_s=10,
+            num_episodes=episodes,
+            video=True,
+            push_to_hub=False,  # Set to True if you want to upload
+            private=True,  # Set to True if you want to keep the dataset private
+        ),
+        DatasetRecordConfig(
+            repo_id="place_inside_knife",
+            single_task="Place the knife inside the plate.",
             fps=30,
             episode_time_s=60,  # 30 seconds for place motion
             reset_time_s=10,
@@ -73,7 +101,7 @@ def create_multi_record_config():
     # Define multi-dataset configuration
     multi_dataset_config = MultiDatasetRecordConfig(
         datasets=dataset_configs,
-        stage_switch_keys=["space", "tab"],  # Space for pick, Tab for place
+        use_numeric_keys=True,  # Use numeric keys 1-4 for stage switching
     )
 
     # Create the complete multi-record configuration
@@ -99,8 +127,10 @@ def main():
 
     print("Starting multi-dataset recording...")
     print("Instructions:")
-    print("- Press SPACE to record 'pick' motion to the first dataset")
-    print("- Press TAB to record 'place' motion to the second dataset")
+    print("- Press '1' to record 'pick knife' motion to the first dataset")
+    print("- Press '2' to record 'place left' motion to the second dataset")
+    print("- Press '3' to record 'place right' motion to the third dataset")
+    print("- Press '4' to record 'place inside' motion to the fourth dataset")
     print("- Press RIGHT ARROW to finish current episode")
     print("- Press LEFT ARROW to re-record current episode")
     print("- Press ESC to stop recording completely")
