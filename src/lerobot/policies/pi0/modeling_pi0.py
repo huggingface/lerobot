@@ -487,6 +487,13 @@ class PI0Policy(PreTrainedPolicy):
         device = batch[OBS_STATE].device
         tasks = batch["task"]
 
+        # Ensure tasks is always a list
+        if isinstance(tasks, str):
+            tasks = [tasks]
+
+        if len(tasks) == 1:
+            tasks = [tasks[0] for _ in range(batch[OBS_STATE].shape[0])]
+
         # PaliGemma prompt has to end with a new line
         tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
 
