@@ -55,6 +55,33 @@ RESET_TIME=${RESET_TIME:-60}
 read -p "Enter task description (e.g., 'Grab the black cube'): " TASK_DESCRIPTION
 TASK_DESCRIPTION=${TASK_DESCRIPTION:-"Grab the black cube"}
 
+# Viz and logging options
+echo ""
+read -p "Enable depth visualization in viewer (viz_depth)? [y/N]: " VIZ_INPUT
+if [[ "$VIZ_INPUT" =~ ^[Yy]$ ]]; then
+    VIZ_DEPTH=true
+else
+    VIZ_DEPTH=false
+fi
+
+# Logging options
+echo ""
+read -p "Enable performance logging (every 5s)? [y/N]: " PERF_INPUT
+if [[ "$PERF_INPUT" =~ ^[Yy]$ ]]; then
+    PERF_ARGS="--perf_logging=true --perf_level=INFO"
+else
+    PERF_ARGS="--perf_logging=false"
+fi
+
+read -p "Enter log file path (default dir: C:/Users/madha/Documents/lerobot): " LOG_FILE
+LOG_DIR="C:/Users/madha/Documents/lerobot"
+if [ -z "$LOG_FILE" ]; then
+    LOG_FILE="$LOG_DIR/record_$(date +%Y%m%d_%H%M%S).log"
+fi
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
+
+# Note: No stdout/stderr redirection; perf-only logs go to file via app logging
+
 # Get Hugging Face username
 echo ""
 echo "Hugging Face Configuration:"
@@ -84,6 +111,9 @@ echo "Episode duration: ${EPISODE_TIME}s"
 echo "Reset time: ${RESET_TIME}s"
 echo "Task: $TASK_DESCRIPTION"
 echo "Dataset repo: $DATASET_REPO_ID"
+echo "Viz depth: $VIZ_DEPTH"
+echo "Log file: ${LOG_FILE:-none}"
+echo "Perf logging: ${PERF_ARGS}"
 echo ""
 
 read -p "Press Enter to start recording or Ctrl+C to cancel..."
@@ -102,13 +132,11 @@ case $choice in
                 'cam_main': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 640,
-                    'height': 480,
+                    'width': 1920,
+                    'height': 1080,
                     'fps': 30,
                     'use_depth': false,
-                    'pipeline': 'cuda',
-                    'enable_bilateral_filter': false,
-                    'enable_edge_filter': false
+                    'pipeline': 'cuda'
                 }
             }" \
             --teleop.type=$TELEOP_TYPE \
@@ -116,6 +144,9 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --display_data=true \
+            --viz_depth=$VIZ_DEPTH \
+            --log_file="$LOG_FILE" \
+            $PERF_ARGS \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
@@ -137,16 +168,13 @@ case $choice in
                 'cam_main': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 640,
-                    'height': 480,
+                    'width': 1920,
+                    'height': 1080,
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.5,
                     'depth_max_meters': 3.0,
-                    'depth_clipping': true,
-                    'enable_bilateral_filter': false,
-                    'enable_edge_filter': false,
                     'pipeline': 'cuda'
                 }
             }" \
@@ -155,6 +183,9 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --display_data=true \
+            --viz_depth=$VIZ_DEPTH \
+            --log_file="$LOG_FILE" \
+            $PERF_ARGS \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
@@ -193,6 +224,9 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --display_data=true \
+            --viz_depth=$VIZ_DEPTH \
+            --log_file="$LOG_FILE" \
+            $PERF_ARGS \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
@@ -220,8 +254,7 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.07,
-                    'depth_max_meters': 0.5,
-                    'depth_clipping': true
+                    'depth_max_meters': 0.5
                 },
                 'cam_high': {
                     'type': 'intelrealsense',
@@ -232,8 +265,7 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.07,
-                    'depth_max_meters': 0.5,
-                    'depth_clipping': true
+                    'depth_max_meters': 0.5
                 }
             }" \
             --teleop.type=$TELEOP_TYPE \
@@ -241,6 +273,9 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --display_data=true \
+            --viz_depth=$VIZ_DEPTH \
+            --log_file="$LOG_FILE" \
+            $PERF_ARGS \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
@@ -276,13 +311,11 @@ case $choice in
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 640,
-                    'height': 480,
+                    'width': 1920,
+                    'height': 1080,
                     'fps': 30,
                     'use_depth': false,
-                    'pipeline': 'cuda',
-                    'enable_bilateral_filter': false,
-                    'enable_edge_filter': false
+                    'pipeline': 'cuda'
                 }
             }" \
             --teleop.type=$TELEOP_TYPE \
@@ -290,6 +323,9 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --display_data=true \
+            --viz_depth=$VIZ_DEPTH \
+            --log_file="$LOG_FILE" \
+            $PERF_ARGS \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
@@ -318,7 +354,7 @@ case $choice in
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.07,
                     'depth_max_meters': 0.5,
-                    'depth_clipping': true
+                    
                 },
                 'cam_high': {
                     'type': 'intelrealsense',
@@ -329,22 +365,20 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.07,
-                    'depth_max_meters': 0.5,
-                    'depth_clipping': true
+                    'depth_max_meters': 0.4,
+                    
                 },
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 640,
-                    'height': 480,
+                    'width': 1920,
+                    'height': 1080,
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.5,
-                    'depth_max_meters': 3.0,
-                    'depth_clipping': true,
-                    'enable_bilateral_filter': false,
-                    'enable_edge_filter': false,
+                    'depth_max_meters': 0.8,
+
                     'pipeline': 'cuda'
                 }
             }" \
@@ -353,12 +387,15 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --display_data=false \
+            --viz_depth=$VIZ_DEPTH \
+            --log_file="$LOG_FILE" \
+            $PERF_ARGS \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
             --dataset.reset_time_s=$RESET_TIME \
             --dataset.single_task="$TASK_DESCRIPTION"\
-            --dataset.fps=$FPS
+            --dataset.fps=$FPS $REDIRECT_STD
         ;;
 
     7)
@@ -375,6 +412,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --display_data=true \
+            $PERF_ARGS \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \
@@ -387,7 +425,7 @@ case $choice in
         echo ""
         echo "Recording: 2 RealSense RGB + Depth + Kinect RGB only"
         echo "===================================================="
-        python -m lerobot.record \
+        run_cmd python -m lerobot.record \
             --robot.type=$ROBOT_TYPE \
             --robot.id=$ROBOT_ID \
             --robot.left_arm_port=$LEFT_ARM_PORT \
@@ -402,8 +440,7 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.07,
-                    'depth_max_meters': 0.5,
-                    'depth_clipping': true
+                    'depth_max_meters': 0.5
                 },
                 'cam_high': {
                     'type': 'intelrealsense',
@@ -414,8 +451,7 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.07,
-                    'depth_max_meters': 0.5,
-                    'depth_clipping': true
+                    'depth_max_meters': 0.5
                 },
                 'cam_kinect': {
                     'type': 'kinect',
@@ -424,9 +460,7 @@ case $choice in
                     'height': 1080,
                     'fps': 30,
                     'use_depth': false,
-                    'pipeline': 'cuda',
-                    'enable_bilateral_filter': false,
-                    'enable_edge_filter': false
+                    'pipeline': 'cuda'
                 }
             }" \
             --teleop.type=$TELEOP_TYPE \
@@ -434,6 +468,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --display_data=true \
+            $PERF_ARGS \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \

@@ -69,6 +69,7 @@ def colorize_depth_directory(
         min_depth_m=min_depth_m,
         max_depth_m=max_depth_m,
         clipping=True,
+        reverse=(colormap.upper() in ["JET_RS", "JET_REALSENSE"]),
     )
     
     for npy_path in npy_files:
@@ -76,19 +77,16 @@ def colorize_depth_directory(
             # Load raw depth data
             depth_data = np.load(npy_path)
             
-            # Determine the depth unit based on dtype
-            # Kinect uses float32 in millimeters
-            # RealSense uses uint16 in micrometers
-            if depth_data.dtype == np.float32:
-                # Kinect: already in millimeters
-                depth_mm = depth_data
-            elif depth_data.dtype == np.uint16:
-                # RealSense: use provided depth scale if available (meters per unit)
+            # Standardized path: raw depth saved as uint16. Interpret using provided scale when present.
+            if depth_data.dtype == np.uint16:
                 if depth_scale_m_per_unit is not None and depth_scale_m_per_unit > 0:
                     depth_mm = depth_data.astype(np.float32) * (depth_scale_m_per_unit * 1000.0)
                 else:
                     # Fallback: assume micrometers and convert to millimeters
                     depth_mm = depth_data.astype(np.float32) / 1000.0
+            elif depth_data.dtype == np.float32:
+                # Backward compatibility: float mm
+                depth_mm = depth_data
             else:
                 logger.warning(f"Unexpected depth dtype {depth_data.dtype} in {npy_path}, skipping")
                 continue
@@ -97,8 +95,10 @@ def colorize_depth_directory(
             depth_rgb = colorizer.colorize(depth_mm)
             
             # Save as PNG with the same name
+            # DepthColorizer returns RGB, but cv2.imwrite expects BGR
             png_path = npy_path.with_suffix('.png')
-            cv2.imwrite(str(png_path), depth_rgb)
+            depth_bgr = cv2.cvtColor(depth_rgb, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(str(png_path), depth_bgr)
             
             # Delete the .npy file if requested
             if delete_npy:
@@ -117,7 +117,8 @@ def main():
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Colorize raw depth data from .npy files to .png images")
     parser.add_argument("directory", type=str, help="Directory containing .npy depth files")
-    parser.add_argument("--colormap", type=str, default="JET", help="OpenCV colormap name (default: JET)")
+    parser.add_argument("--colormap", type=str, default="JET", help="Colormap name (JET, JET_RS, VIRIDIS, TURBO, etc.)")
+    parser.add_argument("--reverse", action="store_true", help="Reverse colormap (RealSense-style Jet)")
     parser.add_argument("--min_depth", type=float, default=0.5, help="Minimum depth in meters (default: 0.5)")
     parser.add_argument("--max_depth", type=float, default=4.5, help="Maximum depth in meters (default: 4.5)")
     parser.add_argument(

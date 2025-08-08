@@ -89,14 +89,14 @@ class KinectCameraConfig(CameraConfig):
     serial_number: str | None = None
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
-    use_ir: bool = False  # IR disabled in project; field kept for compatibility but ignored
+    # IR removed from this project (ignored)
+    use_ir: bool = False
     pipeline: KinectPipeline = KinectPipeline.AUTO
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: float = 1.0
-    # Depth filtering - DISABLED by default for performance
-    # WARNING: These filters significantly impact performance!
-    enable_bilateral_filter: bool = False  # Adds ~15-25ms per frame when enabled
-    enable_edge_filter: bool = False  # Adds ~5-10ms per frame when enabled
+    # Depth filters removed (ignored)
+    enable_bilateral_filter: bool = False
+    enable_edge_filter: bool = False
     min_depth: float = 0.5
     max_depth: float = 4.5
     # Depth colorization settings
@@ -104,6 +104,9 @@ class KinectCameraConfig(CameraConfig):
     depth_min_meters: float = 0.5  # Kinect v2 minimum: 0.5m
     depth_max_meters: float = 4.5  # Kinect v2 maximum: 4.5m
     depth_clipping: bool = True
+    # Optional offline resize target for color frames (processed before encoding)
+    resize_width: int | None = None
+    resize_height: int | None = None
 
 
     def __post_init__(self):
@@ -164,3 +167,5 @@ class KinectCameraConfig(CameraConfig):
             raise ValueError(
                 f"`depth_min_meters` ({self.depth_min_meters}) must be less than `depth_max_meters` ({self.depth_max_meters})"
             )
+
+        # No deprecation warnings; fields are accepted and ignored

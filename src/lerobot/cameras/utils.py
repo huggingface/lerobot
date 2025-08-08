@@ -40,6 +40,8 @@ class DepthColorizer:
 
     COLORMAP_MAPPING = {
         "jet": cv2.COLORMAP_JET,
+        "jet_rs": cv2.COLORMAP_JET,  # RealSense-style Jet (reversed)
+        "jet_realsense": cv2.COLORMAP_JET,
         "hot": cv2.COLORMAP_HOT,
         "cool": cv2.COLORMAP_COOL,
         "viridis": cv2.COLORMAP_VIRIDIS,
@@ -54,11 +56,18 @@ class DepthColorizer:
         min_depth_m: float = 0.5,
         max_depth_m: float = 4.5,
         clipping: bool = True,
+        reverse: bool | None = None,
     ):
-        self.colormap = self.COLORMAP_MAPPING.get(colormap.lower(), cv2.COLORMAP_JET)
+        cmap_key = colormap.lower()
+        self.colormap = self.COLORMAP_MAPPING.get(cmap_key, cv2.COLORMAP_JET)
         self.min_depth_mm = min_depth_m * 1000
         self.max_depth_mm = max_depth_m * 1000
         self.clipping = clipping
+        # Determine reversal: explicit reverse arg wins, otherwise special names imply reverse
+        if reverse is None:
+            self.reverse = cmap_key in ("jet_rs", "jet_realsense")
+        else:
+            self.reverse = bool(reverse)
 
         # Build LUT for all possible 16-bit depth values (0-65535)
         self._build_lut()
@@ -86,18 +95,12 @@ class DepthColorizer:
         
         # Convert BGR to RGB (most cameras expect RGB)
         self.lut = cv2.cvtColor(bgr_lut, cv2.COLOR_BGR2RGB).reshape(65536, 3)
-        
-        # Handle out-of-range values for better visualization
-        if self.clipping:
-            # Values below minimum depth - use minimum color
-            min_idx = int(self.min_depth_mm * 65535 / depth_range) if depth_range > 0 else 0
-            if min_idx > 0:
-                self.lut[:min_idx] = self.lut[min_idx]
-            
-            # Values above maximum depth - use maximum color  
-            max_idx = int((self.max_depth_mm - self.min_depth_mm) * 65535 / depth_range) if depth_range > 0 else 65535
-            if max_idx < 65535:
-                self.lut[max_idx + 1:] = self.lut[max_idx]
+        # Reverse LUT if requested (RealSense-style JET)
+        if self.reverse:
+            self.lut = self.lut[::-1]
+
+        # Note: clipping is handled during colorize() by quantizing
+        # normalized indices to [0, 65535], so no LUT-side clamping is needed.
 
     def colorize(self, depth_data: np.ndarray) -> np.ndarray:
         """

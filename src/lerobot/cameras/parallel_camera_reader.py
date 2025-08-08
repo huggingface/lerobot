@@ -16,8 +16,11 @@
 # TODO: Implement parallel camera reading utilities here if needed in the future.
 
 """
-Parallel camera reading utility for LeRobot.
-Reduces camera read latency by executing async_read operations concurrently.
+DEPRECATED: Parallel camera reading utility for LeRobot.
+
+This module is kept for reference only and is not used by the current robots.
+Robots use sequential camera reads for stability. Consider removing this file
+if parallel reading is no longer desired.
 """
 
 import logging
@@ -193,12 +196,12 @@ class ParallelCameraReader:
 
                     # Process result based on read type (this is software overhead)
                     if read_type == "depth" and isinstance(result, dict):
-                        # async_read_all returns dict with "color" and possibly "depth_rgb"
+                        # async_read_all returns dict with "color" and possibly "depth"
                         obs_dict[cam_key] = result.get("color")
 
                         # Add depth frame with _depth suffix if present
-                        if "depth_rgb" in result and result["depth_rgb"] is not None:
-                            obs_dict[f"{cam_key}_depth"] = result["depth_rgb"]
+                        if "depth" in result and result["depth"] is not None:
+                            obs_dict[f"{cam_key}_depth"] = result["depth"]
                     else:
                         # Regular async_read returns the frame directly
                         obs_dict[cam_key] = result
