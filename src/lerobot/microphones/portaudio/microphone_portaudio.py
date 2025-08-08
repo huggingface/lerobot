@@ -100,6 +100,7 @@ class PortAudioMicrophone(Microphone):
         # Thread/Process to handle data writing in a separate thread/process (safely)
         self.write_thread = None
         self.write_stop_event = None
+        self.write_is_started_event = None
 
         self.logs = {}
 
@@ -113,7 +114,7 @@ class PortAudioMicrophone(Microphone):
 
     @property
     def is_writing(self) -> bool:
-        return self.write_thread is not None and self.write_thread.is_alive()
+        return self.write_thread is not None and self.write_is_started_event.is_set()
 
     @staticmethod
     def find_microphones(
@@ -434,11 +435,13 @@ class PortAudioMicrophone(Microphone):
 
             if multiprocessing:
                 self.write_stop_event = process_Event()
+                self.write_is_started_event = process_Event()
                 self.write_thread = Process(
                     target=PortAudioMicrophone._write_loop,
                     args=(
                         self.write_queue,
                         self.write_stop_event,
+                        self.write_is_started_event,
                         self.sample_rate,
                         self.channels,
                         output_file,
@@ -446,11 +449,13 @@ class PortAudioMicrophone(Microphone):
                 )
             else:
                 self.write_stop_event = thread_Event()
+                self.write_is_started_event = thread_Event()
                 self.write_thread = Thread(
                     target=PortAudioMicrophone._write_loop,
                     args=(
                         self.write_queue,
                         self.write_stop_event,
+                        self.write_is_started_event,
                         self.sample_rate,
                         self.channels,
                         output_file,
@@ -458,6 +463,7 @@ class PortAudioMicrophone(Microphone):
                 )
             self.write_thread.daemon = True
             self.write_thread.start()
+            self.write_is_started_event.wait()  # Wait for the writing thread/process to be started.
 
         self.record_start_event.set()  # Start the input audio stream process
         self.record_is_started_event.wait()  # Wait for the input audio stream process to be actually started
@@ -506,7 +512,14 @@ class PortAudioMicrophone(Microphone):
             raise RuntimeError(f"Error stopping writing for microphone {self.microphone_index}.")
 
     @staticmethod
-    def _write_loop(queue, event: Event, sample_rate: int, channels: list[int], output_file: Path) -> None:
+    def _write_loop(
+        queue,
+        write_stop_event: Event,
+        write_is_started_event: Event,
+        sample_rate: int,
+        channels: list[int],
+        output_file: Path,
+    ) -> None:
         """
         Thread/Process-safe loop to write audio data into a file.
         """
@@ -519,7 +532,8 @@ class PortAudioMicrophone(Microphone):
             format="WAV",
             subtype="FLOAT",  # By default, a much lower quality WAV file is created !
         ) as file:
-            while not event.is_set():
+            write_is_started_event.set()
+            while not write_stop_event.is_set():
                 try:
                     file.write(
                         queue.get(timeout=0.005)
@@ -527,6 +541,7 @@ class PortAudioMicrophone(Microphone):
                     queue.task_done()
                 except Empty:
                     continue
+        write_is_started_event.clear()
 
     def __del__(self) -> None:
         if self.is_connected:
