@@ -31,6 +31,10 @@ class Reachy2RobotConfig(RobotConfig):
     ip_address: str | None = "localhost"
     use_external_commands: bool = False
     with_mobile_base: bool = True
+    with_l_arm: bool = True
+    with_r_arm: bool = True
+    with_neck: bool = True
+    with_antennas: bool = True
 
     mock: bool = False
 
