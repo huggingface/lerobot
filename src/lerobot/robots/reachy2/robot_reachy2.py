@@ -87,6 +87,7 @@ class Reachy2Robot(Robot):
         self.logs = {}
 
         self.joints_dict: dict[str, str] = {}
+        self.generate_joints_dict()
 
     @property
     def observation_features(self) -> dict:
