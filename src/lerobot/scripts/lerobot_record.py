@@ -91,6 +91,10 @@ from lerobot.datasets.utils import (
     combine_feature_dicts,
 )
 from lerobot.datasets.video_utils import VideoEncodingManager
+from lerobot.microphones import (
+    MicrophoneConfig,  # noqa: F401
+)
+from lerobot.microphones.portaudio.configuration_portaudio import PortAudioMicrophoneConfig  # noqa: F401
 from lerobot.microphones.utils import (
     async_microphones_start_recording,
     async_microphones_stop_recording,
@@ -344,14 +348,15 @@ def record_loop(
     if (
         dataset is not None and robot.name != "lekiwi"
     ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
-        for microphone_key, microphone in robot.microphones.items():
-            dataset.add_microphone_recording(microphone, microphone_key)
+        dataset.add_microphones_recordings(robot.microphones)
     else:
         async_microphones_start_recording(robot.microphones)
 
     # Fill audio buffers if needed
     if robot.microphones and (policy is not None or dataset is not None):
-        # This initial wait might be longer than the audio chunk duration to (1) ensure that the audio buffers are filled with enough data and (2) add additional initial samples to the dataset in case of variable audio chubk duration during training.
+        # This initial wait might be longer than the audio chunk duration to
+        # (1) ensure that the audio buffers are filled with enough data
+        # (2) add additional initial samples to the dataset in case of variable audio chunk duration during training
         busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
 
         for microphone_name, microphone in robot.microphones.items():
