@@ -412,7 +412,7 @@ Example configuration for training the [reward classifier](https://huggingface.c
 To train the classifier, use the `train.py` script with your configuration:
 
 ```bash
-python -m lerobot.scripts.train --config_path path/to/reward_classifier_train_config.json
+lerobot-train --config_path path/to/reward_classifier_train_config.json
 ```
 
 **Deploying and Testing the Model**
@@ -458,7 +458,7 @@ The reward classifier will automatically provide rewards based on the visual inp
 3. **Train the classifier**:
 
    ```bash
-   python -m lerobot.scripts.train --config_path src/lerobot/configs/reward_classifier_train_config.json
+   lerobot-train --config_path src/lerobot/configs/reward_classifier_train_config.json
    ```
 
 4. **Test the classifier**:
