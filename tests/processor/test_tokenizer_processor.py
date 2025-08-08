@@ -725,3 +725,264 @@ def test_custom_padding_side(mock_auto_tokenizer):
     processor_right(transition)
 
     assert tracking_tokenizer.padding_side_calls[-1] == "right"
+
+
+@require_package("transformers")
+def test_device_detection_cpu():
+    """Test that tokenized tensors stay on CPU when other tensors are on CPU."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
+
+    # Create transition with CPU tensors
+    observation = {"observation.state": torch.randn(10)}  # CPU tensor
+    action = torch.randn(5)  # CPU tensor
+    transition = create_transition(
+        observation=observation, action=action, complementary_data={"task": "test task"}
+    )
+
+    result = processor(transition)
+
+    # Check that tokenized tensors are on CPU
+    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+
+    assert tokens.device.type == "cpu"
+    assert attention_mask.device.type == "cpu"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@require_package("transformers")
+def test_device_detection_cuda():
+    """Test that tokenized tensors are moved to CUDA when other tensors are on CUDA."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
+
+    # Create transition with CUDA tensors
+    observation = {"observation.state": torch.randn(10).cuda()}  # CUDA tensor
+    action = torch.randn(5).cuda()  # CUDA tensor
+    transition = create_transition(
+        observation=observation, action=action, complementary_data={"task": "test task"}
+    )
+
+    result = processor(transition)
+
+    # Check that tokenized tensors are on CUDA
+    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+
+    assert tokens.device.type == "cuda"
+    assert attention_mask.device.type == "cuda"
+    assert tokens.device.index == 0  # Should be on same device as input
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
+@require_package("transformers")
+def test_device_detection_multi_gpu():
+    """Test that tokenized tensors match device in multi-GPU setup."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
+
+    # Test with tensors on cuda:1
+    device = torch.device("cuda:1")
+    observation = {"observation.state": torch.randn(10).to(device)}
+    action = torch.randn(5).to(device)
+    transition = create_transition(
+        observation=observation, action=action, complementary_data={"task": "multi gpu test"}
+    )
+
+    result = processor(transition)
+
+    # Check that tokenized tensors are on cuda:1
+    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+
+    assert tokens.device == device
+    assert attention_mask.device == device
+
+
+@require_package("transformers")
+def test_device_detection_no_tensors():
+    """Test that tokenized tensors stay on CPU when no other tensors exist."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
+
+    # Create transition with no tensors
+    transition = create_transition(
+        observation={"metadata": {"key": "value"}},  # No tensors
+        complementary_data={"task": "no tensor test"},
+    )
+
+    result = processor(transition)
+
+    # Check that tokenized tensors are on CPU (default)
+    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+
+    assert tokens.device.type == "cpu"
+    assert attention_mask.device.type == "cpu"
+
+
+@require_package("transformers")
+def test_device_detection_mixed_devices():
+    """Test device detection when tensors are on different devices (uses first found)."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
+
+    if torch.cuda.is_available():
+        # Create transition with mixed devices
+        observation = {
+            "observation.cpu": torch.randn(10),  # CPU
+            "observation.cuda": torch.randn(10).cuda(),  # CUDA
+        }
+        transition = create_transition(
+            observation=observation, complementary_data={"task": "mixed device test"}
+        )
+
+        result = processor(transition)
+
+        # The device detection should use the first tensor found
+        # (iteration order depends on dict, but result should be consistent)
+        tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+        attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+
+        # Both should be on the same device
+        assert tokens.device == attention_mask.device
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@require_package("transformers")
+def test_device_detection_from_action():
+    """Test that device is detected from action tensor when no observation tensors exist."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
+
+    # Create transition with action on CUDA but no observation tensors
+    observation = {"metadata": {"key": "value"}}  # No tensors in observation
+    action = torch.randn(5).cuda()
+    transition = create_transition(
+        observation=observation, action=action, complementary_data={"task": "action device test"}
+    )
+
+    result = processor(transition)
+
+    # Check that tokenized tensors match action's device
+    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+
+    assert tokens.device.type == "cuda"
+    assert attention_mask.device.type == "cuda"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@require_package("transformers")
+def test_device_detection_from_complementary_data():
+    """Test that device is detected from tensors in complementary_data."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
+
+    # Create transition with tensor in complementary_data
+    transition = create_transition(
+        observation={"metadata": {"key": "value"}},  # No tensors
+        complementary_data={
+            "task": "comp data test",
+            "index": torch.tensor([42]).cuda(),  # Tensor in complementary_data
+        },
+    )
+
+    result = processor(transition)
+
+    # Check that tokenized tensors match complementary_data tensor's device
+    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+
+    assert tokens.device.type == "cuda"
+    assert attention_mask.device.type == "cuda"
+
+
+@require_package("transformers")
+def test_device_detection_preserves_dtype():
+    """Test that device detection doesn't affect dtype of tokenized tensors."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
+
+    # Create transition with float tensor (to test dtype isn't affected)
+    observation = {"observation.state": torch.randn(10, dtype=torch.float16)}
+    transition = create_transition(observation=observation, complementary_data={"task": "dtype test"})
+
+    result = processor(transition)
+
+    # Check that tokenized tensors have correct dtypes (not affected by input dtype)
+    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+
+    assert tokens.dtype == torch.long  # Should remain long
+    assert attention_mask.dtype == torch.bool  # Should be bool (converted in processor)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@require_package("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_integration_with_device_processor(mock_auto_tokenizer):
+    """Test that TokenizerProcessor works correctly with DeviceProcessor in pipeline."""
+    from lerobot.processor import DeviceProcessor
+
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    mock_auto_tokenizer.from_pretrained.return_value = mock_tokenizer
+
+    # Create pipeline with TokenizerProcessor then DeviceProcessor
+    tokenizer_processor = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=6)
+    device_processor = DeviceProcessor(device="cuda:0")
+    robot_processor = RobotProcessor([tokenizer_processor, device_processor])
+
+    # Start with CPU tensors
+    transition = create_transition(
+        observation={"observation.state": torch.randn(10)},  # CPU
+        action=torch.randn(5),  # CPU
+        complementary_data={"task": "pipeline test"},
+    )
+
+    result = robot_processor(transition)
+
+    # All tensors should end up on CUDA (moved by DeviceProcessor)
+    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
+    assert result[TransitionKey.ACTION].device.type == "cuda"
+
+    # Tokenized tensors should also be on CUDA
+    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+    assert tokens.device.type == "cuda"
+    assert attention_mask.device.type == "cuda"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@require_package("transformers")
+def test_simulated_accelerate_scenario():
+    """Test scenario simulating Accelerate with data already on GPU."""
+    mock_tokenizer = MockTokenizer(vocab_size=100)
+    processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
+
+    # Simulate Accelerate scenario: batch already on GPU
+    device = torch.device("cuda:0")
+    observation = {
+        "observation.state": torch.randn(1, 10).to(device),  # Batched, on GPU
+        "observation.image": torch.randn(1, 3, 224, 224).to(device),  # Batched, on GPU
+    }
+    action = torch.randn(1, 5).to(device)  # Batched, on GPU
+
+    transition = create_transition(
+        observation=observation,
+        action=action,
+        complementary_data={"task": ["accelerate test"]},  # List for batched task
+    )
+
+    result = processor(transition)
+
+    # Tokenized tensors should match GPU placement
+    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+
+    assert tokens.device == device
+    assert attention_mask.device == device
+    # MockTokenizer squeezes single-item batches, so shape is (max_length,) not (1, max_length)
+    assert tokens.shape == (10,)  # MockTokenizer behavior for single string in list
+    assert attention_mask.shape == (10,)
