@@ -468,7 +468,7 @@ class VideoEncodingManager:
                     )
                     shutil.rmtree(img_dir)
             for key in self.dataset.meta.audio_keys:
-                audio_dir = self.dataset._get_audio_file_path(
+                audio_dir = self.dataset._get_raw_audio_file_path(
                     episode_index=interrupted_episode_index, audio_key=key
                 ).parent
                 if audio_dir.exists():
