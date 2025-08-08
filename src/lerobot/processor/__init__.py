@@ -56,6 +56,7 @@ __all__ = [
     "InfoProcessor",
     "InterventionActionProcessor",
     "JointVelocityProcessor",
+    "MapDeltaActionToRobotAction",
     "MotorCurrentProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
