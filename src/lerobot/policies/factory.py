@@ -140,8 +140,6 @@ def make_processor(
         NotImplementedError: If the policy type doesn't have a processor implemented.
     """
     if pretrained_path:
-        # Load a pretrained processor
-        # TODO(azouitine): Handle this case.
         return (
             RobotProcessor.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
