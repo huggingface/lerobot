@@ -1,0 +1,148 @@
+# Processors for Robots and Teleoperators
+
+This guide shows how to build and modify processing pipelines that connect teleoperators (e.g., phone) to robots and datasets. Pipelines standardize conversions between different action/observation spaces so you can swap teleops and robots without rewriting glue code.
+
+We use the Phone to SO‑100 follower examples for concreteness, but the same patterns apply to other robots.
+
+**What you'll learn**
+
+- Absolute vs. relative EE control: What each means, trade‑offs, and how to choose for your task.
+- Three-pipeline pattern: How to map teleop actions → dataset actions → robot commands, and robot observations → dataset observations.
+- Adapters (`to_transition` / `to_output`): How these comvert raw dicts to `EnvTransition` and back to reduce boilerplate.
+- Dataset feature contracts: How steps declare features via `transform_features(...)`, and how to aggregate/merge them for recording.
+- Choosing a representation: When to store joints, absolute EE poses, or relative EE deltas—and how that affects training.
+- Pipeline customization guidance: How to swap robots/URDFs safely and tune bounds, step sizes, and options like IK initialization.
+
+### Absolute vs relative EE control
+
+The examples in this guide use absolute end effector (EE) poses because they are easy to reason about. In practice, relative EE deltas or joint position are often preferred as learning features.
+
+You can choose what you save and learn from the teleop and robot action spaces, joints, absolute EE, or relative EE by using/implementing the right steps (and `transform_features()`) in your pipelines.
+
+## Three pipelines
+
+We often compose three pipelines. Depending on your setup, some can be empty if action and observation spaces already match.
+Each of these pipelines handle different conversions between different action and observation spaces. Below is a quick explanation of each pipeline.
+
+1. Pipeline 1: Teleop action space → dataset action space (phone pose → EE targets)
+2. Pipeline 2: Dataset action space → robot command space (EE targets → joints)
+3. Pipeline 3: Robot observation space → dataset observation space (joints → EE pose)
+
+Below is an example of the three pipelines that we use in the phone to SO-100 follower examples:
+
+```69:90:examples/phone_so100_record.py
+phone_to_robot_ee_pose = RobotProcessor(  # teleop -> dataset action
+    steps=[MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
+           AddRobotObservationAsComplimentaryData(robot=robot),
+            EEReferenceAndDelta(kinematics=kinematics_solver,
+                               end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
+                               motor_names=list(robot.bus.motors.keys())),
+           EEBoundsAndSafety(end_effector_bounds={"min": [-1, -1, -1], "max": [1, 1, 1]},
+                             max_ee_step_m=0.20, max_ee_twist_step_rad=0.50)],
+    to_transition=to_transition_teleop_action,
+    to_output=lambda tr: tr,
+)
+
+robot_ee_to_joints = RobotProcessor(      # dataset action -> robot
+    steps=[InverseKinematicsEEToJoints(kinematics=kinematics_solver,
+                                       motor_names=list(robot.bus.motors.keys()),
+                                       initial_guess_current_joints=True),
+           GripperVelocityToJoint(motor_names=list(robot.bus.motors.keys()), speed_factor=20.0)],
+    to_transition=lambda tr: tr,
+    to_output=to_output_robot_action,
+)
+
+robot_joints_to_ee_pose = RobotProcessor( # robot obs -> dataset obs
+    steps=[ForwardKinematicsJointsToEE(kinematics=kinematics_solver,
+                                       motor_names=list(robot.bus.motors.keys()))],
+    to_transition=to_transition_robot_observation,
+    to_output=lambda tr: tr,
+)
+```
+
+## Why to_transition / to_output
+
+To convert from robot/teleoperator to pipeline and back, we use the `to_transition` and `to_output` pipeline adapters.
+They standardize conversions to reduce boilerplate code, and form the bridge between the robot and teleoperators raw dicts and the pipeline’s `EnvTransition` format.
+In the phone to SO-100 follower examples we use the following adapters:
+
+- `to_transition_teleop_action`: transforms the teleop action dict to a pipeline transition (puts keys under `action.*`, converts scalars/arrays to tensors, keeps objects like `Rotation` intact)
+- `to_output_robot_action`: transforms the pipeline transition to a robot action dict (extracts keys ending with `.pos`/`.vel` and strips `action.` prefix)
+- `to_transition_robot_observation`: transforms the robot observation dict to a pipeline transition (splits state vs images; stores state under `observation.state.*` and images under `observation.images.*`)
+
+See `src/lerobot/processor/converters.py` for more details.
+
+## Dataset feature contracts
+
+Dataset features are the keys saved in the dataset. Each step can declare what its dataset features are via `transform_features(...)`. We can then aggregate features per pipeline with `aggregate_pipeline_dataset_features()` and merge multiple groups with `merge_features(...)`.
+
+Below is and example of how we declare features with the `transform_features` method in the phone to SO-100 follower examples:
+
+```203:211:src/lerobot/robots/so100_follower/robot_kinematic_processor.py
+def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    # Because this is last step we specify the dataset features of this step that we want to be stored in the dataset
+    features["action.ee.x"] = float
+    features["action.ee.y"] = float
+    features["action.ee.z"] = float
+    features["action.ee.wx"] = float
+    features["action.ee.wy"] = float
+    features["action.ee.wz"] = float
+    return features
+```
+
+Tip: declare features at the last step that produces them (e.g., `EEBoundsAndSafety` declares `action.ee.*`, `ForwardKinematicsJointsToEE` declares `observation.state.ee.*`).
+
+Below is an example of how we aggregate and merge features in the phone to SO-100 follower examples:
+
+```121:145:examples/phone_so100_record.py
+action_ee = aggregate_pipeline_dataset_features(
+    pipeline=phone_to_robot_ee_pose,
+    initial_features=phone.action_features,
+    use_videos=True,
+    patterns=["action.ee"],
+)
+
+gripper = aggregate_pipeline_dataset_features(
+    pipeline=robot_ee_to_joints,
+    initial_features={},
+    use_videos=True,
+    patterns=["action.gripper.pos", "observation.state.gripper.pos"],
+)
+
+observation_ee = aggregate_pipeline_dataset_features(
+    pipeline=robot_joints_to_ee_pose,
+    initial_features=robot.observation_features,
+    use_videos=True,
+    patterns=["observation.state.ee"],
+)
+
+dataset_features = merge_features(action_ee, gripper, observation_ee)
+```
+
+How it works:
+
+- `aggregate_pipeline_dataset_features(...)`: applies `transform_features` across the pipeline and filters by patterns (images included when `use_videos=True`).
+- `merge_features(...)`: combine multiple feature dicts.
+- Recording uses `to_dataset_frame(...)` to build frames consistent with `dataset.features` before we call `add_frame(...)` to add the frame to the dataset.
+
+## Guidance when customizing robot pipelines
+
+You can store any of the following features as your action/observation space:
+
+- Joint positions
+- Absolute EE poses
+- Relative EE deltas
+- Other features: joint velocity, etc.
+
+Pick what you want to use for your policy action and observation space and configure/modify the pipelines and steps accordingly.
+
+### Different robots
+
+- Swap `RobotKinematics` URDF and `motor_names`. Ensure `target_frame_name` points to your gripper/wrist.
+
+### Safety first
+
+- When changing pipelines, start with tight bounds, implement safety steps when working with real robots.
+- Its advised to start with simulation first and then move to real robots.
+
+Hope this guide helps you get started with customizing your robot pipelines, If you run into any issues at any point, jump into our [Discord community](https://discord.com/invite/s3KuuzsPFb) for support.
