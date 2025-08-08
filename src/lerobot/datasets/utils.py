@@ -685,12 +685,12 @@ def hw_to_dataset_features(
             "names": ["height", "width", "channels"],
         }
 
-    for key, features in mic_fts.items():
+    for key, parameters in mic_fts.items():
         features[f"{prefix}.audio.{key}"] = {
             "dtype": "audio",
-            "shape": (features[1],),
+            "shape": (len(parameters[1]),),
             "names": ["channels"],
-            "info": {"sample_rate": features[0]},
+            "info": {"sample_rate": parameters[0]},
         }
 
     _validate_feature_names(features)
@@ -1168,7 +1168,9 @@ def validate_feature_audio(name: str, expected_shape: list[str], value: np.ndarr
     if isinstance(value, np.ndarray):
         actual_shape = value.shape
         c = expected_shape
-        if len(actual_shape) != 2 or actual_shape[-1] != c[-1]:  # The number of frames might be different
+        if (len(actual_shape) != 2 and len(actual_shape) != 1) or actual_shape[-1] != c[
+            -1
+        ]:  # The number of frames might be different
             error_message += (
                 f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{c}'.\n"
             )
