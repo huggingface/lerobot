@@ -8,7 +8,7 @@ import torchvision.transforms.functional as F  # noqa: N812
 from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
-GRIPPER_POS_KEY = "action.gripper.pos"
+GRIPPER_KEY = "gripper"
 
 
 @dataclass
@@ -122,16 +122,15 @@ class GripperPenaltyProcessor:
         if complementary_data is None or action is None:
             return transition
 
-        current_gripper_pos = complementary_data.get("raw_joint_positions", None)[-1]
+        current_gripper_pos = complementary_data.get("raw_joint_positions", None).get(GRIPPER_KEY, None)
         if current_gripper_pos is None:
             return transition
 
-        gripper_action = action[GRIPPER_POS_KEY]
+        gripper_action = action[f"action.{GRIPPER_KEY}.pos"]
         gripper_action_normalized = gripper_action / self.max_gripper_pos
 
         # Normalize gripper state and action
         gripper_state_normalized = current_gripper_pos / self.max_gripper_pos
-        gripper_action_normalized = gripper_action - 1.0
 
         # Calculate penalty boolean as in original
         gripper_penalty_bool = (gripper_state_normalized < 0.5 and gripper_action_normalized > 0.5) or (
@@ -149,7 +148,7 @@ class GripperPenaltyProcessor:
 
         # Create new transition with updated complementary data
         new_transition = transition.copy()
-        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
+        new_transition[TransitionKey.COMPLEMENTARY_DATA].update(new_complementary_data)
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
@@ -202,9 +201,9 @@ class InterventionActionProcessor:
         if is_intervention and teleop_action:
             # Convert teleop_action dict to tensor format
             action_list = [
-                teleop_action.get("delta_x", 0.0),
-                teleop_action.get("delta_y", 0.0),
-                teleop_action.get("delta_z", 0.0),
+                teleop_action.get("action.delta_x", 0.0),
+                teleop_action.get("action.delta_y", 0.0),
+                teleop_action.get("action.delta_z", 0.0),
             ]
             if self.use_gripper:
                 action_list.append(teleop_action.get("gripper", 1.0))

@@ -43,7 +43,7 @@ from lerobot.processor.hil_processor import (
     RewardClassifierProcessor,
     TimeLimitProcessor,
 )
-from lerobot.processor.pipeline import TransitionKey
+from lerobot.processor.pipeline import EnvTransition, TransitionKey
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
@@ -65,6 +65,7 @@ from lerobot.teleoperators import (
     make_teleoperator_from_config,
     so101_leader,  # noqa: F401
 )
+from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
@@ -371,7 +372,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
             gripper_penalty=gripper_penalty,
         )
 
-        return env, DummyTeleopDevice()
+        return env, DummyTeleopDevice
 
     # Real robot environment
     assert cfg.robot is not None, "Robot config must be provided for real robot environment"
@@ -495,30 +496,22 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
     env_pipeline_steps.append(DeviceProcessor(device=device))
 
     action_pipeline_steps = [
+        AddRobotObservationAsComplimentaryData(robot=env.robot),
         InterventionActionProcessor(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
         ),
     ]
 
-    # Add robot observation to complementary data for kinematics
-    action_pipeline_steps.append(AddRobotObservationAsComplimentaryData(robot=env.robot))
-
-    # Add delta action processor for gamepad/keyboard inputs
-    action_pipeline_steps.append(
-        MapDeltaActionToRobotAction(
-            position_scale=1.0,  # Can be adjusted based on needs
-            rotation_scale=0.0,  # No rotation for gamepad/keyboard
-        )
-    )
-
     # Replace InverseKinematicsProcessor with new kinematic processors
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
+            MapDeltaActionToRobotAction(),
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
                 end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
                 motor_names=motor_names,
+                use_latched_reference=False,
             ),
             EEBoundsAndSafety(
                 end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
@@ -531,6 +524,8 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
             GripperVelocityToJoint(
                 motor_names=motor_names,
                 clip_max=cfg.processor.max_gripper_pos,
+                speed_factor=1.0,
+                discrete_gripper=True,
             ),
         ]
         action_pipeline_steps.extend(inverse_kinematics_steps)
@@ -539,12 +534,12 @@ def make_processors(env: gym.Env, cfg: HILSerlRobotEnvConfig, device: str = "cpu
 
 
 def step_env_and_process_transition(
-    env,
-    transition,
-    action,
-    teleop_device,
-    env_processor,
-    action_processor,
+    env: gym.Env,
+    transition: EnvTransition,
+    action: torch.Tensor,
+    teleop_device: Teleoperator,
+    env_processor: RobotProcessor,
+    action_processor: RobotProcessor,
 ):
     """
     Execute one step with processors handling intervention and observation processing.
@@ -555,11 +550,12 @@ def step_env_and_process_transition(
         action: Action to execute (will be replaced by neutral action in gym_manipulator mode)
         teleop_device: Teleoperator device for getting intervention signals (DummyTeleopDevice for GymHIL)
         env_processor: Environment processor for observations
-        action_processor: Action processor for handling interventions
+        action_processor: Action processor for handling intervention
 
     Returns:
-        tuple: (new_transition, terminate_episode)
+        New transition with processed action and metadata
     """
+
     # Get teleoperation action and events (DummyTeleopDevice for GymHIL, real device for robots)
     teleop_action = teleop_device.get_action()
     teleop_events = teleop_device.get_teleop_events() if hasattr(teleop_device, "get_teleop_events") else {}
@@ -569,43 +565,37 @@ def step_env_and_process_transition(
     action_transition[TransitionKey.ACTION] = action
 
     # Add teleoperation data to complementary data
-    action_complementary_data = action_transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).copy()
-    action_complementary_data["teleop_action"] = teleop_action
-    action_complementary_data.update(teleop_events)
-    action_transition[TransitionKey.COMPLEMENTARY_DATA] = action_complementary_data
+    action_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"] = teleop_action
+    action_transition[TransitionKey.COMPLEMENTARY_DATA].update(teleop_events)
 
     # Process action through action pipeline (IdentityProcessor for GymHIL, full pipeline for robots)
     processed_action_transition = action_processor(action_transition)
 
     # Extract processed action and metadata
     processed_action = processed_action_transition[TransitionKey.ACTION]
-    terminate_episode = processed_action_transition.get(TransitionKey.DONE, False)
 
     # Step environment with processed action
     obs, reward, terminated, truncated, info = env.step(processed_action)
 
     # Combine rewards from environment and action processor
     reward = reward + processed_action_transition[TransitionKey.REWARD]
-
-    # Process new observation - handle raw_joint_positions if it exists
+    terminated = terminated or processed_action_transition[TransitionKey.DONE]
+    truncated = truncated or processed_action_transition[TransitionKey.TRUNCATED]
     complementary_data = processed_action_transition[TransitionKey.COMPLEMENTARY_DATA].copy()
-    if "raw_joint_positions" in info:
-        complementary_data["raw_joint_positions"] = info.pop("raw_joint_positions")
-
     info.update(processed_action_transition[TransitionKey.INFO])
 
     new_transition = create_transition(
         observation=obs,
         action=processed_action,
         reward=reward,
-        done=terminated or terminate_episode,
+        done=terminated,
         truncated=truncated,
         info=info,
         complementary_data=complementary_data,
     )
     new_transition = env_processor(new_transition)
 
-    return new_transition, terminate_episode
+    return new_transition
 
 
 def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymManipulatorConfig):
@@ -685,7 +675,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
             neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
 
         # Use the new step function
-        transition, terminate_episode = step_env_and_process_transition(
+        transition = step_env_and_process_transition(
             env=env,
             transition=transition,
             action=neutral_action,
@@ -717,7 +707,7 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
         episode_step += 1
 
         # Handle episode termination
-        if terminated or truncated or terminate_episode:
+        if terminated or truncated:
             episode_time = time.perf_counter() - episode_start_time
             logging.info(
                 f"Episode ended after {episode_step} steps in {episode_time:.1f}s with reward {transition[TransitionKey.REWARD]}"
@@ -736,15 +726,10 @@ def control_loop(env, env_processor, action_processor, teleop_device, cfg: GymMa
 
             # Reset for new episode
             obs, info = env.reset()
-            complementary_data = (
-                {"raw_joint_positions": info.pop("raw_joint_positions")}
-                if "raw_joint_positions" in info
-                else {}
-            )
             env_processor.reset()
             action_processor.reset()
 
-            transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
+            transition = create_transition(observation=obs, info=info)
             transition = env_processor(transition)
 
         # Maintain fps timing

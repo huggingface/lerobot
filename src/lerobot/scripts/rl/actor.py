@@ -264,12 +264,11 @@ def act_with_policy(
     assert isinstance(policy, nn.Module)
 
     obs, info = online_env.reset()
-    complementary_data = {"raw_joint_positions": info.pop("raw_joint_positions")}
     env_processor.reset()
     action_processor.reset()
 
     # Process initial observation
-    transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
+    transition = create_transition(observation=obs, info=info)
     transition = env_processor(transition)
 
     # NOTE: For the moment we will solely handle the case of a single environment
@@ -299,7 +298,7 @@ def act_with_policy(
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 
         # Use the new step function
-        new_transition, terminate_episode = step_env_and_process_transition(
+        new_transition = step_env_and_process_transition(
             env=online_env,
             transition=transition,
             action=action,
@@ -324,6 +323,11 @@ def act_with_policy(
             episode_intervention = True
             episode_intervention_steps += 1
 
+        complementary_info = {
+            "discrete_penalty": torch.tensor(
+                [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
+            ),
+        }
         # Create transition for learner (convert to old format)
         list_transition_to_send_to_learner.append(
             Transition(
@@ -333,7 +337,7 @@ def act_with_policy(
                 next_state=next_observation,
                 done=done,
                 truncated=truncated,
-                complementary_info={},  # new_transition[TransitionKey.COMPLEMENTARY_DATA],
+                complementary_info=complementary_info,
             )
         )
 
@@ -381,12 +385,11 @@ def act_with_policy(
 
             # Reset environment and processors
             obs, info = online_env.reset()
-            complementary_data = {"raw_joint_positions": info.pop("raw_joint_positions")}
             env_processor.reset()
             action_processor.reset()
 
             # Process initial observation
-            transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
+            transition = create_transition(observation=obs, info=info)
             transition = env_processor(transition)
 
         if cfg.env.fps is not None:
