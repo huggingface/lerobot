@@ -18,7 +18,11 @@ Provides the PortAudioMicrophone class for capturing audio from microphones usin
 
 import logging
 import time
-from multiprocessing import Event as process_Event, JoinableQueue as process_Queue, Process
+from multiprocessing import (
+    Event as process_Event,
+    JoinableQueue as process_Queue,
+    Process,
+)
 from pathlib import Path
 from queue import Empty
 from threading import Barrier, Event, Event as thread_Event, Thread
@@ -38,6 +42,8 @@ from lerobot.utils.utils import capture_timestamp_utc
 
 from ..microphone import Microphone
 from .configuration_portaudio import PortAudioMicrophoneConfig
+
+logger = logging.getLogger(__name__)
 
 
 class PortAudioMicrophone(Microphone):
@@ -153,7 +159,7 @@ class PortAudioMicrophone(Microphone):
                 return found_microphones_info[0]
 
         if len(found_microphones_info) == 0:
-            logging.warning("No microphone found !")
+            logger.warning("No microphone found !")
 
         return found_microphones_info
 
@@ -189,7 +195,9 @@ class PortAudioMicrophone(Microphone):
     def _validate_sample_rate(self) -> None:
         """Validates the sample rate against the actual microphone's default sample rate."""
 
-        actual_sample_rate = PortAudioMicrophone.find_microphones(self.microphone_index, self.sounddevice_sdk)["sample_rate"]
+        actual_sample_rate = PortAudioMicrophone.find_microphones(
+            self.microphone_index, self.sounddevice_sdk
+        )["sample_rate"]
 
         if self.sample_rate is not None:
             try:
@@ -205,7 +213,7 @@ class PortAudioMicrophone(Microphone):
                 )
             else:
                 if self.sample_rate < actual_sample_rate:
-                    logging.warning(
+                    logger.warning(
                         "Provided sample rate is lower than the sample rate of the microphone. Performance may be impacted."
                     )
         else:
@@ -214,10 +222,12 @@ class PortAudioMicrophone(Microphone):
     def _validate_channels(self) -> None:
         """Validates the channels against the actual microphone's maximum input channels."""
 
-        actual_channels = PortAudioMicrophone.find_microphones(self.microphone_index, self.sounddevice_sdk)["channels"]
+        actual_channels = PortAudioMicrophone.find_microphones(self.microphone_index, self.sounddevice_sdk)[
+            "channels"
+        ]
 
         if self.channels is not None and len(self.channels) > 0:
-            if any(all(c > actual_channels) or c <= 0 or not isinstance(c, np.integer) for c in self.channels):
+            if not all(channel in actual_channels for channel in self.channels):
                 raise RuntimeError(
                     f"Some of the provided channels {self.channels} are outside the possible channel range of the microphone {actual_channels}."
                 )
@@ -268,9 +278,13 @@ class PortAudioMicrophone(Microphone):
         self.record_process.daemon = True
         self.record_process.start()
 
-        time.sleep(0.1)  # Wait for the recording process to be started...
+        time.sleep(
+            0.1
+        )  # Wait for the recording process to be started, and to potentially raise an error on failure.
         if not self.is_connected:
             raise RuntimeError(f"Error connecting microphone {self.microphone_index}.")
+
+        logger.info(f"{self} connected.")
 
     def disconnect(self) -> None:
         """
@@ -289,6 +303,8 @@ class PortAudioMicrophone(Microphone):
 
         if self.is_connected:
             raise RuntimeError(f"Error disconnecting microphone {self.microphone_index}.")
+
+        logger.info(f"{self} disconnected.")
 
     def _read(self) -> np.ndarray:
         """
@@ -351,15 +367,13 @@ class PortAudioMicrophone(Microphone):
             Low-level sounddevice callback.
             """
             if status:
-                logging.warning(status)
-            # Slicing makes copy unnecessary
-            # Two separate queues are necessary because .get() also pops the data from the queue
-            # Remark: this also ensures that file-recorded data and chunk-audio data are the same.
+                logger.warning(status)
             if audio_callback_start_event.is_set():
                 write_queue.put_nowait(indata[:, channels_index])
                 read_queue.put_nowait(indata[:, channels_index])
 
         # Create the audio stream
+        # InputStream must be instantiated in the process as it is not pickable.
         stream = sounddevice_sdk.InputStream(
             device=microphone_index,
             samplerate=sample_rate,
@@ -380,9 +394,8 @@ class PortAudioMicrophone(Microphone):
             stream.start()
             record_is_started_event.set()
             record_stop_event.wait()
-            stream.stop()  # stream.stop() waits for all buffers to be processed
+            stream.stop()  # stream.stop() waits for all buffers to be processed, stream.abort() flushes the buffers !
             record_is_started_event.clear()
-            # Remark : stream.abort() flushes the buffers !
         stream.close()
 
     def start_recording(
@@ -483,6 +496,11 @@ class PortAudioMicrophone(Microphone):
             self.write_stop_event.set()
             self.write_thread.join()
 
+        timeout = 1.0
+        while self.is_recording and timeout > 0:
+            time.sleep(0.01)
+            timeout -= 0.01
+
         if self.is_recording:
             raise RuntimeError(f"Error stopping recording for microphone {self.microphone_index}.")
         if self.is_writing:
@@ -510,6 +528,10 @@ class PortAudioMicrophone(Microphone):
                     queue.task_done()
                 except Empty:
                     continue
+
+    def __del__(self) -> None:
+        if self.is_connected:
+            self.disconnect()
 
     @staticmethod
     def _clear_queue(queue, join_queue: bool = False):
