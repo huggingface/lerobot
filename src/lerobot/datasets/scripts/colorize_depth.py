@@ -112,6 +112,9 @@ def colorize_depth_directory(
 
 
 def main():
+    # Ensure basic logging is configured for subprocess runs
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Colorize raw depth data from .npy files to .png images")
     parser.add_argument("directory", type=str, help="Directory containing .npy depth files")
     parser.add_argument("--colormap", type=str, default="JET", help="OpenCV colormap name (default: JET)")

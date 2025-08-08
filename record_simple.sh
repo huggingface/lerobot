@@ -420,8 +420,8 @@ case $choice in
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 640,
-                    'height': 480,
+                    'width': 1920,
+                    'height': 1080,
                     'fps': 30,
                     'use_depth': false,
                     'pipeline': 'cuda',
@@ -433,7 +433,7 @@ case $choice in
             --teleop.id=$TELEOP_ID \
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
-            --display_data=false \
+            --display_data=true \
             --dataset.repo_id=$DATASET_REPO_ID \
             --dataset.num_episodes=$NUM_EPISODES \
             --dataset.episode_time_s=$EPISODE_TIME \

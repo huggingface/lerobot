@@ -58,6 +58,7 @@ python -m lerobot.record \
 """
 
 import logging
+import math
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -223,6 +224,11 @@ def record_loop(
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
+    logger = logging.getLogger(__name__)
+    stats_interval_s = 10.0
+    last_stats_t = time.perf_counter()
+    frame_durations: list[float] = []
+
     teleop_arm = teleop_keyboard = None
     if isinstance(teleop, list):
         teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
@@ -293,6 +299,27 @@ def record_loop(
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
+
+        # Achieved loop period and rolling FPS stats
+        loop_s = time.perf_counter() - start_loop_t
+        frame_durations.append(loop_s)
+
+        now = time.perf_counter()
+        if now - last_stats_t >= stats_interval_s and frame_durations:
+            fps_values = [1.0 / t for t in frame_durations if t > 0]
+            if fps_values:
+                n = len(fps_values)
+                avg = sum(fps_values) / n
+                mn = min(fps_values)
+                mx = max(fps_values)
+                # population std dev over the window
+                var = sum((x - avg) ** 2 for x in fps_values) / n
+                std = math.sqrt(var)
+                logger.info(
+                    f"Record stats last {int(stats_interval_s)}s: FPS avg={avg:.1f} min={mn:.1f} max={mx:.1f} std={std:.1f}"
+                )
+            frame_durations.clear()
+            last_stats_t = now
 
         timestamp = time.perf_counter() - start_episode_t
 
