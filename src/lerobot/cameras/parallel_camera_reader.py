@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# The following section is commented out and can be used for future implementation or as a TODO.
+# TODO: Implement parallel camera reading utilities here if needed in the future.
+
 """
 Parallel camera reading utility for LeRobot.
 Reduces camera read latency by executing async_read operations concurrently.

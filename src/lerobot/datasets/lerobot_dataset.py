@@ -987,17 +987,45 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Check if this is a depth stream by looking for .npy files
             npy_files = list(img_dir.glob("*.npy"))
             if npy_files:
-                # This is a depth stream with raw depth data - run colorization
+                # This is a depth stream with raw depth data - run colorization first
                 logger.info(f"Colorizing depth stream '{key}' for episode {episode_index}")
-                
-                # Run the colorization script
+
+                # Prepare per-stream parameters if available in features info
+                # Defaults: Kinect (0.5–4.5 m), RealSense D405 (0.07–0.5 m), colormap=JET
+                min_depth = 0.5
+                max_depth = 4.5
+                colormap = "JET"
+                depth_scale = None  # meters per unit (RealSense); Kinect not needed
+
+                try:
+                    ft = self.meta.info["features"].get(key, {})
+                    params = ft.get("depth_colorization", {})
+                    min_depth = float(params.get("min_depth", min_depth))
+                    max_depth = float(params.get("max_depth", max_depth))
+                    colormap = str(params.get("colormap", colormap))
+                    depth_scale = params.get("depth_scale", depth_scale)
+                    if depth_scale is not None:
+                        depth_scale = float(depth_scale)
+                except Exception:
+                    pass
+
                 colorize_script = Path(__file__).parent / "scripts" / "colorize_depth.py"
-                result = subprocess.run(
-                    ["python", str(colorize_script), str(img_dir)],
-                    capture_output=True,
-                    text=True
-                )
-                
+                cmd = [
+                    "python",
+                    str(colorize_script),
+                    str(img_dir),
+                    "--colormap",
+                    colormap,
+                    "--min_depth",
+                    str(min_depth),
+                    "--max_depth",
+                    str(max_depth),
+                ]
+                if depth_scale is not None:
+                    cmd += ["--depth_scale", str(depth_scale)]
+
+                result = subprocess.run(cmd, capture_output=True, text=True)
+
                 if result.returncode != 0:
                     logger.error(f"Depth colorization failed: {result.stderr}")
                     raise RuntimeError(f"Failed to colorize depth stream '{key}': {result.stderr}")

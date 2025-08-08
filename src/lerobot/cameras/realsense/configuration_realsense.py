@@ -65,13 +65,14 @@ class RealSenseCameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
-    warmup_s: int = 3  # Increased to ensure depth stream is ready
+    warmup_s: int = 1  # Original default; sufficient once pipeline is running
     # Depth colorization settings
     depth_colormap: str = "jet"
-    depth_min_meters: float = 0.3  # Default for general D400 series
-    depth_max_meters: float = 4.0  # Default for general D400 series
+    # General defaults for most RealSense (D400/L500) devices
+    depth_min_meters: float = 0.3
+    depth_max_meters: float = 4.0
     depth_clipping: bool = True
-    # Note: D405 users should use depth_min_meters=0.07, depth_max_meters=0.5
+    # Note: For D405 close-range, consider depth_min_meters=0.07, depth_max_meters=0.5
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):

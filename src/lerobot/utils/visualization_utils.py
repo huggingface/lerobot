@@ -15,10 +15,61 @@
 import os
 from typing import Any
 
-import cv2
 import numpy as np
 import rerun as rr
 
+# Registry for per-stream depth scales: meters per unit
+_DEPTH_METERS_PER_UNIT: dict[str, float] = {}
+
+
+def register_depth_scale(stream_key: str, meters_per_unit: float) -> None:
+    """
+    Register the physical scale for a depth stream key.
+
+    - stream_key: base camera key without suffix (e.g., "cam_kinect", "cam_low").
+    - meters_per_unit: conversion factor from the stream's integer/float value to meters.
+
+    Examples:
+    - RealSense uint16 depth: meters_per_unit = device.depth_scale (e.g., 0.0005)
+    - Kinect float32 depth in millimeters: meters_per_unit = 0.001
+    - Generic meters float32: meters_per_unit = 1.0
+    """
+    _DEPTH_METERS_PER_UNIT[stream_key] = float(meters_per_unit)
+
+
+def _depth_to_mm(key: str, depth: np.ndarray) -> np.ndarray:
+    """Convert a raw depth array to millimeters using per-stream scale when available.
+
+    Fallbacks when scale is not registered:
+    - float arrays default to millimeters (meters_per_unit = 0.001)
+    - uint16 arrays default to micrometers (meters_per_unit = 1e-6)
+    """
+    # Derive base stream key (remove trailing "_depth" when present)
+    base = key[:-6] if key.endswith("_depth") else key
+
+    if base in _DEPTH_METERS_PER_UNIT:
+        meters_per_unit = _DEPTH_METERS_PER_UNIT[base]
+    else:
+        if np.issubdtype(depth.dtype, np.floating):
+            meters_per_unit = 0.001  # assume float depths are in millimeters
+        elif np.issubdtype(depth.dtype, np.integer):
+            meters_per_unit = 1e-6  # assume uint16 like RealSense is micrometers
+        else:
+            meters_per_unit = 0.001
+
+    return depth.astype(np.float32) * (meters_per_unit * 1000.0)
+
+
+def _camera_entity_path_from_key(key: str) -> tuple[str, bool]:
+    """Return (entity_path, is_depth) using dot-separated hierarchy.
+
+    - "cam_kinect" -> ("observation.cam_kinect.rgb", False)
+    - "cam_kinect_depth" -> ("observation.cam_kinect.depth", True)
+    """
+    parts = key.rsplit("_", 1)
+    if len(parts) == 2 and parts[1] == "depth":
+        return f"observation.{parts[0]}.depth", True
+    return f"observation.{key}.rgb", False
 
 def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
     """Initializes the Rerun SDK for visualizing the control loop."""
@@ -30,84 +81,36 @@ def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
 
 
 def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
-    """
-    Log observation and action data to Rerun with hierarchical camera organization.
-    
-    Uses hierarchical paths like:
-    - observation/cam_kinect/rgb
-    - observation/cam_kinect/depth  
-    - observation/cam_low/rgb
-    - observation/cam_low/depth
-    """
-    # Separate camera frames from other observation data
-    camera_frames = {}
-    other_obs = {}
-    
+    # Log observations
     for key, val in observation.items():
-        if isinstance(val, np.ndarray) and val.ndim > 1:
-            camera_frames[key] = val
-        else:
-            other_obs[key] = val
-
-    # Log non-camera observations with simple paths
-    for obs, val in other_obs.items():
+        # Scalars
         if isinstance(val, float):
-            rr.log(f"observation/{obs}", rr.Scalar(val))
-        elif isinstance(val, np.ndarray) and val.ndim == 1:
+            rr.log(f"observation.{key}", rr.Scalar(val))
+            continue
+
+        # 1D vectors
+        if isinstance(val, np.ndarray) and val.ndim == 1:
             for i, v in enumerate(val):
-                rr.log(f"observation/{obs}/{i}", rr.Scalar(float(v)))
+                rr.log(f"observation.{key}.{i}", rr.Scalar(float(v)))
+            continue
 
-    # Log camera frames with hierarchical organization
-    for key, frame in camera_frames.items():
-        try:
-            # Parse camera key to create hierarchical path
-            # Examples: "cam_kinect" -> "cam_kinect/rgb"
-            #          "cam_kinect_depth" -> "cam_kinect/depth"
-            #          "cam_low_depth" -> "cam_low/depth"
-            parts = key.rsplit('_', 1)
-            if len(parts) == 2 and parts[1] == "depth":
-                # This is a depth stream: cam_kinect_depth -> cam_kinect/depth
-                entity_path = f"observation/{parts[0]}/depth"
-            else:
-                # This is a color stream: cam_kinect -> cam_kinect/rgb
-                entity_path = f"observation/{key}/rgb"
+        # Depth images (raw)
+        if isinstance(val, np.ndarray) and val.ndim == 2 and (np.issubdtype(val.dtype, np.floating) or np.issubdtype(val.dtype, np.integer)):
+            entity_path, _ = _camera_entity_path_from_key(key)
+            depth_mm = _depth_to_mm(key, val)
+            rr.log(entity_path, rr.DepthImage(depth_mm, meter=1000.0), static=True)
+            continue
 
-            # Handle different frame types
-            if frame.ndim == 2 and frame.dtype in [np.float32, np.uint16]:
-                # Raw depth data - convert to millimeters and log as DepthImage
-                if frame.dtype == np.uint16:
-                    # RealSense (uint16) is in micrometers. Convert to millimeters.
-                    depth_mm = frame.astype(np.float32) / 1000.0
-                else:
-                    # Kinect (float32) is already in millimeters.
-                    depth_mm = frame
+        # Color images
+        if isinstance(val, np.ndarray) and val.ndim == 3:
+            entity_path, _ = _camera_entity_path_from_key(key)
+            rr.log(entity_path, rr.Image(val), static=True)
+            continue
 
-                # Rerun's `meter` argument specifies how many depth units are in a meter.
-                # Since depth_mm is in millimeters, there are 1000 millimeters in a meter.
-                rr.log(entity_path, rr.DepthImage(depth_mm, meter=1000.0), static=True)
-                
-            elif frame.ndim == 3:
-                # Color image data - handle BGRA from Kinect
-                if frame.shape[2] == 4:
-                    # Convert BGRA to RGB for visualization
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
-                    rr.log(entity_path, rr.Image(frame_rgb), static=True)
-                else:
-                    # Regular RGB/BGR image
-                    rr.log(entity_path, rr.Image(frame), static=True)
-            else:
-                # Unexpected frame format - log with warning
-                print(f"Warning: Unexpected frame format for {key}: shape={frame.shape}, dtype={frame.dtype}")
-                rr.log(f"observation/{key}", rr.Image(frame), static=True)
-                
-        except Exception as e:
-            # Log any errors to help with debugging
-            print(f"Error logging {key} to Rerun: {e} (shape={frame.shape}, dtype={frame.dtype})")
-
-    # Log actions with simple paths
+    # Log actions
     for act, val in action.items():
         if isinstance(val, float):
-            rr.log(f"action/{act}", rr.Scalar(val))
+            rr.log(f"action.{act}", rr.Scalar(val))
         elif isinstance(val, np.ndarray):
             for i, v in enumerate(val):
-                rr.log(f"action/{act}/{i}", rr.Scalar(float(v)))
+                rr.log(f"action.{act}.{i}", rr.Scalar(float(v)))

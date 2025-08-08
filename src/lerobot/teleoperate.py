@@ -61,6 +61,7 @@ import rerun as rr
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.kinect.configuration_kinect import KinectCameraConfig  # noqa: F401
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -86,7 +87,7 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
-from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data, register_depth_scale
 
 
 @dataclass
@@ -95,7 +96,7 @@ class TeleoperateConfig:
     teleop: TeleoperatorConfig
     robot: RobotConfig
     # Limit the maximum frames per second.
-    fps: int = 30
+    fps: int = 60
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
@@ -104,32 +105,14 @@ class TeleoperateConfig:
 def teleop_loop(
     teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
 ):
-    import numpy as np
-    
-    perf_logger = logging.getLogger("performance")
-
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
-
-    # Lightweight stats tracking
-    all_frame_times = []
-    last_stats_time = start
-    stats_interval = 5.0  # Print stats every 5 seconds
-    stats_printed = False
-
-    # Telemetry and logging throttling
-    frame_counter = 0
-    rerun_log_interval = 6  # Log to Rerun every 6 frames to reduce CPU overhead further
-    console_update_interval_s = 1.0  # Update console every 1 second
-    last_console_update_time = start
 
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
-        
-        frame_counter += 1
-        
-        if display_data and (frame_counter % rerun_log_interval == 0):
+
+        if display_data:
             observation = robot.get_observation()
             log_rerun_data(observation, action)
 
@@ -137,38 +120,18 @@ def teleop_loop(
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
-        loop_end = time.perf_counter()
-        loop_s = loop_end - loop_start
-        all_frame_times.append(1 / loop_s if loop_s > 0 else 0)
+        loop_s = time.perf_counter() - loop_start
 
-        # Log performance stats to file
-        if loop_end - last_stats_time >= stats_interval and len(all_frame_times) > 0:
-            fps_array = np.array(all_frame_times)
-            recent_fps = np.array(all_frame_times[-150:]) if len(all_frame_times) > 150 else fps_array
-            perf_logger.info(
-                f"FPS Stats (5s): avg={recent_fps.mean():.1f} | min={recent_fps.min():.1f} | "
-                f"max={recent_fps.max():.1f} | std={recent_fps.std():.1f} | Total avg={fps_array.mean():.1f}"
-            )
-            last_stats_time = loop_end
-        
-        # In-place console telemetry (throttled)
-        if loop_end - last_console_update_time >= console_update_interval_s:
-            if stats_printed:
-                move_cursor_up(len(action) + 4)
-                
-            print("-" * (display_len + 12))
-            print(f"| {'NAME':<{display_len}} | {'VALUE':>7} |")
-            print(f"|{'─' * (display_len + 12)}|")
-            for motor, value in action.items():
-                print(f"| {motor:<{display_len}} | {value:>7.2f} |")
-            print("-" * (display_len + 12))
-            print(f"Loop: {loop_s * 1e3:.2f}ms ({1 / loop_s if loop_s > 0 else 0:.0f} Hz)")
+        print("\n" + "-" * (display_len + 10))
+        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        for motor, value in action.items():
+            print(f"{motor:<{display_len}} | {value:>7.2f}")
+        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
-            if not stats_printed:
-                stats_printed = True
+        if duration is not None and time.perf_counter() - start >= duration:
+            return
 
-            move_cursor_up(len(action) + 5)
-            last_console_update_time = loop_end
+        move_cursor_up(len(action) + 5)
 
 
 
@@ -184,6 +147,15 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop.connect()
     robot.connect()
+
+    # Register per-stream depth scales for correct Rerun depth visualization
+    try:
+        for cam_key, cam in getattr(robot, "cameras", {}).items():
+            depth_scale = getattr(cam, "depth_scale", None)
+            if depth_scale:
+                register_depth_scale(cam_key, float(depth_scale))
+    except Exception:
+        pass
 
     try:
         teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)

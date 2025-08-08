@@ -68,11 +68,12 @@ from lerobot.cameras import (  # noqa: F401
 )
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.kinect.configuration_kinect import KinectCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features, write_info
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -111,7 +112,6 @@ from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
     log_say,
-    move_cursor_up,
 )
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
@@ -159,6 +159,16 @@ class DatasetRecordConfig:
 
 
 @dataclass
+class ColorizeConfig:
+    # Offline depth colorization overrides applied to all depth streams unless a camera config overrides them
+    colormap: str = "JET"
+    min_depth: float | None = None  # meters
+    max_depth: float | None = None  # meters
+    # For RealSense only: override device depth scale (meters per unit)
+    depth_scale: float | None = None
+
+
+@dataclass
 class RecordConfig:
     robot: RobotConfig
     dataset: DatasetRecordConfig
@@ -172,6 +182,14 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Nested namespace for offline colorization CLI overrides
+    colorize: ColorizeConfig | None = None
+    # Offline depth colorization CLI overrides (apply to all depth streams unless camera config specifies otherwise)
+    colorize_colormap: str | None = None
+    colorize_min_depth: float | None = None
+    colorize_max_depth: float | None = None
+    # For RealSense only: override device depth scale (meters per unit)
+    colorize_depth_scale: float | None = None
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -225,17 +243,6 @@ def record_loop(
     if policy is not None:
         policy.reset()
 
-    import numpy as np
-    
-    perf_logger = logging.getLogger("performance")
-
-    display_len = max(len(key) for key in robot.action_features) if robot.action_features else 20
-    
-    all_frame_times = []
-    last_stats_time = time.perf_counter()
-    stats_interval = 5.0
-    stats_printed = False
-
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -287,41 +294,7 @@ def record_loop(
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
 
-        loop_end_t = time.perf_counter()
-        timestamp = loop_end_t - start_episode_t
-        loop_s = loop_end_t - start_loop_t
-        all_frame_times.append(1 / loop_s if loop_s > 0 else 0)
-
-        # Log performance stats to file
-        if loop_end_t - last_stats_time >= stats_interval and len(all_frame_times) > 0:
-            fps_array = np.array(all_frame_times)
-            recent_fps = fps_array[-150:] if len(all_frame_times) > 150 else fps_array
-            perf_logger.info(
-                f"FPS Stats (5s): avg={recent_fps.mean():.1f} | min={recent_fps.min():.1f} | "
-                f"max={recent_fps.max():.1f} | std={recent_fps.std():.1f} | Total avg={fps_array.mean():.1f}"
-            )
-            last_stats_time = loop_end_t
-            if not stats_printed:
-                stats_printed = True
-
-        # In-place console telemetry
-        if stats_printed:
-            move_cursor_up(len(sent_action) + 4)
-
-        print("-" * (display_len + 12))
-        print(f"| {'NAME':<{display_len}} | {'VALUE':>7} |")
-        print(f"|{'─' * (display_len + 12)}|")
-        for motor, value in sent_action.items():
-            print(f"| {motor:<{display_len}} | {value:>7.2f} |")
-        print("-" * (display_len + 12))
-        print(
-            f"Loop: {loop_s * 1e3:.1f}ms ({1 / loop_s if loop_s > 0 else 0:.0f} Hz) | "
-            f"Episode: {timestamp:.1f}s / {control_time_s:.1f}s"
-        )
-        if not stats_printed:
-            stats_printed = True
-        
-        move_cursor_up(len(sent_action) + 5)
+        timestamp = time.perf_counter() - start_episode_t
 
 
 @parser.wrap()
@@ -373,6 +346,63 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
     robot.connect()
+
+    # Enrich dataset metadata with per-stream depth colorization parameters
+    try:
+        # Defaults
+        DEFAULTS = {
+            "realsense": {"min": 0.07, "max": 0.5, "colormap": "JET"},
+            "kinect": {"min": 0.5, "max": 4.5, "colormap": "JET"},
+        }
+
+        for cam_key, cam in getattr(robot, "cameras", {}).items():
+            if not getattr(cam, "use_depth", False):
+                continue
+
+            # Feature key in dataset features for depth stream
+            depth_ft_key = f"observation.images.{cam_key}_depth"
+            if depth_ft_key not in dataset.meta.info["features"]:
+                continue
+
+            cam_type = cam.__class__.__name__.lower()
+            sensor = "realsense" if "realsense" in cam_type else ("kinect" if "kinect" in cam_type else "unknown")
+
+            # Read per-camera config values with fallbacks
+            cam_cfg = cfg.robot.cameras.get(cam_key, None) if hasattr(cfg.robot, "cameras") else None
+            # Determine defaults by sensor
+            dmin = DEFAULTS.get(sensor, DEFAULTS["kinect"])  # fallback to kinect defaults if unknown
+            min_depth = getattr(cam_cfg, "depth_min_meters", None) if cam_cfg else None
+            max_depth = getattr(cam_cfg, "depth_max_meters", None) if cam_cfg else None
+            colormap = getattr(cam_cfg, "depth_colormap", None) if cam_cfg else None
+
+            # Resolve nested CLI overrides first, then legacy top-level, then defaults
+            cli_colormap = (cfg.colorize.colormap if (cfg.colorize and cfg.colorize.colormap) else cfg.colorize_colormap)
+            cli_min = (cfg.colorize.min_depth if (cfg.colorize and cfg.colorize.min_depth is not None) else cfg.colorize_min_depth)
+            cli_max = (cfg.colorize.max_depth if (cfg.colorize and cfg.colorize.max_depth is not None) else cfg.colorize_max_depth)
+
+            min_depth = cli_min if cli_min is not None else (min_depth if min_depth is not None else dmin["min"])
+            max_depth = cli_max if cli_max is not None else (max_depth if max_depth is not None else dmin["max"])
+            colormap = cli_colormap if cli_colormap is not None else (colormap if colormap is not None else dmin["colormap"])
+
+            # depth_scale for RealSense
+            depth_scale = None
+            if sensor == "realsense":
+                cli_scale = (cfg.colorize.depth_scale if (cfg.colorize and cfg.colorize.depth_scale is not None) else cfg.colorize_depth_scale)
+                depth_scale = cli_scale if cli_scale is not None else getattr(cam, "depth_scale", None)
+
+            # Inject into metadata
+            dataset.meta.info["features"][depth_ft_key]["depth_colorization"] = {
+                "min_depth": float(min_depth),
+                "max_depth": float(max_depth),
+                "colormap": str(colormap),
+                **({"depth_scale": float(depth_scale)} if depth_scale is not None else {}),
+                "sensor": sensor,
+            }
+
+        # Persist updated metadata
+        write_info(dataset.meta.info, dataset.meta.root)
+    except Exception as e:
+        logging.warning(f"Failed to annotate depth colorization metadata: {e}")
     if teleop is not None:
         teleop.connect()
 

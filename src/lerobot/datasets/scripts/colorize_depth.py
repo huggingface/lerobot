@@ -43,6 +43,7 @@ def colorize_depth_directory(
     min_depth_m: float = 0.5,
     max_depth_m: float = 4.5,
     delete_npy: bool = True,
+    depth_scale_m_per_unit: float | None = None,
 ) -> None:
     """
     Colorize all .npy depth files in a directory and save as .png files.
@@ -82,8 +83,12 @@ def colorize_depth_directory(
                 # Kinect: already in millimeters
                 depth_mm = depth_data
             elif depth_data.dtype == np.uint16:
-                # RealSense: convert micrometers to millimeters
-                depth_mm = depth_data.astype(np.float32) / 1000.0
+                # RealSense: use provided depth scale if available (meters per unit)
+                if depth_scale_m_per_unit is not None and depth_scale_m_per_unit > 0:
+                    depth_mm = depth_data.astype(np.float32) * (depth_scale_m_per_unit * 1000.0)
+                else:
+                    # Fallback: assume micrometers and convert to millimeters
+                    depth_mm = depth_data.astype(np.float32) / 1000.0
             else:
                 logger.warning(f"Unexpected depth dtype {depth_data.dtype} in {npy_path}, skipping")
                 continue
@@ -112,6 +117,12 @@ def main():
     parser.add_argument("--colormap", type=str, default="JET", help="OpenCV colormap name (default: JET)")
     parser.add_argument("--min_depth", type=float, default=0.5, help="Minimum depth in meters (default: 0.5)")
     parser.add_argument("--max_depth", type=float, default=4.5, help="Maximum depth in meters (default: 4.5)")
+    parser.add_argument(
+        "--depth_scale",
+        type=float,
+        default=None,
+        help="Depth scale in meters per unit (RealSense). If omitted, falls back to micrometer assumption.",
+    )
     parser.add_argument("--keep_npy", action="store_true", help="Keep .npy files after colorization")
     
     args = parser.parse_args()
@@ -126,6 +137,7 @@ def main():
         min_depth_m=args.min_depth,
         max_depth_m=args.max_depth,
         delete_npy=not args.keep_npy,
+        depth_scale_m_per_unit=args.depth_scale,
     )
 
 

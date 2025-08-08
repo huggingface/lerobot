@@ -57,7 +57,6 @@ from ..utils import DepthColorizer, get_cv2_rotation
 from .configuration_kinect import KinectCameraConfig, KinectPipeline
 
 logger = logging.getLogger(__name__)
-perf_logger = logging.getLogger("performance")
 
 
 class KinectCamera(Camera):
@@ -154,7 +153,7 @@ class KinectCamera(Camera):
         self.fps = config.fps or 30  # Kinect v2 default
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
-        self.use_ir = config.use_ir
+        self.use_ir = False  # IR disabled per project requirements
         self.pipeline_type = config.pipeline
         self.warmup_s = config.warmup_s
         self.enable_bilateral_filter = config.enable_bilateral_filter
@@ -304,7 +303,7 @@ class KinectCamera(Camera):
 
         self.listener = SyncMultiFrameListener(frame_types)
         self.device.setColorFrameListener(self.listener)
-        if self.use_depth or self.use_ir:
+        if self.use_depth:
             self.device.setIrAndDepthFrameListener(self.listener)
 
         # Start device
@@ -330,7 +329,11 @@ class KinectCamera(Camera):
                     pass  # nosec
                 time.sleep(0.1)
 
-        logger.info(f"{self} connected with {self.pipeline.__class__.__name__}")
+        logger.info(
+            f"{self} connected with {self.pipeline.__class__.__name__}: "
+            f"color={self.width}x{self.height}@{self.fps}, depth={'on' if self.use_depth else 'off'}, "
+            f"rotation={'none' if self.rotation is None else self.rotation}"
+        )
 
     def _create_pipeline(self):
         """Creates the appropriate processing pipeline based on configuration."""
@@ -570,44 +573,8 @@ class KinectCamera(Camera):
         return depth_rgb
 
     def read_ir(self, timeout_ms: int = 200) -> np.ndarray:
-        """
-        Reads a single IR frame synchronously from the camera.
-
-        Args:
-            timeout_ms: Maximum time in milliseconds to wait for a frame.
-
-        Returns:
-            np.ndarray: The IR image as a NumPy array (424, 512) of type float32.
-
-        Raises:
-            DeviceNotConnectedError: If the camera is not connected.
-            RuntimeError: If IR stream is not enabled or reading fails.
-        """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        if not self.use_ir:
-            raise RuntimeError(f"Failed to capture IR frame. IR stream is not enabled for {self}.")
-
-        frames = FrameMap()
-
-        # Wait for new frame
-        if not self.listener.waitForNewFrame(frames, timeout_ms):
-            self.listener.release(frames)
-            raise RuntimeError(f"{self} read_ir timeout after {timeout_ms}ms")
-
-        try:
-            ir_frame = frames[FrameType.Ir]
-            ir_data = ir_frame.asarray().copy()
-
-            # Apply rotation if needed
-            if self.rotation is not None:
-                ir_data = cv2.rotate(ir_data, self.rotation)
-
-            return ir_data
-
-        finally:
-            self.listener.release(frames)
+        """IR stream is disabled in this project."""
+        raise RuntimeError("IR stream is disabled for Kinect in this project")
 
     def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> np.ndarray:
         """
@@ -641,26 +608,36 @@ class KinectCamera(Camera):
         # Pre-allocate buffers for zero-copy operation
         depth_buffer = np.empty((424, 512), dtype=np.float32)
         
-        # Timing stats
-        frame_count = 0
-        total_wait_time = 0
-
         while not self.stop_event.is_set():
             try:
                 frames = FrameMap()
                 # Use shorter timeout for more responsive shutdown
                 wait_start = time.perf_counter()
                 if self.listener.waitForNewFrame(frames, 100):
-                    wait_time = (time.perf_counter() - wait_start) * 1000
-                    
-                    try:
-                        # Process color frame - MINIMAL processing, just raw BGRA capture
-                        color_frame = frames[FrameType.Color]
-                        color_data = color_frame.asarray()  # No .copy() to avoid memory allocation
+                    _ = (time.perf_counter() - wait_start) * 1000
 
-                        # Process depth if enabled - RAW depth only, no processing
+                    try:
+                        # Process color frame - Convert BGRA→RGB, optional resize, rotation
+                        color_frame = frames[FrameType.Color]
+                        color_bgra = color_frame.asarray()
+                        # Drop alpha and convert to RGB
+                        color_data = cv2.cvtColor(color_bgra, cv2.COLOR_BGRA2RGB)
+
+                        # Optional resize to whitelist resolutions
+                        if self.width and self.height:
+                            target_w, target_h = int(self.width), int(self.height)
+                            h, w = color_data.shape[:2]
+                            if (w, h) != (target_w, target_h):
+                                interp = cv2.INTER_AREA if target_w < w or target_h < h else cv2.INTER_LINEAR
+                                color_data = cv2.resize(color_data, (target_w, target_h), interpolation=interp)
+
+                        # Optional rotation
+                        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
+                            color_data = cv2.rotate(color_data, self.rotation)
+
+                        # Process depth if enabled - RAW depth only, keep native 512x424
                         depth_data = None
-                        
+
                         if self.use_depth:
                             depth_frame = frames[FrameType.Depth]
                             # Get raw depth without any processing (no clipping, no copy)
@@ -669,45 +646,20 @@ class KinectCamera(Camera):
                             else:
                                 depth_data = depth_frame.asarray()
 
-                        # Process IR if enabled
+                            # Optional rotation for depth (keep native resolution otherwise)
+                            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
+                                depth_data = cv2.rotate(depth_data, self.rotation)
+
+                        # IR disabled
                         ir_data = None
-                        if self.use_ir:
-                            ir_frame = frames[FrameType.Ir]
-
-                            # Pre-allocate IR buffer if needed
-                            if not hasattr(self, "_ir_buffer"):
-                                self._ir_buffer = np.empty((424, 512), dtype=np.float32)
-
-                            # Use optimized method if available
-                            if hasattr(ir_frame, "asarray_optimized"):
-                                ir_data = ir_frame.asarray_optimized(self._ir_buffer)
-                            else:
-                                ir_data = ir_frame.asarray().copy()
 
                         # Store frames thread-safely (minimal time in lock)
                         with self.frame_lock:
                             self.latest_frame = color_data.copy() if color_data is not None else None
                             self.latest_depth = depth_data.copy() if depth_data is not None else None
                             self.latest_depth_rgb = None  # No colorization in real-time
-                            self.latest_ir = ir_data.copy() if ir_data is not None else None
+                            self.latest_ir = None
                         self.new_frame_event.set()
-
-                        # Track timing stats
-                        frame_count += 1
-                        total_wait_time += wait_time
-                        
-                        # Log stats every 500 frames (about 16 seconds at 30fps) to reduce log spam
-                        if frame_count % 500 == 0 and frame_count > 0:
-                            avg_wait = total_wait_time / frame_count
-                            
-                            perf_logger.info(
-                                f"{self} timing (avg over {frame_count} frames): "
-                                f"hardware_wait={avg_wait:.1f}ms (raw frame acquisition only)"
-                            )
-                            
-                            # Reset counters for fresh averages
-                            frame_count = 0
-                            total_wait_time = 0
 
                     finally:
                         self.listener.release(frames)
@@ -716,11 +668,7 @@ class KinectCamera(Camera):
                 logger.info(f"{self} disconnected, stopping read loop")
                 break
             except Exception as e:
-                # Log the full traceback for debugging, but only periodically to avoid spam
-                if frame_count % 100 == 0:
-                    logger.exception(f"Error in Kinect read loop for {self}: {e}")
-                else:
-                    logger.warning(f"Error in Kinect read loop for {self}: {e}")
+                logger.warning(f"Error in Kinect read loop for {self}: {e}")
                 time.sleep(0.1)  # Prevent busy-looping on repeated errors
 
     def _start_read_thread(self) -> None:

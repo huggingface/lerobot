@@ -89,7 +89,7 @@ class KinectCameraConfig(CameraConfig):
     serial_number: str | None = None
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
-    use_ir: bool = False
+    use_ir: bool = False  # IR disabled in project; field kept for compatibility but ignored
     pipeline: KinectPipeline = KinectPipeline.AUTO
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: float = 1.0

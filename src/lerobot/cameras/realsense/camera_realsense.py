@@ -37,7 +37,6 @@ from ..utils import get_cv2_rotation
 from .configuration_realsense import RealSenseCameraConfig
 
 logger = logging.getLogger(__name__)
-perf_logger = logging.getLogger("performance")
 
 
 
@@ -130,24 +129,19 @@ class RealSenseCamera(Camera):
         self.use_depth = config.use_depth
         self.warmup_s = config.warmup_s
 
-        # Depth colorizer disabled to avoid on-the-fly colorization (handled offline)
-        self.depth_colorizer: rs.colorizer | None = None
+        # On-the-fly depth colorization removed; handled offline
         self.depth_clipping = config.depth_clipping
 
         self.rs_pipeline: rs.pipeline | None = None
         self.rs_profile: rs.pipeline_profile | None = None
+        self.depth_scale: float | None = None
 
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
         self.latest_frame: np.ndarray | None = None
         self.latest_depth: np.ndarray | None = None
-        self.latest_depth_rgb: np.ndarray | None = None  # Colorized depth
         self.new_frame_event: Event = Event()
-
-        # Initialize colorization counters (removed in cleanup)
-        self._colorization_error_count = 0
-        self._colorization_success_count = 0
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
@@ -196,6 +190,19 @@ class RealSenseCamera(Camera):
 
         self._configure_capture_settings()
 
+        # Query depth scale once (meters per unit)
+        try:
+            depth_sensor = self.rs_profile.get_device().first_depth_sensor()
+            self.depth_scale = float(depth_sensor.get_depth_scale())
+        except Exception:
+            self.depth_scale = None
+
+        # Log connection details
+        logger.info(
+            f"{self} connected: {self.width}x{self.height}@{self.fps}, use_depth={self.use_depth}, "
+            f"rotation={'none' if self.rotation is None else self.rotation}, depth_scale={self.depth_scale}"
+        )
+
         # Start background thread before warmup
         self._start_read_thread()
 
@@ -207,14 +214,17 @@ class RealSenseCamera(Camera):
 
             while time.time() - start_time < self.warmup_s:
                 try:
-                    # Simple async_read during warmup - avoids complex async_read_all
-                    self.async_read(timeout_ms=1000)
+                    # Use async_read_all during warmup to populate the buffer
+                    if self.use_depth and hasattr(self, "async_read_all"):
+                        self.async_read_all(timeout_ms=1000)
+                    else:
+                        self.read()
                 except Exception:  # nosec
                     pass  # Silently ignore warmup errors
 
                 time.sleep(0.1)
-
-        logger.info(f"{self} connected.")
+        
+        # Warmup complete
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
@@ -293,6 +303,7 @@ class RealSenseCamera(Camera):
         rs.config.enable_device(rs_config, self.serial_number)
 
         if self.width and self.height and self.fps:
+            # Enforce same resolution for color and depth when requested
             rs_config.enable_stream(
                 rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps
             )
@@ -502,24 +513,32 @@ class RealSenseCamera(Camera):
 
         On each iteration:
         1. Reads color and optionally depth frames with 500ms timeout
-        2. Stores results in latest_frame, latest_depth (thread-safe)
+        2. Stores results in latest_frame, latest_depth, latest_depth_rgb (thread-safe)
         3. Sets new_frame_event to notify listeners
 
-        Stops on DeviceNotConnectedError, silently ignores other errors.
+        Stops on DeviceNotConnectedError, logs other errors and continues.
         """
+        import time
+
         while not self.stop_event.is_set():
             try:
                 # Get frames from pipeline
                 ret, frames = self.rs_pipeline.try_wait_for_frames(timeout_ms=500)
-                
+
                 if not ret or frames is None:
                     continue
 
-                # Get raw color frame (no post-processing)
+                # Get color frame
                 color_frame = frames.get_color_frame()
-                color_image = np.asanyarray(color_frame.get_data())
+                color_image = np.asanyarray(color_frame.get_data())  # rs.format.rgb8 → RGB
 
-                # ONLY get depth frame if depth is enabled
+                # Apply optional rotation
+                if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
+                    color_image = cv2.rotate(color_image, self.rotation)
+
+                # No post-capture resizing: color stream resolution is enforced via rs.config
+
+                # Get depth frame if enabled (raw data)
                 depth_data = None
                 if self.use_depth:
                     depth_frame = frames.get_depth_frame()
@@ -527,12 +546,14 @@ class RealSenseCamera(Camera):
                         # Store raw depth uint16 data (no processing)
                         depth_data = np.asanyarray(depth_frame.get_data())
 
+                        # Apply optional rotation to depth for alignment
+                        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
+                            depth_data = cv2.rotate(depth_data, self.rotation)
+
                 # Store frames thread-safely
                 with self.frame_lock:
                     self.latest_frame = color_image
-                    if self.use_depth:
-                        self.latest_depth = depth_data
-                        self.latest_depth_rgb = None  # No colorization in real-time
+                    self.latest_depth = depth_data
                 self.new_frame_event.set()
 
             except DeviceNotConnectedError:
@@ -723,8 +744,5 @@ class RealSenseCamera(Camera):
             self.rs_pipeline.stop()
             self.rs_pipeline = None
             self.rs_profile = None
-
-        # Clean up colorizer
-        self.depth_colorizer = None
 
         logger.info(f"{self} disconnected.")

@@ -14,9 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import platform
-import time
 from pathlib import Path
 from typing import TypeAlias
 
@@ -28,8 +26,7 @@ from .configs import CameraConfig, Cv2Rotation
 
 IndexOrPath: TypeAlias = int | Path
 
-logger = logging.getLogger(__name__)
-perf_logger = logging.getLogger("performance")
+ 
 
 
 class DepthColorizer:
@@ -64,10 +61,7 @@ class DepthColorizer:
         self.clipping = clipping
 
         # Build LUT for all possible 16-bit depth values (0-65535)
-        lut_start = time.perf_counter()
         self._build_lut()
-        lut_time = (time.perf_counter() - lut_start) * 1000
-        perf_logger.info(f"Built depth LUT in {lut_time:.1f}ms for range {min_depth_m}-{max_depth_m}m")
 
     def _build_lut(self):
         """Pre-compute the color lookup table using vectorized NumPy operations."""

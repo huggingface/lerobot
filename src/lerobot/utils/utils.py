@@ -132,42 +132,25 @@ def init_logging(
     formatter = logging.Formatter()
     formatter.format = custom_format
 
-    # Configure the root logger for console output
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.NOTSET)
+    logger = logging.getLogger()
+    logger.setLevel(logging.NOTSET)  # Set the logger to the lowest level to capture all messages
 
-    # Remove all existing handlers to prevent duplicates
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
+    # Remove unused default handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
 
-    # Console Handler for general logs
+    # Write logs to console
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     console_handler.setLevel(console_level.upper())
-    # Add a filter to exclude performance logs from the console
-    console_handler.addFilter(lambda record: record.name != "performance")
-    root_logger.addHandler(console_handler)
+    logger.addHandler(console_handler)
 
-    # File Handler for general logs (if a log file is provided)
+    # Additionally write logs to file
     if log_file is not None:
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         file_handler.setLevel(file_level.upper())
-        root_logger.addHandler(file_handler)
-
-    # --- Dedicated Performance Logger ---
-    perf_logger = logging.getLogger("performance")
-    perf_logger.setLevel(logging.INFO)
-    perf_logger.propagate = False  # Crucial: prevent logs from going to the root logger
-
-    # Remove any old handlers from the performance logger to prevent duplicates
-    for handler in perf_logger.handlers[:]:
-        perf_logger.removeHandler(handler)
-
-    # File Handler specifically for performance logs
-    perf_file_handler = logging.FileHandler("performance.log", encoding="utf-8")
-    perf_file_handler.setFormatter(formatter)
-    perf_logger.addHandler(perf_file_handler)
+        logger.addHandler(file_handler)
 
 
 def format_big_number(num, precision=0):
