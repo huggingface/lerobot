@@ -21,8 +21,10 @@ from .hil_processor import (
     GripperPenaltyProcessor,
     ImageCropResizeProcessor,
     InterventionActionProcessor,
+    RewardClassifierProcessor,
     TimeLimitProcessor,
 )
+from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
@@ -53,6 +55,8 @@ __all__ = [
     "ImageCropResizeProcessor",
     "InfoProcessor",
     "InterventionActionProcessor",
+    "JointVelocityProcessor",
+    "MotorCurrentProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
     "hotswap_stats",
@@ -60,6 +64,7 @@ __all__ = [
     "ProcessorStep",
     "ProcessorStepRegistry",
     "RenameProcessor",
+    "RewardClassifierProcessor",
     "RewardProcessor",
     "RobotProcessor",
     "ToBatchProcessor",

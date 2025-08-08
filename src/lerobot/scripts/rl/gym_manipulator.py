@@ -30,18 +30,18 @@ from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
     DeviceProcessor,
-    IdentityProcessor,
-    MapDeltaActionToRobotAction,
-    RobotProcessor,
-    ToBatchProcessor,
-    VanillaObservationProcessor,
-)
-from lerobot.processor.hil_processor import (
     GripperPenaltyProcessor,
+    IdentityProcessor,
     ImageCropResizeProcessor,
     InterventionActionProcessor,
+    JointVelocityProcessor,
+    MapDeltaActionToRobotAction,
+    MotorCurrentProcessor,
     RewardClassifierProcessor,
+    RobotProcessor,
     TimeLimitProcessor,
+    ToBatchProcessor,
+    VanillaObservationProcessor,
 )
 from lerobot.processor.pipeline import EnvTransition, TransitionKey
 from lerobot.robots import (  # noqa: F401
@@ -49,7 +49,6 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
 )
-from lerobot.robots.joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
 from lerobot.robots.robot import Robot
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
