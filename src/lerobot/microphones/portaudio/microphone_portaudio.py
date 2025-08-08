@@ -31,13 +31,14 @@ from typing import Any
 import numpy as np
 from soundfile import SoundFile
 
+from lerobot.microphones.portaudio.interface_sounddevice_sdk import ISounddeviceSDK, SounddeviceSDKAdapter
 from lerobot.utils.errors import (
     DeviceAlreadyConnectedError,
     DeviceAlreadyRecordingError,
     DeviceNotConnectedError,
     DeviceNotRecordingError,
 )
-from lerobot.microphones.portaudio.interface_sounddevice_sdk import ISounddeviceSDK, SounddeviceSDKAdapter
+from lerobot.utils.shared_array import SharedArray
 
 from ..microphone import Microphone
 from .configuration_portaudio import PortAudioMicrophoneConfig
@@ -93,10 +94,13 @@ class PortAudioMicrophone(Microphone):
         self.record_is_started_event = process_Event()
         self.audio_callback_start_event = process_Event()
 
-        # Process-safe concurrent queues to store the written/read audio
+        # Process-safe concurrent queue to send audio from the recording process to the writing process/thread
+        # TODO(CarolinePascal): replace by a Pipe (more efficient !)
         self.write_queue = process_Queue()
-        self.read_queue = process_Queue()
 
+        # SharedArray to store audio from the recording process.
+        self.read_shared_array = None
+        self.local_read_shared_array = None
         # Thread/Process to handle data writing in a separate thread/process (safely)
         self.write_thread = None
         self.write_stop_event = None
@@ -246,9 +250,13 @@ class PortAudioMicrophone(Microphone):
 
         self._configure_capture_settings()
 
-        # Create or reset queues
+        # Create or reset queue and shared array
+        self.read_shared_array = SharedArray(
+            shape=(self.sample_rate * 10, len(self.channels)),
+            dtype=np.dtype("float32"),
+        )
+        self.local_read_shared_array = self.read_shared_array.get_local_array()
         self.write_queue = process_Queue()
-        self.read_queue = process_Queue()
 
         # Reset events
         self.record_start_event.clear()
@@ -271,7 +279,7 @@ class PortAudioMicrophone(Microphone):
                 self.record_is_started_event,
                 self.audio_callback_start_event,
                 self.write_queue,
-                self.read_queue,
+                self.read_shared_array,
                 self.sounddevice_sdk,
             ),
         )
@@ -297,7 +305,7 @@ class PortAudioMicrophone(Microphone):
             self.stop_recording()
 
         self.record_close_event.set()
-        self.read_queue.close()
+        self.read_shared_array.delete()
         self.write_queue.close()
         self.record_process.join()
 
@@ -310,16 +318,7 @@ class PortAudioMicrophone(Microphone):
         """
         Thread/Process-safe callback to read available audio data
         """
-        audio_readings = np.empty((0, len(self.channels)))
-
-        while True:
-            try:
-                audio_readings = np.concatenate((audio_readings, self.read_queue.get_nowait()), axis=0)
-                self.read_queue.task_done()
-            except Empty:
-                break
-
-        return audio_readings
+        return self.read_shared_array.read(self.local_read_shared_array, flush=True)
 
     def read(self) -> np.ndarray:
         """
@@ -353,7 +352,7 @@ class PortAudioMicrophone(Microphone):
         record_is_started_event,
         audio_callback_start_event,
         write_queue,
-        read_queue,
+        read_shared_array,
         sounddevice_sdk,
     ) -> None:
         """
@@ -361,6 +360,7 @@ class PortAudioMicrophone(Microphone):
         """
 
         channels_index = np.array(channels) - 1
+        local_read_shared_array = read_shared_array.get_local_array()
 
         def audio_callback(indata, frames, timestamp, status) -> None:
             """
@@ -370,7 +370,7 @@ class PortAudioMicrophone(Microphone):
                 logger.warning(status)
             if audio_callback_start_event.is_set():
                 write_queue.put_nowait(indata[:, channels_index])
-                read_queue.put_nowait(indata[:, channels_index])
+                read_shared_array.write(local_read_shared_array, indata[:, channels_index])
 
         # Create the audio stream
         # InputStream must be instantiated in the process as it is not pickable.
@@ -413,8 +413,8 @@ class PortAudioMicrophone(Microphone):
         if self.is_recording:
             raise DeviceAlreadyRecordingError(f"Microphone {self.microphone_index} is already recording.")
 
-        # Reset queues
-        self._clear_queue(self.read_queue)
+        # Reset queue and shared memory
+        self.read_shared_array.reset()
         self._clear_queue(self.write_queue)
 
         # Reset stop event
@@ -491,10 +491,7 @@ class PortAudioMicrophone(Microphone):
         self.record_start_event.clear()  # Ensures the audio stream is not started again !
         self.record_stop_event.set()
 
-        while self.is_recording:
-            time.sleep(0.01)
-
-        self._clear_queue(self.read_queue, join_queue=True)
+        self.read_shared_array.reset()
         self._clear_queue(self.write_queue, join_queue=True)
 
         if self.is_writing:
