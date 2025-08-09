@@ -24,6 +24,7 @@ from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
 
+from lerobot.__version__ import __version__
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
@@ -108,6 +109,7 @@ def update_policy(
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
+    logging.info(f"LeRobot version: {__version__}")
     logging.info(pformat(cfg.to_dict()))
 
     if cfg.wandb.enable and cfg.wandb.project:
