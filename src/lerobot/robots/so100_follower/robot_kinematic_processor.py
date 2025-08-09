@@ -53,6 +53,9 @@ class EEReferenceAndDelta:
     kinematics: RobotKinematics
     end_effector_step_sizes: dict
     motor_names: list[str]
+    use_latched_reference: bool = (
+        True  # If True, latch reference on enable; if False, always use current pose
+    )
 
     reference_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
     _prev_enabled: bool = field(default=False, init=False, repr=False)
@@ -69,7 +72,10 @@ class EEReferenceAndDelta:
                 "raw_joint_positions is not in complementary data and is required for EEReferenceAndDelta"
             )
 
-        q = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
+        if "reference_joint_positions" in comp:
+            q = comp["reference_joint_positions"]
+        else:
+            q = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
 
         # Current pose from FK on measured joints
         t_curr = self.kinematics.forward_kinematics(q)
@@ -85,11 +91,12 @@ class EEReferenceAndDelta:
         desired = None
 
         if enabled:
-            # Latch a reference at the rising edge; also be defensive if None
-            if not self._prev_enabled or self.reference_ee_pose is None:
-                self.reference_ee_pose = t_curr.copy()
-
-            ref = self.reference_ee_pose if self.reference_ee_pose is not None else t_curr
+            ref = t_curr
+            if self.use_latched_reference:
+                # Latched reference mode: latch reference at the rising edge
+                if not self._prev_enabled or self.reference_ee_pose is None:
+                    self.reference_ee_pose = t_curr.copy()
+                ref = self.reference_ee_pose if self.reference_ee_pose is not None else t_curr
 
             delta_p = np.array(
                 [
@@ -100,7 +107,6 @@ class EEReferenceAndDelta:
                 dtype=float,
             )
             r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
-
             desired = np.eye(4, dtype=float)
             desired[:3, :3] = ref[:3, :3] @ r_abs
             desired[:3, 3] = ref[:3, 3] + delta_p
@@ -292,6 +298,8 @@ class InverseKinematicsEEToJoints:
             else:
                 new_act[f"action.{name}.pos"] = float(q_target[i])
         transition[TransitionKey.ACTION] = new_act
+        if not self.initial_guess_current_joints:
+            transition[TransitionKey.COMPLEMENTARY_DATA]["reference_joint_positions"] = q_target
         return transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
@@ -332,6 +340,7 @@ class GripperVelocityToJoint:
     speed_factor: float = 20.0
     clip_min: float = 0.0
     clip_max: float = 100.0
+    discrete_gripper: bool = False
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         obs = transition.get(TransitionKey.OBSERVATION) or {}
@@ -346,6 +355,15 @@ class GripperVelocityToJoint:
             new_act.pop("action.gripper", None)
             transition[TransitionKey.ACTION] = new_act
             return transition
+
+        if self.discrete_gripper:
+            # Discrete gripper actions are in [0, 1, 2]
+            # 0: open, 1: close, 2: stay
+            # We need to shift them to [-1, 0, 1] and then scale them to clip_max
+            gripper_action = act.get("action.gripper", 1.0)
+            gripper_action = gripper_action - 1.0
+            gripper_action *= self.clip_max
+            act["action.gripper"] = gripper_action
 
         # Get current gripper position from complementary data
         raw = comp.get("raw_joint_positions") or {}

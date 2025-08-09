@@ -15,7 +15,20 @@
 # limitations under the License.
 
 from .batch_processor import ToBatchProcessor
+from .delta_action_processor import MapDeltaActionToRobotAction
 from .device_processor import DeviceProcessor
+from .hil_processor import (
+    AddTeleopActionAsComplimentaryData,
+    AddTeleopEventsAsInfo,
+    GripperPenaltyProcessor,
+    ImageCropResizeProcessor,
+    InterventionActionProcessor,
+    Numpy2TorchActionProcessor,
+    RewardClassifierProcessor,
+    TimeLimitProcessor,
+    Torch2NumpyActionProcessor,
+)
+from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
@@ -37,11 +50,20 @@ from .tokenizer_processor import TokenizerProcessor
 
 __all__ = [
     "ActionProcessor",
+    "AddTeleopActionAsComplimentaryData",
+    "AddTeleopEventsAsInfo",
     "DeviceProcessor",
     "DoneProcessor",
+    "MapDeltaActionToRobotAction",
     "EnvTransition",
+    "GripperPenaltyProcessor",
     "IdentityProcessor",
+    "ImageCropResizeProcessor",
     "InfoProcessor",
+    "InterventionActionProcessor",
+    "JointVelocityProcessor",
+    "MapDeltaActionToRobotAction",
+    "MotorCurrentProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
     "hotswap_stats",
@@ -49,10 +71,14 @@ __all__ = [
     "ProcessorStep",
     "ProcessorStepRegistry",
     "RenameProcessor",
+    "RewardClassifierProcessor",
     "RewardProcessor",
     "RobotProcessor",
     "ToBatchProcessor",
     "TokenizerProcessor",
+    "TimeLimitProcessor",
+    "Numpy2TorchActionProcessor",
+    "Torch2NumpyActionProcessor",
     "TransitionKey",
     "TruncatedProcessor",
     "VanillaObservationProcessor",
