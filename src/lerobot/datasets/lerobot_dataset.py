@@ -810,7 +810,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
-    def save_episode(self, episode_data: dict | None = None) -> None:
+    def save_episode(self, episode_data: dict | None = None, *, options: dict | None = None) -> None:
         """
         This will save to disk the current episode in self.episode_buffer.
 
@@ -822,11 +822,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
+            options (dict | None, optional): Options. If None, defaults to an empty dict. Currently used for
+                configuring video encoding options, where options["video_encode"] is a dict with options.
         """
         if not episode_data:
             episode_buffer = self.episode_buffer
 
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
+
+        options = options or {}
 
         # size and task are special cases that won't be added to hf_dataset
         episode_length = episode_buffer.pop("size")
@@ -861,7 +865,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         use_batched_encoding = self.batch_encoding_size > 1
 
         if has_video_keys and not use_batched_encoding:
-            self.encode_episode_videos(episode_index)
+            try:
+                self.encode_episode_videos(episode_index, options=options.get("video_encode", None))
+            except TypeError:  # in case user subclassed this class and follow the older API
+                self.encode_episode_videos(episode_index)
 
         # `meta.save_episode` should be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
@@ -875,7 +882,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 logging.info(
                     f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
                 )
-                self.batch_encode_videos(start_ep, end_ep)
+                try:
+                    self.batch_encode_videos(start_ep, end_ep, options=options.get("video_encode", None))
+                except TypeError:  # in case user subclassed this class and follow the older API
+                    self.batch_encode_videos(start_ep, end_ep)
                 self.episodes_since_last_encoding = 0
 
         # Episode data index and timestamp checking
@@ -950,7 +960,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
 
-    def encode_episode_videos(self, episode_index: int) -> None:
+    def encode_episode_videos(self, episode_index: int, *, options: dict | None = None) -> None:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
@@ -963,7 +973,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Args:
             episode_index (int): Index of the episode to encode.
+            options (dict | None, optional): Options for video encoding. If None, defaults to an empty dict.
         """
+        options = options or {}
+
+        if "overwrite" in options:
+            raise ValueError("options for encode_episode_videos must not contain 'overwrite'")
+
         for key in self.meta.video_keys:
             video_path = self.root / self.meta.get_video_file_path(episode_index, key)
             if video_path.is_file():
@@ -972,7 +988,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             img_dir = self._get_image_file_path(
                 episode_index=episode_index, image_key=key, frame_index=0
             ).parent
-            encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
+            encode_video_frames(img_dir, video_path, self.fps, overwrite=True, **options)
             shutil.rmtree(img_dir)
 
         # Update video info (only needed when first episode is encoded since it reads from episode 0)
@@ -980,23 +996,28 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.meta.update_video_info()
             write_info(self.meta.info, self.meta.root)  # ensure video info always written properly
 
-    def batch_encode_videos(self, start_episode: int = 0, end_episode: int | None = None) -> None:
+    def batch_encode_videos(
+        self, start_episode: int = 0, end_episode: int | None = None, *, options: dict | None = None
+    ) -> None:
         """
         Batch encode videos for multiple episodes.
 
         Args:
             start_episode: Starting episode index (inclusive)
             end_episode: Ending episode index (exclusive). If None, encodes all episodes from start_episode
+            options: Options for video encoding. If None, defaults to an empty dict.
         """
         if end_episode is None:
             end_episode = self.meta.total_episodes
+
+        options = options or {}
 
         logging.info(f"Starting batch video encoding for episodes {start_episode} to {end_episode - 1}")
 
         # Encode all episodes with cleanup enabled for individual episodes
         for ep_idx in range(start_episode, end_episode):
             logging.info(f"Encoding videos for episode {ep_idx}")
-            self.encode_episode_videos(ep_idx)
+            self.encode_episode_videos(ep_idx, options=options)
 
         logging.info("Batch video encoding completed")
 
