@@ -1,20 +1,17 @@
 from dataclasses import dataclass
 from typing import Any
 
-import gymnasium as gym
 import torch
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.robots import Robot
 
 
 @dataclass
 @ProcessorStepRegistry.register("joint_velocity_processor")
 class JointVelocityProcessor:
-    """Add joint velocity information to observations.
-
-    Computes joint velocities by tracking changes in joint positions over time.
-    """
+    """Add joint velocity information to observations."""
 
     joint_velocity_limits: float = 100.0
     dt: float = 1.0 / 10
@@ -75,17 +72,19 @@ class JointVelocityProcessor:
 class MotorCurrentProcessor:
     """Add motor current information to observations."""
 
-    env: gym.Env = None
+    robot: Robot | None = None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
         if observation is None:
             return transition
 
-        # Get current values from complementary_data (where robot state would be stored)
-        present_current_dict = self.env.unwrapped.robot.bus.sync_read("Present_Current")
+        # Get current values from robot state
+        if self.robot is None:
+            return transition
+        present_current_dict = self.robot.bus.sync_read("Present_Current")  # type: ignore[attr-defined]
         motor_currents = torch.tensor(
-            [present_current_dict[name] for name in self.env.unwrapped.robot.bus.motors],
+            [present_current_dict[name] for name in self.robot.bus.motors],  # type: ignore[attr-defined]
             dtype=torch.float32,
         ).unsqueeze(0)
 

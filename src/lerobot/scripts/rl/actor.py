@@ -243,7 +243,7 @@ def act_with_policy(
     logging.info("make_env online")
 
     online_env, teleop_device = make_robot_env(cfg=cfg.env)
-    env_processor, action_processor = make_processors(online_env, cfg.env, cfg.policy.device)
+    env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
 
     set_seed(cfg.seed)
     device = get_safe_torch_device(cfg.policy.device, log=True)
@@ -302,14 +302,13 @@ def act_with_policy(
             env=online_env,
             transition=transition,
             action=action,
-            teleop_device=teleop_device,
             env_processor=env_processor,
             action_processor=action_processor,
         )
 
         # Extract values from processed transition
         next_observation = new_transition[TransitionKey.OBSERVATION]
-        executed_action = new_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"]
+        executed_action = new_transition[TransitionKey.ACTION]
         reward = new_transition[TransitionKey.REWARD]
         done = new_transition.get(TransitionKey.DONE, False)
         truncated = new_transition.get(TransitionKey.TRUNCATED, False)

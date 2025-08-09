@@ -2,17 +2,102 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import (
+    ActionProcessor,
+    ComplementaryDataProcessor,
+    EnvTransition,
+    InfoProcessor,
+    ProcessorStepRegistry,
+    TransitionKey,
+)
+from lerobot.teleoperators.teleoperator import Teleoperator
 
 GRIPPER_KEY = "gripper"
 
 
+@ProcessorStepRegistry.register("add_teleop_action_as_complementary_data")
 @dataclass
+class AddTeleopActionAsComplimentaryData(ComplementaryDataProcessor):
+    """Add teleoperator action to transition complementary data."""
+
+    teleop_device: Teleoperator
+
+    def complementary_data(self, complementary_data: dict | None) -> dict:
+        complementary_data = {} if complementary_data is None else dict(complementary_data)
+        complementary_data["teleop_action"] = self.teleop_device.get_action()
+        return complementary_data
+
+
+@ProcessorStepRegistry.register("add_teleop_action_as_info")
+@dataclass
+class AddTeleopEventsAsInfo(InfoProcessor):
+    """Add teleoperator control events to transition info."""
+
+    teleop_device: Teleoperator
+
+    def info(self, info: dict | None) -> dict:
+        info = {} if info is None else dict(info)
+        teleop_events = getattr(self.teleop_device, "get_teleop_events", lambda: {})()
+        info.update(teleop_events)
+        return info
+
+
+@ProcessorStepRegistry.register("torch2numpy_action_processor")
+@dataclass
+class Torch2NumpyActionProcessor(ActionProcessor):
+    """Convert PyTorch tensor actions to NumPy arrays."""
+
+    squeeze_batch_dim: bool = True
+
+    def action(self, action: torch.Tensor | None) -> np.ndarray | None:
+        if action is None:
+            return None
+
+        if not isinstance(action, torch.Tensor):
+            raise TypeError(
+                f"Expected torch.Tensor or None, got {type(action).__name__}. "
+                "Use appropriate processor for non-tensor actions."
+            )
+
+        numpy_action = action.detach().cpu().numpy()
+
+        # Remove batch dimensions but preserve action dimensions
+        # Only squeeze if there's a batch dimension (first dim == 1)
+        if (
+            self.squeeze_batch_dim
+            and numpy_action.shape
+            and len(numpy_action.shape) > 1
+            and numpy_action.shape[0] == 1
+        ):
+            numpy_action = numpy_action.squeeze(0)
+
+        return numpy_action
+
+
+@ProcessorStepRegistry.register("numpy2torch_action_processor")
+@dataclass
+class Numpy2TorchActionProcessor(ActionProcessor):
+    """Convert NumPy array action to PyTorch tensor."""
+
+    def action(self, action: np.ndarray | None) -> torch.Tensor | None:
+        if action is None:
+            return None
+        if not isinstance(action, np.ndarray):
+            raise TypeError(
+                f"Expected np.ndarray or None, got {type(action).__name__}. "
+                "Use appropriate processor for non-tensor actions."
+            )
+        torch_action = torch.from_numpy(action)
+        return torch_action
+
+
 @ProcessorStepRegistry.register("image_crop_resize_processor")
+@dataclass
 class ImageCropResizeProcessor:
     """Crop and resize image observations."""
 
@@ -73,7 +158,7 @@ class ImageCropResizeProcessor:
 @dataclass
 @ProcessorStepRegistry.register("time_limit_processor")
 class TimeLimitProcessor:
-    """Track episode time and enforce time limits."""
+    """Track episode steps and enforce time limits."""
 
     max_episode_steps: int
     current_step: int = 0
@@ -111,6 +196,8 @@ class TimeLimitProcessor:
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
 class GripperPenaltyProcessor:
+    """Apply penalty for inappropriate gripper usage."""
+
     penalty: float = -0.01
     max_gripper_pos: float = 30.0
 
@@ -174,11 +261,7 @@ class GripperPenaltyProcessor:
 @dataclass
 @ProcessorStepRegistry.register("intervention_action_processor")
 class InterventionActionProcessor:
-    """Handle action intervention based on signals in the transition.
-
-    This processor checks for intervention signals in the transition's complementary data
-    and overrides agent actions when intervention is active.
-    """
+    """Handle human intervention actions and episode termination."""
 
     use_gripper: bool = False
 
@@ -188,25 +271,28 @@ class InterventionActionProcessor:
             return transition
 
         # Get intervention signals from complementary data
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
-        teleop_action = complementary_data.get("teleop_action", {})
-        is_intervention = complementary_data.get("is_intervention", False)
-        terminate_episode = complementary_data.get("terminate_episode", False)
-        success = complementary_data.get("success", False)
-        rerecord_episode = complementary_data.get("rerecord_episode", False)
+        info = transition.get(TransitionKey.INFO, {})
+        teleop_action = info.get("teleop_action", {})
+        is_intervention = info.get("is_intervention", False)
+        terminate_episode = info.get("terminate_episode", False)
+        success = info.get("success", False)
+        rerecord_episode = info.get("rerecord_episode", False)
 
         new_transition = transition.copy()
 
         # Override action if intervention is active
-        if is_intervention and teleop_action:
-            # Convert teleop_action dict to tensor format
-            action_list = [
-                teleop_action.get("action.delta_x", 0.0),
-                teleop_action.get("action.delta_y", 0.0),
-                teleop_action.get("action.delta_z", 0.0),
-            ]
-            if self.use_gripper:
-                action_list.append(teleop_action.get("gripper", 1.0))
+        if is_intervention and teleop_action is not None:
+            if isinstance(teleop_action, dict):
+                # Convert teleop_action dict to tensor format
+                action_list = [
+                    teleop_action.get("action.delta_x", 0.0),
+                    teleop_action.get("action.delta_y", 0.0),
+                    teleop_action.get("action.delta_z", 0.0),
+                ]
+                if self.use_gripper:
+                    action_list.append(teleop_action.get("gripper", 1.0))
+            elif isinstance(teleop_action, np.ndarray):
+                action_list = teleop_action.tolist()
 
             teleop_action_tensor = torch.tensor(action_list, dtype=action.dtype, device=action.device)
             new_transition[TransitionKey.ACTION] = teleop_action_tensor
@@ -248,14 +334,9 @@ class InterventionActionProcessor:
 @dataclass
 @ProcessorStepRegistry.register("reward_classifier_processor")
 class RewardClassifierProcessor:
-    """Apply reward classification to image observations.
+    """Apply reward classification to image observations."""
 
-    This processor runs a trained reward classifier on image observations
-    to predict rewards and success states, potentially terminating episodes
-    when success is achieved.
-    """
-
-    pretrained_path: str = None
+    pretrained_path: str | None = None
     device: str = "cpu"
     success_threshold: float = 0.5
     success_reward: float = 1.0
