@@ -4,7 +4,13 @@ In this tutorial you will go through the full Human-in-the-Loop Sample-Efficient
 
 HIL-SERL is a sample-efficient reinforcement learning algorithm that combines human demonstrations with online learning and human interventions. The approach starts from a small set of human demonstrations, uses them to train a reward classifier, and then employs an actor-learner architecture where humans can intervene during policy execution to guide exploration and correct unsafe behaviors. In this tutorial, you'll use a gamepad to provide interventions and control the robot during the learning process.
 
-It combines three key ingredients: 1. **Offline demonstrations & reward classifier:** a handful of human-teleop episodes plus a vision-based success detector give the policy a shaped starting point. 2. **On-robot actor / learner loop with human interventions:** a distributed Soft Actor Critic (SAC) learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour. 3. **Safety & efficiency tools:** joint/end-effector (EE) bounds, crop region of interest (ROI) preprocessing and WandB monitoring keep the data useful and the hardware safe.
+It combines three key ingredients:
+
+1. **Offline demonstrations & reward classifier:** a handful of human-teleop episodes plus a vision-based success detector give the policy a shaped starting point.
+
+2. **On-robot actor / learner loop with human interventions:** a distributed Soft Actor Critic (SAC) learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour.
+
+3. **Safety & efficiency tools:** joint/end-effector (EE) bounds, crop region of interest (ROI) preprocessing and WandB monitoring keep the data useful and the hardware safe.
 
 Together these elements let HIL-SERL reach near-perfect task success and faster cycle times than imitation-only baselines.
 
@@ -64,35 +70,233 @@ class GymManipulatorConfig:
     env: HILSerlRobotEnvConfig    # Environment configuration (nested)
     dataset: DatasetConfig    # Dataset recording/replay configuration (nested)
     mode: str | None = None    # "record", "replay", or None (for training)
+    device: str = "cpu"    # Compute device
 
 class HILSerlRobotEnvConfig(EnvConfig):
     robot: RobotConfig | None = None    # Main robot agent (defined in `lerobot/robots`)
     teleop: TeleoperatorConfig | None = None    # Teleoperator agent, e.g., gamepad or leader arm
     processor: HILSerlProcessorConfig    # Processing pipeline configuration (nested)
     name: str = "real_robot"    # Environment name
-    device: str = "cuda"    # Compute device
-    fps: int = 30    # Control frequency
+    task: str | None = None    # Task identifier
+    fps: int = 10    # Control frequency
 
 # Nested processor configuration
 class HILSerlProcessorConfig:
     control_mode: str = "gamepad"    # Control mode
-    observation: ObservationConfig    # Observation processing settings
-    image_preprocessing: ImagePreprocessingConfig    # Image crop/resize settings
-    gripper: GripperConfig    # Gripper control and penalty settings
-    reset: ResetConfig    # Environment reset and timing settings
-    inverse_kinematics: InverseKinematicsConfig    # IK processing settings
-    reward_classifier: RewardClassifierConfig    # Reward classifier settings
+    observation: ObservationConfig | None = None    # Observation processing settings
+    image_preprocessing: ImagePreprocessingConfig | None = None    # Image crop/resize settings
+    gripper: GripperConfig | None = None    # Gripper control and penalty settings
+    reset: ResetConfig | None = None    # Environment reset and timing settings
+    inverse_kinematics: InverseKinematicsConfig | None = None    # IK processing settings
+    reward_classifier: RewardClassifierConfig | None = None    # Reward classifier settings
+    max_gripper_pos: float | None = 100.0    # Maximum gripper position
+
+# Sub-configuration classes
+class ObservationConfig:
+    add_joint_velocity_to_observation: bool = False    # Add joint velocities to state
+    add_current_to_observation: bool = False    # Add motor currents to state
+    add_ee_pose_to_observation: bool = False    # Add end-effector pose to state
+    display_cameras: bool = False    # Display camera feeds during execution
+
+class ImagePreprocessingConfig:
+    crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None    # Image cropping parameters
+    resize_size: tuple[int, int] | None = None    # Target image size
+
+class GripperConfig:
+    use_gripper: bool = True    # Enable gripper control
+    gripper_penalty: float = 0.0    # Penalty for inappropriate gripper usage
+    gripper_penalty_in_reward: bool = False    # Include gripper penalty in reward
+
+class ResetConfig:
+    fixed_reset_joint_positions: Any | None = None    # Joint positions for reset
+    reset_time_s: float = 5.0    # Time to wait during reset
+    control_time_s: float = 20.0    # Maximum episode duration
+
+class InverseKinematicsConfig:
+    urdf_path: str | None = None    # Path to robot URDF file
+    target_frame_name: str | None = None    # End-effector frame name
+    end_effector_bounds: dict[str, list[float]] | None = None    # EE workspace bounds
+    end_effector_step_sizes: dict[str, float] | None = None    # EE step sizes per axis
+
+class RewardClassifierConfig:
+    pretrained_path: str | None = None    # Path to pretrained reward classifier
+    success_threshold: float = 0.5    # Success detection threshold
+    success_reward: float = 1.0    # Reward value for successful episodes
 
 # Dataset configuration
 class DatasetConfig:
     repo_id: str    # LeRobot dataset repository ID
-    dataset_root: str | None = None    # Local dataset root (optional)
+    dataset_root: str    # Local dataset root directory
     task: str    # Task identifier
     num_episodes: int    # Number of episodes for recording
     episode: int    # Episode index for replay
     push_to_hub: bool    # Whether to push datasets to Hub
 ```
 <!-- prettier-ignore-end -->
+
+### Processor Pipeline Architecture
+
+HIL-SERL uses a modular processor pipeline architecture that processes robot observations and actions through a series of composable steps. The pipeline is divided into two main components:
+
+#### Environment Processor Pipeline
+
+The environment processor (`env_processor`) handles incoming observations and environment state:
+
+1. **VanillaObservationProcessor**: Converts raw robot observations into standardized format
+2. **JointVelocityProcessor** (optional): Adds joint velocity information to observations
+3. **MotorCurrentProcessor** (optional): Adds motor current readings to observations
+4. **ForwardKinematicsJointsToEE** (optional): Computes end-effector pose from joint positions
+5. **ImageCropResizeProcessor** (optional): Crops and resizes camera images
+6. **TimeLimitProcessor** (optional): Enforces episode time limits
+7. **GripperPenaltyProcessor** (optional): Applies penalties for inappropriate gripper usage
+8. **RewardClassifierProcessor** (optional): Automated reward detection using vision models
+9. **ToBatchProcessor**: Converts data to batch format for neural network processing
+10. **DeviceProcessor**: Moves data to the specified compute device (CPU/GPU)
+
+#### Action Processor Pipeline
+
+The action processor (`action_processor`) handles outgoing actions and human interventions:
+
+1. **AddTeleopActionAsComplimentaryData**: Captures teleoperator actions for logging
+2. **AddTeleopEventsAsInfo**: Records intervention events and episode control signals
+3. **AddRobotObservationAsComplimentaryData**: Stores raw robot state for processing
+4. **InterventionActionProcessor**: Handles human interventions and episode termination
+5. **Inverse Kinematics Pipeline** (when enabled):
+   - **MapDeltaActionToRobotAction**: Converts delta actions to robot action format
+   - **EEReferenceAndDelta**: Computes end-effector reference and delta movements
+   - **EEBoundsAndSafety**: Enforces workspace safety bounds
+   - **InverseKinematicsEEToJoints**: Converts end-effector actions to joint targets
+   - **GripperVelocityToJoint**: Handles gripper control commands
+
+#### Configuration Examples
+
+**Basic Observation Processing**:
+
+```json
+{
+  "env": {
+    "processor": {
+      "observation": {
+        "add_joint_velocity_to_observation": true,
+        "add_current_to_observation": false,
+        "display_cameras": false
+      }
+    }
+  }
+}
+```
+
+**Image Processing**:
+
+```json
+{
+  "env": {
+    "processor": {
+      "image_preprocessing": {
+        "crop_params_dict": {
+          "observation.images.front": [180, 250, 120, 150],
+          "observation.images.side": [180, 207, 180, 200]
+        },
+        "resize_size": [128, 128]
+      }
+    }
+  }
+}
+```
+
+**Inverse Kinematics Setup**:
+
+```json
+{
+  "env": {
+    "processor": {
+      "inverse_kinematics": {
+        "urdf_path": "path/to/robot.urdf",
+        "target_frame_name": "end_effector",
+        "end_effector_bounds": {
+          "min": [0.16, -0.08, 0.03],
+          "max": [0.24, 0.2, 0.1]
+        },
+        "end_effector_step_sizes": {
+          "x": 0.02,
+          "y": 0.02,
+          "z": 0.02
+        }
+      }
+    }
+  }
+}
+```
+
+### Advanced Observation Processing
+
+The HIL-SERL framework supports additional observation processing features that can improve policy learning:
+
+#### Joint Velocity Processing
+
+Enable joint velocity estimation to provide the policy with motion information:
+
+```json
+{
+  "env": {
+    "processor": {
+      "observation": {
+        "add_joint_velocity_to_observation": true
+      }
+    }
+  }
+}
+```
+
+This processor:
+
+- Estimates joint velocities using finite differences between consecutive joint position readings
+- Adds velocity information to the observation state vector
+- Useful for policies that need motion awareness for dynamic tasks
+
+#### Motor Current Processing
+
+Monitor motor currents to detect contact forces and load conditions:
+
+```json
+{
+  "env": {
+    "processor": {
+      "observation": {
+        "add_current_to_observation": true
+      }
+    }
+  }
+}
+```
+
+This processor:
+
+- Reads motor current values from the robot's control system
+- Adds current measurements to the observation state vector
+- Helps detect contact events, object weights, and mechanical resistance
+- Useful for contact-rich manipulation tasks
+
+#### Combined Observation Processing
+
+You can enable multiple observation processing features simultaneously:
+
+```json
+{
+  "env": {
+    "processor": {
+      "observation": {
+        "add_joint_velocity_to_observation": true,
+        "add_current_to_observation": true,
+        "add_ee_pose_to_observation": false,
+        "display_cameras": false
+      }
+    }
+  }
+}
+```
+
+**Note**: Enabling additional observation features increases the state space dimensionality, which may require adjusting your policy network architecture and potentially collecting more training data.
 
 ### Finding Robot Workspace Bounds
 
@@ -156,8 +360,32 @@ Example configuration section:
 {
   "env": {
     "type": "gym_manipulator",
-    "fps": 10
-    // ... robot, teleop, processor configs ...
+    "name": "real_robot",
+    "fps": 10,
+    "processor": {
+      "control_mode": "gamepad",
+      "observation": {
+        "display_cameras": false
+      },
+      "image_preprocessing": {
+        "crop_params_dict": {},
+        "resize_size": [128, 128]
+      },
+      "gripper": {
+        "use_gripper": true,
+        "gripper_penalty": 0.0
+      },
+      "reset": {
+        "reset_time_s": 5.0,
+        "control_time_s": 20.0
+      }
+    },
+    "robot": {
+      // ... robot configuration ...
+    },
+    "teleop": {
+      // ... teleoperator configuration ...
+    }
   },
   "dataset": {
     "repo_id": "username/pick_lift_cube",
@@ -167,7 +395,8 @@ Example configuration section:
     "episode": 0,
     "push_to_hub": true
   },
-  "mode": "record"
+  "mode": "record",
+  "device": "cpu"
 }
 ```
 
@@ -221,7 +450,10 @@ To setup the gamepad, you need to set the `control_mode` to `"gamepad"` and defi
       "use_gripper": true
     },
     "processor": {
-      "control_mode": "gamepad"
+      "control_mode": "gamepad",
+      "gripper": {
+        "use_gripper": true
+      }
     }
   }
 }
@@ -254,7 +486,10 @@ To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and 
       "use_degrees": true
     },
     "processor": {
-      "control_mode": "leader"
+      "control_mode": "leader",
+      "gripper": {
+        "use_gripper": true
+      }
     }
   }
 }
@@ -403,20 +638,34 @@ Example configuration section for data collection:
 {
   "env": {
     "type": "gym_manipulator",
+    "name": "real_robot",
     "fps": 10,
     "processor": {
       "reset": {
-        "number_of_steps_after_success": 15
+        "reset_time_s": 5.0,
+        "control_time_s": 20.0
+      },
+      "gripper": {
+        "use_gripper": true
       }
+    },
+    "robot": {
+      // ... robot configuration ...
+    },
+    "teleop": {
+      // ... teleoperator configuration ...
     }
   },
   "dataset": {
     "repo_id": "hf_username/dataset_name",
     "dataset_root": "data/your_dataset",
+    "task": "reward_classifier_task",
     "num_episodes": 20,
+    "episode": 0,
     "push_to_hub": true
   },
-  "mode": "record"
+  "mode": "record",
+  "device": "cpu"
 }
 ```
 
