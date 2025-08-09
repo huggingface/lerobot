@@ -23,7 +23,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
@@ -132,6 +132,7 @@ class ProcessorStepRegistry:
         cls._registry.clear()
 
 
+@runtime_checkable
 class ProcessorStep(Protocol):
     """Structural typing interface for a single processor step.
 
@@ -145,7 +146,6 @@ class ProcessorStep(Protocol):
 
     **Required**:
         - ``__call__(transition: EnvTransition) -> EnvTransition``
-        - ``feature_contract(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
 
     Optional helper protocol:
     * ``get_config() -> dict[str, Any]`` – User-defined JSON-serializable
@@ -158,6 +158,8 @@ class ProcessorStep(Protocol):
     * ``load_state_dict(state)`` – Inverse of ``state_dict``. Receives a dict
       containing torch tensors only.
     * ``reset()`` – Clear internal buffers at episode boundaries.
+    * ``transform_features(features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]``
+    If present, this method will be called to aggregate the dataset features of all steps.
 
     Example separation:
     - get_config(): {"name": "my_step", "learning_rate": 0.01, "window_size": 10}
@@ -174,7 +176,7 @@ class ProcessorStep(Protocol):
 
     def reset(self) -> None: ...
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
 
 
 def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
@@ -201,10 +203,16 @@ def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noq
     observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
     observation = observation_keys if observation_keys else None
 
-    # Extract padding and task keys for complementary data
+    # Extract padding, task, index, and task_index keys for complementary data
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
     task_key = {"task": batch["task"]} if "task" in batch else {}
-    complementary_data = {**pad_keys, **task_key} if pad_keys or task_key else {}
+    index_key = {"index": batch["index"]} if "index" in batch else {}
+    task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
+    complementary_data = (
+        {**pad_keys, **task_key, **index_key, **task_index_key}
+        if pad_keys or task_key or index_key or task_index_key
+        else {}
+    )
 
     transition: EnvTransition = {
         TransitionKey.OBSERVATION: observation,
@@ -231,7 +239,7 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
         "info": transition.get(TransitionKey.INFO, {}),
     }
 
-    # Add padding and task data from complementary_data
+    # Add padding, task, index, and task_index data from complementary_data
     complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
     if complementary_data:
         pad_data = {k: v for k, v in complementary_data.items() if "_is_pad" in k}
@@ -239,6 +247,12 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
 
         if "task" in complementary_data:
             batch["task"] = complementary_data["task"]
+
+        if "index" in complementary_data:
+            batch["index"] = complementary_data["index"]
+
+        if "task_index" in complementary_data:
+            batch["task_index"] = complementary_data["task_index"]
 
     # Handle observation - flatten dict to observation.* keys if it's a dict
     observation = transition.get(TransitionKey.OBSERVATION)
@@ -342,7 +356,10 @@ class RobotProcessor(ModelHubMixin):
                 hook(idx, current_transition)
 
         # Convert back to original format if needed
-        return self.to_output(current_transition) if called_with_batch else current_transition
+        if called_with_batch or self.to_output is not _default_transition_to_batch:
+            return self.to_output(current_transition)
+        else:
+            return current_transition
 
     def _prepare_transition(self, data: EnvTransition | dict[str, Any]) -> tuple[EnvTransition, bool]:
         """Prepare and validate transition data for processing.
@@ -575,10 +592,9 @@ class RobotProcessor(ModelHubMixin):
             if config_filename is None:
                 # Try common config names
                 common_names = [
-                    "processor.json",
-                    "preprocessor.json",
-                    "postprocessor.json",
-                    "robotprocessor.json",
+                    "robot_processor.json",
+                    "robot_preprocessor.json",
+                    "robot_postprocessor.json",
                 ]
                 config_path = None
                 for name in common_names:
@@ -808,23 +824,15 @@ class RobotProcessor(ModelHubMixin):
                     f"Step {i} ({type(step).__name__}) must define __call__(transition) -> EnvTransition"
                 )
 
-            fc = getattr(step, "feature_contract", None)
-            if not callable(fc):
-                raise TypeError(
-                    f"Step {i} ({type(step).__name__}) must define feature_contract(features) -> dict[str, Any]"
-                )
-
-    def feature_contract(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, initial_features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """
-        Apply ALL steps in order. Each step must implement
-        feature_contract(features) and return a dict (full or incremental schema).
+        Apply ALL steps in order. Only if a step has a features method, it will be called.
+        We aggregate the dataset features of all steps.
         """
         features: dict[str, PolicyFeature] = deepcopy(initial_features)
 
         for _, step in enumerate(self.steps):
-            out = step.feature_contract(features)
-            if not isinstance(out, dict):
-                raise TypeError(f"{step.__class__.__name__}.feature_contract must return dict[str, Any]")
+            out = step.transform_features(features)
             features = out
         return features
 
@@ -884,7 +892,7 @@ class ObservationProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -944,7 +952,7 @@ class ActionProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1003,7 +1011,7 @@ class RewardProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1067,7 +1075,7 @@ class DoneProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1127,7 +1135,7 @@ class TruncatedProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1192,7 +1200,7 @@ class InfoProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1238,7 +1246,7 @@ class ComplementaryDataProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -1260,5 +1268,5 @@ class IdentityProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features

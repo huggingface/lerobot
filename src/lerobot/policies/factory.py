@@ -14,9 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
+from __future__ import annotations
 
+import logging
+from typing import Any, TypedDict, cast
+
+import torch
 from torch import nn
+from typing_extensions import Unpack
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
@@ -34,9 +39,10 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from lerobot.processor.pipeline import RobotProcessor
 
 
-def get_policy_class(name: str) -> PreTrainedPolicy:
+def get_policy_class(name: str) -> type[PreTrainedPolicy]:
     """Get the policy's class and config class given a name (matching the policy class' `name` attribute)."""
     if name == "tdmpc":
         from lerobot.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
@@ -101,6 +107,123 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
 
+class ProcessorConfigKwargs(TypedDict, total=False):
+    """Keyword arguments for the processor config."""
+
+    preprocessor_config_filename: str | None
+    postprocessor_config_filename: str | None
+    preprocessor_overrides: dict[str, Any] | None
+    postprocessor_overrides: dict[str, Any] | None
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+
+
+def make_processor(
+    policy_cfg: PreTrainedConfig,
+    pretrained_path: str | None = None,
+    **kwargs: Unpack[ProcessorConfigKwargs],
+) -> tuple[RobotProcessor, RobotProcessor]:
+    """Make a processor instance for a given policy type.
+
+    This function creates the appropriate processor configuration based on the policy type.
+    Each policy type has its own processor with specific preprocessing steps.
+
+    Args:
+        policy_cfg: The config of the policy to create a processor for (e.g., "act", "diffusion", etc.)
+        pretrained_path: Optional path to load a pretrained processor from. If provided, loads
+            the processor from this path instead of creating a new one.
+        **kwargs: Additional keyword arguments passed to the processor creation.
+
+    Returns:
+        Tuple of (input_processor, output_processor) for the policy.
+
+    Raises:
+        NotImplementedError: If the policy type doesn't have a processor implemented.
+    """
+    if pretrained_path:
+        return (
+            RobotProcessor.from_pretrained(
+                pretrained_model_name_or_path=pretrained_path,
+                config_filename=kwargs.get("preprocessor_config_filename", "robot_preprocessor.json"),
+                overrides=kwargs.get("preprocessor_overrides", {}),
+            ),
+            RobotProcessor.from_pretrained(
+                pretrained_model_name_or_path=pretrained_path,
+                config_filename=kwargs.get("postprocessor_config_filename", "robot_postprocessor.json"),
+                overrides=kwargs.get("postprocessor_overrides", {}),
+            ),
+        )
+
+    # Create a new processor based on policy type
+    if policy_cfg.type == "tdmpc":
+        from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+        from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_processor
+
+        processors = make_tdmpc_processor(
+            config=cast(TDMPCConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif policy_cfg.type == "diffusion":
+        from lerobot.policies.diffusion.processor_diffusion import make_diffusion_processor
+
+        processors = make_diffusion_processor(
+            cast(DiffusionConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif policy_cfg.type == "act":
+        from lerobot.policies.act.processor_act import make_act_processor
+
+        processors = make_act_processor(
+            config=cast(ACTConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif policy_cfg.type == "vqbet":
+        from lerobot.policies.vqbet.processor_vqbet import make_vqbet_processor
+
+        processors = make_vqbet_processor(
+            config=cast(VQBeTConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif policy_cfg.type == "pi0":
+        from lerobot.policies.pi0.processor_pi0 import make_pi0_processor
+
+        processors = make_pi0_processor(
+            config=cast(PI0Config, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif policy_cfg.type == "pi0fast":
+        from lerobot.policies.pi0fast.processor_pi0fast import make_pi0fast_processor
+
+        processors = make_pi0fast_processor(
+            cast(PI0Config, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif policy_cfg.type == "sac":
+        from lerobot.policies.sac.processor_sac import make_sac_processor
+
+        processors = make_sac_processor(
+            cast(SACConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif policy_cfg.type == "reward_classifier":
+        from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
+
+        processors = make_classifier_processor(
+            cast(RewardClassifierConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif policy_cfg.type == "smolvla":
+        from lerobot.policies.smolvla.processor_smolvla import make_smolvla_processor
+
+        processors = make_smolvla_processor(
+            cast(SmolVLAConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    else:
+        raise NotImplementedError(f"Processor for policy type '{policy_cfg.type}' is not implemented.")
+
+    return processors
+
+
 def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
@@ -147,7 +270,6 @@ def make_policy(
     kwargs = {}
     if ds_meta is not None:
         features = dataset_to_policy_features(ds_meta.features)
-        kwargs["dataset_stats"] = ds_meta.stats
     else:
         if not cfg.pretrained_path:
             logging.warning(
@@ -155,6 +277,8 @@ def make_policy(
                 "rather than a dataset. Normalization modules inside the policy will have infinite values "
                 "by default without stats from a dataset."
             )
+        if env_cfg is None:
+            raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
 
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}

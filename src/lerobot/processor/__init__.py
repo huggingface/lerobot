@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .batch_processor import ToBatchProcessor
 from .device_processor import DeviceProcessor
-from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor
+from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessor,
@@ -32,6 +33,7 @@ from .pipeline import (
     TruncatedProcessor,
 )
 from .rename_processor import RenameProcessor
+from .tokenizer_processor import TokenizerProcessor
 
 __all__ = [
     "ActionProcessor",
@@ -42,12 +44,15 @@ __all__ = [
     "InfoProcessor",
     "NormalizerProcessor",
     "UnnormalizerProcessor",
+    "hotswap_stats",
     "ObservationProcessor",
     "ProcessorStep",
     "ProcessorStepRegistry",
     "RenameProcessor",
     "RewardProcessor",
     "RobotProcessor",
+    "ToBatchProcessor",
+    "TokenizerProcessor",
     "TransitionKey",
     "TruncatedProcessor",
     "VanillaObservationProcessor",

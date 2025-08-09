@@ -31,7 +31,7 @@ from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env
 from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
 from lerobot.scripts.eval import eval_policy
@@ -140,6 +140,9 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
+    preprocessor, postprocessor = make_processor(
+        policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path, dataset_stats=dataset.meta.stats
+    )
 
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
@@ -203,11 +206,8 @@ def train(cfg: TrainPipelineConfig):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
-
-        for key in batch:
-            if isinstance(batch[key], torch.Tensor):
-                batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")
 
         train_tracker, output_dict = update_policy(
             train_tracker,
@@ -240,7 +240,7 @@ def train(cfg: TrainPipelineConfig):
         if cfg.save_checkpoint and is_saving_step:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler)
+            save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler, preprocessor)
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
                 wandb_logger.log_policy(checkpoint_dir)
@@ -284,6 +284,10 @@ def train(cfg: TrainPipelineConfig):
 
     if cfg.policy.push_to_hub:
         policy.push_model_to_hub(cfg)
+        if preprocessor:
+            preprocessor.push_to_hub(cfg.policy.repo_id)
+        if postprocessor:
+            postprocessor.push_to_hub(cfg.policy.repo_id)
 
 
 def main():

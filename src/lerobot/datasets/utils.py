@@ -470,6 +470,50 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
     return policy_features
 
 
+def merge_features(*dicts: dict) -> dict:
+    """
+    Merge LeRobot grouped feature dicts.
+
+    - For 1D numeric specs (dtype not image/video/string) with "names": we merge the names and recompute the shape.
+    - For others (observation.images.*), last one wins (if they are identical).
+    """
+    out: dict = {}
+    for d in dicts:
+        for key, value in d.items():
+            if not isinstance(value, dict):
+                out[key] = value
+                continue
+
+            dtype = value.get("dtype")
+            shape = value.get("shape")
+            is_vector = (
+                dtype not in ("image", "video", "string")
+                and isinstance(shape, tuple)
+                and len(shape) == 1
+                and "names" in value
+            )
+
+            if is_vector:
+                # Initialize or retrieve the accumulating dict for this feature key
+                target = out.setdefault(key, {"dtype": dtype, "names": [], "shape": (0,)})
+                # Ensure consistent data types across merged entries
+                if "dtype" in target and dtype != target["dtype"]:
+                    raise ValueError(f"dtype mismatch for '{key}': {target['dtype']} vs {dtype}")
+
+                # Merge feature names: append only new ones to preserve order without duplicates
+                seen = set(target["names"])
+                for n in value["names"]:
+                    if n not in seen:
+                        target["names"].append(n)
+                        seen.add(n)
+                # Recompute the shape to reflect the updated number of features
+                target["shape"] = (len(target["names"]),)
+            else:
+                # For images/videos and non-1D entries: override with the latest definition
+                out[key] = value
+    return out
+
+
 def create_empty_dataset_info(
     codebase_version: str,
     fps: int,
