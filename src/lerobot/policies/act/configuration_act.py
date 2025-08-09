@@ -128,6 +128,10 @@ class ACTConfig(PreTrainedConfig):
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
     temporal_ensemble_coeff: float | None = None
 
+    # Reward prediction head
+    use_reward_head: bool = True
+    reward_loss_weight: float = 2.0
+
     # Training and loss computation.
     dropout: float = 0.1
     kl_weight: float = 10.0
