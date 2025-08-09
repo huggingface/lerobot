@@ -168,13 +168,13 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             return {
                 "dtype": "float32",
                 "shape": (4,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
+                "names": {"action.delta_x": 0, "action.delta_y": 1, "action.delta_z": 2, "action.gripper": 3},
             }
         else:
             return {
                 "dtype": "float32",
                 "shape": (3,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
+                "names": {"action.delta_x": 0, "action.delta_y": 1, "action.delta_z": 2},
             }
 
     def _on_press(self, key):
@@ -227,9 +227,9 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         self.current_pressed.clear()
 
         action_dict = {
-            "delta_x": delta_x,
-            "delta_y": delta_y,
-            "delta_z": delta_z,
+            "action.delta_x": delta_x,
+            "action.delta_y": delta_y,
+            "action.delta_z": delta_z,
         }
 
         if self.config.use_gripper:
