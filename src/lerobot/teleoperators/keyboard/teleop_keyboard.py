@@ -24,6 +24,7 @@ from typing import Any
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
+from ..utils import TeleopEvents
 from .configuration_keyboard import KeyboardEndEffectorTeleopConfig, KeyboardTeleopConfig
 
 PYNPUT_AVAILABLE = True
@@ -256,10 +257,10 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         """
         if not self.is_connected:
             return {
-                "is_intervention": False,
-                "terminate_episode": False,
-                "success": False,
-                "rerecord_episode": False,
+                TeleopEvents.IS_INTERVENTION: False,
+                TeleopEvents.TERMINATE_EPISODE: False,
+                TeleopEvents.SUCCESS: False,
+                TeleopEvents.RERECORD_EPISODE: False,
             }
 
         # Check if any movement keys are currently pressed (indicates intervention)
@@ -284,7 +285,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         while not self.misc_keys_queue.empty():
             key = self.misc_keys_queue.get_nowait()
             if key == "s":
-                terminate_episode = True
                 success = True
             elif key == "r":
                 terminate_episode = True
@@ -294,8 +294,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 success = False
 
         return {
-            "is_intervention": is_intervention,
-            "terminate_episode": terminate_episode,
-            "success": success,
-            "rerecord_episode": rerecord_episode,
+            TeleopEvents.IS_INTERVENTION: is_intervention,
+            TeleopEvents.TERMINATE_EPISODE: terminate_episode,
+            TeleopEvents.SUCCESS: success,
+            TeleopEvents.RERECORD_EPISODE: rerecord_episode,
         }

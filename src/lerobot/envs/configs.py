@@ -211,6 +211,7 @@ class ResetConfig:
     fixed_reset_joint_positions: Any | None = None
     reset_time_s: float = 5.0
     control_time_s: float = 20.0
+    terminate_on_success: bool = True
 
 
 @dataclass

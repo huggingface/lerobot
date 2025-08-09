@@ -16,6 +16,7 @@ from lerobot.processor.pipeline import (
     TransitionKey,
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.teleoperators.utils import TeleopEvents
 
 GRIPPER_KEY = "gripper"
 
@@ -264,6 +265,7 @@ class InterventionActionProcessor:
     """Handle human intervention actions and episode termination."""
 
     use_gripper: bool = False
+    terminate_on_success: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         action = transition.get(TransitionKey.ACTION)
@@ -273,10 +275,10 @@ class InterventionActionProcessor:
         # Get intervention signals from complementary data
         info = transition.get(TransitionKey.INFO, {})
         teleop_action = info.get("teleop_action", {})
-        is_intervention = info.get("is_intervention", False)
-        terminate_episode = info.get("terminate_episode", False)
-        success = info.get("success", False)
-        rerecord_episode = info.get("rerecord_episode", False)
+        is_intervention = info.get(TeleopEvents.IS_INTERVENTION, False)
+        terminate_episode = info.get(TeleopEvents.TERMINATE_EPISODE, False)
+        success = info.get(TeleopEvents.SUCCESS, False)
+        rerecord_episode = info.get(TeleopEvents.RERECORD_EPISODE, False)
 
         new_transition = transition.copy()
 
@@ -298,14 +300,16 @@ class InterventionActionProcessor:
             new_transition[TransitionKey.ACTION] = teleop_action_tensor
 
         # Handle episode termination
-        new_transition[TransitionKey.DONE] = bool(terminate_episode)
+        new_transition[TransitionKey.DONE] = bool(terminate_episode) or (
+            self.terminate_on_success and success
+        )
         new_transition[TransitionKey.REWARD] = float(success)
 
         # Update info with intervention metadata
         info = new_transition.get(TransitionKey.INFO, {})
-        info["is_intervention"] = is_intervention
-        info["rerecord_episode"] = rerecord_episode
-        info["next.success"] = success if terminate_episode else info.get("next.success", False)
+        info[TeleopEvents.IS_INTERVENTION] = is_intervention
+        info[TeleopEvents.RERECORD_EPISODE] = rerecord_episode
+        info[TeleopEvents.SUCCESS] = success
         new_transition[TransitionKey.INFO] = info
         new_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"] = new_transition[
             TransitionKey.ACTION

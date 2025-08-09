@@ -16,6 +16,16 @@ from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
 
 
+class TeleopEvents:
+    """Shared constants for teleoperator events across teleoperators."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    RERECORD_EPISODE = "rerecord_episode"
+    IS_INTERVENTION = "is_intervention"
+    TERMINATE_EPISODE = "terminate_episode"
+
+
 def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
     if config.type == "keyboard":
         from .keyboard import KeyboardTeleop

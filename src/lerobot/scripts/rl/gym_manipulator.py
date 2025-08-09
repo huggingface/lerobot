@@ -68,6 +68,7 @@ from lerobot.teleoperators import (
     so101_leader,  # noqa: F401
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
@@ -251,7 +252,7 @@ class RobotEnv(gym.Env):
         self.episode_data = None
         obs = self._get_observation()
         return obs, {
-            "is_intervention": False,
+            TeleopEvents.IS_INTERVENTION: False,
             "raw_joint_positions": obs["agent_pos"],
         }
 
@@ -279,7 +280,7 @@ class RobotEnv(gym.Env):
             reward,
             terminated,
             truncated,
-            {"is_intervention": False, "raw_joint_positions": obs["agent_pos"]},
+            {TeleopEvents.IS_INTERVENTION: False, "raw_joint_positions": obs["agent_pos"]},
         )
 
     def render(self) -> None:
@@ -367,9 +368,15 @@ def make_processors(
     Returns:
         Tuple of (environment processor, action processor).
     """
-    # Check if this is a GymHIL simulation environment
+    terminate_on_success = (
+        cfg.processor.reset.terminate_on_success if cfg.processor.reset is not None else True
+    )
+
     if cfg.name == "gym_hil":
-        action_pipeline_steps = [InterventionActionProcessor(), Torch2NumpyActionProcessor()]
+        action_pipeline_steps = [
+            InterventionActionProcessor(terminate_on_success=terminate_on_success),
+            Torch2NumpyActionProcessor(),
+        ]
 
         # Minimal processor pipeline for GymHIL simulation
         env_pipeline_steps = [
@@ -435,7 +442,6 @@ def make_processors(
             )
         )
 
-    # Add reward classifier processor if configured
     if (
         cfg.processor.reward_classifier is not None
         and cfg.processor.reward_classifier.pretrained_path is not None
@@ -446,6 +452,7 @@ def make_processors(
                 device=device,
                 success_threshold=cfg.processor.reward_classifier.success_threshold,
                 success_reward=cfg.processor.reward_classifier.success_reward,
+                terminate_on_success=terminate_on_success,
             )
         )
 
@@ -458,6 +465,7 @@ def make_processors(
         AddRobotObservationAsComplimentaryData(robot=env.robot),
         InterventionActionProcessor(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+            terminate_on_success=terminate_on_success,
         ),
     ]
 

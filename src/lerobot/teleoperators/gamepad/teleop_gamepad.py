@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from ..teleoperator import Teleoperator
+from ..utils import TeleopEvents
 from .configuration_gamepad import GamepadTeleopConfig
 
 
@@ -121,10 +122,10 @@ class GamepadTeleop(Teleoperator):
         """
         if self.gamepad is None:
             return {
-                "is_intervention": False,
-                "terminate_episode": False,
-                "success": False,
-                "rerecord_episode": False,
+                TeleopEvents.IS_INTERVENTION: False,
+                TeleopEvents.TERMINATE_EPISODE: False,
+                TeleopEvents.SUCCESS: False,
+                TeleopEvents.RERECORD_EPISODE: False,
             }
 
         # Update gamepad state to get fresh inputs
@@ -135,15 +136,18 @@ class GamepadTeleop(Teleoperator):
 
         # Get episode end status
         episode_end_status = self.gamepad.get_episode_end_status()
-        terminate_episode = episode_end_status is not None
-        success = episode_end_status == "success"
-        rerecord_episode = episode_end_status == "rerecord_episode"
+        terminate_episode = episode_end_status in [
+            TeleopEvents.RERECORD_EPISODE,
+            TeleopEvents.FAILURE,
+        ]
+        success = episode_end_status == TeleopEvents.SUCCESS
+        rerecord_episode = episode_end_status == TeleopEvents.RERECORD_EPISODE
 
         return {
-            "is_intervention": is_intervention,
-            "terminate_episode": terminate_episode,
-            "success": success,
-            "rerecord_episode": rerecord_episode,
+            TeleopEvents.IS_INTERVENTION: is_intervention,
+            TeleopEvents.TERMINATE_EPISODE: terminate_episode,
+            TeleopEvents.SUCCESS: success,
+            TeleopEvents.RERECORD_EPISODE: rerecord_episode,
         }
 
     def disconnect(self) -> None:

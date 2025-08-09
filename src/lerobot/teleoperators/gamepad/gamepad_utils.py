@@ -16,6 +16,8 @@
 
 import logging
 
+from ..utils import TeleopEvents
+
 
 class InputController:
     """Base class for input controllers that generate motion deltas."""
@@ -134,10 +136,10 @@ class KeyboardController(InputController):
                     return False
                 elif key == keyboard.Key.enter:
                     self.key_states["success"] = True
-                    self.episode_end_status = "success"
+                    self.episode_end_status = TeleopEvents.SUCCESS
                 elif key == keyboard.Key.backspace:
                     self.key_states["failure"] = True
-                    self.episode_end_status = "failure"
+                    self.episode_end_status = TeleopEvents.FAILURE
             except AttributeError:
                 pass
 
@@ -255,13 +257,13 @@ class GamepadController(InputController):
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 3:
-                    self.episode_end_status = "success"
+                    self.episode_end_status = TeleopEvents.SUCCESS
                 # A button (1) for failure
                 elif event.button == 1:
-                    self.episode_end_status = "failure"
+                    self.episode_end_status = TeleopEvents.FAILURE
                 # X button (0) for rerecord
                 elif event.button == 0:
-                    self.episode_end_status = "rerecord_episode"
+                    self.episode_end_status = TeleopEvents.RERECORD_EPISODE
 
                 # RB button (6) for closing gripper
                 elif event.button == 6:
@@ -451,11 +453,11 @@ class GamepadControllerHID(InputController):
                 # Check if X/Square button (bit 5) is pressed for failure
                 # Check if A/Cross button (bit 4) is pressed for rerecording
                 if buttons & 1 << 7:
-                    self.episode_end_status = "success"
+                    self.episode_end_status = TeleopEvents.SUCCESS
                 elif buttons & 1 << 5:
-                    self.episode_end_status = "failure"
+                    self.episode_end_status = TeleopEvents.FAILURE
                 elif buttons & 1 << 4:
-                    self.episode_end_status = "rerecord_episode"
+                    self.episode_end_status = TeleopEvents.RERECORD_EPISODE
                 else:
                     self.episode_end_status = None
 

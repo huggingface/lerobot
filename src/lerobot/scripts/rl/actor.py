@@ -71,6 +71,7 @@ from lerobot.scripts.rl.gym_manipulator import (
     step_env_and_process_transition,
 )
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
+from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import (
     bytes_to_state_dict,
@@ -318,7 +319,7 @@ def act_with_policy(
 
         # Check for intervention from transition info
         intervention_info = new_transition[TransitionKey.INFO]
-        if intervention_info.get("is_intervention", False):
+        if intervention_info.get(TeleopEvents.IS_INTERVENTION, False):
             episode_intervention = True
             episode_intervention_steps += 1
 

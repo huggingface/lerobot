@@ -111,6 +111,7 @@ class ResetConfig:
     fixed_reset_joint_positions: Any | None = None    # Joint positions for reset
     reset_time_s: float = 5.0    # Time to wait during reset
     control_time_s: float = 20.0    # Maximum episode duration
+    terminate_on_success: bool = True    # Whether to terminate episodes on success detection
 
 class InverseKinematicsConfig:
     urdf_path: str | None = None    # Path to robot URDF file
@@ -626,11 +627,13 @@ python -m lerobot.scripts.rl.gym_manipulator --config_path src/lerobot/configs/r
 - **mode**: set it to `"record"` to collect a dataset (at root level)
 - **dataset.repo_id**: `"hf_username/dataset_name"`, name of the dataset and repo on the hub
 - **dataset.num_episodes**: Number of episodes to record
-- **env.processor.reset.number_of_steps_after_success**: Number of additional frames to record after a success (reward=1) is detected
+- **env.processor.reset.terminate_on_success**: Whether to automatically terminate episodes when success is detected (default: `true`)
 - **env.fps**: Number of frames per second to record
 - **dataset.push_to_hub**: Whether to push the dataset to the hub
 
-The `env.processor.reset.number_of_steps_after_success` parameter is crucial as it allows you to collect more positive examples. When a success is detected, the system will continue recording for the specified number of steps while maintaining the reward=1 label. Otherwise, there won't be enough states in the dataset labeled to 1 to train a good classifier.
+The `env.processor.reset.terminate_on_success` parameter allows you to control episode termination behavior. When set to `false`, episodes will continue even after success is detected, allowing you to collect more positive examples with the reward=1 label. This is crucial for training reward classifiers as it provides more success state examples in your dataset. When set to `true` (default), episodes terminate immediately upon success detection.
+
+**Important**: For reward classifier training, set `terminate_on_success: false` to collect sufficient positive examples. For regular HIL-SERL training, keep it as `true` to enable automatic episode termination when the task is completed successfully.
 
 Example configuration section for data collection:
 
@@ -643,7 +646,8 @@ Example configuration section for data collection:
     "processor": {
       "reset": {
         "reset_time_s": 5.0,
-        "control_time_s": 20.0
+        "control_time_s": 20.0,
+        "terminate_on_success": false
       },
       "gripper": {
         "use_gripper": true
@@ -749,6 +753,9 @@ or set the argument in the json config file.
         "pretrained_path": "path_to_your_pretrained_model",
         "success_threshold": 0.7,
         "success_reward": 1.0
+      },
+      "reset": {
+        "terminate_on_success": true
       }
     }
   }
