@@ -13,21 +13,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import glob
 import importlib
+import json
 import logging
 import shutil
+import subprocess
+import tempfile
 import warnings
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
-import av
 import pyarrow as pa
 import torch
 import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
+
+from lerobot.datasets.utils import DEFAULT_VIDEO_PATH
 
 
 def get_safe_default_codec():
@@ -102,7 +106,7 @@ def decode_video_frames_torchvision(
     keyframes_only = False
     torchvision.set_video_backend(backend)
     if backend == "pyav":
-        keyframes_only = True  # pyav doesn't support accurate seek
+        keyframes_only = True  # pyav doesnt support accuracte seek
 
     # set a video stream reader
     # TODO(rcadene): also load audio stream at the same time
@@ -155,6 +159,7 @@ def decode_video_frames_torchvision(
     )
 
     # get closest frames to the query timestamps
+    # TODO(rcadene): remove torch.stack
     closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
     closest_ts = loaded_ts[argmin_]
 
@@ -252,83 +257,104 @@ def encode_video_frames(
     g: int | None = 2,
     crf: int | None = 30,
     fast_decode: int = 0,
-    log_level: int | None = av.logging.ERROR,
+    log_level: str | None = "quiet",
     overwrite: bool = False,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
-    # Check encoder availability
-    if vcodec not in ["h264", "hevc", "libsvtav1"]:
-        raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: h264, hevc, libsvtav1.")
-
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
+    video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    video_path.parent.mkdir(parents=True, exist_ok=overwrite)
-
-    # Encoders/pixel formats incompatibility check
-    if (vcodec == "libsvtav1" or vcodec == "hevc") and pix_fmt == "yuv444p":
-        logging.warning(
-            f"Incompatible pixel format 'yuv444p' for codec {vcodec}, auto-selecting format 'yuv420p'"
-        )
-        pix_fmt = "yuv420p"
-
-    # Get input frames
-    template = "frame_" + ("[0-9]" * 6) + ".png"
-    input_list = sorted(
-        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("_")[-1].split(".")[0])
+    ffmpeg_args = OrderedDict(
+        [
+            ("-f", "image2"),
+            ("-r", str(fps)),
+            ("-i", str(imgs_dir / "frame-%06d.png")),
+            ("-vcodec", vcodec),
+            ("-pix_fmt", pix_fmt),
+        ]
     )
 
-    # Define video output frame size (assuming all input frames are the same size)
-    if len(input_list) == 0:
-        raise FileNotFoundError(f"No images found in {imgs_dir}.")
-    dummy_image = Image.open(input_list[0])
-    width, height = dummy_image.size
-
-    # Define video codec options
-    video_options = {}
-
     if g is not None:
-        video_options["g"] = str(g)
+        ffmpeg_args["-g"] = str(g)
 
     if crf is not None:
-        video_options["crf"] = str(crf)
+        ffmpeg_args["-crf"] = str(crf)
 
     if fast_decode:
-        key = "svtav1-params" if vcodec == "libsvtav1" else "tune"
+        key = "-svtav1-params" if vcodec == "libsvtav1" else "-tune"
         value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
-        video_options[key] = value
+        ffmpeg_args[key] = value
 
-    # Set logging level
     if log_level is not None:
-        # "While less efficient, it is generally preferable to modify logging with Python’s logging"
-        logging.getLogger("libav").setLevel(log_level)
+        ffmpeg_args["-loglevel"] = str(log_level)
 
-    # Create and open output file (overwrite by default)
-    with av.open(str(video_path), "w") as output:
-        output_stream = output.add_stream(vcodec, fps, options=video_options)
-        output_stream.pix_fmt = pix_fmt
-        output_stream.width = width
-        output_stream.height = height
+    ffmpeg_args = [item for pair in ffmpeg_args.items() for item in pair]
+    if overwrite:
+        ffmpeg_args.append("-y")
 
-        # Loop through input frames and encode them
-        for input_data in input_list:
-            input_image = Image.open(input_data).convert("RGB")
-            input_frame = av.VideoFrame.from_image(input_image)
-            packet = output_stream.encode(input_frame)
-            if packet:
-                output.mux(packet)
-
-        # Flush the encoder
-        packet = output_stream.encode()
-        if packet:
-            output.mux(packet)
-
-    # Reset logging level
-    if log_level is not None:
-        av.logging.restore_default_callback()
+    ffmpeg_cmd = ["ffmpeg"] + ffmpeg_args + [str(video_path)]
+    # redirect stdin to subprocess.DEVNULL to prevent reading random keyboard inputs from terminal
+    subprocess.run(ffmpeg_cmd, check=True, stdin=subprocess.DEVNULL)
 
     if not video_path.exists():
-        raise OSError(f"Video encoding did not work. File not found: {video_path}.")
+        raise OSError(
+            f"Video encoding did not work. File not found: {video_path}. "
+            f"Try running the command manually to debug: `{''.join(ffmpeg_cmd)}`"
+        )
+
+
+def concat_video_files(paths_to_cat: list[Path], root: Path, video_key: str, chunk_idx: int, file_idx: int):
+    """
+    Concatenate multiple video files into a single video file using ffmpeg.
+
+    This function takes a list of video file paths and concatenates them into a single
+    output video file. It uses ffmpeg's concat demuxer with stream copy mode for fast
+    concatenation without re-encoding.
+
+    Args:
+        paths_to_cat: List of video file paths to concatenate, in order.
+        root: Root directory where temporary files and output will be created.
+        video_key: Video key identifier (e.g., camera name) used in output path.
+        chunk_idx: Chunk index for organizing output files.
+        file_idx: File index within the chunk.
+
+    Note:
+        - Creates a temporary directory for intermediate files that is cleaned up after use.
+        - Uses ffmpeg's concat demuxer which requires all input videos to have the same
+          codec, resolution, and frame rate for proper concatenation.
+        - Output path follows the DEFAULT_VIDEO_PATH pattern with video_key, chunk_idx,
+          and file_idx parameters.
+    """
+
+    tmp_dir = Path(tempfile.mkdtemp(dir=root))
+    path_concat_video_files = tmp_dir / "concat_video_files.txt"
+    with open(path_concat_video_files, "w") as f:
+        for ep_path in paths_to_cat:
+            f.write(f"file '{str(ep_path)}'\n")
+
+    path_tmp_output = tmp_dir / "tmp_output.mp4"
+    command = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(path_concat_video_files),
+        "-c",
+        "copy",
+        str(path_tmp_output),
+    ]
+    subprocess.run(command, check=True)
+
+    output_path = root / DEFAULT_VIDEO_PATH.format(
+        video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path_tmp_output), str(output_path))
+    shutil.rmtree(str(tmp_dir))
 
 
 @dataclass
@@ -364,68 +390,78 @@ with warnings.catch_warnings():
 
 
 def get_audio_info(video_path: Path | str) -> dict:
-    # Set logging level
-    logging.getLogger("libav").setLevel(av.logging.ERROR)
+    ffprobe_audio_cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=channels,codec_name,bit_rate,sample_rate,bit_depth,channel_layout,duration",
+        "-of",
+        "json",
+        str(video_path),
+    ]
+    result = subprocess.run(ffprobe_audio_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Error running ffprobe: {result.stderr}")
 
-    # Getting audio stream information
-    audio_info = {}
-    with av.open(str(video_path), "r") as audio_file:
-        try:
-            audio_stream = audio_file.streams.audio[0]
-        except IndexError:
-            # Reset logging level
-            av.logging.restore_default_callback()
-            return {"has_audio": False}
+    info = json.loads(result.stdout)
+    audio_stream_info = info["streams"][0] if info.get("streams") else None
+    if audio_stream_info is None:
+        return {"has_audio": False}
 
-        audio_info["audio.channels"] = audio_stream.channels
-        audio_info["audio.codec"] = audio_stream.codec.canonical_name
-        # In an ideal loseless case : bit depth x sample rate x channels = bit rate.
-        # In an actual compressed case, the bit rate is set according to the compression level : the lower the bit rate, the more compression is applied.
-        audio_info["audio.bit_rate"] = audio_stream.bit_rate
-        audio_info["audio.sample_rate"] = audio_stream.sample_rate  # Number of samples per second
-        # In an ideal loseless case : fixed number of bits per sample.
-        # In an actual compressed case : variable number of bits per sample (often reduced to match a given depth rate).
-        audio_info["audio.bit_depth"] = audio_stream.format.bits
-        audio_info["audio.channel_layout"] = audio_stream.layout.name
-        audio_info["has_audio"] = True
-
-    # Reset logging level
-    av.logging.restore_default_callback()
-
-    return audio_info
+    # Return the information, defaulting to None if no audio stream is present
+    return {
+        "has_audio": True,
+        "audio.channels": audio_stream_info.get("channels", None),
+        "audio.codec": audio_stream_info.get("codec_name", None),
+        "audio.bit_rate": int(audio_stream_info["bit_rate"]) if audio_stream_info.get("bit_rate") else None,
+        "audio.sample_rate": int(audio_stream_info["sample_rate"])
+        if audio_stream_info.get("sample_rate")
+        else None,
+        "audio.bit_depth": audio_stream_info.get("bit_depth", None),
+        "audio.channel_layout": audio_stream_info.get("channel_layout", None),
+    }
 
 
 def get_video_info(video_path: Path | str) -> dict:
-    # Set logging level
-    logging.getLogger("libav").setLevel(av.logging.ERROR)
+    ffprobe_video_cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=r_frame_rate,width,height,codec_name,nb_frames,duration,pix_fmt",
+        "-of",
+        "json",
+        str(video_path),
+    ]
+    result = subprocess.run(ffprobe_video_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Error running ffprobe: {result.stderr}")
 
-    # Getting video stream information
-    video_info = {}
-    with av.open(str(video_path), "r") as video_file:
-        try:
-            video_stream = video_file.streams.video[0]
-        except IndexError:
-            # Reset logging level
-            av.logging.restore_default_callback()
-            return {}
+    info = json.loads(result.stdout)
+    video_stream_info = info["streams"][0]
 
-        video_info["video.height"] = video_stream.height
-        video_info["video.width"] = video_stream.width
-        video_info["video.codec"] = video_stream.codec.canonical_name
-        video_info["video.pix_fmt"] = video_stream.pix_fmt
-        video_info["video.is_depth_map"] = False
+    # Calculate fps from r_frame_rate
+    r_frame_rate = video_stream_info["r_frame_rate"]
+    num, denom = map(int, r_frame_rate.split("/"))
+    fps = num / denom
 
-        # Calculate fps from r_frame_rate
-        video_info["video.fps"] = int(video_stream.base_rate)
+    pixel_channels = get_video_pixel_channels(video_stream_info["pix_fmt"])
 
-        pixel_channels = get_video_pixel_channels(video_stream.pix_fmt)
-        video_info["video.channels"] = pixel_channels
-
-    # Reset logging level
-    av.logging.restore_default_callback()
-
-    # Adding audio stream information
-    video_info.update(**get_audio_info(video_path))
+    video_info = {
+        "video.fps": fps,
+        "video.height": video_stream_info["height"],
+        "video.width": video_stream_info["width"],
+        "video.channels": pixel_channels,
+        "video.codec": video_stream_info["codec_name"],
+        "video.pix_fmt": video_stream_info["pix_fmt"],
+        "video.is_depth_map": False,
+        **get_audio_info(video_path),
+    }
 
     return video_info
 
@@ -452,66 +488,3 @@ def get_image_pixel_channels(image: Image):
         return 4  # RGBA
     else:
         raise ValueError("Unknown format")
-
-
-class VideoEncodingManager:
-    """
-    Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
-
-    This manager handles:
-    - Batch encoding for any remaining episodes when recording interrupted
-    - Cleaning up temporary image files from interrupted episodes
-    - Removing empty image directories
-
-    Args:
-        dataset: The LeRobotDataset instance
-    """
-
-    def __init__(self, dataset):
-        self.dataset = dataset
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # Handle any remaining episodes that haven't been batch encoded
-        if self.dataset.episodes_since_last_encoding > 0:
-            if exc_type is not None:
-                logging.info("Exception occurred. Encoding remaining episodes before exit...")
-            else:
-                logging.info("Recording stopped. Encoding remaining episodes...")
-
-            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
-            end_ep = self.dataset.num_episodes
-            logging.info(
-                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}"
-            )
-            self.dataset.batch_encode_videos(start_ep, end_ep)
-
-        # Clean up episode images if recording was interrupted
-        if exc_type is not None:
-            interrupted_episode_index = self.dataset.num_episodes
-            for key in self.dataset.meta.video_keys:
-                img_dir = self.dataset._get_image_file_path(
-                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
-                ).parent
-                if img_dir.exists():
-                    logging.debug(
-                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
-                    )
-                    shutil.rmtree(img_dir)
-
-        # Clean up any remaining images directory if it's empty
-        img_dir = self.dataset.root / "images"
-        # Check for any remaining PNG files
-        png_files = list(img_dir.rglob("*.png"))
-        if len(png_files) == 0:
-            # Only remove the images directory if no PNG files remain
-            if img_dir.exists():
-                shutil.rmtree(img_dir)
-                logging.debug("Cleaned up empty images directory")
-        else:
-            logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
-
-        return False  # Don't suppress the original exception
