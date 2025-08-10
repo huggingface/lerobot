@@ -37,25 +37,25 @@ from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
-from lerobot.policies.dact.variant_a.configuration_dact_a import DACTConfigA
+from lerobot.policies.dact.variant_b.configuration_dact_b import DACTConfigB
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionConditionalUnet1d
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters, get_dtype_from_parameters, populate_queues
 
 
-class DACTPolicyA(PreTrainedPolicy):
+class DACTPolicyB(PreTrainedPolicy):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://huggingface.co/papers/2304.13705, code: https://github.com/tonyzhaozh/act)
     """
 
-    config_class = DACTConfigA
-    name = "dact_a"
+    config_class = DACTConfigB
+    name = "dact_b"
 
     def __init__(
         self,
-        config: DACTConfigA,
+        config: DACTConfigB,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -367,7 +367,7 @@ class DACT(nn.Module):
                                 └───────────────────────┘
     """
 
-    def __init__(self, config: DACTConfigA):
+    def __init__(self, config: DACTConfigB):
         # BERT style VAE encoder with input tokens [cls, robot_state, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         super().__init__()
@@ -885,7 +885,7 @@ class DACT(nn.Module):
 class ACTEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""
 
-    def __init__(self, config: DACTConfigA, is_vae_encoder: bool = False):
+    def __init__(self, config: DACTConfigB, is_vae_encoder: bool = False):
         super().__init__()
         self.is_vae_encoder = is_vae_encoder
         num_layers = config.n_vae_encoder_layers if self.is_vae_encoder else config.n_encoder_layers
@@ -902,7 +902,7 @@ class ACTEncoder(nn.Module):
 
 
 class ACTEncoderLayer(nn.Module):
-    def __init__(self, config: DACTConfigA):
+    def __init__(self, config: DACTConfigB):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
 
@@ -941,7 +941,7 @@ class ACTEncoderLayer(nn.Module):
 
 
 class ACTDecoder(nn.Module):
-    def __init__(self, config: DACTConfigA):
+    def __init__(self, config: DACTConfigB):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
         self.layers = nn.ModuleList([ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)])
@@ -964,7 +964,7 @@ class ACTDecoder(nn.Module):
 
 
 class ACTDecoderLayer(nn.Module):
-    def __init__(self, config: DACTConfigA):
+    def __init__(self, config: DACTConfigB):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
         self.multihead_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)

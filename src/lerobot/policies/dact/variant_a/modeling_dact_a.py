@@ -33,24 +33,25 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from lerobot.constants import ACTION, OBS_IMAGES
-from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from lerobot.policies.dact.variant_a.configuration_dact_a import DACTConfigA
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import populate_queues
 
 
-class ACTPolicy(PreTrainedPolicy):
+class DACTPolicyA(PreTrainedPolicy):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://huggingface.co/papers/2304.13705, code: https://github.com/tonyzhaozh/act)
     """
 
-    config_class = ACTConfig
-    name = "act"
+    config_class = DACTConfigA
+    name = "dact_a"
 
     def __init__(
         self,
-        config: ACTConfig,
+        config: DACTConfigA,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -77,6 +78,9 @@ class ACTPolicy(PreTrainedPolicy):
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
+        # queues are populated during rollout of the policy, they contain the n latest observations and actions
+        self._queues = None
+
         self.reset()
 
     def get_optim_params(self) -> dict:
@@ -102,10 +106,16 @@ class ACTPolicy(PreTrainedPolicy):
 
     def reset(self):
         """This should be called whenever the environment is reset."""
-        if self.config.temporal_ensemble_coeff is not None:
-            self.temporal_ensembler.reset()
-        else:
-            self._action_queue = deque([], maxlen=self.config.n_action_steps)
+        self._queues = {
+            "observation.state": deque(maxlen=self.config.n_obs_steps),
+            "action": deque(maxlen=self.config.n_action_steps),
+        }
+        if self.config.image_features:
+            self._queues["observation.images"] = deque(maxlen=self.config.n_obs_steps)
+        if self.config.env_state_feature:
+            self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
+
+        self._obs_steps_seen = 0
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -117,58 +127,186 @@ class ACTPolicy(PreTrainedPolicy):
         """
         self.eval()  # keeping the policy in eval mode as it could be set to train mode while queue is consumed
 
+        # ------------------------------------------------------------------ #
+        # 1. Pre-process the incoming observation (normalise + image stacking)
+        # ------------------------------------------------------------------ #
+        # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
+        if ACTION in batch:
+            batch.pop(ACTION)
+
+        # Normalize the batch inputs
+        batch = self.normalize_inputs(batch)
+        if self.config.image_features:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch[OBS_IMAGES] = torch.stack(
+                [batch[k] for k in self.config.image_features], dim=-4
+            )
+
+        # ------------------------------------------------------------------ #
+        # 2. Initialise / update rolling queues of past observations
+        # ------------------------------------------------------------------ #
+        # Belt and suspenders approach to ensure that the action is not added to the queues
+        # Populate queues ensures that the queues are initialised and updated with the latest observations
+        # For the first timestep it copies the first observation several times
+        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
+        self._obs_steps_seen = min(self._obs_steps_seen + 1, self.config.n_obs_steps) # Increment the number of observations seen
+
+        # ------------------------------------------------------------------ #
+        # 3. Branch A – temporal ensembling (no action queue needed)
+        # Stacks observations inside
+        # ------------------------------------------------------------------ #
         if self.config.temporal_ensemble_coeff is not None:
-            actions = self.predict_action_chunk(batch)
+            actions = self.predict_action_chunk()
             action = self.temporal_ensembler.update(actions)
             return action
 
+        # ------------------------------------------------------------------ #
+        # 4. Branch B – uses up actions in the queue then calls the model
+        # ------------------------------------------------------------------ #
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk()[:, : self.config.n_action_steps]
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
+    def _stack_obs_from_queues(self, queues: dict[str, deque]) -> dict[str, Tensor]:
+        """Materialize the last T=n_obs_steps as a time axis (B, T, ...)."""
+        assert queues is not None, "Queues must be initialised before calling this method"
+        stacked = {}
+        for k, dq in queues.items():
+            if k == ACTION:
+                continue
+            # dq is a deque of length n_obs_steps with per-step tensors shaped like the incoming batch
+            stacked[k] = torch.stack(list(dq), dim=1)
+        return stacked
+
+    def _masked_mean(self, x: Tensor, mask: Tensor, dim: int = 1, keepdim: bool = False, eps: float = 1e-8) -> Tensor:
+        """Compute the mean of x along the time axis, ignoring the masked values."""
+        mask = mask.to(dtype=x.dtype, device=x.device)
+        while mask.ndim < x.ndim:
+            mask = mask.unsqueeze(-1)
+        weighted_x = x * mask
+        return weighted_x.sum(dim=dim, keepdim=keepdim) / mask.sum(dim=dim, keepdim=keepdim).clamp(min=eps)
+
+    def _time_mask(self, b: int) -> Tensor:
+        """(B, T) mask with ones for valid timesteps, zeros for duplicated/padded."""
+        t = self.config.n_obs_steps
+        k = min(self._obs_steps_seen, t)
+        mask = torch.zeros(b, t, dtype=torch.bool, device=self.device)
+        mask[:, :k] = 1
+        return mask
+
+    def _temporal_pool(self, hist: dict[str, Tensor], t_mask: Tensor) -> dict[str, Tensor]:
+        """Pool the history of observations to a single vector.
+        This is a simple average pooling over the time axis.
+        Args:
+            hist: Dictionary of tensors with a time axis.
+        Returns:
+            Dictionary of tensors without a time axis.
+        """
+        pooled = {}
+        for k, x in hist.items():
+            if k in {OBS_STATE, OBS_ENV_STATE}:
+                assert x.ndim >= 3 and x.size(1) == self.config.n_obs_steps
+                pooled[k] = self._masked_mean(x, t_mask, dim=1, keepdim=False)
+            elif k in {OBS_IMAGES}:
+                assert x.ndim >= 5 and x.size(1) == self.config.n_obs_steps
+                pooled[k] = self._masked_mean(x, t_mask, dim=1, keepdim=False)
+            else:
+                pooled[k] = x
+        return pooled
+
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
-        batch = self.normalize_inputs(batch)
-        if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
-
-        actions = self.model(batch)[0]
+        hist = self._stack_obs_from_queues(self._queues)
+        b = next(iter(hist.values())).shape[0]
+        t_mask = self._time_mask(b)
+        hist = self._temporal_pool(hist, t_mask)
+        actions = self.model(hist)[0]
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """Run the batch through the model and compute the loss for training or validation."""
+        # 1) Normalize inputs first so pooling works on normalized values
         batch = self.normalize_inputs(batch)
-        if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
+        # 2) Build time-stacked hist like inference expects
+        hist: dict[str, Tensor] = {}
+
+        # State: (B, T, D) or (B, D)
+        if OBS_STATE in batch:
+            x = batch[OBS_STATE]
+            if x.ndim == 2:  # no time axis
+                x = x.unsqueeze(1)  # (B, 1, D)
+            hist[OBS_STATE] = x
+
+        # Env state (optional): (B, T, E) or (B, E)
+        if OBS_ENV_STATE in batch:
+            x = batch[OBS_ENV_STATE]
+            if x.ndim == 2:
+                x = x.unsqueeze(1)  # (B, 1, E)
+            hist[OBS_ENV_STATE] = x
+
+        # Images: stack per camera into (B, T, n_cams, C, H, W)
+        if self.config.image_features:
+            cams = []
+            for cam_key in self.config.image_features:
+                img = batch[cam_key]
+                if img.ndim == 4:   # (B, C, H, W) -> (B, 1, C, H, W)
+                    img = img.unsqueeze(1)
+                cams.append(img)     # each (B, T, C, H, W)
+            hist[OBS_IMAGES] = torch.stack(cams, dim=2)  # (B, T, n_cams, C, H, W)
+
+        # 3) Derive a valid time mask (B, T) from any available *_is_pad (prefer state)
+        valid_mask = None
+        mask_key_candidates = []
+        if OBS_STATE in hist:
+            mask_key_candidates.append(f"{OBS_STATE}_is_pad")
+        if self.config.image_features:
+            mask_key_candidates.append(f"{self.config.image_features[0]}_is_pad")
+        if OBS_ENV_STATE in hist:
+            mask_key_candidates.append(f"{OBS_ENV_STATE}_is_pad")
+
+        for mk in mask_key_candidates:
+            if mk in batch:
+                valid_mask = ~batch[mk]  # invert pad -> valid
+                break
+        if valid_mask is None:
+            # No pad mask present; fall back to all valid
+            b, t = next(iter(hist.values())).shape[:2]
+            valid_mask = torch.ones(b, t, dtype=torch.bool, device=next(iter(hist.values())).device)
+
+        # 4) Temporal pool using the same logic as inference
+        pooled = self._temporal_pool(hist, valid_mask)
+
+        # 5) Repack images to the model’s expected list format and update batch
+        if OBS_STATE in pooled:
+            batch[OBS_STATE] = pooled[OBS_STATE]  # (B, D)
+        if OBS_ENV_STATE in pooled:
+            batch[OBS_ENV_STATE] = pooled[OBS_ENV_STATE]  # (B, E)
+        if OBS_IMAGES in pooled:
+            # pooled[OBS_IMAGES]: (B, n_cams, C, H, W) -> list of (B, C, H, W)
+            batch[OBS_IMAGES] = [pooled[OBS_IMAGES][:, i] for i in range(pooled[OBS_IMAGES].shape[1])]
+
+        # 6) Normalize targets and run model
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
+        # 7) Loss (masking unchanged)
         l1_loss = (
             F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
         ).mean()
 
         loss_dict = {"l1_loss": l1_loss.item()}
         if self.config.use_vae:
-            # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
-            # each dimension independently, we sum over the latent dimension to get the total
-            # KL-divergence per batch element, then take the mean over the batch.
-            # (See App. B of https://huggingface.co/papers/1312.6114 for more details).
-            mean_kld = (
-                (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
-            )
+            mean_kld = (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
             loss_dict["kld_loss"] = mean_kld.item()
             loss = l1_loss + mean_kld * self.config.kl_weight
         else:
@@ -303,7 +441,7 @@ class ACT(nn.Module):
                                 └───────────────────────┘
     """
 
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: DACTConfigA):
         # BERT style VAE encoder with input tokens [cls, robot_state, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         super().__init__()
@@ -533,7 +671,7 @@ class ACT(nn.Module):
 class ACTEncoder(nn.Module):
     """Convenience module for running multiple encoder layers, maybe followed by normalization."""
 
-    def __init__(self, config: ACTConfig, is_vae_encoder: bool = False):
+    def __init__(self, config: DACTConfigA, is_vae_encoder: bool = False):
         super().__init__()
         self.is_vae_encoder = is_vae_encoder
         num_layers = config.n_vae_encoder_layers if self.is_vae_encoder else config.n_encoder_layers
@@ -550,7 +688,7 @@ class ACTEncoder(nn.Module):
 
 
 class ACTEncoderLayer(nn.Module):
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: DACTConfigA):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
 
@@ -589,7 +727,7 @@ class ACTEncoderLayer(nn.Module):
 
 
 class ACTDecoder(nn.Module):
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: DACTConfigA):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
         self.layers = nn.ModuleList([ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)])
@@ -612,7 +750,7 @@ class ACTDecoder(nn.Module):
 
 
 class ACTDecoderLayer(nn.Module):
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: DACTConfigA):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
         self.multihead_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
