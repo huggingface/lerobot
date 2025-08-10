@@ -174,10 +174,12 @@ class LiberoEnv(gym.Env):
         self.camera_name = camera_name.split(
             ","
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
+        #TODO: jadechoghari, check mapping
         self.camera_name_mapping = {
             "agentview_image": OBS_IMAGE,
             "robot0_eye_in_hand_image": OBS_IMAGE_2,
         }
+
         self.num_steps_wait = (
             10  # Do nothing for the first few timesteps to wait for the simulator drops objects
         )
@@ -220,7 +222,7 @@ class LiberoEnv(gym.Env):
                     "agent_pos": spaces.Box(
                         low=-1000.0,
                         high=1000.0,
-                        shape=(8,),
+                        shape=(8,), #TODO: jadechoghari, check compatible
                         dtype=np.float64,
                     ),
                 }
@@ -293,7 +295,7 @@ class LiberoEnv(gym.Env):
         info = {"is_success": False}
         return observation, info
 
-    def step(self, action):
+    def step1(self, action):
         assert action.ndim == 1
         raw_obs, reward, done, info = self._env.step(action)
 
@@ -306,6 +308,18 @@ class LiberoEnv(gym.Env):
             self.reset()
             print(self.task, self.task_id, done, is_success)
         truncated = False
+        return observation, reward, terminated, truncated, info
+    def step(self, action):
+        assert action.ndim == 1
+        raw_obs, reward, done, info = self._env.step(action)
+
+        is_success = self._env.check_success()
+        terminated = done or is_success
+        info["is_success"] = is_success
+        print(f"[LiberoEnv.step] done={done}, is_success={is_success}, terminated={terminated}")
+        observation = self._format_raw_obs(raw_obs)
+        truncated = False
+        # note if it is unable to complete get libero error after many steps
         return observation, reward, terminated, truncated, info
 
     def close(self):
