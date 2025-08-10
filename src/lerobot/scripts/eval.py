@@ -189,7 +189,6 @@ def rollout(
         running_success_rate = (
             # einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean() #TODO: changed by jade
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "max")
-
         )
         progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
         progbar.update()
