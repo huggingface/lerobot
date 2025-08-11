@@ -8,7 +8,6 @@ import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import (
-    ActionProcessor,
     ComplementaryDataProcessor,
     EnvTransition,
     InfoProcessor,
@@ -47,8 +46,6 @@ class AddTeleopEventsAsInfo(InfoProcessor):
         teleop_events = getattr(self.teleop_device, "get_teleop_events", lambda: {})()
         info.update(teleop_events)
         return info
-
-
 
 
 @ProcessorStepRegistry.register("image_crop_resize_processor")

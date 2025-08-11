@@ -13,24 +13,11 @@
 
 from dataclasses import dataclass
 
-import torch
 import numpy as np
+import torch
 
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
 
-
-@ProcessorStepRegistry.register("robot_action_to_tensor_processor")
-@dataclass
-class RobotAction2TensorProcessor(ActionProcessor):
-    """Convert robot action to tensor."""
-    motor_names: list[str]
-
-    def action(self, action: dict | None) -> torch.Tensor | None:
-        if action is None:
-            return None
-
-        action_tensor = torch.tensor([action[f"action.{motor_name}.pos"] for motor_name in self.motor_names])
-        return action_tensor
 
 @ProcessorStepRegistry.register("torch2numpy_action_processor")
 @dataclass

@@ -34,7 +34,7 @@ class MapTensorToDeltaActionDict(ActionProcessor):
             return action
         if action.dim() > 1:
             action = action.squeeze(0)
-        
+
         # TODO (maractingi): add rotation
         return {
             "action.delta_x": action[0],

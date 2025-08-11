@@ -17,6 +17,7 @@
 from .batch_processor import ToBatchProcessor
 from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
 from .device_processor import DeviceProcessor
+from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
 from .hil_processor import (
     AddTeleopActionAsComplimentaryData,
     AddTeleopEventsAsInfo,
@@ -26,7 +27,6 @@ from .hil_processor import (
     RewardClassifierProcessor,
     TimeLimitProcessor,
 )
-from .gym_action_processor import RobotAction2TensorProcessor, Torch2NumpyActionProcessor, Numpy2TorchActionProcessor
 from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
@@ -55,7 +55,6 @@ __all__ = [
     "DoneProcessor",
     "MapDeltaActionToRobotAction",
     "MapTensorToDeltaActionDict",
-    "RobotAction2TensorProcessor",
     "EnvTransition",
     "GripperPenaltyProcessor",
     "IdentityProcessor",
