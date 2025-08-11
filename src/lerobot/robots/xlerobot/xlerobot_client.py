@@ -18,7 +18,7 @@ import base64
 import json
 import logging
 from functools import cached_property
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import cv2
 import numpy as np
