@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from torch import Tensor
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
 
 
@@ -109,14 +109,14 @@ class MapDeltaActionToRobotAction(ActionProcessor):
         # Update features to reflect the new action format
         features.update(
             {
-                "action.enabled": bool,
-                "action.target_x": float,
-                "action.target_y": float,
-                "action.target_z": float,
-                "action.target_wx": float,
-                "action.target_wy": float,
-                "action.target_wz": float,
-                "action.gripper": float,
+                "action.enabled": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.target_x": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.target_y": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.target_z": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.target_wx": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.target_wy": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.target_wz": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.gripper": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
             }
         )
         return features
