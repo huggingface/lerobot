@@ -142,6 +142,14 @@ class ImageCropResizeProcessor(ObservationProcessor):
             "resize_size": self.resize_size,
         }
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        if self.resize_size is None:
+            return features
+        for key in features:
+            if "image" in key:
+                features[key] = PolicyFeature(type=features[key].type, shape=self.resize_size)
+        return features
+
 
 @dataclass
 @ProcessorStepRegistry.register("time_limit_processor")
