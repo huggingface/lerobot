@@ -25,3 +25,7 @@ class Reachy2FakeTeleoperatorConfig(TeleoperatorConfig):
     # Port to connect to the arm
     ip_address: str | None = "localhost"
     with_mobile_base: bool = True
+    with_l_arm: bool = True
+    with_r_arm: bool = True
+    with_neck: bool = True
+    with_antennas: bool = True

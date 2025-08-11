@@ -26,10 +26,18 @@ from ..robot import Robot
 from .configuration_reachy2 import Reachy2RobotConfig
 
 # {lerobot_keys: reachy2_sdk_keys}
-REACHY2_JOINTS = {
+REACHY2_NECK_JOINTS = {
     "neck_yaw.pos": "head.neck.yaw",
     "neck_pitch.pos": "head.neck.pitch",
     "neck_roll.pos": "head.neck.roll",
+}
+
+REACHY2_ANTENNAS_JOINTS = {
+    "l_antenna.pos": "head.l_antenna",
+    "r_antenna.pos": "head.r_antenna",
+}
+
+REACHY2_R_ARM_JOINTS = {
     "r_shoulder_pitch.pos": "r_arm.shoulder.pitch",
     "r_shoulder_roll.pos": "r_arm.shoulder.roll",
     "r_elbow_yaw.pos": "r_arm.elbow.yaw",
@@ -38,6 +46,9 @@ REACHY2_JOINTS = {
     "r_wrist_pitch.pos": "r_arm.wrist.pitch",
     "r_wrist_yaw.pos": "r_arm.wrist.yaw",
     "r_gripper.pos": "r_arm.gripper",
+}
+
+REACHY2_L_ARM_JOINTS = {
     "l_shoulder_pitch.pos": "l_arm.shoulder.pitch",
     "l_shoulder_roll.pos": "l_arm.shoulder.roll",
     "l_elbow_yaw.pos": "l_arm.elbow.yaw",
@@ -46,8 +57,6 @@ REACHY2_JOINTS = {
     "l_wrist_pitch.pos": "l_arm.wrist.pitch",
     "l_wrist_yaw.pos": "l_arm.wrist.yaw",
     "l_gripper.pos": "l_arm.gripper",
-    "l_antenna.pos": "head.l_antenna",
-    "r_antenna.pos": "head.r_antenna",
 }
 
 REACHY2_VEL = {
@@ -77,6 +86,9 @@ class Reachy2Robot(Robot):
 
         self.logs = {}
 
+        self.joints_dict: dict[str, str] = {}
+        self.generate_joints_dict()
+
     @property
     def observation_features(self) -> dict:
         return {**self.motors_features, **self.camera_features}
@@ -95,14 +107,14 @@ class Reachy2Robot(Robot):
     def motors_features(self) -> dict:
         if self.config.with_mobile_base:
             return {**dict.fromkeys(
-                REACHY2_JOINTS.keys(),
-                float,
-            ), **dict.fromkeys(
-                REACHY2_VEL.keys(),
-                float,
-            )}
+                        self.joints_dict.keys(),
+                        float,
+                    ), **dict.fromkeys(
+                        REACHY2_VEL.keys(),
+                        float,
+                    )}
         else:
-            return dict.fromkeys(REACHY2_JOINTS.keys(), float)
+            return dict.fromkeys(self.joints_dict.keys(), float)
 
     @property
     def is_connected(self) -> bool:
@@ -130,8 +142,18 @@ class Reachy2Robot(Robot):
     def calibrate(self) -> None:
         pass
 
+    def generate_joints_dict(self) -> dict[str, str]:
+        if self.config.with_neck:
+            self.joints_dict.update(REACHY2_NECK_JOINTS)
+        if self.config.with_l_arm:
+            self.joints_dict.update(REACHY2_L_ARM_JOINTS)
+        if self.config.with_r_arm:
+            self.joints_dict.update(REACHY2_R_ARM_JOINTS)
+        if self.config.with_antennas:
+            self.joints_dict.update(REACHY2_ANTENNAS_JOINTS)
+
     def _get_state(self) -> dict:
-        pos_dict = {k: self.reachy.joints[v].present_position for k, v in REACHY2_JOINTS.items()}
+        pos_dict = {k: self.reachy.joints[v].present_position for k, v in self.joints_dict.items()}
         if not self.config.with_mobile_base:
             return pos_dict
         vel_dict = {k: self.reachy.mobile_base.odometry[v] for k, v in REACHY2_VEL.items()}
@@ -159,13 +181,13 @@ class Reachy2Robot(Robot):
 
         vel = {}
         for key, val in action.items():
-            if key not in REACHY2_JOINTS:
+            if key not in self.joints_dict:
                 if key not in REACHY2_VEL:
                     raise KeyError(f"Key '{key}' is not a valid motor key in Reachy 2.")
                 else:
                     vel[REACHY2_VEL[key]] = val
             else:
-                self.reachy.joints[REACHY2_JOINTS[key]].goal_position = val
+                self.reachy.joints[self.joints_dict[key]].goal_position = val
 
         if self.config.with_mobile_base:
             self.reachy.mobile_base.set_goal_speed(vel["vx"], vel["vy"], vel["vtheta"])

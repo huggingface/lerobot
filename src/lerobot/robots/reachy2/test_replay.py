@@ -44,6 +44,8 @@ l_arm_goal = [action["l_shoulder_pitch.pos"],
 
 robot.reachy.head.goto(neck_goal)
 robot.reachy.r_arm.goto(r_arm_goal)
+robot.reachy.r_arm.gripper.goto(100.0, percentage=True)
+robot.reachy.l_arm.gripper.goto(100.0, percentage=True)
 robot.reachy.l_arm.goto(l_arm_goal, wait=True)
 
 for idx in range(dataset.num_frames):
