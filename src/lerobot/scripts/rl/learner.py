@@ -75,6 +75,7 @@ from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.robots import so100_follower  # noqa: F401
 from lerobot.scripts.rl import learner_service
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
+from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2_grpc
 from lerobot.transport.utils import (
     MAX_MESSAGE_SIZE,
@@ -1174,7 +1175,7 @@ def process_transitions(
 
             # Add to offline buffer if it's an intervention
             if dataset_repo_id is not None and transition.get("complementary_info", {}).get(
-                "is_intervention"
+                TeleopEvents.IS_INTERVENTION
             ):
                 offline_replay_buffer.add(**transition)
 
