@@ -37,6 +37,21 @@ class DatasetConfig:
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_codec)
+    # Multi-dataset support
+    sampling_weights: str | None = None
+    max_action_dim: int | None = None
+    max_state_dim: int | None = None
+    max_num_images: int | None = None
+    max_image_dim: int | None = None
+    train_on_all_features: bool = False
+    features_version: int = 0
+    discard_first_n_frames: int = 0
+    min_fps: int = 1
+    max_fps: int = 100
+    discard_first_idle_frames: bool = False
+    motion_threshold: float = 5e-2
+    motion_window_size: int = 10
+    motion_buffer: int = 3
 
 
 @dataclass
