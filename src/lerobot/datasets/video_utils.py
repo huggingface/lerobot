@@ -281,8 +281,8 @@ def encode_video_frames(
     # Define video output frame size (assuming all input frames are the same size)
     if len(input_list) == 0:
         raise FileNotFoundError(f"No images found in {imgs_dir}.")
-    dummy_image = Image.open(input_list[0])
-    width, height = dummy_image.size
+    with Image.open(input_list[0]) as dummy_image:
+        width, height = dummy_image.size
 
     # Define video codec options
     video_options = {}
