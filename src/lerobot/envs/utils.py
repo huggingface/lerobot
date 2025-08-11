@@ -112,11 +112,11 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
         task_name, task = None, None
         try:
             task_name = env.call("task_description")
-        except Exception as e:
+        except Exception:
             pass
         try:
             task = env.call("task")
-        except Exception as e:
+        except Exception:
             pass
 
         if task_name is None or task is None:
@@ -145,11 +145,11 @@ def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dic
     task_name = None
     try:
         task_name = env.call("task_description")
-    except Exception as e:
+    except Exception:
         pass
     try:
         task_name = env.call("task")
-    except Exception as e:
+    except Exception:
         pass
     if task_name is None:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
         num_envs = observation[list(observation.keys())[0]].shape[0]
