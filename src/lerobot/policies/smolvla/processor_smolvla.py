@@ -18,6 +18,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.types import PolicyFeature
+from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
     DeviceProcessor,
@@ -57,8 +58,8 @@ def make_smolvla_processor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
-    return RobotProcessor(steps=input_steps, name="robot_preprocessor"), RobotProcessor(
-        steps=output_steps, name="robot_postprocessor"
+    return RobotProcessor(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), RobotProcessor(
+        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
     )
 
 

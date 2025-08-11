@@ -40,6 +40,9 @@ OPTIMIZER_STATE = "optimizer_state.safetensors"
 OPTIMIZER_PARAM_GROUPS = "optimizer_param_groups.json"
 SCHEDULER_STATE = "scheduler_state.json"
 
+PREPROCESSOR_DEFAULT_NAME = "robot_preprocessor"
+POSTPROCESSOR_DEFAULT_NAME = "robot_postprocessor"
+
 if "LEROBOT_HOME" in os.environ:
     raise ValueError(
         f"You have a 'LEROBOT_HOME' environment variable set to '{os.getenv('LEROBOT_HOME')}'.\n"

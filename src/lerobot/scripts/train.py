@@ -26,6 +26,7 @@ from torch.optim import Optimizer
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
@@ -152,6 +153,10 @@ def train(cfg: TrainPipelineConfig):
 
     if cfg.resume:
         step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
+        preprocessor.from_pretrained(cfg.checkpoint_path, config_filename=f"{PREPROCESSOR_DEFAULT_NAME}.json")
+        postprocessor.from_pretrained(
+            cfg.checkpoint_path, config_filename=f"{POSTPROCESSOR_DEFAULT_NAME}.json"
+        )
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
@@ -240,7 +245,9 @@ def train(cfg: TrainPipelineConfig):
         if cfg.save_checkpoint and is_saving_step:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler, preprocessor)
+            save_checkpoint(
+                checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler, preprocessor, postprocessor
+            )
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
                 wandb_logger.log_policy(checkpoint_dir)
@@ -284,10 +291,8 @@ def train(cfg: TrainPipelineConfig):
 
     if cfg.policy.push_to_hub:
         policy.push_model_to_hub(cfg)
-        if preprocessor:
-            preprocessor.push_to_hub(cfg.policy.repo_id)
-        if postprocessor:
-            postprocessor.push_to_hub(cfg.policy.repo_id)
+        preprocessor.push_to_hub(cfg.policy.repo_id)
+        postprocessor.push_to_hub(cfg.policy.repo_id)
 
 
 def main():
