@@ -56,7 +56,7 @@ class PiperSDKInterface:
         self.piper.JointCtrl(joint_0, joint_1, joint_2, joint_3, joint_4, joint_5)
         self.piper.GripperCtrl(joint_6, 1000, 0x01, 0)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         joint_status = self.piper.GetArmJointMsgs()
         gripper = self.piper.GetArmGripperMsgs()
         gripper.gripper_state.grippers_angle
