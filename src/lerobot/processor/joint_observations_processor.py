@@ -13,7 +13,7 @@ from lerobot.robots import Robot
 
 @dataclass
 @ProcessorStepRegistry.register("joint_velocity_processor")
-class JointVelocityProcessor:
+class JointVelocityProcessor(ObservationProcessor):
     """Add joint velocity information to observations."""
 
     joint_velocity_limits: float = 100.0

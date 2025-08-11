@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from .batch_processor import ToBatchProcessor
-from .delta_action_processor import MapDeltaActionToRobotAction
+from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
 from .device_processor import DeviceProcessor
 from .hil_processor import (
     AddTeleopActionAsComplimentaryData,
@@ -55,6 +55,7 @@ __all__ = [
     "DeviceProcessor",
     "DoneProcessor",
     "MapDeltaActionToRobotAction",
+    "MapTensorToDeltaActionDict",
     "EnvTransition",
     "GripperPenaltyProcessor",
     "IdentityProcessor",

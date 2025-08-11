@@ -271,7 +271,8 @@ class InterventionActionProcessor:
 
         # Get intervention signals from complementary data
         info = transition.get(TransitionKey.INFO, {})
-        teleop_action = info.get("teleop_action", {})
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        teleop_action = complementary_data.get("teleop_action", {})
         is_intervention = info.get(TeleopEvents.IS_INTERVENTION, False)
         terminate_episode = info.get(TeleopEvents.TERMINATE_EPISODE, False)
         success = info.get(TeleopEvents.SUCCESS, False)

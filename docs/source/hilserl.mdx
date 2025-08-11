@@ -127,11 +127,11 @@ class RewardClassifierConfig:
 # Dataset configuration
 class DatasetConfig:
     repo_id: str    # LeRobot dataset repository ID
-    dataset_root: str    # Local dataset root directory
     task: str    # Task identifier
-    num_episodes: int    # Number of episodes for recording
-    episode: int    # Episode index for replay
-    push_to_hub: bool    # Whether to push datasets to Hub
+    root: str | None = None    # Local dataset root directory
+    num_episodes_to_record: int = 5    # Number of episodes for recording
+    replay_episode: int | None = None    # Episode index for replay
+    push_to_hub: bool = False    # Whether to push datasets to Hub
 ```
 <!-- prettier-ignore-end -->
 
@@ -351,7 +351,7 @@ Create a configuration file for recording demonstrations (or edit an existing on
 
 1. Set `mode` to `"record"` at the root level
 2. Specify a unique `repo_id` for your dataset in the `dataset` section (e.g., "username/task_name")
-3. Set `num_episodes` in the `dataset` section to the number of demonstrations you want to collect
+3. Set `num_episodes_to_record` in the `dataset` section to the number of demonstrations you want to collect
 4. Set `env.processor.image_preprocessing.crop_params_dict` to `{}` initially (we'll determine crops later)
 5. Configure `env.robot`, `env.teleop`, and other hardware settings in the `env` section
 
@@ -390,10 +390,10 @@ Example configuration section:
   },
   "dataset": {
     "repo_id": "username/pick_lift_cube",
-    "dataset_root": null,
+    "root": null,
     "task": "pick_and_lift",
-    "num_episodes": 15,
-    "episode": 0,
+    "num_episodes_to_record": 15,
+    "replay_episode": 0,
     "push_to_hub": true
   },
   "mode": "record",
@@ -626,7 +626,7 @@ python -m lerobot.scripts.rl.gym_manipulator --config_path src/lerobot/configs/r
 
 - **mode**: set it to `"record"` to collect a dataset (at root level)
 - **dataset.repo_id**: `"hf_username/dataset_name"`, name of the dataset and repo on the hub
-- **dataset.num_episodes**: Number of episodes to record
+- **dataset.num_episodes_to_record**: Number of episodes to record
 - **env.processor.reset.terminate_on_success**: Whether to automatically terminate episodes when success is detected (default: `true`)
 - **env.fps**: Number of frames per second to record
 - **dataset.push_to_hub**: Whether to push the dataset to the hub
@@ -664,8 +664,8 @@ Example configuration section for data collection:
     "repo_id": "hf_username/dataset_name",
     "dataset_root": "data/your_dataset",
     "task": "reward_classifier_task",
-    "num_episodes": 20,
-    "episode": 0,
+    "num_episodes_to_record": 20,
+    "replay_episode": null,
     "push_to_hub": true
   },
   "mode": "record",

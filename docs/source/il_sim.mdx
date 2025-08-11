@@ -36,10 +36,10 @@ To teleoperate and collect a dataset, we need to modify this config file. Here's
   },
   "dataset": {
     "repo_id": "your_username/il_gym",
-    "dataset_root": null,
+    "root": null,
     "task": "pick_cube",
-    "num_episodes": 30,
-    "episode": 0,
+    "num_episodes_to_record": 30,
+    "replay_episode": null,
     "push_to_hub": true
   },
   "mode": "record",
@@ -50,7 +50,7 @@ To teleoperate and collect a dataset, we need to modify this config file. Here's
 Key configuration points:
 
 - Set your `repo_id` in the `dataset` section: `"repo_id": "your_username/il_gym"`
-- Set `num_episodes: 30` to collect 30 demonstration episodes
+- Set `num_episodes_to_record: 30` to collect 30 demonstration episodes
 - Ensure `mode` is set to `"record"`
 - If you don't have an NVIDIA GPU, change `"device": "cuda"` to `"mps"` for macOS or `"cpu"`
 - To use keyboard instead of gamepad, change `"task"` to `"PandaPickCubeKeyboard-v0"`
