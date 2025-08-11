@@ -18,7 +18,7 @@ Replays the actions of an episode from a dataset on a robot.
 Examples:
 
 ```shell
-python -m lerobot.replay \
+lerobot-replay \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=black \
@@ -28,7 +28,7 @@ python -m lerobot.replay \
 
 Example replay with bimanual so100:
 ```shell
-python -m lerobot.replay \
+lerobot-replay \
   --robot.type=bi_so100_follower \
   --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
   --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
@@ -112,5 +112,9 @@ def replay(cfg: ReplayConfig):
     robot.disconnect()
 
 
-if __name__ == "__main__":
+def main():
     replay()
+
+
+if __name__ == "__main__":
+    main()

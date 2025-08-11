@@ -21,7 +21,7 @@ You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/di
 for 10 episodes.
 
 ```
-python -m lerobot.scripts.eval \
+lerobot-eval \
     --policy.path=lerobot/diffusion_pusht \
     --env.type=pusht \
     --eval.batch_size=10 \
@@ -32,7 +32,7 @@ python -m lerobot.scripts.eval \
 
 OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
 ```
-python -m lerobot.scripts.eval \
+lerobot-eval \
     --policy.path=outputs/train/diffusion_pusht/checkpoints/005000/pretrained_model \
     --env.type=pusht \
     --eval.batch_size=10 \
@@ -501,6 +501,10 @@ def eval_main(cfg: EvalPipelineConfig):
     logging.info("End of eval")
 
 
-if __name__ == "__main__":
+def main():
     init_logging()
     eval_main()
+
+
+if __name__ == "__main__":
+    main()

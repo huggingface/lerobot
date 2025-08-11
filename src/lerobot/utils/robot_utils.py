@@ -17,10 +17,9 @@ import time
 
 
 def busy_wait(seconds):
-    if platform.system() == "Darwin":
-        # On Mac, `time.sleep` is not accurate and we need to use this while loop trick,
+    if platform.system() == "Darwin" or platform.system() == "Windows":
+        # On Mac and Windows, `time.sleep` is not accurate and we need to use this while loop trick,
         # but it consumes CPU cycles.
-        # TODO(rcadene): find an alternative: from python 11, time.sleep is precise
         end_time = time.perf_counter() + seconds
         while time.perf_counter() < end_time:
             pass

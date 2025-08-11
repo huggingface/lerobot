@@ -19,6 +19,11 @@ on:
     tags:
       - 'v*.*.*' # Trigger on tags like v0.1.0, v1.0.0
 
+# Sets up the environment variables
+env:
+  UV_VERSION: "0.8.0"
+  PYTHON_VERSION: "3.10"
+
 jobs:
   # This job builds the Python package and publishes it to PyPI
   build-and-publish:
@@ -50,6 +55,7 @@ jobs:
           VERSION_NUMBER=${VERSION#v}
           echo "tag_version=$VERSION_NUMBER" >> $GITHUB_OUTPUT
       - name: Check if version matches pyproject.toml
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
         # zizmor: ignore[template-injection]
         run: |
           TAG_VERSION=${{ steps.extract_info.outputs.tag_version }}
@@ -86,13 +92,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # zizmor: ignore[template-injection]
-        run: gh release create ${{ github.ref_name }} --release-name "Release ${{ github.ref_name }}" --generate-notes ./dist/*
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "Release ${{ github.ref_name }}" \
+            --generate-notes \
+            --draft=$([[ "${{ github.ref_name }}" == *-* ]] && echo true || echo false) \
+            --prerelease=$([[ "${{ github.ref_name }}" == *-* ]] && echo true || echo false) \
+            ./dist/*
 
-      - name: Publish to PyPI
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish to TestPyPI for pre-releases
+        # True for tags like 'v0.2.0-rc1'
+        if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-')
         uses: pypa/gh-action-pypi-publish@v1.12.4 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          repository-url: https://test.pypi.org/legacy/
+          verbose: true
+          print-hash: true
+
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
+        uses: pypa/gh-action-pypi-publish@v1.12.4 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
+        with:
+          verbose: true
+          print-hash: true
 
   # This job runs end-to-end tests on the release
   test-release:
@@ -119,15 +141,31 @@ jobs:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
+      - name: Create uv virtual environment
+        run: uv venv
       - name: Install lerobot release
-        run: uv run pip install lerobot==${{ needs.build-and-publish.outputs.version }} # zizmor: ignore[template-injection]
-
+        # zizmor: ignore[template-injection]
+        run: |
+          VERSION="${{ needs.build-and-publish.outputs.version }}"
+          if [[ "$VERSION" == *-* ]]; then
+            BASE_VERSION="${VERSION%%-*}"
+            echo "Installing pre-release version $BASE_VERSION from TestPyPI..."
+            uv pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple \
+              --index-strategy unsafe-best-match \
+               "lerobot[all]==$BASE_VERSION"
+          else
+            echo "Installing release version $VERSION from PyPI..."
+            uv pip install "lerobot[all]==$VERSION"
+          fi
       - name: Check lerobot version
-        run: uv run lerobot --version
+        run: uv run python -c "import lerobot; print(lerobot.__version__)"
 
       - name: Run end-to-end tests
         run: uv run make test-end-to-end
 
 
-# TODO(Steven): Publish draft/pre-release and to test pypi
+# TODO(Steven): Publish draft/pre-release and to test pypi weekly
+# TODO(Steven): Separate build and publish job
 # TODO(Steven): Tag documentation with the same version as the package

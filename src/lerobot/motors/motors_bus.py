@@ -222,7 +222,7 @@ class MotorsBus(abc.ABC):
     A MotorsBus subclass instance requires a port (e.g. `FeetechMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
     To find the port, you can run our utility script:
     ```bash
-    python -m lerobot.find_port.py
+    lerobot-find-port.py
     >>> Finding all available ports for the MotorsBus.
     >>> ["/dev/tty.usbmodem575E0032081", "/dev/tty.usbmodem575E0031751"]
     >>> Remove the usb cable from your MotorsBus and press Enter when done.
@@ -446,7 +446,7 @@ class MotorsBus(abc.ABC):
         except (FileNotFoundError, OSError, serial.SerialException) as e:
             raise ConnectionError(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
-                "\nTry running `python -m lerobot.find_port`\n"
+                "\nTry running `lerobot-find-port`\n"
             ) from e
 
     @abc.abstractmethod

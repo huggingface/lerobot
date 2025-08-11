@@ -30,7 +30,7 @@ pip install -e ".[pi0]"
 
 Example of finetuning the pi0 pretrained model (`pi0_base` in `openpi`):
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.path=lerobot/pi0 \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
@@ -38,7 +38,7 @@ python -m lerobot.scripts.train \
 Example of finetuning the pi0 neural network with PaliGemma and expert Gemma
 pretrained with VLM default parameters before pi0 finetuning:
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.type=pi0 \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
@@ -66,7 +66,8 @@ from lerobot.policies.pi0.paligemma_with_expert import (
     PaliGemmaWithExpertModel,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.utils import get_safe_dtype
+from lerobot.policies.utils import log_model_loading_keys
+from lerobot.utils.utils import get_safe_dtype, init_logging
 
 
 def create_sinusoidal_pos_embedding(
@@ -251,6 +252,99 @@ class PI0Policy(PreTrainedPolicy):
     def reset(self):
         """This should be called whenever the environment is reset."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
+
+    @classmethod
+    def _transform_state_dict_keys(cls, state_dict: dict) -> dict:
+        """
+        Transform state dict keys to match expected model structure.
+
+        Transformations:
+        - model.paligemma_with_expert.paligemma.language_model.lm_head ->
+          model.paligemma_with_expert.paligemma.lm_head
+        - model.paligemma_with_expert.paligemma.language_model.model ->
+          model.paligemma_with_expert.paligemma.model.language_model
+        - model.paligemma_with_expert.paligemma.vision_tower ->
+          model.paligemma_with_expert.paligemma.model.vision_tower
+        - model.paligemma_with_expert.paligemma.multi_modal_projector ->
+          model.paligemma_with_expert.paligemma.model.multi_modal_projector
+
+        Also handles tied weights between lm_head.weight and
+        embed_tokens.weight.
+        """
+        import re
+
+        transformed_dict = {}
+
+        transformations = [
+            (
+                re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.lm_head"),
+                ".paligemma_with_expert.paligemma.lm_head",
+            ),
+            (
+                re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.model"),
+                ".paligemma_with_expert.paligemma.model.language_model",
+            ),
+            (
+                re.compile(r"\.paligemma_with_expert\.paligemma\.vision_tower"),
+                ".paligemma_with_expert.paligemma.model.vision_tower",
+            ),
+            (
+                re.compile(r"\.paligemma_with_expert\.paligemma\.multi_modal_projector"),
+                ".paligemma_with_expert.paligemma.model.multi_modal_projector",
+            ),
+        ]
+
+        for key, value in state_dict.items():
+            new_key = key
+            for pattern, replacement in transformations:
+                new_key = pattern.sub(replacement, new_key)
+            transformed_dict[new_key] = value
+
+        # Handle tied weights: lm_head.weight and embed_tokens.weight share memory
+        lm_head_key = None
+        embed_tokens_key = None
+
+        for key in transformed_dict:
+            if key.endswith(".paligemma_with_expert.paligemma.lm_head.weight"):
+                lm_head_key = key
+            elif key.endswith(".paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"):
+                embed_tokens_key = key
+            if lm_head_key and embed_tokens_key:
+                break
+
+        if lm_head_key and not embed_tokens_key:
+            embed_tokens_key = lm_head_key.replace(
+                ".lm_head.weight", ".model.language_model.embed_tokens.weight"
+            )
+            transformed_dict[embed_tokens_key] = transformed_dict[lm_head_key]
+        elif embed_tokens_key and not lm_head_key:
+            lm_head_key = embed_tokens_key.replace(
+                ".model.language_model.embed_tokens.weight", ".lm_head.weight"
+            )
+            transformed_dict[lm_head_key] = transformed_dict[embed_tokens_key]
+
+        return transformed_dict
+
+    @classmethod
+    def _load_as_safetensor(
+        cls, model: "PI0Policy", model_file: str, map_location: str, strict: bool
+    ) -> "PI0Policy":
+        """Override to apply key transformations before loading."""
+        from safetensors.torch import load_file
+
+        init_logging()
+        # Load the state dict from file safely
+        state_dict = load_file(model_file, device=map_location)
+
+        # Apply key transformations
+        transformed_state_dict = cls._transform_state_dict_keys(state_dict)
+
+        # Load the transformed state dict
+        msg = model.load_state_dict(transformed_state_dict, strict=strict)
+
+        # Log message
+        log_model_loading_keys(msg.missing_keys, msg.unexpected_keys)
+        return model
 
     def get_optim_params(self) -> dict:
         return self.parameters()

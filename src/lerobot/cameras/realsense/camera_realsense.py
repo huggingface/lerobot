@@ -51,7 +51,7 @@ class RealSenseCamera(Camera):
 
     Use the provided utility script to find available camera indices and default profiles:
     ```bash
-    python -m lerobot.find_cameras realsense
+    lerobot-find-cameras realsense
     ```
 
     A `RealSenseCamera` instance requires a configuration object specifying the
@@ -176,8 +176,7 @@ class RealSenseCamera(Camera):
             self.rs_profile = None
             self.rs_pipeline = None
             raise ConnectionError(
-                f"Failed to open {self}."
-                "Run `python -m lerobot.find_cameras realsense` to find available cameras."
+                f"Failed to open {self}.Run `lerobot-find-cameras realsense` to find available cameras."
             ) from e
 
         self._configure_capture_settings()
@@ -434,7 +433,7 @@ class RealSenseCamera(Camera):
         if self.color_mode == ColorMode.BGR:
             processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
             processed_image = cv2.rotate(processed_image, self.rotation)
 
         return processed_image

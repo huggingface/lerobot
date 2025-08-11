@@ -20,7 +20,7 @@ Helper to find the camera devices available in your system.
 Example:
 
 ```shell
-python -m lerobot.find_cameras
+lerobot-find-cameras
 ```
 """
 
@@ -286,7 +286,7 @@ def save_images_from_all_cameras(
             print(f"Image capture finished. Images saved to {output_dir}")
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Unified camera utility script for listing cameras and capturing images."
     )
@@ -313,3 +313,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     save_images_from_all_cameras(**vars(args))
+
+
+if __name__ == "__main__":
+    main()

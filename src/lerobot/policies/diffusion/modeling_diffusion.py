@@ -288,7 +288,7 @@ class DiffusionModel(nn.Module):
 
             "observation.images": (B, n_obs_steps, num_cameras, C, H, W)
                 AND/OR
-            "observation.environment_state": (B, environment_dim)
+            "observation.environment_state": (B, n_obs_steps, environment_dim)
         }
         """
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
@@ -315,7 +315,7 @@ class DiffusionModel(nn.Module):
 
             "observation.images": (B, n_obs_steps, num_cameras, C, H, W)
                 AND/OR
-            "observation.environment_state": (B, environment_dim)
+            "observation.environment_state": (B, n_obs_steps, environment_dim)
 
             "action": (B, horizon, action_dim)
             "action_is_pad": (B, horizon)

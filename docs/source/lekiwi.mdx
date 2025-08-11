@@ -60,7 +60,7 @@ First, we will assemble the two SO100/SO101 arms. One to attach to the mobile ba
 To find the port for each bus servo adapter, run this script:
 
 ```bash
-python -m lerobot.find_port
+lerobot-find-port
 ```
 
 <hfoptions id="example">
@@ -116,7 +116,7 @@ The instructions for configuring the motors can be found in the SO101 [docs](./s
 You can run this command to setup motors for LeKiwi. It will first setup the motors for arm (id 6..1) and then setup motors for wheels (9,8,7)
 
 ```bash
-python -m lerobot.setup_motors \
+lerobot-setup-motors \
     --robot.type=lekiwi \
     --robot.port=/dev/tty.usbmodem58760431551 # <- paste here the port found at previous step
 ```
@@ -174,7 +174,7 @@ The calibration process is very important because it allows a neural network tra
 Make sure the arm is connected to the Raspberry Pi and run this script or API example (on the Raspberry Pi via SSH) to launch calibration of the follower arm:
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --robot.type=lekiwi \
     --robot.id=my_awesome_kiwi # <- Give the robot a unique name
 ```
@@ -193,7 +193,7 @@ Then, to calibrate the leader arm (which is attached to the laptop/pc). Run the 
 <hfoption id="Command">
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --teleop.type=so100_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
     --teleop.id=my_awesome_leader_arm # <- Give the robot a unique name
