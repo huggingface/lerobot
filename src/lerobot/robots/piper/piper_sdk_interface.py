@@ -31,7 +31,7 @@ class PiperSDKInterface:
 
     def set_joint_positions(self, positions):
         # positions: list of 7 floats, first 6 are joint and 7 is gripper position
-        # postions are in -100% to 100% range, we need to map them on the min and max positions
+        # positions are in -100% to 100% range, we need to map them on the min and max positions
         # so -100% is min_pos and 100% is max_pos
         scaled_positions = [
             self.min_pos[i] + (self.max_pos[i] - self.min_pos[i]) * (pos + 100) / 200
@@ -59,8 +59,7 @@ class PiperSDKInterface:
     def get_status(self) -> dict[str, Any]:
         joint_status = self.piper.GetArmJointMsgs()
         gripper = self.piper.GetArmGripperMsgs()
-        gripper.gripper_state.grippers_angle
-
+        
         joint_state = joint_status.joint_state
         obs_dict = {
             "joint_0.pos": joint_state.joint_1,
