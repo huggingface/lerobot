@@ -49,53 +49,6 @@ class AddTeleopEventsAsInfo(InfoProcessor):
         return info
 
 
-@ProcessorStepRegistry.register("torch2numpy_action_processor")
-@dataclass
-class Torch2NumpyActionProcessor(ActionProcessor):
-    """Convert PyTorch tensor actions to NumPy arrays."""
-
-    squeeze_batch_dim: bool = True
-
-    def action(self, action: torch.Tensor | None) -> np.ndarray | None:
-        if action is None:
-            return None
-
-        if not isinstance(action, torch.Tensor):
-            raise TypeError(
-                f"Expected torch.Tensor or None, got {type(action).__name__}. "
-                "Use appropriate processor for non-tensor actions."
-            )
-
-        numpy_action = action.detach().cpu().numpy()
-
-        # Remove batch dimensions but preserve action dimensions
-        # Only squeeze if there's a batch dimension (first dim == 1)
-        if (
-            self.squeeze_batch_dim
-            and numpy_action.shape
-            and len(numpy_action.shape) > 1
-            and numpy_action.shape[0] == 1
-        ):
-            numpy_action = numpy_action.squeeze(0)
-
-        return numpy_action
-
-
-@ProcessorStepRegistry.register("numpy2torch_action_processor")
-@dataclass
-class Numpy2TorchActionProcessor(ActionProcessor):
-    """Convert NumPy array action to PyTorch tensor."""
-
-    def action(self, action: np.ndarray | None) -> torch.Tensor | None:
-        if action is None:
-            return None
-        if not isinstance(action, np.ndarray):
-            raise TypeError(
-                f"Expected np.ndarray or None, got {type(action).__name__}. "
-                "Use appropriate processor for non-tensor actions."
-            )
-        torch_action = torch.from_numpy(action)
-        return torch_action
 
 
 @ProcessorStepRegistry.register("image_crop_resize_processor")

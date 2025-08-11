@@ -41,6 +41,7 @@ from lerobot.processor import (
     MotorCurrentProcessor,
     Numpy2TorchActionProcessor,
     RewardClassifierProcessor,
+    RobotAction2TensorProcessor,
     RobotProcessor,
     TimeLimitProcessor,
     ToBatchProcessor,
@@ -402,9 +403,7 @@ def make_processors(
             joint_names=motor_names,
         )
 
-    env_pipeline_steps = [
-        VanillaObservationProcessor(),
-    ]
+    env_pipeline_steps = [VanillaObservationProcessor()]
 
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
@@ -457,6 +456,7 @@ def make_processors(
             )
         )
 
+    env_pipeline_steps.append(RobotAction2TensorProcessor(motor_names=motor_names))
     env_pipeline_steps.append(ToBatchProcessor())
     env_pipeline_steps.append(DeviceProcessor(device=device))
 
@@ -654,6 +654,7 @@ def control_loop(
             env_processor=env_processor,
             action_processor=action_processor,
         )
+        print(transition[TransitionKey.ACTION])
         terminated = transition.get(TransitionKey.DONE, False)
         truncated = transition.get(TransitionKey.TRUNCATED, False)
 

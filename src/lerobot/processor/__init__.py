@@ -23,11 +23,10 @@ from .hil_processor import (
     GripperPenaltyProcessor,
     ImageCropResizeProcessor,
     InterventionActionProcessor,
-    Numpy2TorchActionProcessor,
     RewardClassifierProcessor,
     TimeLimitProcessor,
-    Torch2NumpyActionProcessor,
 )
+from .gym_action_processor import RobotAction2TensorProcessor, Torch2NumpyActionProcessor, Numpy2TorchActionProcessor
 from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
@@ -56,6 +55,7 @@ __all__ = [
     "DoneProcessor",
     "MapDeltaActionToRobotAction",
     "MapTensorToDeltaActionDict",
+    "RobotAction2TensorProcessor",
     "EnvTransition",
     "GripperPenaltyProcessor",
     "IdentityProcessor",
