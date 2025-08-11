@@ -15,16 +15,28 @@
 """
 Replays the actions of an episode from a dataset on a robot.
 
-Example:
+Examples:
 
 ```shell
-python -m lerobot.replay \
+lerobot-replay \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=black \
     --dataset.repo_id=aliberts/record-test \
     --dataset.episode=2
 ```
+
+Example replay with bimanual so100:
+```shell
+lerobot-replay \
+  --robot.type=bi_so100_follower \
+  --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
+  --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
+  --robot.id=bimanual_follower \
+  --dataset.repo_id=${HF_USER}/bimanual-so100-handover-cube \
+  --dataset.episode=0
+```
+
 """
 
 import logging
@@ -39,6 +51,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so100_follower,
     hope_jr,
     koch_follower,
     make_robot_from_config,
@@ -99,5 +112,9 @@ def replay(cfg: ReplayConfig):
     robot.disconnect()
 
 
-if __name__ == "__main__":
+def main():
     replay()
+
+
+if __name__ == "__main__":
+    main()

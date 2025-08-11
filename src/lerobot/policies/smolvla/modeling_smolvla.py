@@ -28,7 +28,7 @@ pip install -e ".[smolvla]"
 
 Example of finetuning the smolvla pretrained model (`smolvla_base`):
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.path=lerobot/smolvla_base \
 --dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
 --batch_size=64 \
@@ -38,7 +38,7 @@ python -m lerobot.scripts.train \
 Example of finetuning a smolVLA. SmolVLA is composed of a pretrained VLM,
 and an action expert.
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.type=smolvla \
 --dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
 --batch_size=64 \
@@ -192,12 +192,6 @@ def create_sinusoidal_pos_embedding(
     sin_input = scaling_factor[None, :] * time[:, None]
     pos_emb = torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
     return pos_emb
-
-
-def sample_beta(alpha, beta, bsize, device):
-    gamma1 = torch.empty((bsize,), device=device).uniform_(0, 1).pow(1 / alpha)
-    gamma2 = torch.empty((bsize,), device=device).uniform_(0, 1).pow(1 / beta)
-    return gamma1 / (gamma1 + gamma2)
 
 
 def make_att_2d_masks(pad_masks, att_masks):
@@ -384,8 +378,13 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return self.parameters()
 
     def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+        # TODO: Check if this for loop is needed.
+        # Context: In fact, self.queues contains only ACTION field, and in inference, we don't have action in the batch
+        # In the case of offline inference, we have the action in the batch
+        # that why without the k != ACTION check, it will raise an error because we are trying to stack
+        # on an empty container.
         for k in batch:
-            if k in self._queues:
+            if k in self._queues and k != ACTION:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
 
         images, img_masks = self.prepare_images(batch)
@@ -631,7 +630,7 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config):
+    def __init__(self, config: SmolVLAConfig):
         super().__init__()
         self.config = config
 
@@ -685,9 +684,10 @@ class VLAFlowMatching(nn.Module):
         return noise
 
     def sample_time(self, bsize, device):
-        time_beta = sample_beta(1.5, 1.0, bsize, device)
+        beta_dist = torch.distributions.Beta(concentration1=1.5, concentration0=1.0)
+        time_beta = beta_dist.sample((bsize,)).to(device=device, dtype=torch.float32)
         time = time_beta * 0.999 + 0.001
-        return time.to(dtype=torch.float32, device=device)
+        return time
 
     def embed_prefix(
         self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None

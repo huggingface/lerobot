@@ -18,7 +18,7 @@ Simple script to control a robot from teleoperation.
 Example:
 
 ```shell
-python -m lerobot.teleoperate \
+lerobot-teleoperate \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
@@ -28,6 +28,27 @@ python -m lerobot.teleoperate \
     --teleop.id=blue \
     --display_data=true
 ```
+
+Example teleoperation with bimanual so100:
+
+```shell
+lerobot-teleoperate \
+  --robot.type=bi_so100_follower \
+  --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
+  --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
+  --robot.id=bimanual_follower \
+  --robot.cameras='{
+    left: {"type": "opencv", "index_or_path": 0, "width": 1920, "height": 1080, "fps": 30},
+    top: {"type": "opencv", "index_or_path": 1, "width": 1920, "height": 1080, "fps": 30},
+    right: {"type": "opencv", "index_or_path": 2, "width": 1920, "height": 1080, "fps": 30}
+  }' \
+  --teleop.type=bi_so100_leader \
+  --teleop.left_arm_port=/dev/tty.usbmodem5A460828611 \
+  --teleop.right_arm_port=/dev/tty.usbmodem5A460826981 \
+  --teleop.id=bimanual_leader \
+  --display_data=true
+```
+
 """
 
 import logging
@@ -43,6 +64,7 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so100_follower,
     hope_jr,
     koch_follower,
     make_robot_from_config,
@@ -53,6 +75,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bi_so100_leader,
     gamepad,
     homunculus,
     koch_leader,
@@ -131,5 +154,9 @@ def teleoperate(cfg: TeleoperateConfig):
         robot.disconnect()
 
 
-if __name__ == "__main__":
+def main():
     teleoperate()
+
+
+if __name__ == "__main__":
+    main()

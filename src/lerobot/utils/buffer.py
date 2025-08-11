@@ -15,8 +15,9 @@
 # limitations under the License.
 
 import functools
+from collections.abc import Callable, Sequence
 from contextlib import suppress
-from typing import Callable, Sequence, TypedDict
+from typing import TypedDict
 
 import torch
 import torch.nn.functional as F  # noqa: N812

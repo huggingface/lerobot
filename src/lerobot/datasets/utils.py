@@ -41,7 +41,6 @@ from lerobot.datasets.backward_compatibility import (
     BackwardCompatibilityError,
     ForwardCompatibilityError,
 )
-from lerobot.robots import Robot
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of episodes per chunk
@@ -438,16 +437,6 @@ def build_dataset_frame(
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
     return frame
-
-
-def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
-    camera_ft = {}
-    if robot.cameras:
-        camera_ft = {
-            key: {"dtype": "video" if use_videos else "image", **ft}
-            for key, ft in robot.camera_features.items()
-        }
-    return {**robot.motor_features, **camera_ft, **DEFAULT_FEATURES}
 
 
 def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:

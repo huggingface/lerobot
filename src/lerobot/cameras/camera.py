@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import abc
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
@@ -69,7 +69,7 @@ class Camera(abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def find_cameras() -> List[Dict[str, Any]]:
+    def find_cameras() -> list[dict[str, Any]]:
         """Detects available cameras connected to the system.
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
