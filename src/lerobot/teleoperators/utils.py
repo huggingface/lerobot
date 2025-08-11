@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
+
 from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
 
 
-class TeleopEvents:
+class TeleopEvents(Enum):
     """Shared constants for teleoperator events across teleoperators."""
 
     SUCCESS = "success"
