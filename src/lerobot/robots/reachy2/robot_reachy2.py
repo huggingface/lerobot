@@ -15,12 +15,11 @@
 # limitations under the License.
 
 import time
-
-import numpy as np
-from reachy2_sdk import ReachySDK
 from typing import Any
 
+import numpy as np
 from lerobot.cameras.utils import make_cameras_from_configs
+from reachy2_sdk import ReachySDK
 
 from ..robot import Robot
 from .configuration_reachy2 import Reachy2RobotConfig
@@ -98,20 +97,21 @@ class Reachy2Robot(Robot):
 
     @property
     def camera_features(self) -> dict[str, dict]:
-        return {
-            cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras
-        }
+        return {cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras}
 
     @property
     def motors_features(self) -> dict:
         if self.config.with_mobile_base:
-            return {**dict.fromkeys(
-                        self.joints_dict.keys(),
-                        float,
-                    ), **dict.fromkeys(
-                        REACHY2_VEL.keys(),
-                        float,
-                    )}
+            return {
+                **dict.fromkeys(
+                    self.joints_dict.keys(),
+                    float,
+                ),
+                **dict.fromkeys(
+                    REACHY2_VEL.keys(),
+                    float,
+                ),
+            }
         else:
             return dict.fromkeys(self.joints_dict.keys(), float)
 

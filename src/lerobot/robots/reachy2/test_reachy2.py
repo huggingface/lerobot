@@ -1,5 +1,6 @@
-from lerobot.robots.reachy2 import Reachy2Robot, Reachy2RobotConfig
 import time
+
+from lerobot.robots.reachy2 import Reachy2Robot, Reachy2RobotConfig
 
 # {lerobot_keys: reachy2_sdk_keys}
 REACHY2_JOINTS = {

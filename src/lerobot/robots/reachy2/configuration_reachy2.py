@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from lerobot.cameras import CameraConfig
-from lerobot.cameras.reachy2_camera import Reachy2CameraConfig
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
+from lerobot.cameras.reachy2_camera import Reachy2CameraConfig
 
 from ..config import RobotConfig
 
@@ -51,33 +51,31 @@ class Reachy2RobotConfig(RobotConfig):
     with_right_teleop_camera: bool = True
     with_torso_camera: bool = False
 
-    mock: bool = False
-
     def __post_init__(self):
         # Add cameras
         self.cameras: dict[str, CameraConfig] = {}
         if self.with_left_teleop_camera:
             self.cameras["teleop_left"] = Reachy2CameraConfig(
-                        name="teleop",
-                        image_type="left",
-                        ip_address=self.ip_address,
-                        fps=30,
-                        width=640,
-                        height=480,
-                        color_mode=ColorMode.RGB,
-                        rotation=Cv2Rotation.NO_ROTATION
-                )
+                name="teleop",
+                image_type="left",
+                ip_address=self.ip_address,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                rotation=Cv2Rotation.NO_ROTATION,
+            )
         if self.with_right_teleop_camera:
             self.cameras["teleop_right"] = Reachy2CameraConfig(
-                        name="teleop",
-                        image_type="right",
-                        ip_address=self.ip_address,
-                        fps=30,
-                        width=640,
-                        height=480,
-                        color_mode=ColorMode.RGB,
-                        rotation=Cv2Rotation.NO_ROTATION
-                )
+                name="teleop",
+                image_type="right",
+                ip_address=self.ip_address,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                rotation=Cv2Rotation.NO_ROTATION,
+            )
         if self.with_torso_camera:
             self.cameras["torso_rgb"] = Reachy2CameraConfig(
                 name="depth",
@@ -87,7 +85,7 @@ class Reachy2RobotConfig(RobotConfig):
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,
-                rotation=Cv2Rotation.NO_ROTATION
+                rotation=Cv2Rotation.NO_ROTATION,
             )
 
         super().__post_init__()

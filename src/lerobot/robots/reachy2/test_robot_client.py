@@ -1,10 +1,9 @@
 import threading
-from lerobot.scripts.server.configs import RobotClientConfig
+
 from lerobot.robots.reachy2 import Reachy2Robot, Reachy2RobotConfig
-
-from lerobot.scripts.server.robot_client import RobotClient
+from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import visualize_action_queue_size
-
+from lerobot.scripts.server.robot_client import RobotClient
 
 robot_config = Reachy2RobotConfig(
     ip_address="192.168.0.199",
