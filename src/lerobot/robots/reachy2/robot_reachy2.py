@@ -86,8 +86,7 @@ class Reachy2Robot(Robot):
 
         self.logs = {}
 
-        self.joints_dict: dict[str, str] = {}
-        self.generate_joints_dict()
+        self.joints_dict: dict[str, str] = self._generate_joints_dict()
 
     @property
     def observation_features(self) -> dict:
@@ -142,15 +141,17 @@ class Reachy2Robot(Robot):
     def calibrate(self) -> None:
         pass
 
-    def generate_joints_dict(self) -> dict[str, str]:
+    def _generate_joints_dict(self) -> dict[str, str]:
+        self.joints = {}
         if self.config.with_neck:
-            self.joints_dict.update(REACHY2_NECK_JOINTS)
+            self.joints.update(REACHY2_NECK_JOINTS)
         if self.config.with_l_arm:
-            self.joints_dict.update(REACHY2_L_ARM_JOINTS)
+            self.joints.update(REACHY2_L_ARM_JOINTS)
         if self.config.with_r_arm:
-            self.joints_dict.update(REACHY2_R_ARM_JOINTS)
+            self.joints.update(REACHY2_R_ARM_JOINTS)
         if self.config.with_antennas:
-            self.joints_dict.update(REACHY2_ANTENNAS_JOINTS)
+            self.joints.update(REACHY2_ANTENNAS_JOINTS)
+        return self.joints
 
     def _get_state(self) -> dict:
         pos_dict = {k: self.reachy.joints[v].present_position for k, v in self.joints_dict.items()}

@@ -139,14 +139,14 @@ class Reachy2Camera(Camera):
 
         if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
             if self.config.image_type == "left":
-                frame = self.cam_manager.teleop.get_frame(CameraView.LEFT)[0]
+                frame = self.cam_manager.teleop.get_frame(CameraView.LEFT, size=(640, 480))[0]
             elif self.config.image_type == "right":
-                frame = self.cam_manager.teleop.get_frame(CameraView.RIGHT)[0]
+                frame = self.cam_manager.teleop.get_frame(CameraView.RIGHT, size=(640, 480))[0]
         elif self.config.name == "depth" and hasattr(self.cam_manager, "depth"):
             if self.config.image_type == "depth":
                 frame = self.cam_manager.depth.get_depth_frame()[0]
             elif self.config.image_type == "rgb":
-                frame = self.cam_manager.depth.get_frame()[0]
+                frame = self.cam_manager.depth.get_frame(size=(640, 480))[0]
 
         if frame is None:
             return None

@@ -29,19 +29,35 @@ class Reachy2RobotConfig(RobotConfig):
     # the number of motors in your follower arms.
     max_relative_target: int | None = None
     ip_address: str | None = "localhost"
+
+    # Tag for external commands control
+    # Set to True if you use an external commands system to control the robot,
+    # such as the official teleoperation application: https://github.com/pollen-robotics/Reachy2Teleoperation
     use_external_commands: bool = False
+
+    # Robot parts
+    # Set to False to not add the corresponding joints part to the robot list of joints.
+    # By default, all parts are set to True.
     with_mobile_base: bool = True
     with_l_arm: bool = True
     with_r_arm: bool = True
     with_neck: bool = True
     with_antennas: bool = True
 
+    # Robot cameras
+    # Set to True if you want to use the corresponding cameras in the observations.
+    # By default, only the teleop cameras are used.
+    with_left_teleop_camera: bool = True
+    with_right_teleop_camera: bool = True
+    with_torso_camera: bool = False
+
     mock: bool = False
 
     def __post_init__(self):
-        # cameras
-        self.cameras: dict[str, CameraConfig] = {
-                "teleop_left": Reachy2CameraConfig(
+        # Add cameras
+        self.cameras: dict[str, CameraConfig] = {}
+        if self.with_left_teleop_camera:
+            self.cameras["teleop_left"] = Reachy2CameraConfig(
                         name="teleop",
                         image_type="left",
                         ip_address=self.ip_address,
@@ -50,8 +66,9 @@ class Reachy2RobotConfig(RobotConfig):
                         height=480,
                         color_mode=ColorMode.RGB,
                         rotation=Cv2Rotation.NO_ROTATION
-                ),
-                "teleop_right": Reachy2CameraConfig(
+                )
+        if self.with_right_teleop_camera:
+            self.cameras["teleop_right"] = Reachy2CameraConfig(
                         name="teleop",
                         image_type="right",
                         ip_address=self.ip_address,
@@ -60,128 +77,17 @@ class Reachy2RobotConfig(RobotConfig):
                         height=480,
                         color_mode=ColorMode.RGB,
                         rotation=Cv2Rotation.NO_ROTATION
-                ),
-        }
+                )
+        if self.with_torso_camera:
+            self.cameras["torso_rgb"] = Reachy2CameraConfig(
+                name="depth",
+                image_type="rgb",
+                ip_address=self.ip_address,
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                rotation=Cv2Rotation.NO_ROTATION
+            )
+
         super().__post_init__()
-
-
-# #     cameras
-#     cameras: dict[str, CameraConfig] = field(
-#         default_factory=lambda: {
-#                 "teleop_left": Reachy2CameraConfig(
-#                         name="teleop",
-#                         image_type="left",
-#                         fps=30,
-#                         width=640,
-#                         height=480,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-#                 "teleop_right": Reachy2CameraConfig(
-#                         name="teleop",
-#                         image_type="right",
-#                         fps=30,
-#                         width=640,
-#                         height=480,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-#                 "torso_rgb": Reachy2CameraConfig(
-#                         name="depth",
-#                         image_type="rgb",
-#                         fps=30,
-#                         width=640,
-#                         height=480,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-#                 "torso_depth": Reachy2CameraConfig(
-#                         name="depth",
-#                         image_type="depth",
-#                         fps=30,
-#                         width=640,
-#                         height=480,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION,
-#                         use_depth=True
-#                 )
-
-#                 # REAL ROBOT
-#                 "teleop_left": Reachy2CameraConfig(
-#                         name="teleop",
-#                         image_type="left",
-#                         ip_address="192.168.0.199",
-#                         # ip_address="172.18.131.66",
-#                         fps=30,
-#                         width=960,
-#                         height=720,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-#                 "teleop_right": Reachy2CameraConfig(
-#                         name="teleop",
-#                         image_type="right",
-#                         ip_address="192.168.0.199",
-#                         # ip_address="172.18.131.66",
-#                         fps=30,
-#                         width=960,
-#                         height=720,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-#                 "torso_rgb": Reachy2CameraConfig(
-#                         name="depth",
-#                         image_type="rgb",
-#                         ip_address="172.18.131.66",
-#                         fps=30,
-#                         width=1280,
-#                         height=720,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-
-#                 # REAL ROBOT REDUCED IMAGE SIZE
-#                 "teleop_left": Reachy2CameraConfig(
-#                         name="teleop",
-#                         image_type="left",
-#                         ip_address="192.168.0.199",
-#                         fps=30,
-#                         width=640,
-#                         height=480,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-#                 "teleop_right": Reachy2CameraConfig(
-#                         name="teleop",
-#                         image_type="right",
-#                         ip_address="192.168.0.199",
-#                         fps=30,
-#                         width=640,
-#                         height=480,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-
-#                 # Reduced size for testing
-#                 "teleop_left": Reachy2CameraConfig(
-#                         name="teleop",
-#                         image_type="left",
-#                         ip_address="172.18.131.66",
-#                         fps=30,
-#                         width=480,
-#                         height=360,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-#                 "teleop_right": Reachy2CameraConfig(
-#                         name="teleop",
-#                         image_type="right",
-#                         ip_address="172.18.131.66",
-#                         fps=30,
-#                         width=480,
-#                         height=360,
-#                         color_mode=ColorMode.RGB,
-#                         rotation=Cv2Rotation.NO_ROTATION
-#                 ),
-#         }
-#     )
