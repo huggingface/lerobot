@@ -31,6 +31,7 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.datasets.utils_must import extract_keys_to_max_dim_from_features, multidataset_collate_fn
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.factory import make_env
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy
@@ -178,9 +179,13 @@ def train(cfg: TrainPipelineConfig):
 
     # TODO: (jadechoghari): down the line, we should support loading as such:
     # keys_to_max_dim = getattr(dataset.meta, "keys_to_max_dim", {})
-    keys_to_max_dim = extract_keys_to_max_dim_from_features(dataset.meta.features)
-
-    collate_fn = partial(multidataset_collate_fn, keys_to_max_dim=keys_to_max_dim)
+    if isinstance(dataset, LeRobotDataset):
+        keys_to_max_dim = None
+        collate_fn = None
+    else: # it is a mutlidataset
+        keys_to_max_dim = extract_keys_to_max_dim_from_features(dataset.meta.features)
+        collate_fn = partial(multidataset_collate_fn, keys_to_max_dim=keys_to_max_dim)
+        
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=cfg.num_workers,
