@@ -4,7 +4,10 @@ from typing import Any
 import torch
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import (
+    ObservationProcessor,
+    ProcessorStepRegistry,
+)
 from lerobot.robots import Robot
 
 
@@ -15,18 +18,18 @@ class JointVelocityProcessor:
 
     joint_velocity_limits: float = 100.0
     dt: float = 1.0 / 10
+    num_dof: int | None = None
 
     last_joint_positions: torch.Tensor | None = None
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION)
+    def observation(self, observation: dict | None) -> dict | None:
         if observation is None:
-            return transition
+            return None
 
         # Get current joint positions (assuming they're in observation.state)
         current_positions = observation.get("observation.state")
         if current_positions is None:
-            return transition
+            return observation
 
         # Initialize last joint positions if not already set
         if self.last_joint_positions is None:
@@ -43,10 +46,7 @@ class JointVelocityProcessor:
         new_observation = dict(observation)
         new_observation["observation.state"] = extended_state
 
-        # Return new transition
-        new_transition = transition.copy()
-        new_transition[TransitionKey.OBSERVATION] = new_observation
-        return new_transition
+        return new_observation
 
     def get_config(self) -> dict[str, Any]:
         return {
@@ -54,34 +54,34 @@ class JointVelocityProcessor:
             "dt": self.dt,
         }
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
     def reset(self) -> None:
         self.last_joint_positions = None
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        if "observation.state" in features and self.num_dof is not None:
+            from lerobot.configs.types import PolicyFeature
+
+            original_feature = features["observation.state"]
+            # Double the shape to account for positions + velocities
+            new_shape = (original_feature.shape[0] + self.num_dof,) + original_feature.shape[1:]
+            features["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
         return features
 
 
 @dataclass
 @ProcessorStepRegistry.register("current_processor")
-class MotorCurrentProcessor:
+class MotorCurrentProcessor(ObservationProcessor):
     """Add motor current information to observations."""
 
     robot: Robot | None = None
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION)
+    def observation(self, observation: dict | None) -> dict | None:
         if observation is None:
-            return transition
+            return None
 
         # Get current values from robot state
         if self.robot is None:
-            return transition
+            return observation
         present_current_dict = self.robot.bus.sync_read("Present_Current")  # type: ignore[attr-defined]
         motor_currents = torch.tensor(
             [present_current_dict[name] for name in self.robot.bus.motors],  # type: ignore[attr-defined]
@@ -90,7 +90,7 @@ class MotorCurrentProcessor:
 
         current_state = observation.get("observation.state")
         if current_state is None:
-            return transition
+            return observation
 
         extended_state = torch.cat([current_state, motor_currents], dim=-1)
 
@@ -98,22 +98,19 @@ class MotorCurrentProcessor:
         new_observation = dict(observation)
         new_observation["observation.state"] = extended_state
 
-        # Return new transition
-        new_transition = transition.copy()
-        new_transition[TransitionKey.OBSERVATION] = new_observation
-        return new_transition
+        return new_observation
 
-    def get_config(self) -> dict[str, Any]:
-        return {}
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        if "observation.state" in features and self.robot is not None:
+            from lerobot.configs.types import PolicyFeature
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
+            original_feature = features["observation.state"]
+            # Add motor current dimensions to the original state shape
+            num_motors = 0
+            if hasattr(self.robot, "bus") and hasattr(self.robot.bus, "motors"):  # type: ignore[attr-defined]
+                num_motors = len(self.robot.bus.motors)  # type: ignore[attr-defined]
 
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+            if num_motors > 0:
+                new_shape = (original_feature.shape[0] + num_motors,) + original_feature.shape[1:]
+                features["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
         return features

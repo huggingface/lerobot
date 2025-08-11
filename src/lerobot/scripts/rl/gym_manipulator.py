@@ -407,7 +407,7 @@ def make_processors(
 
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
-            env_pipeline_steps.append(JointVelocityProcessor(dt=1.0 / cfg.fps))
+            env_pipeline_steps.append(JointVelocityProcessor(dt=1.0 / cfg.fps, num_dof=len(motor_names)))
         if cfg.processor.observation.add_current_to_observation:
             env_pipeline_steps.append(MotorCurrentProcessor(robot=env.robot))
 

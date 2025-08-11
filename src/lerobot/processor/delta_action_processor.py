@@ -61,6 +61,7 @@ class MapDeltaActionToRobotAction(ActionProcessor):
             return {}
 
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
+        # TODO (maractingi): changing this target_xyz naming convention from the teleop_devices
         if isinstance(action, dict):
             delta_x = action.pop("action.delta_x", 0.0)
             delta_y = action.pop("action.delta_y", 0.0)
@@ -119,3 +120,6 @@ class MapDeltaActionToRobotAction(ActionProcessor):
             }
         )
         return features
+
+    def reset(self):
+        self._prev_enabled = False

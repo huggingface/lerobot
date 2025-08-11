@@ -12,6 +12,7 @@ from lerobot.processor.pipeline import (
     ComplementaryDataProcessor,
     EnvTransition,
     InfoProcessor,
+    ObservationProcessor,
     ProcessorStepRegistry,
     TransitionKey,
 )
@@ -99,19 +100,18 @@ class Numpy2TorchActionProcessor(ActionProcessor):
 
 @ProcessorStepRegistry.register("image_crop_resize_processor")
 @dataclass
-class ImageCropResizeProcessor:
+class ImageCropResizeProcessor(ObservationProcessor):
     """Crop and resize image observations."""
 
-    crop_params_dict: dict[str, tuple[int, int, int, int]]
-    resize_size: tuple[int, int] = (128, 128)
+    crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
+    resize_size: tuple[int, int] | None = None
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION)
+    def observation(self, observation: dict | None) -> dict | None:
         if observation is None:
-            return transition
+            return None
 
         if self.resize_size is None and not self.crop_params_dict:
-            return transition
+            return observation
 
         new_observation = dict(observation)
 
@@ -122,38 +122,25 @@ class ImageCropResizeProcessor:
 
             image = observation[key]
             device = image.device
+            # NOTE (maractingi): No mps kernel for crop and resize, so we need to move to cpu
             if device.type == "mps":
                 image = image.cpu()
             # Crop if crop params are provided for this key
-            if key in self.crop_params_dict:
+            if self.crop_params_dict is not None and key in self.crop_params_dict:
                 crop_params = self.crop_params_dict[key]
                 image = F.crop(image, *crop_params)
-            # Always resize
-            image = F.resize(image, self.resize_size)
-            image = image.clamp(0.0, 1.0)
+            if self.resize_size is not None:
+                image = F.resize(image, self.resize_size)
+                image = image.clamp(0.0, 1.0)
             new_observation[key] = image.to(device)
 
-        new_transition = transition.copy()
-        new_transition[TransitionKey.OBSERVATION] = new_observation
-        return new_transition
+        return new_observation
 
     def get_config(self) -> dict[str, Any]:
         return {
             "crop_params_dict": self.crop_params_dict,
             "resize_size": self.resize_size,
         }
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
 
 
 @dataclass
@@ -190,7 +177,7 @@ class TimeLimitProcessor:
     def reset(self) -> None:
         self.current_step = 0
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -236,7 +223,9 @@ class GripperPenaltyProcessor:
 
         # Create new transition with updated complementary data
         new_transition = transition.copy()
-        new_transition[TransitionKey.COMPLEMENTARY_DATA].update(new_complementary_data)
+        existing_comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        existing_comp_data.update(new_complementary_data)
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = existing_comp_data  # type: ignore[misc]
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
@@ -255,7 +244,7 @@ class GripperPenaltyProcessor:
         """Reset the processor state."""
         self.last_gripper_state = None
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -295,6 +284,8 @@ class InterventionActionProcessor:
                     action_list.append(teleop_action.get("gripper", 1.0))
             elif isinstance(teleop_action, np.ndarray):
                 action_list = teleop_action.tolist()
+            else:
+                action_list = teleop_action
 
             teleop_action_tensor = torch.tensor(action_list, dtype=action.dtype, device=action.device)
             new_transition[TransitionKey.ACTION] = teleop_action_tensor
@@ -311,9 +302,11 @@ class InterventionActionProcessor:
         info[TeleopEvents.RERECORD_EPISODE] = rerecord_episode
         info[TeleopEvents.SUCCESS] = success
         new_transition[TransitionKey.INFO] = info
-        new_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"] = new_transition[
-            TransitionKey.ACTION
-        ]
+
+        # Update complementary data with teleop action
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        complementary_data["teleop_action"] = new_transition.get(TransitionKey.ACTION)
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
 
         return new_transition
 
@@ -331,7 +324,7 @@ class InterventionActionProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
 
@@ -413,5 +406,5 @@ class RewardClassifierProcessor:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
