@@ -1,7 +1,7 @@
 # Piper SDK interface for LeRobot integration
 
 import time
-from typing import Any, Dict
+from typing import Any
 
 try:
     from piper_sdk import C_PiperInterface_V2
@@ -59,7 +59,7 @@ class PiperSDKInterface:
     def get_status(self) -> dict[str, Any]:
         joint_status = self.piper.GetArmJointMsgs()
         gripper = self.piper.GetArmGripperMsgs()
-        
+
         joint_state = joint_status.joint_state
         obs_dict = {
             "joint_0.pos": joint_state.joint_1,
