@@ -36,12 +36,14 @@ class MapTensorToDeltaActionDict(ActionProcessor):
             action = action.squeeze(0)
 
         # TODO (maractingi): add rotation
-        return {
+        delta_action = {
             "action.delta_x": action[0],
             "action.delta_y": action[1],
             "action.delta_z": action[2],
-            "action.gripper": action[3],
         }
+        if action.shape[0] > 3:
+            delta_action["action.gripper"] = action[3]
+        return delta_action
 
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
