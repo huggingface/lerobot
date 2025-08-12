@@ -28,6 +28,7 @@ from .hil_processor import (
     TimeLimitProcessor,
 )
 from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
+from .leader_follower_processor import LeaderFollowerProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
@@ -62,6 +63,7 @@ __all__ = [
     "InfoProcessor",
     "InterventionActionProcessor",
     "JointVelocityProcessor",
+    "LeaderFollowerProcessor",
     "MapDeltaActionToRobotAction",
     "MotorCurrentProcessor",
     "NormalizerProcessor",

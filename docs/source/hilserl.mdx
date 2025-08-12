@@ -320,6 +320,8 @@ python -m lerobot.scripts.find_joint_limits \
     --teleop.id=blue
 ```
 
+Note: You can also use `so101_leader` as the teleop type if you have the SO101 leader arm with reduced gears for smoother teleoperation.
+
 **Workflow**
 
 1. Run the script and move the robot through the space that solves the task
@@ -476,7 +478,7 @@ To setup the gamepad, you need to set the `control_mode` to `"gamepad"` and defi
 
 The SO101 leader arm has reduced gears that allows it to move and track the follower arm during exploration. Therefore, taking over is much smoother than the gearless SO100.
 
-To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and define the `teleop` section in the configuration file.
+To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and define the `teleop` section in the configuration file with `leader_follower_mode` enabled:
 
 ```json
 {
@@ -484,7 +486,8 @@ To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and 
     "teleop": {
       "type": "so101_leader",
       "port": "/dev/tty.usbmodem585A0077921",
-      "use_degrees": true
+      "use_degrees": true,
+      "leader_follower_mode": true
     },
     "processor": {
       "control_mode": "leader",
@@ -495,6 +498,10 @@ To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and 
   }
 }
 ```
+
+The `leader_follower_mode` enables the leader arm to automatically track the follower's position when you're not intervening. This creates a seamless teleoperation experience where:
+- When not intervening: the leader arm follows the follower arm's position
+- When intervening (press `space`): you control the leader arm, and the follower tracks it in end-effector space
 
 In order to annotate the success/failure of the episode, **you will need** to use a keyboard to press `s` for success, `esc` for failure.
 During the online training, press `space` to take over the policy and `space` again to give the control back to the policy.

@@ -36,6 +36,7 @@ from lerobot.processor import (
     ImageCropResizeProcessor,
     InterventionActionProcessor,
     JointVelocityProcessor,
+    LeaderFollowerProcessor,
     MapDeltaActionToRobotAction,
     MapTensorToDeltaActionDict,
     MotorCurrentProcessor,
@@ -52,6 +53,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     so100_follower,
+    so101_follower,
 )
 from lerobot.robots.robot import Robot
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -68,6 +70,7 @@ from lerobot.teleoperators import (
     make_teleoperator_from_config,
     so101_leader,  # noqa: F401
 )
+from lerobot.teleoperators.so101_leader.so101_leader_follower import SO101LeaderFollower
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.robot_utils import busy_wait
@@ -113,7 +116,7 @@ def create_transition(
     }
 
 
-def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> None:
+def reset_follower_position(robot_arm: Robot | SO101LeaderFollower, target_position: np.ndarray) -> None:
     """Reset robot arm to target position using smooth trajectory."""
     current_position_dict = robot_arm.bus.sync_read("Present_Position")
     current_position = np.array(
@@ -458,15 +461,36 @@ def make_processors(
     env_pipeline_steps.append(ToBatchProcessor())
     env_pipeline_steps.append(DeviceProcessor(device=device))
 
+    # Get control mode
+    control_mode = cfg.processor.control_mode if cfg.processor is not None else "gamepad"
+    
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryData(teleop_device=teleop_device),
         AddTeleopEventsAsInfo(teleop_device=teleop_device),
-        AddRobotObservationAsComplimentaryData(robot=env.robot),
+        AddRobotObservationAsComplimentaryData(robot=env.robot)
+    ]
+    # Check for leader control mode
+    if control_mode == "leader":
+        assert isinstance(teleop_device, SO101LeaderFollower), "Leader control mode requires SO101LeaderFollower teleop device"
+
+        action_pipeline_steps.append(
+            LeaderFollowerProcessor(
+                leader_device=teleop_device,
+                motor_names=motor_names,
+                robot=env.robot,
+                kinematics=kinematics_solver,
+                end_effector_step_sizes=np.array(list(cfg.processor.inverse_kinematics.end_effector_step_sizes.values())),
+                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+                max_gripper_pos=cfg.processor.max_gripper_pos if cfg.processor.max_gripper_pos is not None else 100.0,
+            )
+            )
+        # Standard teleop mode (gamepad, keyboard, etc.)
+    action_pipeline_steps.append(
         InterventionActionProcessor(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
             terminate_on_success=terminate_on_success,
         ),
-    ]
+    )
 
     # Replace InverseKinematicsProcessor with new kinematic processors
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
@@ -572,11 +596,7 @@ def control_loop(
     dt = 1.0 / cfg.env.fps
 
     print(f"Starting control loop at {cfg.env.fps} FPS")
-    print("Controls:")
-    print("- Use gamepad/teleop device for intervention")
-    print("- When not intervening, robot will stay still")
-    print("- Press Ctrl+C to exit")
-
+    
     # Reset environment and processors
     obs, info = env.reset()
     complementary_data = (

@@ -26,3 +26,6 @@ class SO101LeaderConfig(TeleoperatorConfig):
     port: str
 
     use_degrees: bool = False
+
+    # Enable leader-follower mode where leader can both lead and follow
+    leader_follower_mode: bool = False
