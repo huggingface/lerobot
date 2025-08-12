@@ -139,6 +139,7 @@ class RTCProcessor:
             weights[:start] = 1.0
         elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.ONES:
             weights = torch.ones(total)
+            weights[end:] = 0.0
         elif self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR:
             lin_weights = self._linweights(start, end, total)
             weights = self._add_trailing_zeros(lin_weights, total, end)

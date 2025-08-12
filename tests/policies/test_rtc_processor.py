@@ -109,8 +109,9 @@ class TestGetPrefixWeights:
 
         # Test case 1: Normal case
         weights = ones_scheduler_processor.get_prefix_weights(start=3, end=7, total=10)
-        expected = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        expected = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
         assert weights.shape == expected.shape
+
         torch.testing.assert_close(weights, expected)
 
         # Total = 0
