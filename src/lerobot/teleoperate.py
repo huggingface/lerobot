@@ -61,7 +61,6 @@ import rerun as rr
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.cameras.kinect.configuration_kinect import KinectCameraConfig  # noqa: F401
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -87,7 +86,7 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
-from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data, register_depth_scale
+from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
 
 @dataclass
@@ -107,11 +106,9 @@ def teleop_loop(
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
-
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
-
         if display_data:
             observation = robot.get_observation()
             log_rerun_data(observation, action)
@@ -134,7 +131,6 @@ def teleop_loop(
         move_cursor_up(len(action) + 5)
 
 
-
 @draccus.wrap()
 def teleoperate(cfg: TeleoperateConfig):
     init_logging()
@@ -147,15 +143,6 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop.connect()
     robot.connect()
-
-    # Register per-stream depth scales for correct Rerun depth visualization
-    try:
-        for cam_key, cam in getattr(robot, "cameras", {}).items():
-            depth_scale = getattr(cam, "depth_scale", None)
-            if depth_scale:
-                register_depth_scale(cam_key, float(depth_scale))
-    except Exception:
-        pass
 
     try:
         teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)

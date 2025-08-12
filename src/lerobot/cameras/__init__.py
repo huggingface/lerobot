@@ -16,3 +16,9 @@ from .camera import Camera
 from .configs import CameraConfig, ColorMode, Cv2Rotation
 from .utils import make_cameras_from_configs
 
+try:
+    from .kinect import available_kinect
+
+    del available_kinect
+except ImportError:
+    pass

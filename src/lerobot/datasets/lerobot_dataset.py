@@ -16,8 +16,6 @@
 import contextlib
 import logging
 import shutil
-import subprocess
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -76,8 +74,6 @@ from lerobot.datasets.video_utils import (
 )
 
 CODEBASE_VERSION = "v2.1"
-
-logger = logging.getLogger(__name__)
 
 
 class LeRobotDatasetMetadata:
@@ -807,18 +803,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                # Check if this is raw depth data (2D array with float32 or uint16)
-                data = frame[key]
-                if isinstance(data, np.ndarray) and data.ndim == 2 and data.dtype in [np.float32, np.uint16]:
-                    # Save raw depth as .npy instead of .png
-                    npy_path = img_path.with_suffix('.npy')
-                    np.save(npy_path, data)
-                    self.episode_buffer[key].append(str(npy_path))
-                else:
-                    # Save as image (existing behavior)
-                    self._save_image(data, img_path)
-                    self.episode_buffer[key].append(str(img_path))
+                self._save_image(frame[key], img_path)
+                self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
 
@@ -868,14 +854,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_buffer[key] = np.stack(episode_buffer[key])
 
         self._wait_image_writer()
-
-        # Ensure raw depth (.npy) files are colorized to .png before computing stats
-        # and update in-memory paths so stats sampling reads PNGs
-        try:
-            self._ensure_depth_pngs_for_stats(episode_index, episode_buffer)
-        except Exception as e:
-            logger.warning(f"Depth pre-colorization before stats failed for episode {episode_index}: {e}")
-
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
@@ -994,12 +972,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             img_dir = self._get_image_file_path(
                 episode_index=episode_index, image_key=key, frame_index=0
             ).parent
-            
-            # If any raw depth remains (unexpected), colorize before encoding
-            if any(img_dir.glob("*.npy")):
-                logger.info(f"Pre-encoding colorization for '{key}', episode {episode_index}")
-                self._run_depth_colorization_subprocess(key, img_dir)
-            
             encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
             shutil.rmtree(img_dir)
 
@@ -1075,103 +1047,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episode_data_index = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         return obj
-
-    # ----------------------
-    # Internal helpers
-    # ----------------------
-
-    def _get_depth_colorization_params(self, key: str) -> tuple[float, float, str, float | None]:
-        """Fetch per-stream colorization params from dataset metadata with sensible defaults."""
-        # Defaults: Kinect (0.5–4.5 m), RealSense (D405 close range) 0.07–0.5 m
-        min_depth = 0.5
-        max_depth = 4.5
-        colormap = "JET"
-        depth_scale = None
-
-        try:
-            ft = self.meta.info["features"].get(key, {})
-            params = ft.get("depth_colorization", {})
-            min_depth = float(params.get("min_depth", min_depth))
-            max_depth = float(params.get("max_depth", max_depth))
-            colormap = str(params.get("colormap", colormap))
-            if "depth_scale" in params and params["depth_scale"] is not None:
-                depth_scale = float(params["depth_scale"])
-        except Exception:
-            pass
-
-        return min_depth, max_depth, colormap, depth_scale
-
-    def _run_depth_colorization_subprocess(self, key: str, img_dir: Path) -> None:
-        """Run the depth colorization script for a given image directory and log basic info."""
-        npy_files = list(img_dir.glob("*.npy"))
-        if not npy_files:
-            return
-
-        min_depth, max_depth, colormap, depth_scale = self._get_depth_colorization_params(key)
-
-        colorize_script = Path(__file__).parent / "scripts" / "colorize_depth.py"
-        cmd = [
-            "python",
-            str(colorize_script),
-            str(img_dir),
-            "--colormap",
-            colormap,
-            "--min_depth",
-            str(min_depth),
-            "--max_depth",
-            str(max_depth),
-        ]
-        if depth_scale is not None:
-            cmd += ["--depth_scale", str(depth_scale)]
-
-        logger.info(
-            f"Colorizing {len(npy_files)} depth frames for '{key}' in {img_dir} (colormap={colormap}, min={min_depth}m, max={max_depth}m, depth_scale={depth_scale})"
-        )
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.stdout:
-            logger.info(result.stdout.strip())
-        if result.stderr:
-            logger.debug(result.stderr.strip())
-        if result.returncode != 0:
-            raise RuntimeError(f"Depth colorization failed for '{key}': {result.stderr}")
-
-        png_count = len(list(img_dir.glob("*.png")))
-        logger.info(f"Colorization complete for '{key}' -> {png_count} PNGs")
-
-    def _ensure_depth_pngs_for_stats(self, episode_index: int, episode_buffer: dict) -> None:
-        """Colorize any raw depth .npy files to .png and update in-memory paths before stats."""
-        # Identify features with image/video dtype
-        image_like_keys = [k for k, ft in self.features.items() if ft.get("dtype") in ["image", "video"]]
-
-        # First pass: for each key that contains .npy paths, colorize its directory
-        for key in image_like_keys:
-            paths = episode_buffer.get(key)
-            if not isinstance(paths, list) or not paths:
-                continue
-            if not any(p.endswith(".npy") for p in paths):
-                continue
-
-            img_dir = self._get_image_file_path(episode_index=episode_index, image_key=key, frame_index=0).parent
-            # Run colorization (deletes .npy and writes .png)
-            self._run_depth_colorization_subprocess(key, img_dir)
-
-        # Second pass: rewrite episode_buffer paths from .npy -> .png
-        for key in image_like_keys:
-            paths = episode_buffer.get(key)
-            if not isinstance(paths, list) or not paths:
-                continue
-            updated = False
-            new_paths = []
-            for p in paths:
-                if p.endswith(".npy"):
-                    png_p = str(Path(p).with_suffix('.png'))
-                    new_paths.append(png_p)
-                    updated = True
-                else:
-                    new_paths.append(p)
-            if updated:
-                logger.info(f"Updated episode buffer paths for '{key}' from .npy to .png ({len(paths)} frames)")
-                episode_buffer[key] = new_paths
 
 
 class MultiLeRobotDataset(torch.utils.data.Dataset):

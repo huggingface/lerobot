@@ -806,20 +806,8 @@ def validate_feature_image_or_video(name: str, expected_shape: list[str], value:
     error_message = ""
     if isinstance(value, np.ndarray):
         actual_shape = value.shape
-        # Debug: check if expected_shape has correct dimensions
-        if len(expected_shape) != 3:
-            error_message += f"Expected shape for '{name}' should have 3 dimensions (h, w, c), but got {len(expected_shape)} dimensions: {expected_shape}\n"
-            return error_message
-        h, w, c = expected_shape
-        
-        # Allow 2D arrays for raw depth data ONLY for depth streams
-        # Depth streams are expected to be registered as features ending with '_depth'
-        if value.ndim == 2 and value.dtype in [np.float32, np.uint16] and name.endswith("_depth"):
-            if actual_shape != (h, w):
-                error_message += (
-                    f"The raw depth feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(h, w)}'.\n"
-                )
-        elif len(actual_shape) != 3 or (actual_shape != (c, h, w) and actual_shape != (h, w, c)):
+        c, h, w = expected_shape
+        if len(actual_shape) != 3 or (actual_shape != (c, h, w) and actual_shape != (h, w, c)):
             error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c, h, w)}' or '{(h, w, c)}'.\n"
     elif isinstance(value, PILImage.Image):
         pass

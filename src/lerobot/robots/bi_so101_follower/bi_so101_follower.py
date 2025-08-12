@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import time
 from functools import cached_property
 from typing import Any
 
@@ -65,8 +66,6 @@ class BiSO101Follower(Robot):
         self.right_arm = SO101Follower(right_arm_config)
         self.cameras = make_cameras_from_configs(config.cameras)
 
-        # Cameras are read sequentially for better stability
-
     @property
     def _motors_ft(self) -> dict[str, type]:
         return {f"left_{motor}.pos": float for motor in self.left_arm.bus.motors} | {
@@ -75,22 +74,9 @@ class BiSO101Follower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        ft = {}
-        for cam_key, cam in self.cameras.items():
-            cam_config = self.config.cameras[cam_key]
-            ft[cam_key] = (cam_config.height, cam_config.width, 3)
-
-            # Add depth stream if enabled
-            if hasattr(cam, "use_depth") and cam.use_depth:
-                # Check if this is a Kinect camera by looking at the camera class name
-                if "kinect" in cam_key.lower():
-                    # Kinect depth has fixed resolution (height=424, width=512)
-                    ft[f"{cam_key}_depth"] = (424, 512, 3)
-                else:
-                    # For other cameras (RealSense), use same resolution as color
-                    ft[f"{cam_key}_depth"] = (cam_config.height, cam_config.width, 3)
-
-        return ft
+        return {
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
+        }
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -142,24 +128,11 @@ class BiSO101Follower(Robot):
         right_obs = self.right_arm.get_observation()
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
-        # Read all cameras sequentially for stability
-        if self.cameras:
-            for cam_key, cam in self.cameras.items():
-                try:
-                    if hasattr(cam, "use_depth") and cam.use_depth:
-                        # Read both color and raw depth in one call
-                        frames = cam.async_read_all(timeout_ms=200)
-                        if frames.get("color") is not None:
-                            obs_dict[cam_key] = frames["color"]
-                        if frames.get("depth") is not None:
-                            obs_dict[f"{cam_key}_depth"] = frames["depth"]
-                    else:
-                        # Minimal diff: use original read path for RGB-only
-                        obs_dict[cam_key] = cam.async_read(timeout_ms=200)
-                except Exception as e:
-                    logger.warning(f"Failed to read from camera {cam_key}: {e}")
-                    # Skip this camera but continue with others
-
+        for cam_key, cam in self.cameras.items():
+            start = time.perf_counter()
+            obs_dict[cam_key] = cam.async_read(timeout_ms=1000)
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 
