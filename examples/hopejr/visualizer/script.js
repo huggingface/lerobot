@@ -199,7 +199,7 @@ function initializeJointElements() {
          // Calibration controls
      const calibRow = document.createElement('div');
      calibRow.className = 'calib-row';
-     
+
      const resetCalibBtn = document.createElement('button');
      resetCalibBtn.textContent = 'Reset Calib';
      resetCalibBtn.className = 'calib-btn';
@@ -208,11 +208,11 @@ function initializeJointElements() {
        observedMax[i] = -Infinity;
        addLogMessage(`Reset calibration for ${fingerName} ${jointType}`);
      });
-     
+
      const calibStatus = document.createElement('span');
      calibStatus.className = 'calib-status';
      calibStatus.textContent = `Range: --`;
-     
+
      calibRow.appendChild(resetCalibBtn);
      calibRow.appendChild(calibStatus);
 
@@ -244,7 +244,7 @@ function initializeJointElements() {
      ui.slider.disabled = connected;
      ui.slider.style.display = connected ? 'none' : '';
    }
-   
+
    // Reset calibration when connecting
    if (connected) {
      observedMin.fill(Infinity);
@@ -299,20 +299,20 @@ async function readSerialData() {
    while ((idx = inputBuffer.indexOf('\n')) !== -1) {
      const line = inputBuffer.slice(0, idx).trim();
      inputBuffer = inputBuffer.slice(idx + 1);
- 
+
      const vals = line.split(/\s+/).map(v => parseInt(v, 10));
      if (vals.length === MAX_JOINTS && vals.every(v => Number.isFinite(v))) {
        for (let i = 0; i < MAX_JOINTS; i++) {
          const info = fingerJointMap[i];
          if (!info) continue;
-         
+
          let rawValue = vals[i];
-         
+
          // Update calibration tracking
          if (calibrationEnabled) {
            observedMin[i] = Math.min(observedMin[i], rawValue);
            observedMax[i] = Math.max(observedMax[i], rawValue);
-           
+
            // Update calibration display
            const ui = uiRefs[i];
            if (ui && ui.calibStatus) {
@@ -320,7 +320,7 @@ async function readSerialData() {
                ui.calibStatus.textContent = `Range: ${observedMin[i]}-${observedMax[i]}`;
              }
            }
-           
+
            // Remap observed range to target range
            if (observedMin[i] !== Infinity && observedMax[i] !== -Infinity && observedMax[i] > observedMin[i]) {
              const observedRange = observedMax[i] - observedMin[i];
@@ -329,7 +329,7 @@ async function readSerialData() {
              rawValue = info.min + (normalizedValue * targetRange);
            }
          }
-         
+
          let v = clamp(rawValue, info.min, info.max);
          if (info.inverted) v = (info.min + info.max) - v;
          jointValues[i] = v;
