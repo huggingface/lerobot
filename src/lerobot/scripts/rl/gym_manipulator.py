@@ -463,15 +463,17 @@ def make_processors(
 
     # Get control mode
     control_mode = cfg.processor.control_mode if cfg.processor is not None else "gamepad"
-    
+
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryData(teleop_device=teleop_device),
         AddTeleopEventsAsInfo(teleop_device=teleop_device),
-        AddRobotObservationAsComplimentaryData(robot=env.robot)
+        AddRobotObservationAsComplimentaryData(robot=env.robot),
     ]
     # Check for leader control mode
     if control_mode == "leader":
-        assert isinstance(teleop_device, SO101LeaderFollower), "Leader control mode requires SO101LeaderFollower teleop device"
+        assert isinstance(teleop_device, SO101LeaderFollower), (
+            "Leader control mode requires SO101LeaderFollower teleop device"
+        )
 
         action_pipeline_steps.append(
             LeaderFollowerProcessor(
@@ -479,11 +481,15 @@ def make_processors(
                 motor_names=motor_names,
                 robot=env.robot,
                 kinematics=kinematics_solver,
-                end_effector_step_sizes=np.array(list(cfg.processor.inverse_kinematics.end_effector_step_sizes.values())),
+                end_effector_step_sizes=np.array(
+                    list(cfg.processor.inverse_kinematics.end_effector_step_sizes.values())
+                ),
                 use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
-                max_gripper_pos=cfg.processor.max_gripper_pos if cfg.processor.max_gripper_pos is not None else 100.0,
+                max_gripper_pos=cfg.processor.max_gripper_pos
+                if cfg.processor.max_gripper_pos is not None
+                else 100.0,
             )
-            )
+        )
         # Standard teleop mode (gamepad, keyboard, etc.)
     action_pipeline_steps.append(
         InterventionActionProcessor(
@@ -596,7 +602,7 @@ def control_loop(
     dt = 1.0 / cfg.env.fps
 
     print(f"Starting control loop at {cfg.env.fps} FPS")
-    
+
     # Reset environment and processors
     obs, info = env.reset()
     complementary_data = (
