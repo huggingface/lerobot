@@ -1,0 +1,104 @@
+{
+  "timestamp": "20250622_222401",
+  "total_recordings": 4,
+  "motor_names": {
+    "leader": [
+      "shoulder_pan",
+      "shoulder_lift",
+      "elbow_flex",
+      "wrist_flex",
+      "wrist_roll",
+      "gripper"
+    ],
+    "follower": [
+      "shoulder_pan",
+      "shoulder_lift",
+      "elbow_flex",
+      "wrist_flex",
+      "wrist_roll",
+      "gripper"
+    ]
+  },
+  "recordings": [
+    {
+      "recording_id": 1,
+      "timestamp": "2025-06-22T22:23:39.963638",
+      "leader_positions": {
+        "shoulder_pan": 2613,
+        "shoulder_lift": 2172,
+        "elbow_flex": 1759,
+        "wrist_flex": 3003,
+        "wrist_roll": 2417,
+        "gripper": 1511
+      },
+      "follower_positions": {
+        "shoulder_pan": 2614,
+        "shoulder_lift": 2180,
+        "elbow_flex": 1757,
+        "wrist_flex": 3006,
+        "wrist_roll": 2416,
+        "gripper": 1670
+      }
+    },
+    {
+      "recording_id": 2,
+      "timestamp": "2025-06-22T22:23:47.285693",
+      "leader_positions": {
+        "shoulder_pan": 2060,
+        "shoulder_lift": 941,
+        "elbow_flex": 2551,
+        "wrist_flex": 2398,
+        "wrist_roll": 2232,
+        "gripper": 1511
+      },
+      "follower_positions": {
+        "shoulder_pan": 2058,
+        "shoulder_lift": 919,
+        "elbow_flex": 2550,
+        "wrist_flex": 2406,
+        "wrist_roll": 2232,
+        "gripper": 1663
+      }
+    },
+    {
+      "recording_id": 3,
+      "timestamp": "2025-06-22T22:23:43.554356",
+      "leader_positions": {
+        "shoulder_pan": 1743,
+        "shoulder_lift": 2043,
+        "elbow_flex": 2035,
+        "wrist_flex": 3003,
+        "wrist_roll": 2143,
+        "gripper": 1512
+      },
+      "follower_positions": {
+        "shoulder_pan": 1738,
+        "shoulder_lift": 2050,
+        "elbow_flex": 2023,
+        "wrist_flex": 3006,
+        "wrist_roll": 2146,
+        "gripper": 1665
+      }
+    },
+    {
+      "recording_id": 4,
+      "timestamp": "2025-06-22T22:23:50.829601",
+      "leader_positions": {
+        "shoulder_pan": 2091,
+        "shoulder_lift": 2509,
+        "elbow_flex": 1386,
+        "wrist_flex": 2654,
+        "wrist_roll": 2156,
+        "gripper": 1512
+      },
+      "follower_positions": {
+        "shoulder_pan": 2089,
+        "shoulder_lift": 2513,
+        "elbow_flex": 1394,
+        "wrist_flex": 2657,
+        "wrist_roll": 2154,
+        "gripper": 1663
+      }
+    }
+  ]
+}
