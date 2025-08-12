@@ -78,7 +78,6 @@ from lerobot.datasets.video_utils import (
 CODEBASE_VERSION = "v2.1"
 
 logger = logging.getLogger(__name__)
-import cv2
 
 
 class LeRobotDatasetMetadata:
@@ -812,15 +811,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 # Check if this is raw depth data (2D array with float32 or uint16)
                 data = frame[key]
                 if isinstance(data, np.ndarray) and data.ndim == 2 and data.dtype in [np.float32, np.uint16]:
-                    # Standardize raw depth storage to uint16 for compactness
-                    if data.dtype == np.float32:
-                        # Assume float32 is millimeters (e.g., Kinect). Quantize to uint16 mm.
-                        data_to_save = np.clip(np.rint(data), 0, 65535).astype(np.uint16)
-                    else:
-                        data_to_save = data
                     # Save raw depth as .npy instead of .png
                     npy_path = img_path.with_suffix('.npy')
-                    np.save(npy_path, data_to_save)
+                    np.save(npy_path, data)
                     self.episode_buffer[key].append(str(npy_path))
                 else:
                     # Save as image (existing behavior)
@@ -1002,19 +995,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 episode_index=episode_index, image_key=key, frame_index=0
             ).parent
             
-            # If this is a Kinect color stream and resize is requested, run resize-only subprocess
-            try:
-                ft = self.meta.info["features"].get(key, {})
-                sensor = ft.get("sensor", "unknown")
-                if sensor == "kinect" and (not key.endswith("_depth")):
-                    resize_cfg = ft.get("resize", None)
-                    if resize_cfg and "width" in resize_cfg and "height" in resize_cfg:
-                        proc_script = Path(__file__).parent / "scripts" / "process_kinect_color.py"
-                        cmd = ["python", str(proc_script), str(img_dir), "--width", str(int(resize_cfg["width"])), "--height", str(int(resize_cfg["height"]))]
-                        subprocess.run(cmd, check=True)
-            except Exception:
-                pass
-
             # If any raw depth remains (unexpected), colorize before encoding
             if any(img_dir.glob("*.npy")):
                 logger.info(f"Pre-encoding colorization for '{key}', episode {episode_index}")
@@ -1047,8 +1027,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.encode_episode_videos(ep_idx)
 
         logging.info("Batch video encoding completed")
-
-    # (Removed in-file Kinect processor; done via subprocess)
 
     @classmethod
     def create(

@@ -35,33 +35,6 @@ TELEOP_LEFT_PORT="COM5"
 TELEOP_RIGHT_PORT="COM4"
 FPS="30"
 
-# Viz and logging options
-echo ""
-read -p "Enable depth visualization in viewer (viz_depth)? [y/N]: " VIZ_INPUT
-if [[ "$VIZ_INPUT" =~ ^[Yy]$ ]]; then
-    VIZ_DEPTH=true
-else
-    VIZ_DEPTH=false
-fi
-
-# Logging options
-echo ""
-read -p "Enable performance logging (every 5s)? [y/N]: " PERF_INPUT
-if [[ "$PERF_INPUT" =~ ^[Yy]$ ]]; then
-    PERF_ARGS="--perf_logging=true --perf_level=INFO"
-else
-    PERF_ARGS="--perf_logging=false"
-fi
-
-read -p "Enter log file path (default dir: C:/Users/madha/Documents/lerobot): " LOG_FILE
-LOG_DIR="C:/Users/madha/Documents/lerobot"
-if [ -z "$LOG_FILE" ]; then
-    LOG_FILE="$LOG_DIR/teleop_$(date +%Y%m%d_%H%M%S).log"
-fi
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
-
-# Note: No stdout/stderr redirection; perf-only logs go to file via app logging
-
 # RealSense serial numbers
 REALSENSE1_SERIAL="218622270973"
 REALSENSE2_SERIAL="218622278797"
@@ -80,11 +53,13 @@ case $choice in
                 'cam_main': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': false,
-                    'pipeline': 'cuda'
+                    'pipeline': 'cuda',
+                    'enable_bilateral_filter': false,
+                    'enable_edge_filter': false
                 }
             }" \
             --teleop.type=$TELEOP_TYPE \
@@ -92,10 +67,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=true \
-            --viz_depth=$VIZ_DEPTH \
-            --log_file="$LOG_FILE" \
-            $PERF_ARGS
+            --display_data=true
         ;;
 
     2)
@@ -111,13 +83,16 @@ case $choice in
                 'cam_main': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.5,
                     'depth_max_meters': 3.0,
+                    'depth_clipping': true,
+                    'enable_bilateral_filter': false,
+                    'enable_edge_filter': false,
                     'pipeline': 'cuda'
                 }
             }" \
@@ -126,10 +101,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=true \
-            --viz_depth=$VIZ_DEPTH \
-            --log_file="$LOG_FILE" \
-            $PERF_ARGS
+            --display_data=true
         ;;
 
     3)
@@ -162,10 +134,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=true \
-            --viz_depth=$VIZ_DEPTH \
-            --log_file="$LOG_FILE" \
-            $PERF_ARGS
+            --display_data=true
         ;;
 
     4)
@@ -187,7 +156,8 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
                 },
                 'cam_high': {
                     'type': 'intelrealsense',
@@ -198,7 +168,8 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
                 }
             }" \
             --teleop.type=$TELEOP_TYPE \
@@ -206,10 +177,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=true \
-            --viz_depth=$VIZ_DEPTH \
-            --log_file="$LOG_FILE" \
-            $PERF_ARGS
+            --display_data=true
         ;;
 
     5)
@@ -239,11 +207,13 @@ case $choice in
                 'cam_kinect': {
                     'type': 'kinect',
                     'device_index': 0,
-                    'width': 1920,
-                    'height': 1080,
+                    'width': 640,
+                    'height': 480,
                     'fps': 30,
                     'use_depth': false,
-                    'pipeline': 'cuda'
+                    'pipeline': 'cuda',
+                    'enable_bilateral_filter': false,
+                    'enable_edge_filter': false
                 }
             }" \
             --teleop.type=$TELEOP_TYPE \
@@ -251,10 +221,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=true \
-            --viz_depth=$VIZ_DEPTH \
-            --log_file="$LOG_FILE" \
-            $PERF_ARGS
+            --display_data=true
         ;;
 
     6)
@@ -276,7 +243,8 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
                 },
                 'cam_high': {
                     'type': 'intelrealsense',
@@ -287,7 +255,8 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
                 },
                 'cam_kinect': {
                     'type': 'kinect',
@@ -299,6 +268,9 @@ case $choice in
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.5,
                     'depth_max_meters': 3.0,
+                    'depth_clipping': true,
+                    'enable_bilateral_filter': false,
+                    'enable_edge_filter': false,
                     'pipeline': 'cuda'
                 }
             }" \
@@ -307,10 +279,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=true \
-            --viz_depth=$VIZ_DEPTH \
-            --log_file="$LOG_FILE" \
-            $PERF_ARGS
+            --display_data=true
         ;;
 
     7)
@@ -327,10 +296,7 @@ case $choice in
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
             --fps=$FPS \
-            --display_data=true \
-            --viz_depth=$VIZ_DEPTH \
-            --log_file="$LOG_FILE" \
-            $PERF_ARGS
+            --display_data=true
         ;;
 
     8)
@@ -352,7 +318,8 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
                 },
                 'cam_high': {
                     'type': 'intelrealsense',
@@ -363,7 +330,8 @@ case $choice in
                     'use_depth': true,
                     'depth_colormap': 'jet',
                     'depth_min_meters': 0.3,
-                    'depth_max_meters': 3.0
+                    'depth_max_meters': 3.0,
+                    'depth_clipping': true
                 },
                 'cam_kinect': {
                     'type': 'kinect',
@@ -372,16 +340,16 @@ case $choice in
                     'height': 1080,
                     'fps': 30,
                     'use_depth': false,
-                    'pipeline': 'cuda'
+                    'pipeline': 'cuda',
+                    'enable_bilateral_filter': false,
+                    'enable_edge_filter': false
                 }
             }" \
             --teleop.type=$TELEOP_TYPE \
             --teleop.id=$TELEOP_ID \
             --teleop.left_arm_port=$TELEOP_LEFT_PORT \
             --teleop.right_arm_port=$TELEOP_RIGHT_PORT \
-            --display_data=true \
-            --viz_depth=$VIZ_DEPTH \
-            --log_file="$LOG_FILE"
+            --display_data=true
         ;;
 
     9)

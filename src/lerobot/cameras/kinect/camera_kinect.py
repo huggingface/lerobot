@@ -53,7 +53,7 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
 from ..configs import ColorMode
-from ..utils import get_cv2_rotation
+from ..utils import DepthColorizer, get_cv2_rotation
 from .configuration_kinect import KinectCameraConfig, KinectPipeline
 
 logger = logging.getLogger(__name__)
@@ -120,10 +120,11 @@ class KinectCamera(Camera):
 
         # Read all streams at once
         frames = depth_camera.async_read_all()
-        color = frames["color"]          # (1080, 1920, 3) BGR
-        raw_depth = frames.get("depth")  # (424, 512) raw depth in mm (if enabled)
+        color = frames["color"]          # (1080, 1920, 3)
+        depth_rgb = frames["depth_rgb"]  # (424, 512, 3) colorized
 
         # Or read individually
+        depth_colorized = depth_camera.read_depth_rgb()
         raw_depth = depth_camera.read_depth()  # Raw depth in mm
         ir_image = depth_camera.read_ir()
 
@@ -188,12 +189,19 @@ class KinectCamera(Camera):
         self.frame_lock: Lock = Lock()
         self.latest_frame: np.ndarray | None = None
         self.latest_depth: np.ndarray | None = None
-        self.latest_depth_rgb: np.ndarray | None = None  # Unused; depth colorization is offline
+        self.latest_depth_rgb: np.ndarray | None = None  # Colorized depth
         self.latest_ir: np.ndarray | None = None
         self.new_frame_event: Event = Event()
 
-        # No runtime depth colorization; handled offline
-        self.depth_colorizer = None
+        # Initialize depth colorizer if depth is enabled
+        self.depth_colorizer: DepthColorizer | None = None
+        if self.use_depth:
+            self.depth_colorizer = DepthColorizer(
+                colormap=config.depth_colormap,
+                min_depth_m=config.depth_min_meters,
+                max_depth_m=config.depth_max_meters,
+                clipping=config.depth_clipping,
+            )
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
@@ -201,22 +209,6 @@ class KinectCamera(Camera):
         self.capture_width, self.capture_height = self.width, self.height
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
             self.capture_width, self.capture_height = self.height, self.width
-
-        # Performance stats (logged every 5s)
-        self._perf_last_log_t: float = time.perf_counter()
-        self._perf_window_s: float = 5.0
-        self._perf_frames: int = 0
-        self._perf_wait_sum_ms: float = 0.0
-        self._perf_wait_min_ms: float = float("inf")
-        self._perf_wait_max_ms: float = 0.0
-        self._perf_proc_sum_ms: float = 0.0
-        self._perf_proc_min_ms: float = float("inf")
-        self._perf_proc_max_ms: float = 0.0
-        self._perf_last_frame_t: float | None = None
-        self._perf_fps_sum: float = 0.0
-        self._perf_fps_sum_sq: float = 0.0
-        self._perf_fps_min: float = float("inf")
-        self._perf_fps_max: float = 0.0
 
     def __str__(self) -> str:
         identifier = self.serial_number if self.serial_number else f"index_{self.device_index}"
@@ -528,8 +520,57 @@ class KinectCamera(Camera):
             self.listener.release(frames)
 
     def read_depth_rgb(self, timeout_ms: int = 200) -> np.ndarray:
-        """Runtime depth colorization is disabled. Use offline colorization."""
-        raise RuntimeError("Kinect runtime depth colorization is disabled. Use raw depth and colorize offline.")
+        """
+        Reads a colorized depth frame as RGB.
+
+        This method reads a depth frame and converts it to an RGB image using
+        the configured colormap. The depth values are normalized and mapped to
+        colors for visualization.
+
+        Args:
+            timeout_ms: Maximum time in milliseconds to wait for a frame.
+
+        Returns:
+            np.ndarray: Colorized depth as RGB image with shape (height, width, 3)
+                        in the configured color mode.
+
+        Raises:
+            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If depth stream is not enabled or reading fails.
+
+        Example:
+            ```python
+            config = KinectCameraConfig(device_index=0, use_depth=True, depth_colormap="jet")
+            camera = KinectCamera(config)
+            camera.connect()
+
+            # Read colorized depth
+            depth_rgb = camera.read_depth_rgb()
+            print(depth_rgb.shape)  # (424, 512, 3)
+
+            camera.disconnect()
+            ```
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if not self.use_depth:
+            raise RuntimeError(f"Failed to capture depth frame. Depth stream is not enabled for {self}.")
+
+        if self.depth_colorizer is None:
+            raise RuntimeError(f"Depth colorizer not initialized for {self}.")
+
+        # Get raw depth frame
+        depth_data = self.read_depth(timeout_ms)
+
+        # Colorize the depth data
+        depth_rgb = self.depth_colorizer.colorize(depth_data)
+
+        # Convert BGR to RGB if needed (OpenCV colormaps return BGR)
+        if self.color_mode == ColorMode.RGB:
+            depth_rgb = cv2.cvtColor(depth_rgb, cv2.COLOR_BGR2RGB)
+
+        return depth_rgb
 
     def read_ir(self, timeout_ms: int = 200) -> np.ndarray:
         """IR stream is disabled in this project."""
@@ -573,24 +614,41 @@ class KinectCamera(Camera):
                 # Use shorter timeout for more responsive shutdown
                 wait_start = time.perf_counter()
                 if self.listener.waitForNewFrame(frames, 100):
-                    wait_ms = (time.perf_counter() - wait_start) * 1000
+                    _ = (time.perf_counter() - wait_start) * 1000
 
                     try:
-                        # Process color frame - Keep raw BGRA; no rotation or conversion in capture thread
-                        proc_start = time.perf_counter()
+                        # Process color frame - Convert BGRA→RGB, optional resize, rotation
                         color_frame = frames[FrameType.Color]
-                        color_data = color_frame.asarray()
+                        color_bgra = color_frame.asarray()
+                        # Drop alpha and convert to RGB
+                        color_data = cv2.cvtColor(color_bgra, cv2.COLOR_BGRA2RGB)
+
+                        # Optional resize to whitelist resolutions
+                        if self.width and self.height:
+                            target_w, target_h = int(self.width), int(self.height)
+                            h, w = color_data.shape[:2]
+                            if (w, h) != (target_w, target_h):
+                                interp = cv2.INTER_AREA if target_w < w or target_h < h else cv2.INTER_LINEAR
+                                color_data = cv2.resize(color_data, (target_w, target_h), interpolation=interp)
+
+                        # Optional rotation
+                        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
+                            color_data = cv2.rotate(color_data, self.rotation)
 
                         # Process depth if enabled - RAW depth only, keep native 512x424
                         depth_data = None
 
                         if self.use_depth:
                             depth_frame = frames[FrameType.Depth]
-                            # Get raw depth without any processing (no clipping, no copy, no rotation)
+                            # Get raw depth without any processing (no clipping, no copy)
                             if hasattr(depth_frame, "asarray_optimized"):
                                 depth_data = depth_frame.asarray_optimized(depth_buffer)
                             else:
                                 depth_data = depth_frame.asarray()
+
+                            # Optional rotation for depth (keep native resolution otherwise)
+                            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
+                                depth_data = cv2.rotate(depth_data, self.rotation)
 
                         # IR disabled
                         ir_data = None
@@ -602,60 +660,6 @@ class KinectCamera(Camera):
                             self.latest_depth_rgb = None  # No colorization in real-time
                             self.latest_ir = None
                         self.new_frame_event.set()
-
-                        # Update performance stats
-                        proc_ms = (time.perf_counter() - proc_start) * 1000
-                        self._perf_frames += 1
-                        self._perf_wait_sum_ms += wait_ms
-                        self._perf_wait_min_ms = min(self._perf_wait_min_ms, wait_ms)
-                        self._perf_wait_max_ms = max(self._perf_wait_max_ms, wait_ms)
-                        self._perf_proc_sum_ms += proc_ms
-                        self._perf_proc_min_ms = min(self._perf_proc_min_ms, proc_ms)
-                        self._perf_proc_max_ms = max(self._perf_proc_max_ms, proc_ms)
-                        now_t = time.perf_counter()
-                        if self._perf_last_frame_t is not None:
-                            dt = now_t - self._perf_last_frame_t
-                            if dt > 0:
-                                fps_inst = 1.0 / dt
-                                self._perf_fps_sum += fps_inst
-                                self._perf_fps_sum_sq += fps_inst * fps_inst
-                                self._perf_fps_min = min(self._perf_fps_min, fps_inst)
-                                self._perf_fps_max = max(self._perf_fps_max, fps_inst)
-                        self._perf_last_frame_t = now_t
-
-                        # Periodic logging
-                        if (now_t - self._perf_last_log_t) >= self._perf_window_s and self._perf_frames > 0:
-                            try:
-                                perf_logger = logging.getLogger("performance")
-                                n = self._perf_frames
-                                wait_avg = self._perf_wait_sum_ms / n
-                                proc_avg = self._perf_proc_sum_ms / n
-                                fps_avg = self._perf_fps_sum / max(n - 1, 1)
-                                # std on fps
-                                mean_sq = self._perf_fps_sum_sq / max(n - 1, 1)
-                                fps_var = max(0.0, mean_sq - (fps_avg ** 2))
-                                fps_std = fps_var ** 0.5
-                                identifier = self.serial_number if self.serial_number else f"index_{self.device_index}"
-                                perf_logger.info(
-                                    f"Kinect({identifier}) 5s stats — fps(avg={fps_avg:.1f}, std={fps_std:.1f}, min={self._perf_fps_min:.1f}, max={self._perf_fps_max:.1f}) | "
-                                    f"wait_ms(avg={wait_avg:.1f}, min={self._perf_wait_min_ms:.1f}, max={self._perf_wait_max_ms:.1f}) | "
-                                    f"proc_ms(avg={proc_avg:.1f}, min={self._perf_proc_min_ms:.1f}, max={self._perf_proc_max_ms:.1f}) | frames={n}"
-                                )
-                            except Exception:
-                                pass
-                            # Reset window
-                            self._perf_last_log_t = now_t
-                            self._perf_frames = 0
-                            self._perf_wait_sum_ms = 0.0
-                            self._perf_wait_min_ms = float("inf")
-                            self._perf_wait_max_ms = 0.0
-                            self._perf_proc_sum_ms = 0.0
-                            self._perf_proc_min_ms = float("inf")
-                            self._perf_proc_max_ms = 0.0
-                            self._perf_fps_sum = 0.0
-                            self._perf_fps_sum_sq = 0.0
-                            self._perf_fps_min = float("inf")
-                            self._perf_fps_max = 0.0
 
                     finally:
                         self.listener.release(frames)
@@ -737,7 +741,7 @@ class KinectCamera(Camera):
             )
 
         with self.frame_lock:
-            # Always return color frame (BGR), depth is accessed via async_read_all()
+            # Always return color frame, depth is accessed via async_read_all()
             frame = self.latest_frame.copy() if self.latest_frame is not None else None
 
         if frame is None:
@@ -758,7 +762,7 @@ class KinectCamera(Camera):
 
         Returns:
             dict: Dictionary containing available streams:
-                - "color": BGR color frame (always present)
+                - "color": Raw BGRA color frame (always present)
                 - "depth": Raw depth as float32 in millimeters (if use_depth=True)
 
         Raises:
@@ -774,7 +778,7 @@ class KinectCamera(Camera):
 
             # Read all streams at once
             frames = camera.async_read_all()
-            color = frames["color"]  # (1080, 1920, 3) - BGR
+            color = frames["color"]  # (1080, 1920, 4) - raw BGRA
             if "depth" in frames:
                 depth_raw = frames["depth"]  # (424, 512) - raw depth in mm
 
@@ -791,7 +795,7 @@ class KinectCamera(Camera):
         # This is the key optimization for parallel reading
         with self.frame_lock:
             if self.latest_frame is not None:
-                # Build result dict immediately with copies. Color is BGR (3-channel)
+                # Build result dict immediately with copies
                 frames = {"color": self.latest_frame.copy()}
                 
                 # Add raw depth if available (no colorization in real-time)
@@ -810,7 +814,7 @@ class KinectCamera(Camera):
             )
 
         with self.frame_lock:
-            # Always include color frame (BGR) with copy to prevent race conditions
+            # Always include color frame (with copy to prevent race conditions)
             frames = {"color": self.latest_frame.copy() if self.latest_frame is not None else None}
 
             # Add raw depth if available (no colorization in real-time)

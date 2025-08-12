@@ -116,9 +116,6 @@ def init_logging(
     display_pid: bool = False,
     console_level: str = "INFO",
     file_level: str = "DEBUG",
-    perf_level: str | None = None,
-    console_enabled: bool = True,
-    only_perf_logging: bool = False,
 ):
     def custom_format(record: logging.LogRecord) -> str:
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -135,75 +132,25 @@ def init_logging(
     formatter = logging.Formatter()
     formatter.format = custom_format
 
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.NOTSET)
+    logger = logging.getLogger()
+    logger.setLevel(logging.NOTSET)  # Set the logger to the lowest level to capture all messages
 
-    # Remove existing handlers from root
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
+    # Remove unused default handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
 
-    # Helper to attach a file handler to a named logger
-    def _attach_file_handler(named_logger: logging.Logger, level: str):
-        if log_file is None:
-            return
-        fh = logging.FileHandler(log_file)
-        fh.setFormatter(formatter)
-        fh.setLevel(level.upper())
-        named_logger.addHandler(fh)
-        named_logger.setLevel(level.upper())
-        named_logger.propagate = False
+    # Write logs to console
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(console_level.upper())
+    logger.addHandler(console_handler)
 
-    if only_perf_logging:
-        # Root: console only, no file handler; DEBUG suppressed by console_level
-        ch = logging.StreamHandler()
-        ch.setFormatter(formatter)
-        ch.setLevel(console_level.upper())
-        root_logger.addHandler(ch)
-        root_logger.setLevel(logging.NOTSET)
-        # Configure dedicated performance-related loggers
-        perf_logger = logging.getLogger("performance")
-        rerun_logger = logging.getLogger("rerun_performance")
-        z_logger = logging.getLogger("Z")
-
-        # Enable or disable based on perf_level
-        effective_level = (perf_level or "INFO").upper()
-        if effective_level in ("OFF", "NONE", "DISABLE", "DISABLED"):
-            perf_logger.disabled = True
-            rerun_logger.disabled = True
-            z_logger.disabled = True
-        else:
-            perf_logger.disabled = False
-            rerun_logger.disabled = False
-            z_logger.disabled = False
-            _attach_file_handler(perf_logger, effective_level)
-            _attach_file_handler(rerun_logger, effective_level)
-            _attach_file_handler(z_logger, effective_level)
-    else:
-        # Normal logging: optional console + file, plus perf logger separate
-        if console_enabled:
-            ch = logging.StreamHandler()
-            ch.setFormatter(formatter)
-            ch.setLevel(console_level.upper())
-            root_logger.addHandler(ch)
-        if log_file is not None:
-            fh = logging.FileHandler(log_file)
-            fh.setFormatter(formatter)
-            fh.setLevel(file_level.upper())
-            root_logger.addHandler(fh)
-
-        perf_logger = logging.getLogger("performance")
-        if perf_level is None:
-            perf_logger.setLevel(logging.WARNING)
-            perf_logger.disabled = False
-        else:
-            if perf_level.upper() in ("OFF", "NONE", "DISABLE", "DISABLED"):
-                perf_logger.disabled = True
-            else:
-                perf_logger.disabled = False
-                perf_logger.setLevel(perf_level.upper())
-        # Route performance logger to file only (no console spam)
-        perf_logger.propagate = False
-        _attach_file_handler(perf_logger, (perf_level or file_level))
+    # Additionally write logs to file
+    if log_file is not None:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(file_level.upper())
+        logger.addHandler(file_handler)
 
 
 def format_big_number(num, precision=0):

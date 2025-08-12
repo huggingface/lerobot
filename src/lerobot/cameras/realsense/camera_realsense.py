@@ -191,13 +191,11 @@ class RealSenseCamera(Camera):
         self._configure_capture_settings()
 
         # Query depth scale once (meters per unit)
-        # Depth scale: assume D405 1e-4 m/unit by default; allow device override
-        self.depth_scale = 1e-4
         try:
             depth_sensor = self.rs_profile.get_device().first_depth_sensor()
-            self.depth_scale = float(depth_sensor.get_depth_scale()) or self.depth_scale
+            self.depth_scale = float(depth_sensor.get_depth_scale())
         except Exception:
-            pass
+            self.depth_scale = None
 
         # Log connection details
         logger.info(
@@ -522,33 +520,15 @@ class RealSenseCamera(Camera):
         """
         import time
 
-        # Perf stats (5s window)
-        perf_last_log_t = time.perf_counter()
-        perf_window_s = 5.0
-        perf_frames = 0
-        perf_wait_sum_ms = 0.0
-        perf_wait_min_ms = float("inf")
-        perf_wait_max_ms = 0.0
-        perf_proc_sum_ms = 0.0
-        perf_proc_min_ms = float("inf")
-        perf_proc_max_ms = 0.0
-        perf_last_frame_t = None
-        perf_fps_sum = 0.0
-        perf_fps_sum_sq = 0.0
-        perf_fps_min = float("inf")
-        perf_fps_max = 0.0
-
         while not self.stop_event.is_set():
             try:
                 # Get frames from pipeline
-                wait_start = time.perf_counter()
                 ret, frames = self.rs_pipeline.try_wait_for_frames(timeout_ms=500)
 
                 if not ret or frames is None:
                     continue
 
                 # Get color frame
-                proc_start = time.perf_counter()
                 color_frame = frames.get_color_frame()
                 color_image = np.asanyarray(color_frame.get_data())  # rs.format.rgb8 → RGB
 
@@ -575,58 +555,6 @@ class RealSenseCamera(Camera):
                     self.latest_frame = color_image
                     self.latest_depth = depth_data
                 self.new_frame_event.set()
-
-                # Update perf stats
-                wait_ms = (time.perf_counter() - wait_start) * 1000
-                proc_ms = (time.perf_counter() - proc_start) * 1000
-                perf_frames += 1
-                perf_wait_sum_ms += wait_ms
-                perf_wait_min_ms = min(perf_wait_min_ms, wait_ms)
-                perf_wait_max_ms = max(perf_wait_max_ms, wait_ms)
-                perf_proc_sum_ms += proc_ms
-                perf_proc_min_ms = min(perf_proc_min_ms, proc_ms)
-                perf_proc_max_ms = max(perf_proc_max_ms, proc_ms)
-                now_t = time.perf_counter()
-                if perf_last_frame_t is not None:
-                    dt = now_t - perf_last_frame_t
-                    if dt > 0:
-                        fps_inst = 1.0 / dt
-                        perf_fps_sum += fps_inst
-                        perf_fps_sum_sq += fps_inst * fps_inst
-                        perf_fps_min = min(perf_fps_min, fps_inst)
-                        perf_fps_max = max(perf_fps_max, fps_inst)
-                perf_last_frame_t = now_t
-
-                if (now_t - perf_last_log_t) >= perf_window_s and perf_frames > 0:
-                    try:
-                        perf_logger = logging.getLogger("performance")
-                        n = perf_frames
-                        wait_avg = perf_wait_sum_ms / n
-                        proc_avg = perf_proc_sum_ms / n
-                        fps_avg = perf_fps_sum / max(n - 1, 1)
-                        mean_sq = perf_fps_sum_sq / max(n - 1, 1)
-                        fps_var = max(0.0, mean_sq - (fps_avg ** 2))
-                        fps_std = fps_var ** 0.5
-                        perf_logger.info(
-                            f"RealSense({self.serial_number}) 5s stats — fps(avg={fps_avg:.1f}, std={fps_std:.1f}, min={perf_fps_min:.1f}, max={perf_fps_max:.1f}) | "
-                            f"wait_ms(avg={wait_avg:.1f}, min={perf_wait_min_ms:.1f}, max={perf_wait_max_ms:.1f}) | "
-                            f"proc_ms(avg={proc_avg:.1f}, min={perf_proc_min_ms:.1f}, max={perf_proc_max_ms:.1f}) | frames={n}"
-                        )
-                    except Exception:
-                        pass
-                    # Reset window
-                    perf_last_log_t = now_t
-                    perf_frames = 0
-                    perf_wait_sum_ms = 0.0
-                    perf_wait_min_ms = float("inf")
-                    perf_wait_max_ms = 0.0
-                    perf_proc_sum_ms = 0.0
-                    perf_proc_min_ms = float("inf")
-                    perf_proc_max_ms = 0.0
-                    perf_fps_sum = 0.0
-                    perf_fps_sum_sq = 0.0
-                    perf_fps_min = float("inf")
-                    perf_fps_max = 0.0
 
             except DeviceNotConnectedError:
                 break

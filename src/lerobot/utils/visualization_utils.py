@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import os
-import time
-import logging
 from typing import Any
 
 import numpy as np
@@ -39,10 +37,16 @@ def register_depth_scale(stream_key: str, meters_per_unit: float) -> None:
     _DEPTH_METERS_PER_UNIT[stream_key] = float(meters_per_unit)
 
 
-def _depth_to_meters(key: str, depth: np.ndarray) -> np.ndarray:
-    """Convert a raw depth array to meters using per-stream scale when available."""
+def _depth_to_mm(key: str, depth: np.ndarray) -> np.ndarray:
+    """Convert a raw depth array to millimeters using per-stream scale when available.
+
+    Fallbacks when scale is not registered:
+    - float arrays default to millimeters (meters_per_unit = 0.001)
+    - uint16 arrays default to micrometers (meters_per_unit = 1e-6)
+    """
     # Derive base stream key (remove trailing "_depth" when present)
     base = key[:-6] if key.endswith("_depth") else key
+
     if base in _DEPTH_METERS_PER_UNIT:
         meters_per_unit = _DEPTH_METERS_PER_UNIT[base]
     else:
@@ -52,7 +56,8 @@ def _depth_to_meters(key: str, depth: np.ndarray) -> np.ndarray:
             meters_per_unit = 1e-6  # assume uint16 like RealSense is micrometers
         else:
             meters_per_unit = 0.001
-    return depth.astype(np.float32) * meters_per_unit
+
+    return depth.astype(np.float32) * (meters_per_unit * 1000.0)
 
 
 def _camera_entity_path_from_key(key: str) -> tuple[str, bool]:
@@ -66,37 +71,16 @@ def _camera_entity_path_from_key(key: str) -> tuple[str, bool]:
         return f"observation.{parts[0]}.depth", True
     return f"observation.{key}.rgb", False
 
-_RR_LAST_LOG_T: float | None = None
-_RR_WIN_S: float = 5.0
-_RR_COUNT: int = 0
-_RR_SUM_MS: float = 0.0
-_RR_SUM_SQ: float = 0.0
-_RR_MIN_MS: float = float("inf")
-_RR_MAX_MS: float = 0.0
-
-
 def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
     """Initializes the Rerun SDK for visualizing the control loop."""
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
     rr.init(session_name)
     memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
-    rerun_logger = logging.getLogger("rerun_performance")
-    t0 = time.perf_counter()
     rr.spawn(memory_limit=memory_limit)
-    rerun_logger.info(f"Rerun spawn took {(time.perf_counter() - t0)*1000:.1f}ms")
-    global _RR_LAST_LOG_T, _RR_COUNT, _RR_SUM_MS, _RR_SUM_SQ, _RR_MIN_MS, _RR_MAX_MS
-    _RR_LAST_LOG_T = time.perf_counter()
-    _RR_COUNT = 0
-    _RR_SUM_MS = 0.0
-    _RR_SUM_SQ = 0.0
-    _RR_MIN_MS = float("inf")
-    _RR_MAX_MS = 0.0
 
 
 def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
-    rerun_logger = logging.getLogger("rerun_performance")
-    t_start = time.perf_counter()
     # Log observations
     for key, val in observation.items():
         # Scalars
@@ -110,23 +94,17 @@ def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
                 rr.log(f"observation.{key}.{i}", rr.Scalar(float(v)))
             continue
 
-        # Depth images (raw) → log as DepthImage with correct meter; no custom colorization
+        # Depth images (raw)
         if isinstance(val, np.ndarray) and val.ndim == 2 and (np.issubdtype(val.dtype, np.floating) or np.issubdtype(val.dtype, np.integer)):
             entity_path, _ = _camera_entity_path_from_key(key)
-            depth_m = _depth_to_meters(key, val)
-            rr.log(entity_path, rr.DepthImage(depth_m, meter=1.0))
+            depth_mm = _depth_to_mm(key, val)
+            rr.log(entity_path, rr.DepthImage(depth_mm, meter=1000.0), static=True)
             continue
 
         # Color images
         if isinstance(val, np.ndarray) and val.ndim == 3:
             entity_path, _ = _camera_entity_path_from_key(key)
-            img = val
-            # Kinect cameras emit BGR now; convert to RGB for visualization only
-            if "kinect" in key:
-                # BGR->RGB channel swap (cheap)
-                if img.shape[-1] == 3:
-                    img = img[..., ::-1].copy()
-            rr.log(entity_path, rr.Image(img))
+            rr.log(entity_path, rr.Image(val), static=True)
             continue
 
     # Log actions
@@ -136,30 +114,3 @@ def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
         elif isinstance(val, np.ndarray):
             for i, v in enumerate(val):
                 rr.log(f"action.{act}.{i}", rr.Scalar(float(v)))
-    # Aggregate rerun overhead every 5 seconds
-    dur_ms = (time.perf_counter() - t_start) * 1000
-    global _RR_LAST_LOG_T, _RR_COUNT, _RR_SUM_MS, _RR_SUM_SQ, _RR_MIN_MS, _RR_MAX_MS
-    _RR_COUNT += 1
-    _RR_SUM_MS += dur_ms
-    _RR_SUM_SQ += dur_ms * dur_ms
-    _RR_MIN_MS = min(_RR_MIN_MS, dur_ms)
-    _RR_MAX_MS = max(_RR_MAX_MS, dur_ms)
-    now_t = time.perf_counter()
-    if _RR_LAST_LOG_T is None:
-        _RR_LAST_LOG_T = now_t
-    if (now_t - _RR_LAST_LOG_T) >= _RR_WIN_S and _RR_COUNT > 0:
-        n = _RR_COUNT
-        avg = _RR_SUM_MS / n
-        mean_sq = _RR_SUM_SQ / n
-        var = max(0.0, mean_sq - (avg ** 2))
-        std = var ** 0.5
-        rerun_logger.info(
-            f"Rerun log 5s stats — log_ms(avg={avg:.1f}, std={std:.1f}, min={_RR_MIN_MS:.1f}, max={_RR_MAX_MS:.1f}), frames={n}"
-        )
-        # Reset window
-        _RR_LAST_LOG_T = now_t
-        _RR_COUNT = 0
-        _RR_SUM_MS = 0.0
-        _RR_SUM_SQ = 0.0
-        _RR_MIN_MS = float("inf")
-        _RR_MAX_MS = 0.0
