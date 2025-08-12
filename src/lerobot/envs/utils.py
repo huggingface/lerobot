@@ -146,11 +146,10 @@ def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dic
     try:
         task_name = env.call("task_description")
     except (AttributeError, TypeError):
-        pass
-    try:
-        task_name = env.call("task")
-    except (AttributeError, TypeError):
-        pass
+        try:
+            task_name = env.call("task")
+        except (AttributeError, TypeError):
+            pass
     if task_name is None:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
         num_envs = observation[list(observation.keys())[0]].shape[0]
         task_name = ["" for _ in range(num_envs)]
