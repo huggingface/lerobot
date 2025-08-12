@@ -53,7 +53,7 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
 from ..configs import ColorMode
-from ..utils import DepthColorizer, get_cv2_rotation
+from ..utils import get_cv2_rotation
 from .configuration_kinect import KinectCameraConfig, KinectPipeline
 
 logger = logging.getLogger(__name__)
@@ -140,9 +140,25 @@ class KinectCamera(Camera):
             config: The configuration settings for the camera.
         """
         if not KINECT_AVAILABLE:
+            import os
+            libfreenect2_prefix = os.environ.get("LIBFREENECT2_INSTALL_PREFIX")
             raise ImportError(
-                "pylibfreenect2 is not installed. Please install it to use Kinect cameras. "
-                "See: https://github.com/r9y9/pylibfreenect2"
+                "\n" + "="*60 + "\n"
+                "Kinect v2 camera support is not available.\n\n"
+                "To use Kinect v2 cameras, you need to:\n\n"
+                "1. Install libfreenect2 library first:\n"
+                "   - Windows: Follow https://github.com/OpenKinect/libfreenect2#windows\n"
+                "   - Linux: Follow https://github.com/OpenKinect/libfreenect2#linux\n"
+                "   - macOS: Follow https://github.com/OpenKinect/libfreenect2#macos\n\n"
+                "2. Set the LIBFREENECT2_INSTALL_PREFIX environment variable:\n"
+                f"   Current value: {libfreenect2_prefix or 'NOT SET'}\n"
+                "   Example: export LIBFREENECT2_INSTALL_PREFIX=/path/to/libfreenect2\n\n"
+                "3. Install the Python bindings:\n"
+                "   pip install 'lerobot[kinect]'\n"
+                "   or\n"
+                "   pip install git+https://github.com/cerealkiller2527/pylibfreenect2-py310.git\n\n"
+                "Note: Python 3.10+ is required for Kinect v2 support.\n"
+                + "="*60
             )
 
         super().__init__(config)
@@ -192,16 +208,6 @@ class KinectCamera(Camera):
         self.latest_depth_rgb: np.ndarray | None = None  # Colorized depth
         self.latest_ir: np.ndarray | None = None
         self.new_frame_event: Event = Event()
-
-        # Initialize depth colorizer if depth is enabled
-        self.depth_colorizer: DepthColorizer | None = None
-        if self.use_depth:
-            self.depth_colorizer = DepthColorizer(
-                colormap=config.depth_colormap,
-                min_depth_m=config.depth_min_meters,
-                max_depth_m=config.depth_max_meters,
-                clipping=config.depth_clipping,
-            )
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
@@ -413,7 +419,18 @@ class KinectCamera(Camera):
             ImportError: If pylibfreenect2 is not installed.
         """
         if not KINECT_AVAILABLE:
-            raise ImportError("pylibfreenect2 is not installed")
+            import os
+            libfreenect2_prefix = os.environ.get("LIBFREENECT2_INSTALL_PREFIX")
+            raise ImportError(
+                "\n" + "="*60 + "\n"
+                "Cannot detect Kinect cameras - pylibfreenect2 is not installed.\n\n"
+                "To use Kinect v2 cameras:\n"
+                "1. Install libfreenect2 library\n"
+                "2. Set LIBFREENECT2_INSTALL_PREFIX environment variable\n"
+                f"   (Current: {libfreenect2_prefix or 'NOT SET'})\n"
+                "3. Install: pip install 'lerobot[kinect]'\n"
+                + "="*60
+            )
 
         found_cameras = []
         fn2 = Freenect2()
