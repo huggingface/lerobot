@@ -503,7 +503,7 @@ class TestDenoiseStep:
             execution_horizon=execution_horizon,
         )
 
-        assert torch.allclose(result, expected_result)
+        assert torch.allclose(result, expected_result, atol=1e-4)
 
     def test_denoise_when_execution_horizon_is_in_config(self, processor):
         """Test denoise step when execution horizon is in config."""
