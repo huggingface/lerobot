@@ -140,6 +140,11 @@ class EEReferenceAndDelta:
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
+    def reset(self):
+        self._prev_enabled = False
+        self.reference_ee_pose = None
+        self._command_when_disabled = None
+
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
 @dataclass
@@ -162,6 +167,7 @@ class EEBoundsAndSafety(ActionProcessor):
     max_ee_step_m: float = 0.05
     max_ee_twist_step_rad: float = 0.20
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
+    _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def action(self, act: dict | None) -> dict:
         x = act.pop("action.ee.x", None)
@@ -205,6 +211,7 @@ class EEBoundsAndSafety(ActionProcessor):
 
     def reset(self):
         self._last_pos = None
+        self._last_twist = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # Because this is last step we specify the dataset features of this step that we want to be stored in the dataset
