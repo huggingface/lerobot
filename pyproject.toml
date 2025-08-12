@@ -110,6 +110,9 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
 ]
+kinect = [
+    "pylibfreenect2 @ git+https://github.com/cerealkiller2527/pylibfreenect2-py310.git ; python_version >= '3.10'"
+]
 # stretch = [
 #     "hello-robot-stretch-body>=0.7.27 ; sys_platform == 'linux'",
 #     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
@@ -143,6 +146,7 @@ all = [
     "lerobot[lekiwi]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
+    "lerobot[kinect]",
     "lerobot[pi0]",
     "lerobot[smolvla]",
     "lerobot[hilserl]",
