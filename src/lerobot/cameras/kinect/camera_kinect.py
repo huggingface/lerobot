@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 class KinectCamera(Camera):
     """
-    Manages interactions with Microsoft Kinect v2 cameras for frame, depth, and IR recording.
+    Manages interactions with Microsoft Kinect v2 cameras for BGRA frame recording.
 
     This class provides an interface similar to `RealSenseCamera` but tailored for
     Kinect v2 devices, leveraging the `pylibfreenect2` library. It supports multiple
@@ -69,14 +69,11 @@ class KinectCamera(Camera):
     to CPU processing.
 
     The Kinect v2 provides:
-    - Color stream: 1920x1080 @ 30 FPS
-    - Depth stream: 512x424 @ 30 FPS (with colorization support)
-    - IR stream: 512x424 @ 30 FPS
+    - Color stream: 1920x1080 @ 30 FPS (BGRA format)
 
     Key features:
-    - Depth colorization: Converts depth data to RGB using configurable colormaps
-    - Multi-stream capture: Read color and colorized depth simultaneously
     - GPU acceleration: Automatic pipeline selection for optimal performance
+    - BGRA to RGB/BGR conversion
 
     Use the provided utility script to find available Kinect devices:
     ```bash
@@ -103,32 +100,6 @@ class KinectCamera(Camera):
         # When done, properly disconnect
         camera.disconnect()
 
-        # Example with colorized depth capture
-        depth_config = KinectCameraConfig(
-            device_index=0,
-            fps=30,
-            color_mode=ColorMode.RGB,
-            use_depth=True,
-            depth_colormap="jet",
-            depth_min_meters=0.5,
-            depth_max_meters=4.0,
-            pipeline=KinectPipeline.CUDA,
-            rotation=Cv2Rotation.NO_ROTATION
-        )
-        depth_camera = KinectCamera(depth_config)
-        depth_camera.connect()
-
-        # Read all streams at once
-        frames = depth_camera.async_read_all()
-        color = frames["color"]          # (1080, 1920, 3)
-        depth_rgb = frames["depth_rgb"]  # (424, 512, 3) colorized
-
-        # Or read individually
-        depth_colorized = depth_camera.read_depth_rgb()
-        raw_depth = depth_camera.read_depth()  # Raw depth in mm
-        ir_image = depth_camera.read_ir()
-
-        depth_camera.disconnect()
         ```
     """
 
@@ -168,21 +139,13 @@ class KinectCamera(Camera):
         self.serial_number = config.serial_number
         self.fps = config.fps or 30  # Kinect v2 default
         self.color_mode = config.color_mode
-        self.use_depth = config.use_depth
-        self.use_ir = False  # IR disabled per project requirements
         self.pipeline_type = config.pipeline
         self.warmup_s = config.warmup_s
-        self.enable_bilateral_filter = config.enable_bilateral_filter
-        self.enable_edge_filter = config.enable_edge_filter
-        self.min_depth = config.min_depth
-        self.max_depth = config.max_depth
 
 
-        # Kinect v2 fixed resolutions
+        # Kinect v2 fixed color resolution
         self.color_width = 1920
         self.color_height = 1080
-        self.depth_width = 512
-        self.depth_height = 424
 
         # Set output dimensions based on requested stream
         if config.width is None or config.height is None:
@@ -204,9 +167,6 @@ class KinectCamera(Camera):
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
         self.latest_frame: np.ndarray | None = None
-        self.latest_depth: np.ndarray | None = None
-        self.latest_depth_rgb: np.ndarray | None = None  # Colorized depth
-        self.latest_ir: np.ndarray | None = None
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
@@ -229,8 +189,8 @@ class KinectCamera(Camera):
         """
         Connects to the Kinect v2 camera specified in the configuration.
 
-        Initializes the libfreenect2 pipeline, configures the required streams (color,
-        depth, and/or IR), starts the device, and validates the actual stream settings.
+        Initializes the libfreenect2 pipeline, configures the color stream,
+        starts the device, and validates the actual stream settings.
 
         Raises:
             DeviceAlreadyConnectedError: If the camera is already connected.
@@ -300,26 +260,14 @@ class KinectCamera(Camera):
         if not self.serial_number:
             self.serial_number = self.device.getSerialNumber()
 
-        # Configure frame listener
+        # Configure frame listener for color only
         frame_types = FrameType.Color
-        if self.use_depth:
-            frame_types |= FrameType.Depth
-        if self.use_ir:
-            frame_types |= FrameType.Ir
-
         self.listener = SyncMultiFrameListener(frame_types)
         self.device.setColorFrameListener(self.listener)
-        if self.use_depth:
-            self.device.setIrAndDepthFrameListener(self.listener)
 
         # Start device
         self.device.start()
 
-        # Setup registration for depth alignment if needed
-        if self.use_depth:
-            self.registration = Registration(
-                self.device.getIrCameraParams(), self.device.getColorCameraParams()
-            )
 
         # Start async thread for better performance
         self._start_read_thread()
@@ -337,7 +285,7 @@ class KinectCamera(Camera):
 
         logger.info(
             f"{self} connected with {self.pipeline.__class__.__name__}: "
-            f"color={self.width}x{self.height}@{self.fps}, depth={'on' if self.use_depth else 'off'}, "
+            f"color={self.width}x{self.height}@{self.fps}, "
             f"rotation={'none' if self.rotation is None else self.rotation}"
         )
 
@@ -449,7 +397,6 @@ class KinectCamera(Camera):
                     "name": f"Kinect v2 #{i}",
                     "serial_number": serial,
                     "color_resolution": "1920x1080",
-                    "depth_resolution": "512x424",
                     "ir_resolution": "512x424",
                     "max_fps": 30,
                     "available_pipelines": [],
@@ -473,125 +420,8 @@ class KinectCamera(Camera):
 
         return found_cameras
 
-    def read_depth(self, timeout_ms: int = 200) -> np.ndarray:
-        """
-        Reads a single depth frame synchronously from the camera.
 
-        Args:
-            timeout_ms: Maximum time in milliseconds to wait for a frame.
 
-        Returns:
-            np.ndarray: The depth map as a NumPy array (424, 512) of type float32
-                        with values in millimeters, processed according to configuration.
-
-        Raises:
-            DeviceNotConnectedError: If the camera is not connected.
-            RuntimeError: If depth stream is not enabled or reading fails.
-        """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        if not self.use_depth:
-            raise RuntimeError(f"Failed to capture depth frame. Depth stream is not enabled for {self}.")
-
-        frames = FrameMap()
-
-        # Pre-allocate buffer for optimized reading
-        depth_buffer = np.empty((424, 512), dtype=np.float32)
-
-        # Wait for new frame
-        if not self.listener.waitForNewFrame(frames, timeout_ms):
-            self.listener.release(frames)
-            raise RuntimeError(f"{self} read_depth timeout after {timeout_ms}ms")
-
-        try:
-            depth_frame = frames[FrameType.Depth]
-
-            # Use optimized method if available
-            if hasattr(depth_frame, "asarray_optimized"):
-                depth_data = depth_frame.asarray_optimized(depth_buffer)
-            else:
-                depth_data = depth_frame.asarray().copy()
-
-            # Apply depth filters
-            if self.enable_bilateral_filter:
-                depth_data = cv2.bilateralFilter(depth_data.astype(np.float32), 5, 50, 50)
-
-            if self.enable_edge_filter:
-                # Edge-aware filtering on normalized depth
-                # Normalize to 0-255 range for filtering, then scale back
-                depth_normalized = np.clip(depth_data / 8000.0 * 255, 0, 255).astype(np.uint8)
-                depth_filtered = cv2.medianBlur(depth_normalized, 5)
-                depth_data = depth_filtered.astype(np.float32) * 8000.0 / 255.0
-
-            # Apply depth range limits
-            depth_data = np.clip(depth_data, self.min_depth * 1000, self.max_depth * 1000)
-
-            # Apply rotation if needed
-            if self.rotation is not None:
-                depth_data = cv2.rotate(depth_data, self.rotation)
-
-            return depth_data
-
-        finally:
-            self.listener.release(frames)
-
-    def read_depth_rgb(self, timeout_ms: int = 200) -> np.ndarray:
-        """
-        Reads a colorized depth frame as RGB.
-
-        This method reads a depth frame and converts it to an RGB image using
-        the configured colormap. The depth values are normalized and mapped to
-        colors for visualization.
-
-        Args:
-            timeout_ms: Maximum time in milliseconds to wait for a frame.
-
-        Returns:
-            np.ndarray: Colorized depth as RGB image with shape (height, width, 3)
-                        in the configured color mode.
-
-        Raises:
-            DeviceNotConnectedError: If the camera is not connected.
-            RuntimeError: If depth stream is not enabled or reading fails.
-
-        Example:
-            ```python
-            config = KinectCameraConfig(device_index=0, use_depth=True, depth_colormap="jet")
-            camera = KinectCamera(config)
-            camera.connect()
-
-            # Read colorized depth
-            depth_rgb = camera.read_depth_rgb()
-            print(depth_rgb.shape)  # (424, 512, 3)
-
-            camera.disconnect()
-            ```
-        """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        if not self.use_depth:
-            raise RuntimeError(f"Failed to capture depth frame. Depth stream is not enabled for {self}.")
-
-        if self.depth_colorizer is None:
-            raise RuntimeError(f"Depth colorizer not initialized for {self}.")
-
-        # Get raw depth frame
-        depth_data = self.read_depth(timeout_ms)
-
-        # Colorize the depth data
-        depth_rgb = self.depth_colorizer.colorize(depth_data)
-
-        # Convert BGR to RGB if needed (OpenCV colormaps return BGR)
-        if self.color_mode == ColorMode.RGB:
-            depth_rgb = cv2.cvtColor(depth_rgb, cv2.COLOR_BGR2RGB)
-
-        return depth_rgb
-
-    def read_ir(self, timeout_ms: int = 200) -> np.ndarray:
-        """IR stream is disabled in this project."""
-        raise RuntimeError("IR stream is disabled for Kinect in this project")
 
     def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> np.ndarray:
         """
@@ -620,10 +450,8 @@ class KinectCamera(Camera):
     def _read_loop(self):
         """
         Internal loop run by the background thread for asynchronous reading.
-        Optimized for minimal latency - no processing, just raw frame capture.
+        Optimized for minimal latency - processes BGRA to RGB conversion.
         """
-        # Pre-allocate buffers for zero-copy operation
-        depth_buffer = np.empty((424, 512), dtype=np.float32)
         
         while not self.stop_event.is_set():
             try:
@@ -652,30 +480,10 @@ class KinectCamera(Camera):
                         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
                             color_data = cv2.rotate(color_data, self.rotation)
 
-                        # Process depth if enabled - RAW depth only, keep native 512x424
-                        depth_data = None
 
-                        if self.use_depth:
-                            depth_frame = frames[FrameType.Depth]
-                            # Get raw depth without any processing (no clipping, no copy)
-                            if hasattr(depth_frame, "asarray_optimized"):
-                                depth_data = depth_frame.asarray_optimized(depth_buffer)
-                            else:
-                                depth_data = depth_frame.asarray()
-
-                            # Optional rotation for depth (keep native resolution otherwise)
-                            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
-                                depth_data = cv2.rotate(depth_data, self.rotation)
-
-                        # IR disabled
-                        ir_data = None
-
-                        # Store frames thread-safely (minimal time in lock)
+                        # Store frame thread-safely (minimal time in lock)
                         with self.frame_lock:
                             self.latest_frame = color_data.copy() if color_data is not None else None
-                            self.latest_depth = depth_data.copy() if depth_data is not None else None
-                            self.latest_depth_rgb = None  # No colorization in real-time
-                            self.latest_ir = None
                         self.new_frame_event.set()
 
                     finally:
@@ -727,8 +535,7 @@ class KinectCamera(Camera):
             timeout_ms: Maximum time in milliseconds to wait for a frame.
 
         Returns:
-            np.ndarray: The latest captured frame. Returns colorized depth if use_depth=True,
-                       otherwise returns color frame.
+            np.ndarray: The latest captured color frame in RGB format.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
@@ -758,7 +565,7 @@ class KinectCamera(Camera):
             )
 
         with self.frame_lock:
-            # Always return color frame, depth is accessed via async_read_all()
+            # Return color frame
             frame = self.latest_frame.copy() if self.latest_frame is not None else None
 
         if frame is None:
@@ -766,83 +573,6 @@ class KinectCamera(Camera):
 
         return frame
 
-    def async_read_all(self, timeout_ms: float = 200) -> dict[str, np.ndarray]:
-        """
-        Reads all enabled streams asynchronously.
-
-        This method retrieves the most recent frames for all enabled streams (color,
-        colorized depth) captured by the background thread. It's more efficient than
-        calling individual read methods when multiple streams are needed.
-
-        Args:
-            timeout_ms: Maximum time in milliseconds to wait for frames.
-
-        Returns:
-            dict: Dictionary containing available streams:
-                - "color": Raw BGRA color frame (always present)
-                - "depth": Raw depth as float32 in millimeters (if use_depth=True)
-
-        Raises:
-            DeviceNotConnectedError: If the camera is not connected.
-            TimeoutError: If no frames become available within timeout.
-            RuntimeError: If the background thread died unexpectedly.
-
-        Example:
-            ```python
-            config = KinectCameraConfig(device_index=0, use_depth=True)
-            camera = KinectCamera(config)
-            camera.connect()
-
-            # Read all streams at once
-            frames = camera.async_read_all()
-            color = frames["color"]  # (1080, 1920, 4) - raw BGRA
-            if "depth" in frames:
-                depth_raw = frames["depth"]  # (424, 512) - raw depth in mm
-
-            camera.disconnect()
-            ```
-        """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        if self.thread is None or not self.thread.is_alive():
-            self._start_read_thread()
-
-        # Don't wait if we already have frames - return immediately
-        # This is the key optimization for parallel reading
-        with self.frame_lock:
-            if self.latest_frame is not None:
-                # Build result dict immediately with copies
-                frames = {"color": self.latest_frame.copy()}
-                
-                # Add raw depth if available (no colorization in real-time)
-                if self.use_depth and self.latest_depth is not None:
-                    frames["depth"] = self.latest_depth.copy()
-                
-                # Don't clear the event - other threads might be waiting
-                return frames
-        
-        # Only wait if no frames are available yet
-        if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
-            thread_alive = self.thread is not None and self.thread.is_alive()
-            raise TimeoutError(
-                f"Timed out waiting for frames from {self} after {timeout_ms}ms. "
-                f"Read thread alive: {thread_alive}."
-            )
-
-        with self.frame_lock:
-            # Always include color frame (with copy to prevent race conditions)
-            frames = {"color": self.latest_frame.copy() if self.latest_frame is not None else None}
-
-            # Add raw depth if available (no colorization in real-time)
-            if self.use_depth and self.latest_depth is not None:
-                frames["depth"] = self.latest_depth.copy()
-
-        # Validate we have at least the color frame
-        if frames["color"] is None:
-            raise RuntimeError(f"Internal error: Event set but no color frame available for {self}.")
-
-        return frames
 
     def disconnect(self):
         """
