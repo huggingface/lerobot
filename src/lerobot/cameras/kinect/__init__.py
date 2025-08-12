@@ -14,25 +14,30 @@
 
 import os
 
+from .camera_kinect import KinectCamera
+from .configuration_kinect import KinectCameraConfig, KinectPipeline
+
 
 def available_kinect():
     """Check if Kinect v2 support is available.
-    
+
     Returns True if pylibfreenect2 can be imported and libfreenect2 is properly installed.
     Provides detailed error messages to help with troubleshooting.
     """
     try:
         import pylibfreenect2
+
         return True
     except ImportError as e:
         import logging
+
         logger = logging.getLogger(__name__)
-        
+
         # Check for libfreenect2 installation
         libfreenect2_prefix = os.environ.get("LIBFREENECT2_INSTALL_PREFIX")
-        
+
         error_msg = (
-            "\n" + "="*60 + "\n"
+            "\n" + "=" * 60 + "\n"
             "Kinect v2 camera support is not available.\n\n"
             "To use Kinect v2 cameras, you need to:\n\n"
             "1. Install libfreenect2 library first:\n"
@@ -47,14 +52,10 @@ def available_kinect():
             "   or\n"
             "   pip install git+https://github.com/cerealkiller2527/pylibfreenect2-py310.git\n\n"
             "Note: Python 3.10+ is required for Kinect v2 support.\n"
-            f"Import error: {e}\n"
-            + "="*60
+            f"Import error: {e}\n" + "=" * 60
         )
         logger.debug(error_msg)
         return False
 
-
-from .camera_kinect import KinectCamera
-from .configuration_kinect import KinectCameraConfig, KinectPipeline
 
 __all__ = ["KinectCamera", "KinectCameraConfig", "KinectPipeline", "available_kinect"]

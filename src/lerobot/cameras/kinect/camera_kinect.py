@@ -112,9 +112,10 @@ class KinectCamera(Camera):
         """
         if not KINECT_AVAILABLE:
             import os
+
             libfreenect2_prefix = os.environ.get("LIBFREENECT2_INSTALL_PREFIX")
             raise ImportError(
-                "\n" + "="*60 + "\n"
+                "\n" + "=" * 60 + "\n"
                 "Kinect v2 camera support is not available.\n\n"
                 "To use Kinect v2 cameras, you need to:\n\n"
                 "1. Install libfreenect2 library first:\n"
@@ -128,8 +129,7 @@ class KinectCamera(Camera):
                 "   pip install 'lerobot[kinect]'\n"
                 "   or\n"
                 "   pip install git+https://github.com/cerealkiller2527/pylibfreenect2-py310.git\n\n"
-                "Note: Python 3.10+ is required for Kinect v2 support.\n"
-                + "="*60
+                "Note: Python 3.10+ is required for Kinect v2 support.\n" + "=" * 60
             )
 
         super().__init__(config)
@@ -141,7 +141,6 @@ class KinectCamera(Camera):
         self.color_mode = config.color_mode
         self.pipeline_type = config.pipeline
         self.warmup_s = config.warmup_s
-
 
         # Kinect v2 fixed color resolution
         self.color_width = 1920
@@ -268,7 +267,6 @@ class KinectCamera(Camera):
         # Start device
         self.device.start()
 
-
         # Start async thread for better performance
         self._start_read_thread()
 
@@ -302,7 +300,7 @@ class KinectCamera(Camera):
                 (KinectPipeline.CPU, self._try_cpu_pipeline),
             ]
 
-            for name, create_func in pipelines_to_try:
+            for _name, create_func in pipelines_to_try:
                 pipeline = create_func()
                 if pipeline is not None:
                     return pipeline
@@ -329,8 +327,8 @@ class KinectCamera(Camera):
         try:
             if hasattr(pylibfreenect2, "CudaPacketPipeline"):
                 return pylibfreenect2.CudaPacketPipeline()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"CUDA pipeline not available: {e}")
         return None
 
     def _try_opencl_pipeline(self):
@@ -338,8 +336,8 @@ class KinectCamera(Camera):
         try:
             if hasattr(pylibfreenect2, "OpenCLPacketPipeline"):
                 return pylibfreenect2.OpenCLPacketPipeline()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"OpenCL pipeline not available: {e}")
         return None
 
     def _try_opengl_pipeline(self):
@@ -347,8 +345,8 @@ class KinectCamera(Camera):
         try:
             if hasattr(pylibfreenect2, "OpenGLPacketPipeline"):
                 return pylibfreenect2.OpenGLPacketPipeline()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"OpenGL pipeline not available: {e}")
         return None
 
     def _try_cpu_pipeline(self):
@@ -368,16 +366,16 @@ class KinectCamera(Camera):
         """
         if not KINECT_AVAILABLE:
             import os
+
             libfreenect2_prefix = os.environ.get("LIBFREENECT2_INSTALL_PREFIX")
             raise ImportError(
-                "\n" + "="*60 + "\n"
+                "\n" + "=" * 60 + "\n"
                 "Cannot detect Kinect cameras - pylibfreenect2 is not installed.\n\n"
                 "To use Kinect v2 cameras:\n"
                 "1. Install libfreenect2 library\n"
                 "2. Set LIBFREENECT2_INSTALL_PREFIX environment variable\n"
                 f"   (Current: {libfreenect2_prefix or 'NOT SET'})\n"
-                "3. Install: pip install 'lerobot[kinect]'\n"
-                + "="*60
+                "3. Install: pip install 'lerobot[kinect]'\n" + "=" * 60
             )
 
         found_cameras = []
@@ -420,9 +418,6 @@ class KinectCamera(Camera):
 
         return found_cameras
 
-
-
-
     def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> np.ndarray:
         """
         Reads a single color frame synchronously from the camera.
@@ -452,7 +447,7 @@ class KinectCamera(Camera):
         Internal loop run by the background thread for asynchronous reading.
         Optimized for minimal latency - processes BGRA to RGB conversion.
         """
-        
+
         while not self.stop_event.is_set():
             try:
                 frames = FrameMap()
@@ -474,12 +469,17 @@ class KinectCamera(Camera):
                             h, w = color_data.shape[:2]
                             if (w, h) != (target_w, target_h):
                                 interp = cv2.INTER_AREA if target_w < w or target_h < h else cv2.INTER_LINEAR
-                                color_data = cv2.resize(color_data, (target_w, target_h), interpolation=interp)
+                                color_data = cv2.resize(
+                                    color_data, (target_w, target_h), interpolation=interp
+                                )
 
                         # Optional rotation
-                        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
+                        if self.rotation in [
+                            cv2.ROTATE_90_CLOCKWISE,
+                            cv2.ROTATE_90_COUNTERCLOCKWISE,
+                            cv2.ROTATE_180,
+                        ]:
                             color_data = cv2.rotate(color_data, self.rotation)
-
 
                         # Store frame thread-safely (minimal time in lock)
                         with self.frame_lock:
@@ -555,7 +555,7 @@ class KinectCamera(Camera):
                 frame = self.latest_frame.copy()
                 # Don't clear the event here - other threads might be waiting
                 return frame
-        
+
         # Only wait if no frame is available yet
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
@@ -572,7 +572,6 @@ class KinectCamera(Camera):
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
         return frame
-
 
     def disconnect(self):
         """

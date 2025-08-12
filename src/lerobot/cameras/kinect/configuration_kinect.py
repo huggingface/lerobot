@@ -76,7 +76,6 @@ class KinectCameraConfig(CameraConfig):
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: float = 1.0
 
-
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
             raise ValueError(
@@ -100,7 +99,7 @@ class KinectCameraConfig(CameraConfig):
                 f"`rotation` is expected to be in {valid_rotations}, but {self.rotation} is provided."
             )
 
-        if self.pipeline not in KinectPipeline:
+        if not isinstance(self.pipeline, KinectPipeline):
             raise ValueError(
                 f"`pipeline` must be one of {list(KinectPipeline)}, but {self.pipeline} is provided."
             )
@@ -118,4 +117,3 @@ class KinectCameraConfig(CameraConfig):
 
         if self.device_index is not None and self.device_index < 0:
             raise ValueError(f"`device_index` must be >= 0. Got {self.device_index}")
-

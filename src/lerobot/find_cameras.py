@@ -38,12 +38,12 @@ import numpy as np
 from PIL import Image
 
 from lerobot.cameras.configs import ColorMode
+from lerobot.cameras.kinect.camera_kinect import KinectCamera
+from lerobot.cameras.kinect.configuration_kinect import KinectCameraConfig
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
-from lerobot.cameras.kinect.camera_kinect import KinectCamera
-from lerobot.cameras.kinect.configuration_kinect import KinectCameraConfig
 
 logger = logging.getLogger(__name__)
 
