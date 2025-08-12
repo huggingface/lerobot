@@ -18,7 +18,7 @@ Helper to recalibrate your device (robot or teleoperator).
 Example:
 
 ```shell
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --teleop.type=so100_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \
     --teleop.id=blue
@@ -82,5 +82,9 @@ def calibrate(cfg: CalibrateConfig):
     device.disconnect()
 
 
-if __name__ == "__main__":
+def main():
     calibrate()
+
+
+if __name__ == "__main__":
+    main()

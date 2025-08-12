@@ -31,7 +31,7 @@ pip install -e ".[dynamixel]"
 To find the port for each bus servo adapter, run this script:
 
 ```bash
-python -m lerobot.find_port
+lerobot-find-port
 ```
 
 <hfoptions id="example">
@@ -98,7 +98,7 @@ For a visual reference on how to set the motor ids please refer to [this video](
 <hfoption id="Command">
 
 ```bash
-python -m lerobot.setup_motors \
+lerobot-setup-motors \
     --robot.type=koch_follower \
     --robot.port=/dev/tty.usbmodem575E0031751 # <- paste here the port found at previous step
 ```
@@ -174,7 +174,7 @@ Do the same steps for the leader arm but modify the command or script accordingl
 <hfoption id="Command">
 
 ```bash
-python -m lerobot.setup_motors \
+lerobot-setup-motors \
     --teleop.type=koch_leader \
     --teleop.port=/dev/tty.usbmodem575E0031751 \  # <- paste here the port found at previous step
 ```
@@ -211,7 +211,7 @@ Run the following command or API example to calibrate the follower arm:
 <hfoption id="Command">
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --robot.type=koch_follower \
     --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
     --robot.id=my_awesome_follower_arm  # <- Give the robot a unique name
@@ -249,7 +249,7 @@ Do the same steps to calibrate the leader arm, run the following command or API 
 <hfoption id="Command">
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --teleop.type=koch_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
     --teleop.id=my_awesome_leader_arm  # <- Give the robot a unique name

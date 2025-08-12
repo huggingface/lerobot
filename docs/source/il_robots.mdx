@@ -45,7 +45,7 @@ Note that the `id` associated with a robot is used to store the calibration file
 <hfoptions id="teleoperate_so101">
 <hfoption id="Command">
 ```bash
-python -m lerobot.teleoperate \
+lerobot-teleoperate \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=my_awesome_follower_arm \
@@ -101,7 +101,7 @@ With `rerun`, you can teleoperate again while simultaneously visualizing the cam
 <hfoptions id="teleoperate_koch_camera">
 <hfoption id="Command">
 ```bash
-python -m lerobot.teleoperate \
+lerobot-teleoperate \
     --robot.type=koch_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=my_awesome_follower_arm \
@@ -174,7 +174,7 @@ Now you can record a dataset. To record 5 episodes and upload your dataset to th
 <hfoptions id="record">
 <hfoption id="Command">
 ```bash
-python -m lerobot.record \
+lerobot-record \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem585A0076841 \
     --robot.id=my_awesome_follower_arm \
@@ -294,7 +294,7 @@ dataset.push_to_hub()
 
 #### Dataset upload
 
-Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/so101_test) that you can obtain by running:
+Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. `https://huggingface.co/datasets/${HF_USER}/so101_test`) that you can obtain by running:
 
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/so101_test
@@ -376,7 +376,7 @@ You can replay the first episode on your robot with either the command below or 
 <hfoptions id="replay">
 <hfoption id="Command">
 ```bash
-python -m lerobot.replay \
+lerobot-replay \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=my_awesome_follower_arm \
@@ -428,10 +428,10 @@ Your robot should replicate movements similar to those you recorded. For example
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`lerobot-train`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
   --dataset.repo_id=${HF_USER}/so101_test \
   --policy.type=act \
   --output_dir=outputs/train/act_so101_test \
@@ -444,7 +444,7 @@ python -m lerobot.scripts.train \
 Let's explain the command:
 
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/so101_test`.
-2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
+2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
 3. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
 4. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 
@@ -453,7 +453,7 @@ Training should take several hours. You will find checkpoints in `outputs/train/
 To resume training from a checkpoint, below is an example command to resume from `last` checkpoint of the `act_so101_test` policy:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
   --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
   --resume=true
 ```
@@ -462,9 +462,9 @@ If you do not want to push your model to the hub after training use `--policy.pu
 
 Additionally you can provide extra `tags` or specify a `license` for your model or make the model repo `private` by adding this: `--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
 
-#### Train using Collab
+#### Train using Google Colab
 
-If your local computer doesn't have a powerful GPU you could utilize Google Collab to train your model by following the [ACT training notebook](./notebooks#training-act).
+If your local computer doesn't have a powerful GPU you could utilize Google Colab to train your model by following the [ACT training notebook](./notebooks#training-act).
 
 #### Upload policy checkpoints
 
@@ -490,7 +490,7 @@ You can use the `record` script from [`lerobot/record.py`](https://github.com/hu
 <hfoptions id="eval">
 <hfoption id="Command">
 ```bash
-python -m lerobot.record  \
+lerobot-record  \
   --robot.type=so100_follower \
   --robot.port=/dev/ttyACM1 \
   --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
