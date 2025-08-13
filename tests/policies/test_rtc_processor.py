@@ -18,10 +18,12 @@
 
 import pytest
 import torch
+import torch.nn as nn
 
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.utils.random_utils import seeded_context
 
 
 class TestGetPrefixWeights:
@@ -526,6 +528,70 @@ class TestDenoiseStep:
         )
 
         assert torch.allclose(result, expected_result, atol=1e-4)
+
+    def test_small_nn_original_denoiser(self, processor):
+        """Use a tiny neural network as the original denoiser to mimic real behavior."""
+        action_chunk_size = 10
+        action_dim = 3
+        inference_delay = 3
+
+        # 2D input to exercise internal batch add/remove logic
+        x_t = torch.full((action_chunk_size, action_dim), 0.1)
+        prev_chunk = torch.ones(5, action_dim)
+        time = torch.tensor(0.5)
+
+        class SmallDenoiser(nn.Module):
+            def __init__(self, dim: int):
+                super().__init__()
+                self.lin = nn.Linear(dim, dim)
+                with torch.no_grad():
+                    self.lin.weight.copy_(torch.eye(dim))
+                    self.lin.bias.zero_()
+
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                return torch.tanh(self.lin(x))
+
+        with seeded_context(0):
+            denoiser = SmallDenoiser(action_dim)
+
+        # Baseline v_t from the denoiser
+        v_t_base = denoiser(x_t)
+
+        # No-guidance path should return v_t_base exactly
+        result_no_guidance = processor.denoise_step(
+            x_t=x_t,
+            prev_chunk_left_over=None,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=denoiser,
+        )
+        torch.allclose(result_no_guidance, v_t_base, atol=1e-6)
+
+        # With guidance, result should be sane and differ from the baseline
+        result = processor.denoise_step(
+            x_t=x_t,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=denoiser,
+        )
+
+        expected_result = torch.tensor(
+            [
+                [2.6417, 2.6417, 2.6417],
+                [2.6417, 2.6417, 2.6417],
+                [2.6417, 2.6417, 2.6417],
+                [2.3240, 2.3240, 2.3240],
+                [2.0062, 2.0062, 2.0062],
+                [-0.1803, -0.1803, -0.1803],
+                [-0.1243, -0.1243, -0.1243],
+                [-0.0683, -0.0683, -0.0683],
+                [-0.0123, -0.0123, -0.0123],
+                [0.0437, 0.0437, 0.0437],
+            ]
+        )
+
+        torch.allclose(result, expected_result, atol=1e-6)
 
     def test_when_execution_horizon_is_in_config(self, processor):
         """Test denoise step when execution horizon is in config."""

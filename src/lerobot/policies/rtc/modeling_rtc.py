@@ -100,21 +100,15 @@ class RTCProcessor:
 
         x_t = x_t.clone().detach().requires_grad_(True)
 
-        v_t = original_denoise_step_partial(x_t)
-
         if prev_chunk_left_over is None:
             # First step, no guidance
-            return v_t
+            return original_denoise_step_partial(x_t)
 
         squeezed = False
         if len(x_t.shape) < 3:
             # Add batch dimension
             x_t = x_t.unsqueeze(0)
             squeezed = True
-
-        if len(v_t.shape) < 3:
-            # Add batch dimension
-            v_t = v_t.unsqueeze(0)
 
         if len(prev_chunk_left_over.shape) < 3:
             # Add batch dimension
@@ -142,6 +136,8 @@ class RTCProcessor:
         weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
 
         with torch.enable_grad():
+            v_t = original_denoise_step_partial(x_t)
+
             # In the original implementation, the time goes from 0 to 1 and x_1t calculates
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
             # Here is the logic is inverted
