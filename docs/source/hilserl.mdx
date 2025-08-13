@@ -91,11 +91,15 @@ This helps simplify the problem of learning on the real robot in two ways: 1) by
 This script helps you find the safe operational bounds for your robot's end-effector. Given that you have a follower and leader arm, you can use the script to find the bounds for the follower arm that will be applied during training.
 Bounding the action space will reduce the redundant exploration of the agent and guarantees safety.
 
+> [!NOTE]
+> You need to clone the SO-ARM100 repository from https://github.com/TheRobotStudio/SO-ARM100 first. The `robot.urdf_path` in the command below should point to `<PATH TO SO-ARM100>/Simulation/SO101/so101_new_calib.urdf` in your local clone of the repository.
+
 ```bash
 python -m lerobot.scripts.find_joint_limits \
-    --robot.type=so100_follower \
+    --robot.type=so100_follower_end_effector \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=black \
+    --robot.urdf_path="/Users/shared/GitHub/SO-ARM100/Simulation/SO101/so101_new_calib.urdf" \
     --teleop.type=so100_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \
     --teleop.id=blue
