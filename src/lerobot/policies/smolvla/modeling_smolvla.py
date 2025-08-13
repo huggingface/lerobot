@@ -56,6 +56,7 @@ import math
 import os
 import re
 from collections import deque
+from functools import partial
 
 import safetensors
 import torch
@@ -899,29 +900,23 @@ class VLAFlowMatching(nn.Module):
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
 
-            v_t = self.denoise_step(
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
+            denoise_step_partial_call = partial(
+                self.denoise_step,
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
+                expanded_time=expanded_time,
             )
 
             if mode == "rtc":
-                # v_t = self.rtc_processor.denoise_step(
-                #     noise=x_t,
-                #     model_denoise_step=euler_step,
-                #     prev_action=x_t,
-                #     latency_delay=dt,
-                #     v_t=v_t,
-                # )
-                pass
-            else:
-                v_t = self.denoise_step(
-                    prefix_pad_masks,
-                    past_key_values,
-                    x_t,
-                    expanded_time,
+                v_t = self.rtc_processor.denoise_step(
+                    x_t=x_t,
+                    prev_chunk_left_over=x_t,
+                    inference_delay=1,
+                    time=time,
+                    original_denoise_step_partial=denoise_step_partial_call,
                 )
+            else:
+                v_t = denoise_step_partial_call(x_t)
 
             # Euler step
             x_t += dt * v_t

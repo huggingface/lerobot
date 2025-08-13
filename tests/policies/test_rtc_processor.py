@@ -344,8 +344,13 @@ class TestDenoiseStep:
         v_t = torch.randn(batch_size, action_chunk_size, action_dim)
         time = torch.tensor(0.5)
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=None, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=None,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         # When prev_chunk is None, should return v_t unchanged
@@ -393,13 +398,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result)
 
-    def test_denoise_with_without_batch_dimension(self, processor):
+    def test_with_without_batch_dimension(self, processor):
         """Test denoise step with without batch dimension."""
         action_chunk_size = 10
         action_dim = 3
@@ -425,13 +435,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result)
 
-    def test_denoise_prev_chunk_smaller_than_action_chunk_size(self, processor):
+    def test_prev_chunk_smaller_than_action_chunk_size(self, processor):
         """Test denoise step with prev_chunk smaller than action chunk size."""
         action_chunk_size = 10
         action_dim = 1
@@ -457,13 +472,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result)
 
-    def test_denoise_with_execution_horizon(self, processor):
+    def test_with_execution_horizon(self, processor):
         """Test denoise step with execution horizon."""
         action_chunk_size = 15
         action_dim = 1
@@ -495,18 +515,19 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise,
+            x_t=noise,
             prev_chunk_left_over=prev_chunk,
             inference_delay=inference_delay,
             time=time,
-            v_t=v_t,
+            original_denoise_step_partial=original_denoise_step_partial,
             execution_horizon=execution_horizon,
         )
 
         assert torch.allclose(result, expected_result, atol=1e-4)
 
-    def test_denoise_when_execution_horizon_is_in_config(self, processor):
+    def test_when_execution_horizon_is_in_config(self, processor):
         """Test denoise step when execution horizon is in config."""
         action_chunk_size = 15
         action_dim = 1
@@ -541,13 +562,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result, atol=1e-4)
 
-    def test_denoise_realistic_case(self):
+    def test_realistic_case(self):
         """Test denoise step with realistic case."""
         action_chunk_size = 50
         action_dim = 6
@@ -617,13 +643,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result, atol=1e-4)
 
-    def test_denoise_with_time_0_1(self, processor):
+    def test_with_time_0_1(self, processor):
         """Test denoise step with time 0.1."""
         action_chunk_size = 10
         action_dim = 1
@@ -649,13 +680,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result)
 
-    def test_denoise_with_time_1(self, processor):
+    def test_with_time_1(self, processor):
         """Test denoise step with time 1."""
         action_chunk_size = 10
         action_dim = 1
@@ -681,13 +717,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result)
 
-    def test_denoise_time_0_0(self, processor):
+    def test_time_0_0(self, processor):
         """Test denoise step with time 0.0."""
         action_chunk_size = 10
         action_dim = 1
@@ -713,13 +754,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result, atol=1e-4)
 
-    def test_denoise_with_zero_attention_weight(self):
+    def test_with_zero_attention_weight(self):
         """Test denoise step with zero attention weight."""
 
         config = self.create_config()
@@ -750,13 +796,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result, atol=1e-4)
 
-    def test_denoise_with_ones_attention_weight(self):
+    def test_with_ones_attention_weight(self):
         """Test denoise step with ones attention weight."""
         config = self.create_config()
         config.prefix_attention_schedule = RTCAttentionSchedule.ONES
@@ -786,13 +837,18 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result)
 
-    def test_denoise_with_linear_attention_weight(self):
+    def test_with_linear_attention_weight(self):
         """Test denoise step with linear attention weight."""
         config = self.create_config()
         config.prefix_attention_schedule = RTCAttentionSchedule.LINEAR
@@ -822,8 +878,13 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result)
@@ -854,8 +915,13 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result, atol=1e-4)
@@ -890,8 +956,13 @@ class TestDenoiseStep:
             ]
         )
 
+        original_denoise_step_partial = lambda x: v_t  # noqa: E731
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=original_denoise_step_partial,
         )
 
         assert torch.allclose(result, expected_result, atol=1e-4)
@@ -926,7 +997,11 @@ class TestDenoiseStep:
         )
 
         result = processor.denoise_step(
-            noise=noise, prev_chunk_left_over=prev_chunk, inference_delay=inference_delay, time=time, v_t=v_t
+            x_t=noise,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=inference_delay,
+            time=time,
+            original_denoise_step_partial=lambda x: v_t,
         )
 
         assert torch.allclose(result, expected_result, atol=1e-4)

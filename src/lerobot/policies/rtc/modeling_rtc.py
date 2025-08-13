@@ -44,31 +44,72 @@ class RTCProcessor:
         """Initialize RTC processor.
 
         Args:
-            chunk_size: Size of action chunks
-            soft_mask_length: Number of actions to soft mask in overlap regions
-            beta: Maximum guidance weight for prefix attention
-            prefix_attention_schedule: Schedule for prefix attention weights ("linear", "exp", "constant")
-            device: PyTorch device for computations
+            rtc_config (RTCConfig): Configuration holding RTC parameters used by
+                the processor, including for example:
+                - execution_horizon: number of timesteps used to build prefix weights
+                - prefix_attention_schedule: strategy for prefix weights
+                  (ZEROS, ONES, LINEAR, EXP)
+                - max_guidance_weight: upper bound applied to the guidance scale
         """
         self.rtc_config = rtc_config
 
     def denoise_step(
-        self, noise, prev_chunk_left_over, inference_delay, time, v_t, execution_horizon=None
+        self,
+        x_t,
+        prev_chunk_left_over,
+        inference_delay,
+        time,
+        original_denoise_step_partial,
+        execution_horizon=None,
     ) -> Tensor:
-        """Denoise the noise to get the next action.
-        Real-time chunking (RTC) denoising.
+        """RTC guidance wrapper around an existing denoiser.
+
+        This method wraps an original denoising callable that only takes ``x_t`` and
+        returns a base denoised velocity ``v_t``. It then applies Real-Time Chunking
+        (RTC) prefix guidance using the leftover prefix from the previous chunk.
+
+        Args:
+            x_t (Tensor): Current latent/state to denoise. Shape ``(B, T, A)`` or ``(T, A)``.
+            prev_chunk_left_over (Tensor | None): Unexecuted prefix from the previous
+                chunk. Shape ``(B, T_prev, A)`` or ``(T_prev, A)``. If ``None``, no guidance
+                is applied and the method returns ``v_t`` from the original denoiser.
+            inference_delay (int): Number of timesteps from the prefix to use for guidance.
+            time (float | Tensor): Scalar in [0, 1] indicating normalized time. Must be
+                broadcastable with ``x_t``.
+            original_denoise_step_partial (Callable[[Tensor], Tensor]): Callable that
+                computes the base denoised velocity given only ``x_t``.
+            execution_horizon (int | None): Horizon used to build prefix weights. If
+                ``None``, defaults to ``self.rtc_config.execution_horizon``.
+
+        Returns:
+            Tensor: Guided velocity with the same shape as ``v_t``.
+
+        Notes:
+            - If inputs are 2D, a batch dimension is temporarily added and removed at the end.
+            - If ``prev_chunk_left_over`` is shorter than the current chunk length ``T``, it is
+              right-padded with zeros to match ``T``.
+            - Prefix weights are constructed via ``get_prefix_weights(inference_delay, execution_horizon, T)``
+              and broadcast to ``(B, T, A)``.
+            - Guidance correction is computed via autograd using ``x1_t = x_t + time * v_t`` and
+              ``error = (prev_chunk_left_over - x1_t) * weights``.
+            - The final guidance weight is clamped by ``max_guidance_weight`` from the config.
 
         Reference:
-        https://www.physicalintelligence.company/download/real_time_chunking.pdf
+            https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
+
+        x_t = x_t.clone().detach().requires_grad_(True)
+
+        v_t = original_denoise_step_partial(x_t)
+
         if prev_chunk_left_over is None:
             # First step, no guidance
             return v_t
 
         squeezed = False
-        if len(noise.shape) < 3:
+        if len(x_t.shape) < 3:
             # Add batch dimension
-            noise = noise.unsqueeze(0)
+            x_t = x_t.unsqueeze(0)
             squeezed = True
 
         if len(v_t.shape) < 3:
@@ -82,9 +123,9 @@ class RTCProcessor:
         if execution_horizon is None:
             execution_horizon = self.rtc_config.execution_horizon
 
-        batch_size = noise.shape[0]
-        action_chunk_size = noise.shape[1]
-        action_dim = noise.shape[2]
+        batch_size = x_t.shape[0]
+        action_chunk_size = x_t.shape[1]
+        action_dim = x_t.shape[2]
 
         if prev_chunk_left_over.shape[1] < action_chunk_size:
             # We need to pad the left over chunk with zeros
@@ -94,12 +135,6 @@ class RTCProcessor:
         assert prev_chunk_left_over.shape[1] == action_chunk_size, (
             "The padded previous chunk must be the same size as the action chunk size"
         )
-
-        noise_with_grad = noise.clone().detach()
-        noise_with_grad.requires_grad = True
-
-        v_t_with_grad = v_t.clone().detach()
-
         weights = self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
 
         # Reshape weights to match the tensor dimensions (batch, time, action_dim)
@@ -110,10 +145,10 @@ class RTCProcessor:
             # In the original implementation, the time goes from 0 to 1 and x_1t calculates
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
             # Here is the logic is inverted
-            x1_t = noise_with_grad + time * v_t_with_grad
+            x1_t = x_t + time * v_t
 
             error = (prev_chunk_left_over - x1_t) * weights
-            correction = torch.autograd.grad(x1_t, noise_with_grad, error, retain_graph=False)[0]
+            correction = torch.autograd.grad(x1_t, x_t, error, retain_graph=False)[0]
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
 
