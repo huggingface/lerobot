@@ -2,19 +2,20 @@ import time
 
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
+from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
 FPS = 30
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="my_lekiwi")
-teleop_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
+robot_config = LeKiwiClientConfig(remote_ip="192.168.31.166", id="MyKiwi")
+# robot_config = LeKiwiClientConfig(remote_ip="100.96.43.20", id="MyKiwi")
+teleop_arm_config = SO101LeaderConfig(port="COM6", id="my_awesome_leader_arm")
 keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
 robot = LeKiwiClient(robot_config)
-leader_arm = SO100Leader(teleop_arm_config)
+leader_arm = SO101Leader(teleop_arm_config)
 keyboard = KeyboardTeleop(keyboard_config)
 
 # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
