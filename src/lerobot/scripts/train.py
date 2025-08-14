@@ -201,7 +201,7 @@ def train(cfg: TrainPipelineConfig):
     )
 
     logging.info("Start offline training on a fixed dataset")
-    
+
     # Create progress bar
     progress_bar = tqdm(
         range(step, cfg.steps),
@@ -210,9 +210,9 @@ def train(cfg: TrainPipelineConfig):
         total=cfg.steps,
         unit="step",
         dynamic_ncols=True,
-        leave=True
+        leave=True,
     )
-    
+
     for current_step in progress_bar:
         start_time = time.perf_counter()
         batch = next(dl_iter)
@@ -242,10 +242,9 @@ def train(cfg: TrainPipelineConfig):
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
         # Update progress bar with current metrics
-        progress_bar.set_postfix({
-            'loss': f'{train_tracker.loss.avg:.4f}',
-            'grad_norm': f'{train_tracker.grad_norm.avg:.3f}'
-        })
+        progress_bar.set_postfix(
+            {"loss": f"{train_tracker.loss.avg:.4f}", "grad_norm": f"{train_tracker.grad_norm.avg:.3f}"}
+        )
 
         if is_log_step:
             # Only log to wandb, skip console logging to keep output clean

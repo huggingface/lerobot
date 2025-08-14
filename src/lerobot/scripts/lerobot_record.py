@@ -107,7 +107,7 @@ During multi-dataset recording:
 During multi-dataset recording:
 - Press the configured keys (e.g., SPACE, TAB) to switch between recording stages
 - Press RIGHT ARROW to finish the current episode
-- Press LEFT ARROW to re-record the current episode  
+- Press LEFT ARROW to re-record the current episode
 - Press ESC to stop recording completely
 - The environment is reset only after all stages of an episode are completed
 """
@@ -767,10 +767,10 @@ def multi_record_loop(
     start_episode_t = time.perf_counter()
     current_stage = events["current_stage"]
     current_dataset = datasets[current_stage] if current_stage < len(datasets) else None
-    
+
     print(f"Starting recording with stage {current_stage}")
     print(f"Available stages: {[f'Stage {i}: {ds.meta.robot_type}' for i, ds in enumerate(datasets)]}")
-    
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -790,7 +790,9 @@ def multi_record_loop(
         observation = robot.get_observation()
 
         if policy is not None or current_dataset is not None:
-            observation_frame = build_dataset_frame(current_dataset.features, observation, prefix="observation")
+            observation_frame = build_dataset_frame(
+                current_dataset.features, observation, prefix="observation"
+            )
 
         if policy is not None:
             action_values = predict_action(
@@ -798,7 +800,9 @@ def multi_record_loop(
                 policy,
                 get_safe_torch_device(policy.config.device),
                 policy.config.use_amp,
-                task=current_dataset.meta.tasks[0] if current_dataset and current_dataset.meta.tasks else None,
+                task=current_dataset.meta.tasks[0]
+                if current_dataset and current_dataset.meta.tasks
+                else None,
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
@@ -828,7 +832,9 @@ def multi_record_loop(
         if current_dataset is not None:
             action_frame = build_dataset_frame(current_dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
-            current_dataset.add_frame(frame, task=current_dataset.meta.tasks[0] if current_dataset.meta.tasks else None)
+            current_dataset.add_frame(
+                frame, task=current_dataset.meta.tasks[0] if current_dataset.meta.tasks else None
+            )
 
         if display_data:
             log_rerun_data(observation, action)
@@ -850,8 +856,12 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
-    action_features = hw_to_dataset_features(robot.action_features, "action", cfg.multi_dataset.datasets[0].video)
-    obs_features = hw_to_dataset_features(robot.observation_features, "observation", cfg.multi_dataset.datasets[0].video)
+    action_features = hw_to_dataset_features(
+        robot.action_features, "action", cfg.multi_dataset.datasets[0].video
+    )
+    obs_features = hw_to_dataset_features(
+        robot.observation_features, "observation", cfg.multi_dataset.datasets[0].video
+    )
     dataset_features = {**action_features, **obs_features}
 
     # Create or load datasets for each stage
@@ -900,7 +910,9 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
     print("\n=== Multi-Dataset Recording Instructions ===")
     if cfg.multi_dataset.use_numeric_keys:
         for i, dataset_cfg in enumerate(cfg.multi_dataset.datasets):
-            print(f"Press '{i + 1}' to record to stage {i + 1}: {dataset_cfg.repo_id} ({dataset_cfg.single_task})")
+            print(
+                f"Press '{i + 1}' to record to stage {i + 1}: {dataset_cfg.repo_id} ({dataset_cfg.single_task})"
+            )
         print("Note: Pressing the same key multiple times creates separate episodes for that dataset")
     else:
         # Legacy key binding system (if needed for backward compatibility)
@@ -913,10 +925,10 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
     with VideoEncodingManager(datasets[0]):  # Use first dataset's video manager
         recorded_episodes = 0
         max_episodes = max(dataset_cfg.num_episodes for dataset_cfg in cfg.multi_dataset.datasets)
-        
+
         while recorded_episodes < max_episodes and not events["stop_recording"]:
             log_say(f"Recording multi-stage episode {recorded_episodes + 1}", cfg.play_sounds)
-            
+
             # Record the multi-stage episode
             multi_record_loop(
                 robot=robot,
@@ -970,7 +982,7 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
         listener.stop()
 
     # Push all datasets to hub if configured
-    for i, (dataset, dataset_cfg) in enumerate(zip(datasets, cfg.multi_dataset.datasets)):
+    for i, (dataset, dataset_cfg) in enumerate(zip(datasets, cfg.multi_dataset.datasets, strict=False)):
         if dataset_cfg.push_to_hub:
             dataset.push_to_hub(tags=dataset_cfg.tags, private=dataset_cfg.private)
 
