@@ -77,7 +77,7 @@ pick_config = DatasetRecordConfig(
 )
 
 place_config = DatasetRecordConfig(
-    repo_id="username/place_dataset", 
+    repo_id="username/place_dataset",
     single_task="Place the object",
     fps=30, episode_time_s=30, num_episodes=50
 )
@@ -87,7 +87,7 @@ multi_config = MultiRecordConfig(
     robot=robot_config,
     multi_dataset=MultiDatasetRecordConfig(
         datasets=[pick_config, place_config],
-        stage_switch_keys=["space", "tab"]  # Space for pick, Tab for place
+        use_numeric_keys=True  # Use numeric keys 1-9 for stage switching
     ),
     teleop=teleop_config
 )
@@ -95,6 +95,14 @@ multi_config = MultiRecordConfig(
 # Start multi-dataset recording
 datasets = multi_record(multi_config)
 ```
+
+During multi-dataset recording:
+- Press numeric keys (1-9) to switch directly to the corresponding recording stage
+- Pressing the same key multiple times creates separate episodes for that dataset
+- Press RIGHT ARROW to finish the current episode
+- Press LEFT ARROW to re-record the current episode
+- Press ESC to stop recording completely
+- The environment is reset only after all stages of an episode are completed
 
 During multi-dataset recording:
 - Press the configured keys (e.g., SPACE, TAB) to switch between recording stages
@@ -223,17 +231,16 @@ class DatasetRecordConfig:
 class MultiDatasetRecordConfig:
     # List of dataset configurations for each stage/phase of the motion
     datasets: list[DatasetRecordConfig]
-    # Key sequence to switch between dataset stages (e.g., ['space', 'tab'])
-    stage_switch_keys: list[str] | None = None
-    
+    # Whether to use numeric keys (1-9) for stage switching. If False, uses legacy key binding system
+    use_numeric_keys: bool = True
+
     def __post_init__(self):
         if not self.datasets:
             raise ValueError("At least one dataset configuration must be provided")
-        if self.stage_switch_keys is None:
-            # Default keys for switching stages
-            self.stage_switch_keys = ['space', 'tab', 'enter'][:len(self.datasets)]
-        elif len(self.stage_switch_keys) < len(self.datasets):
-            raise ValueError(f"Number of stage_switch_keys ({len(self.stage_switch_keys)}) must be at least the number of datasets ({len(self.datasets)})")
+        if len(self.datasets) > 9:
+            raise ValueError(
+                f"Maximum of 9 datasets supported when using numeric keys. Found: {len(self.datasets)}"
+            )
 
 
 @dataclass
@@ -666,8 +673,8 @@ def multi_record_loop(
         timestamp = time.perf_counter() - start_episode_t
 
 
-def init_multi_keyboard_listener(stage_switch_keys: list[str]):
-    """Initialize keyboard listener for multi-dataset recording with stage switching."""
+def init_multi_keyboard_listener(num_datasets: int):
+    """Initialize keyboard listener for multi-dataset recording with numeric stage switching."""
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
@@ -701,38 +708,16 @@ def init_multi_keyboard_listener(stage_switch_keys: list[str]):
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
-            elif hasattr(key, 'char') and key.char:
-                # Handle stage switching keys
-                if key.char == ' ' and 'space' in stage_switch_keys:
-                    stage_idx = stage_switch_keys.index('space')
+            elif hasattr(key, "char") and key.char and key.char.isdigit():
+                # Handle numeric stage switching keys (1-9)
+                stage_num = int(key.char)
+                if 1 <= stage_num <= num_datasets:
+                    stage_idx = stage_num - 1  # Convert to 0-based index
                     events["current_stage"] = stage_idx
                     events["switch_stage"] = True
-                    print(f"Switched to dataset stage {stage_idx}")
-                elif key.char == '\t' and 'tab' in stage_switch_keys:
-                    stage_idx = stage_switch_keys.index('tab')
-                    events["current_stage"] = stage_idx
-                    events["switch_stage"] = True
-                    print(f"Switched to dataset stage {stage_idx}")
-                elif key.char == '\r' and 'enter' in stage_switch_keys:
-                    stage_idx = stage_switch_keys.index('enter')
-                    events["current_stage"] = stage_idx
-                    events["switch_stage"] = True
-                    print(f"Switched to dataset stage {stage_idx}")
-            elif key == keyboard.Key.space and 'space' in stage_switch_keys:
-                stage_idx = stage_switch_keys.index('space')
-                events["current_stage"] = stage_idx
-                events["switch_stage"] = True
-                print(f"Switched to dataset stage {stage_idx}")
-            elif key == keyboard.Key.tab and 'tab' in stage_switch_keys:
-                stage_idx = stage_switch_keys.index('tab')
-                events["current_stage"] = stage_idx
-                events["switch_stage"] = True
-                print(f"Switched to dataset stage {stage_idx}")
-            elif key == keyboard.Key.enter and 'enter' in stage_switch_keys:
-                stage_idx = stage_switch_keys.index('enter')
-                events["current_stage"] = stage_idx
-                events["switch_stage"] = True
-                print(f"Switched to dataset stage {stage_idx}")
+                    print(f"Switched to dataset stage {stage_idx + 1}")
+                else:
+                    print(f"Invalid stage number {stage_num}. Available stages: 1-{num_datasets}")
         except Exception as e:
             print(f"Error handling key press: {e}")
 
@@ -909,12 +894,17 @@ def multi_record(cfg: MultiRecordConfig) -> list[LeRobotDataset]:
         teleop.connect()
 
     # Use custom keyboard listener for stage switching
-    listener, events = init_multi_keyboard_listener(cfg.multi_dataset.stage_switch_keys)
+    listener, events = init_multi_keyboard_listener(len(cfg.multi_dataset.datasets))
 
     # Print instructions for the user
     print("\n=== Multi-Dataset Recording Instructions ===")
-    for i, (key, dataset_cfg) in enumerate(zip(cfg.multi_dataset.stage_switch_keys, cfg.multi_dataset.datasets)):
-        print(f"Press '{key}' to record to stage {i}: {dataset_cfg.repo_id} ({dataset_cfg.single_task})")
+    if cfg.multi_dataset.use_numeric_keys:
+        for i, dataset_cfg in enumerate(cfg.multi_dataset.datasets):
+            print(f"Press '{i + 1}' to record to stage {i + 1}: {dataset_cfg.repo_id} ({dataset_cfg.single_task})")
+        print("Note: Pressing the same key multiple times creates separate episodes for that dataset")
+    else:
+        # Legacy key binding system (if needed for backward compatibility)
+        print("Legacy key binding mode - using predefined keys for stage switching")
     print("Press -> (right arrow) to exit current episode")
     print("Press <- (left arrow) to re-record current episode")
     print("Press ESC to stop recording")
