@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import argparse
 import base64
 import json
 import logging
@@ -7,7 +8,6 @@ import time
 
 import cv2
 import zmq
-import argparse
 
 from .config_lekiwi import LeKiwiConfig, LeKiwiHostConfig
 from .lekiwi import LeKiwi
@@ -37,17 +37,38 @@ class LeKiwiHost:
 def parse_args():
     p = argparse.ArgumentParser()
     # 这三个别名都能用：--id / --robot.id / --robot_id
-    p.add_argument("--id", "--robot.id", "--robot_id", dest="robot_id", type=str, help="Robot ID (used for calibration file lookup)")
-    p.add_argument("--port", "--robot.port", dest="robot_port", type=str, help="Serial port for Feetech bus (e.g. /dev/so101_leader)")
+    p.add_argument(
+        "--id",
+        "--robot.id",
+        "--robot_id",
+        dest="robot_id",
+        type=str,
+        help="Robot ID (used for calibration file lookup)",
+    )
+    p.add_argument(
+        "--port",
+        "--robot.port",
+        dest="robot_port",
+        type=str,
+        help="Serial port for Feetech bus (e.g. /dev/so101_leader)",
+    )
     p.add_argument("--cmd_port", type=int, default=5556, help="ZMQ command bind port")
-    p.add_argument("--state_port", "--obs_port", type=int, default=5555, help="ZMQ observation/state bind port")
+    p.add_argument(
+        "--state_port", "--obs_port", type=int, default=5555, help="ZMQ observation/state bind port"
+    )
     p.add_argument("--watchdog_timeout_ms", type=int, default=500)
     p.add_argument("--max_loop_hz", type=float, default=100.0)
-    p.add_argument("--connection_time_s", type=float, default=3600.0, help="Run time limit; <=0 means run forever")
+    p.add_argument(
+        "--connection_time_s", type=float, default=3600.0, help="Run time limit; <=0 means run forever"
+    )
 
     # ★ 新增：两类日志的节流间隔（秒）
-    p.add_argument("--no_cmd_log_interval_s", type=float, default=1.0, help="Rate-limit 'No command available' logs")
-    p.add_argument("--drop_obs_log_interval_s", type=float, default=1.0, help="Rate-limit 'Dropping observation' logs")
+    p.add_argument(
+        "--no_cmd_log_interval_s", type=float, default=1.0, help="Rate-limit 'No command available' logs"
+    )
+    p.add_argument(
+        "--drop_obs_log_interval_s", type=float, default=1.0, help="Rate-limit 'Dropping observation' logs"
+    )
     return p.parse_args()
 
 
