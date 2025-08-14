@@ -22,22 +22,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
-## #########################################################################
-from decord import VideoReader, cpu
-import numpy as np
-
-def decode_video_frames_decord(video_path, timestamps, tolerance_s):
-    vr = VideoReader(str(video_path), ctx=cpu(0), num_threads=4)
-    fps = vr.get_avg_fps()
-    frames = []
-    for ts in timestamps:
-        idx = min(int(ts * fps), len(vr) - 1)
-        img = vr[idx].asnumpy()                # (H, W, C)
-        img = np.transpose(img, (2, 0, 1))     # → (C, H, W)
-        frames.append(img)
-    return np.stack(frames, axis=0)           # (T, C, H, W)
-#################################################################
-
 import av
 import pyarrow as pa
 import torch
@@ -80,10 +64,6 @@ def decode_video_frames(
         backend = get_safe_default_codec()
     if backend == "torchcodec":
         return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
-#################
-    elif backend == "decord":
-        return decode_video_frames_decord(video_path, timestamps, tolerance_s)
-		#########################################
     elif backend in ["pyav", "video_reader"]:
         return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
     else:

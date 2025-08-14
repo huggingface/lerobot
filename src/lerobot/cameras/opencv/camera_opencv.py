@@ -159,8 +159,10 @@ class OpenCVCamera(Camera):
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
 
-        # self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
-        self.videocapture = cv2.VideoCapture(self.index_or_path, cv2.CAP_DSHOW)
+        self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
+        # On some windows computers, only DSHOW can be used to capture images normally
+        # 在某些windows电脑上只能使用DSHOW才可以正常抓图
+        # self.videocapture = cv2.VideoCapture(self.index_or_path, cv2.CAP_DSHOW)
 
         if not self.videocapture.isOpened():
             self.videocapture.release()
