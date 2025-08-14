@@ -26,8 +26,8 @@ lerobot-eval \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
-    --device=cuda
+    --policy.use_amp=false \
+    --policy.device=cuda
 ```
 
 OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
@@ -37,8 +37,8 @@ lerobot-eval \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
-    --device=cuda
+    --policy.use_amp=false \
+    --policy.device=cuda
 ```
 
 Note that in both examples, the repo/folder should contain at least `config.json` and `model.safetensors` files.
