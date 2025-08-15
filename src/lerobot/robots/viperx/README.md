@@ -141,10 +141,10 @@ python lerobot/scripts/control_robot.py \
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`lerobot-train`](../src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
   --dataset.repo_id=${HF_USER}/aloha_test \
   --policy.type=act \
   --output_dir=outputs/train/act_aloha_test \
