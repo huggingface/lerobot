@@ -877,6 +877,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
                 self.batch_encode_videos(start_ep, end_ep)
                 self.episodes_since_last_encoding = 0
+        else:
+            # delete images
+            img_dir = self.root / "images"
+            if img_dir.is_dir():
+                shutil.rmtree(self.root / "images")
 
         # Episode data index and timestamp checking
         ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
