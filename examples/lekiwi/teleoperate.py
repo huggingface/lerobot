@@ -9,9 +9,14 @@ from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 FPS = 30
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="192.168.31.166", id="MyKiwi")
-# robot_config = LeKiwiClientConfig(remote_ip="100.96.43.20", id="MyKiwi")
-teleop_arm_config = SO101LeaderConfig(port="COM6", id="my_awesome_leader_arm")
+# Robot (LeKiwi host)
+# 将 remote_ip 改为你的机器人 IP（示例：192.168.0.100 或 Tailscale 100.x.y.z）
+robot_config = LeKiwiClientConfig(remote_ip="192.168.0.100", id="lekiwi")
+
+# Teleop leader arm (SO101)
+# Windows 用 "COMx"，Linux 用 "/dev/ttyACM0" 或 "/dev/ttyUSB0"
+# 如不确定串口，可先运行：python -m lerobot.find_port
+teleop_arm_config = SO101LeaderConfig(port="COM6", id="so101_leader")
 keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
 robot = LeKiwiClient(robot_config)

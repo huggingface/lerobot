@@ -56,12 +56,12 @@ class LeKiwiHostConfig:
     port_zmq_observations: int = 5556
 
     # Duration of the application
-    # connection_time_s: int = 30
-    connection_time_s: int = 3600
+    connection_time_s: int = 30
+    # connection_time_s: int = 3600
 
     # Watchdog: stop the robot if no command is received for over 0.5 seconds.
-    # watchdog_timeout_ms: int = 500
-    watchdog_timeout_ms: int = 3600
+    watchdog_timeout_ms: int = 500
+    # watchdog_timeout_ms: int = 3600
 
     # If robot jitters decrease the frequency and monitor cpu load with `top` in cmd
     max_loop_freq_hz: int = 30

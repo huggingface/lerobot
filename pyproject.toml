@@ -172,7 +172,17 @@ where = ["src"]
 [tool.ruff]
 target-version = "py310"
 line-length = 110
-exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
+# 扩展排除目录：避免 lint 第三方源码/示例/基准代码
+exclude = [
+  "tests/artifacts/**/*.safetensors",
+  "*_pb2.py",
+  "*_pb2_grpc.py",
+  "torchcodec-0.5.0",
+  "docs",
+  "examples",
+  "benchmarks",
+  "third_party",
+]
 
 [tool.ruff.lint]
 # E, W: pycodestyle errors and warnings
@@ -201,6 +211,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403"]
+# 测试目录常见的命名/导入位置/演示性表达式在本项目中放宽
+"tests/**" = ["N802", "N803", "N806", "N812", "N813", "N818", "E402", "B015", "B018", "C408"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
