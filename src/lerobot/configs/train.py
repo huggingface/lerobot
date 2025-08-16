@@ -63,18 +63,16 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    checkpoint_path: Path | None = field(init=False, default=None)
 
-    def __post_init__(self):
-        self.checkpoint_path = None
-
-    def validate(self):
+    def validate(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             # Only load the policy config
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = policy_path
+            self.policy.pretrained_path = Path(policy_path)
         elif self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
             config_path = parser.parse_arg("config_path")
@@ -82,14 +80,22 @@ class TrainPipelineConfig(HubMixin):
                 raise ValueError(
                     f"A config_path is expected when resuming a run. Please specify path to {TRAIN_CONFIG_NAME}"
                 )
+
             if not Path(config_path).resolve().exists():
                 raise NotADirectoryError(
                     f"{config_path=} is expected to be a local path. "
                     "Resuming from the hub is not supported for now."
                 )
-            policy_path = Path(config_path).parent
-            self.policy.pretrained_path = policy_path
-            self.checkpoint_path = policy_path.parent
+
+            policy_dir = Path(config_path).parent
+            if self.policy is not None:
+                self.policy.pretrained_path = policy_dir
+            self.checkpoint_path = policy_dir.parent
+
+        if self.policy is None:
+            raise ValueError(
+                "Policy is not configured. Please specify a pretrained policy with `--policy.path`."
+            )
 
         if not self.job_name:
             if self.env is None:
@@ -116,7 +122,7 @@ class TrainPipelineConfig(HubMixin):
             self.optimizer = self.policy.get_optimizer_preset()
             self.scheduler = self.policy.get_scheduler_preset()
 
-        if self.policy.push_to_hub and not self.policy.repo_id:
+        if self.policy.should_push_to_hub and not self.policy.repo_id:
             raise ValueError(
                 "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
             )
@@ -127,7 +133,7 @@ class TrainPipelineConfig(HubMixin):
         return ["policy"]
 
     def to_dict(self) -> dict:
-        return draccus.encode(self)
+        return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus use Any as the return type
 
     def _save_pretrained(self, save_directory: Path) -> None:
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
@@ -139,7 +145,7 @@ class TrainPipelineConfig(HubMixin):
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
-        resume_download: bool = None,
+        resume_download: bool | None = None,
         proxies: dict | None = None,
         token: str | bool | None = None,
         cache_dir: str | Path | None = None,
@@ -181,4 +187,5 @@ class TrainPipelineConfig(HubMixin):
 
 @dataclass(kw_only=True)
 class TrainRLServerPipelineConfig(TrainPipelineConfig):
-    dataset: DatasetConfig | None = None  # NOTE: In RL, we don't need an offline dataset
+    # NOTE: In RL, we don't need an offline dataset
+    dataset: DatasetConfig | None = None  # type: ignore[assignment] # because the parent class has made it's type non-optional

@@ -60,7 +60,7 @@ def parse_arg(arg_name: str, args: Sequence[str] | None = None) -> str | None:
     return None
 
 
-def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict:
+def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, str]:
     """Parse plugin-related arguments from command-line arguments.
 
     This function extracts arguments from command-line arguments that match a specified suffix pattern.
@@ -148,6 +148,8 @@ def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | No
 
 
 def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
+    if args is None:
+        return []
     return [arg for arg in args if not arg.startswith(f"--{field_to_filter}=")]
 
 
@@ -171,7 +173,11 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
     if isinstance(fields_to_filter, str):
         fields_to_filter = [fields_to_filter]
 
-    filtered_args = args
+    if args is None:
+        filtered_args = []
+    else:
+        filtered_args = list(args)
+
     for field in fields_to_filter:
         if get_path_arg(field, args):
             if get_type_arg(field, args):

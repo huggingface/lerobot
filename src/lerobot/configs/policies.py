@@ -63,7 +63,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # automatic gradient scaling is used.
     use_amp: bool = False
 
-    push_to_hub: bool = True
+    should_push_to_hub: bool = True
     repo_id: str | None = None
 
     # Upload on private repository on the Hugging Face hub.
@@ -74,7 +74,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     license: str | None = None
 
     def __post_init__(self):
-        self.pretrained_path = None
+        self.pretrained_path: Path | None = None
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
@@ -153,7 +153,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
-        resume_download: bool = None,
+        resume_download: bool | None = None,
         proxies: dict | None = None,
         token: str | bool | None = None,
         cache_dir: str | Path | None = None,
@@ -167,7 +167,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             if CONFIG_NAME in os.listdir(model_id):
                 config_file = os.path.join(model_id, CONFIG_NAME)
             else:
-                print(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
+                raise FileNotFoundError(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
         else:
             try:
                 config_file = hf_hub_download(
