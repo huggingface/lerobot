@@ -133,7 +133,7 @@ class TrainPipelineConfig(HubMixin):
         return ["policy"]
 
     def to_dict(self) -> dict:
-        return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus use Any as the return type
+        return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
 
     def _save_pretrained(self, save_directory: Path) -> None:
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
