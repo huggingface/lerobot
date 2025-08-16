@@ -63,7 +63,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # automatic gradient scaling is used.
     use_amp: bool = False
 
-    should_push_to_hub: bool = True
+    push_to_hub: bool = True  # type: ignore[assignment]
     repo_id: str | None = None
 
     # Upload on private repository on the Hugging Face hub.

@@ -282,7 +282,7 @@ def train(cfg: TrainPipelineConfig):
         eval_env.close()
     logging.info("End of training")
 
-    if cfg.policy.should_push_to_hub:
+    if cfg.policy.push_to_hub:
         policy.push_model_to_hub(cfg)
 
 
