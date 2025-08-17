@@ -540,6 +540,9 @@ def create_empty_dataset_info(
     features: dict,
     use_videos: bool,
     robot_type: str | None = None,
+    chunks_size: int | None = None,
+    data_files_size_in_mb: int | None = None,
+    video_files_size_in_mb: int | None = None,
 ) -> dict:
     return {
         "codebase_version": codebase_version,
@@ -547,9 +550,9 @@ def create_empty_dataset_info(
         "total_episodes": 0,
         "total_frames": 0,
         "total_tasks": 0,
-        "chunks_size": DEFAULT_CHUNK_SIZE,
-        "data_files_size_in_mb": DEFAULT_DATA_FILE_SIZE_IN_MB,
-        "video_files_size_in_mb": DEFAULT_VIDEO_FILE_SIZE_IN_MB,
+        "chunks_size": chunks_size or DEFAULT_CHUNK_SIZE,
+        "data_files_size_in_mb": data_files_size_in_mb or DEFAULT_DATA_FILE_SIZE_IN_MB,
+        "video_files_size_in_mb": video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
         "fps": fps,
         "splits": {},
         "data_path": DEFAULT_DATA_PATH,

@@ -152,11 +152,11 @@ def update_meta_data(
 def aggregate_datasets(
     repo_ids: list[str],
     aggr_repo_id: str,
-    roots: list[Path] = None,
-    aggr_root: Path = None,
-    data_files_size_in_mb: float = None,
-    video_files_size_in_mb: float = None,
-    chunk_size: int = None,
+    roots: list[Path] | None = None,
+    aggr_root: Path | None = None,
+    data_files_size_in_mb: float | None = None,
+    video_files_size_in_mb: float | None = None,
+    chunk_size: int | None = None,
 ):
     """Aggregates multiple LeRobot datasets into a single unified dataset.
 

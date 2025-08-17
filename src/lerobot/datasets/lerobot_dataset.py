@@ -358,6 +358,53 @@ class LeRobotDatasetMetadata:
                 video_path = self.root / self.get_video_file_path(ep_index=0, vid_key=key)
                 self.info["features"][key]["info"] = get_video_info(video_path)
 
+    def update_chunk_settings(
+        self,
+        chunks_size: int | None = None,
+        data_files_size_in_mb: int | None = None,
+        video_files_size_in_mb: int | None = None,
+    ) -> None:
+        """Update chunk and file size settings after dataset creation.
+
+        This allows users to customize storage organization without modifying the constructor.
+        These settings control how episodes are chunked and how large files can grow before
+        creating new ones.
+
+        Args:
+            chunks_size: Maximum number of files per chunk directory. If None, keeps current value.
+            data_files_size_in_mb: Maximum size for data parquet files in MB. If None, keeps current value.
+            video_files_size_in_mb: Maximum size for video files in MB. If None, keeps current value.
+        """
+        if chunks_size is not None:
+            if chunks_size <= 0:
+                raise ValueError(f"chunks_size must be positive, got {chunks_size}")
+            self.info["chunks_size"] = chunks_size
+
+        if data_files_size_in_mb is not None:
+            if data_files_size_in_mb <= 0:
+                raise ValueError(f"data_files_size_in_mb must be positive, got {data_files_size_in_mb}")
+            self.info["data_files_size_in_mb"] = data_files_size_in_mb
+
+        if video_files_size_in_mb is not None:
+            if video_files_size_in_mb <= 0:
+                raise ValueError(f"video_files_size_in_mb must be positive, got {video_files_size_in_mb}")
+            self.info["video_files_size_in_mb"] = video_files_size_in_mb
+
+        # Update the info file on disk
+        write_info(self.info, self.root)
+
+    def get_chunk_settings(self) -> dict[str, int]:
+        """Get current chunk and file size settings.
+
+        Returns:
+            Dict containing chunks_size, data_files_size_in_mb, and video_files_size_in_mb.
+        """
+        return {
+            "chunks_size": self.chunks_size,
+            "data_files_size_in_mb": self.data_files_size_in_mb,
+            "video_files_size_in_mb": self.video_files_size_in_mb,
+        }
+
     def __repr__(self):
         feature_keys = list(self.features)
         return (
