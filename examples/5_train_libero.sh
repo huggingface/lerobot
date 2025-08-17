@@ -16,7 +16,7 @@ SAVE_FREQ=10000
 NUM_WORKERS=0
 
 # model params
-POLICY=smolvla
+POLICY=pi0
 USE_AMP=false
 OPTIMIZER_LR=1e-4
 PEFT_METHOD=lora
@@ -30,11 +30,13 @@ USE_IMAGENET_STATS=false
 ENABLE_IMG_TRANSFORM=true
 MAX_NUM_IMAGES=2
 MAX_IMAGE_DIM=1024
+unset LEROBOT_HOME
+unset HF_LEROBOT_HOME
 
 echo -e "\033[1;33m[WARNING]\033[0m LIBERO is not yet fully supported in this PR!"
+
 # launch
-PYTORCH_ENABLE_MPS_FALLBACK=1 DEVICE=cpu python src/lerobot/scripts/train.py \
-  --policy.device=cpu \
+python src/lerobot/scripts/train.py \
   --policy.type=$POLICY \
   --dataset.repo_id=$REPO_ID \
   --env.type=libero \
@@ -45,11 +47,7 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 DEVICE=cpu python src/lerobot/scripts/train.py \
   --eval_freq=$EVAL_FREQ \
   --save_freq=$SAVE_FREQ \
   --num_workers=$NUM_WORKERS \
-  --policy.max_action_dim=$MAX_ACTION_DIM \
-  --policy.max_state_dim=$MAX_STATE_DIM \
-  --policy.use_amp=$USE_AMP \
-  --policy.optimizer_lr=$OPTIMIZER_LR \
-  --policy.load_vlm_weights=$LOAD_VLM_WEIGHTS \
   --policy.repo_id=$VLM_REPO_ID \
-  --env.multitask_eval=False \
+  --env.multitask_eval=True \
   --eval.batch_size=1 \
+  --eval.n_episodes=1 \

@@ -32,6 +32,9 @@ def create_libero_envs(
     Returns:
         dict[str, dict[str, list[LiberoEnv]]]: keys are task_suite and values are list of LiberoEnv envs.
     """
+    print("num envs", n_envs)
+    print("multitask_eval", multitask_eval)
+    print("gym_kwargs", gym_kwargs)
     if gym_kwargs is None:
         gym_kwargs = {}
 
@@ -45,6 +48,7 @@ def create_libero_envs(
             episode_indices = list(range(n_envs))
         elif len(tasks_id) < n_envs and n_envs % len(tasks_id) == 0:
             n_repeat = n_envs // len(tasks_id)
+            print("n_repeat", n_repeat)
             episode_indices = []
             for i in range(len(tasks_id)):
                 episode_indices.extend(list(range(n_repeat)))
@@ -313,11 +317,9 @@ class LiberoEnv(gym.Env):
     def step(self, action):
         assert action.ndim == 1
         raw_obs, reward, done, info = self._env.step(action)
-
         is_success = self._env.check_success()
         terminated = done or is_success
         info["is_success"] = is_success
-        print(f"[LiberoEnv.step] done={done}, is_success={is_success}, terminated={terminated}")
         observation = self._format_raw_obs(raw_obs)
         truncated = False
         # note if it is unable to complete get libero error after many steps
