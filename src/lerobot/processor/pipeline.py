@@ -837,6 +837,7 @@ class RobotProcessor(ModelHubMixin):
     def __post_init__(self):
         for i, step in enumerate(self.steps):
             if not callable(step):
+                # TODO(steven): This should instead check isinstance(step, ProcessorStep), test need to be updated
                 raise TypeError(
                     f"Step {i} ({type(step).__name__}) must define __call__(transition) -> EnvTransition"
                 )
