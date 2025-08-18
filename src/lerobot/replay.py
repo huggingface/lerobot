@@ -57,7 +57,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
-    ned2_leader,
+    ned2,
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
