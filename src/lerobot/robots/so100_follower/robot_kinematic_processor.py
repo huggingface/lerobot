@@ -26,6 +26,7 @@ from lerobot.processor.pipeline import (
     ComplementaryDataProcessor,
     EnvTransition,
     ObservationProcessor,
+    ProcessorStep,
     ProcessorStepRegistry,
     TransitionKey,
 )
@@ -34,7 +35,7 @@ from lerobot.robots.robot import Robot
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
 @dataclass
-class EEReferenceAndDelta:
+class EEReferenceAndDelta(ActionProcessor):
     """
     Compute the desired end-effector pose from the target pose and the current pose.
 
@@ -61,9 +62,9 @@ class EEReferenceAndDelta:
     _prev_enabled: bool = field(default=False, init=False, repr=False)
     _command_when_disabled: np.ndarray | None = field(default=None, init=False, repr=False)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        act = transition.get(TransitionKey.ACTION) or {}
-        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+    def action(self, action):
+        new_action = action.copy()
+        comp = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)
 
         # Get joint positions from complimentary data
         raw = comp.get("raw_joint_positions", None)
@@ -80,13 +81,13 @@ class EEReferenceAndDelta:
         # Current pose from FK on measured joints
         t_curr = self.kinematics.forward_kinematics(q)
 
-        enabled = bool(act.pop("action.enabled", 0))
-        tx = float(act.pop("action.target_x", 0.0))
-        ty = float(act.pop("action.target_y", 0.0))
-        tz = float(act.pop("action.target_z", 0.0))
-        wx = float(act.pop("action.target_wx", 0.0))
-        wy = float(act.pop("action.target_wy", 0.0))
-        wz = float(act.pop("action.target_wz", 0.0))
+        enabled = bool(new_action.pop("action.enabled", 0))
+        tx = float(new_action.pop("action.target_x", 0.0))
+        ty = float(new_action.pop("action.target_y", 0.0))
+        tz = float(new_action.pop("action.target_z", 0.0))
+        wx = float(new_action.pop("action.target_wx", 0.0))
+        wy = float(new_action.pop("action.target_wy", 0.0))
+        wz = float(new_action.pop("action.target_wz", 0.0))
 
         desired = None
 
@@ -122,7 +123,7 @@ class EEReferenceAndDelta:
         # Write action fields
         pos = desired[:3, 3]
         tw = Rotation.from_matrix(desired[:3, :3]).as_rotvec()
-        act.update(
+        new_action.update(
             {
                 "action.ee.x": float(pos[0]),
                 "action.ee.y": float(pos[1]),
@@ -134,11 +135,7 @@ class EEReferenceAndDelta:
         )
 
         self._prev_enabled = enabled
-        transition[TransitionKey.ACTION] = act
-        return transition
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
+        return new_action
 
     def reset(self):
         self._prev_enabled = False
@@ -169,7 +166,7 @@ class EEBoundsAndSafety(ActionProcessor):
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
     _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
 
-    def action(self, act: dict | None) -> dict:
+    def action(self, act: dict) -> dict:
         x = act.pop("action.ee.x", None)
         y = act.pop("action.ee.y", None)
         z = act.pop("action.ee.z", None)
@@ -226,7 +223,7 @@ class EEBoundsAndSafety(ActionProcessor):
 
 @ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
 @dataclass
-class InverseKinematicsEEToJoints:
+class InverseKinematicsEEToJoints(ProcessorStep):
     """
     Compute the desired joint positions from the desired end-effector pose.
 
@@ -328,7 +325,7 @@ class InverseKinematicsEEToJoints:
 
 @ProcessorStepRegistry.register("gripper_velocity_to_joint")
 @dataclass
-class GripperVelocityToJoint:
+class GripperVelocityToJoint(ProcessorStep):
     """
     Convert the gripper velocity to a joint velocity.
 
@@ -417,7 +414,7 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
     kinematics: RobotKinematics
     motor_names: list[str]
 
-    def observation(self, obs: dict | None) -> dict:
+    def observation(self, obs: dict) -> dict:
         if not all(f"observation.state.{n}.pos" in obs for n in self.motor_names):
             return obs
 
@@ -458,15 +455,14 @@ class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessor):
     robot: Robot
 
     def complementary_data(self, comp: dict | None) -> dict:
-        comp = {} if comp is None else dict(comp)
-        obs = self.robot.get_observation()
+        new_comp = dict(comp)
+        obs = (
+            self.robot.get_observation()
+        )  # todo(steven): why not self.trtansition.get(TransitionKey.OBSERVATION)?
 
-        comp["raw_joint_positions"] = {
+        new_comp["raw_joint_positions"] = {
             k.removesuffix(".pos"): float(v)
             for k, v in obs.items()
             if isinstance(k, str) and k.endswith(".pos")
         }
-        return comp
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
+        return new_comp
