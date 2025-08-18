@@ -20,9 +20,9 @@ import subprocess
 import sys
 import time
 
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.dynamixel import (
+from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
 )
