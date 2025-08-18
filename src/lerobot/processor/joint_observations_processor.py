@@ -22,10 +22,7 @@ class JointVelocityProcessor(ObservationProcessor):
 
     last_joint_positions: torch.Tensor | None = None
 
-    def observation(self, observation: dict | None) -> dict | None:
-        if observation is None:
-            return None
-
+    def observation(self, observation: dict) -> dict:
         # Get current joint positions (assuming they're in observation.state)
         current_positions = observation.get("observation.state")
         if current_positions is None:
@@ -75,10 +72,7 @@ class MotorCurrentProcessor(ObservationProcessor):
 
     robot: Robot | None = None
 
-    def observation(self, observation: dict | None) -> dict | None:
-        if observation is None:
-            return None
-
+    def observation(self, observation: dict) -> dict:
         # Get current values from robot state
         if self.robot is None:
             return observation

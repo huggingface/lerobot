@@ -11,7 +11,13 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, RobotProcessor, TransitionKey
+from lerobot.processor.pipeline import (
+    EnvTransition,
+    ProcessorStep,
+    ProcessorStepRegistry,
+    RobotProcessor,
+    TransitionKey,
+)
 
 
 def _convert_stats_to_tensors(stats: dict[str, dict[str, Any]]) -> dict[str, dict[str, Tensor]]:
@@ -34,7 +40,7 @@ def _convert_stats_to_tensors(stats: dict[str, dict[str, Any]]) -> dict[str, dic
 
 @dataclass
 @ProcessorStepRegistry.register(name="normalizer_processor")
-class NormalizerProcessor:
+class NormalizerProcessor(ProcessorStep):
     """Normalizes observations and actions in a single processor step.
 
     This processor handles normalization of both observation and action tensors
@@ -254,16 +260,10 @@ class NormalizerProcessor:
             key, stat_name = flat_key.rsplit(".", 1)
             self._tensor_stats.setdefault(key, {})[stat_name] = tensor
 
-    def reset(self):
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
 
 @dataclass
 @ProcessorStepRegistry.register(name="unnormalizer_processor")
-class UnnormalizerProcessor:
+class UnnormalizerProcessor(ProcessorStep):
     """Inverse normalisation for observations and actions.
 
     Exactly mirrors :class:`NormalizerProcessor` but applies the inverse
@@ -431,12 +431,6 @@ class UnnormalizerProcessor:
         for flat_key, tensor in state.items():
             key, stat_name = flat_key.rsplit(".", 1)
             self._tensor_stats.setdefault(key, {})[stat_name] = tensor
-
-    def reset(self):
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
 
 
 def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, Any]]) -> RobotProcessor:

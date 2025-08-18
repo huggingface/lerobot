@@ -16,7 +16,6 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
@@ -46,7 +45,7 @@ class MapPhoneActionToRobotAction(ActionProcessor):
     platform: PhoneOS
     _enabled_prev: bool = field(default=False, init=False, repr=False)
 
-    def action(self, act: dict | None) -> dict:
+    def action(self, act: dict) -> dict:
         # Pop them from the action
         enabled = act.pop("action.phone.enabled", 0)
         pos = act.pop("action.phone.pos", None)
@@ -82,6 +81,3 @@ class MapPhoneActionToRobotAction(ActionProcessor):
             }
         )
         return act
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features

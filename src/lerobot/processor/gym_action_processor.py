@@ -26,10 +26,7 @@ class Torch2NumpyActionProcessor(ActionProcessor):
 
     squeeze_batch_dim: bool = True
 
-    def action(self, action: torch.Tensor | None) -> np.ndarray | None:
-        if action is None:
-            return None
-
+    def action(self, action: torch.Tensor) -> np.ndarray:
         if not isinstance(action, torch.Tensor):
             raise TypeError(
                 f"Expected torch.Tensor or None, got {type(action).__name__}. "
@@ -56,9 +53,7 @@ class Torch2NumpyActionProcessor(ActionProcessor):
 class Numpy2TorchActionProcessor(ActionProcessor):
     """Convert NumPy array action to PyTorch tensor."""
 
-    def action(self, action: np.ndarray | None) -> torch.Tensor | None:
-        if action is None:
-            return None
+    def action(self, action: np.ndarray) -> torch.Tensor:
         if not isinstance(action, np.ndarray):
             raise TypeError(
                 f"Expected np.ndarray or None, got {type(action).__name__}. "

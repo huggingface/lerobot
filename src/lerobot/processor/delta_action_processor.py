@@ -78,10 +78,7 @@ class MapDeltaActionToRobotAction(ActionProcessor):
     position_scale: float = 1.0
     rotation_scale: float = 0.0  # No rotation deltas for gamepad/keyboard
 
-    def action(self, action: dict | None) -> dict:
-        if action is None:
-            return {}
-
+    def action(self, action: dict) -> dict:
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
         # TODO (maractingi): changing this target_xyz naming convention from the teleop_devices
         delta_x = action.pop("action.delta_x", 0.0)

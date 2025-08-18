@@ -18,12 +18,13 @@ from __future__ import annotations
 import importlib
 import json
 import os
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, TypedDict, runtime_checkable
+from typing import Any, TypedDict
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
@@ -132,8 +133,7 @@ class ProcessorStepRegistry:
         cls._registry.clear()
 
 
-@runtime_checkable
-class ProcessorStep(Protocol):
+class ProcessorStep(ABC):
     """Structural typing interface for a single processor step.
 
     A step is any callable accepting a full `EnvTransition` dict and
@@ -166,17 +166,34 @@ class ProcessorStep(Protocol):
     - state_dict(): {"weights": torch.tensor(...), "running_mean": torch.tensor(...)}
     """
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition: ...
+    _current_transition: EnvTransition | None = None
 
-    def get_config(self) -> dict[str, Any]: ...
+    @property
+    def transition(self) -> EnvTransition:
+        """The current transition being processed by this step."""
+        if self._current_transition is None:
+            raise ValueError("Transition is not set. Make sure to call the step with a transition first.")
+        return self._current_transition
 
-    def state_dict(self) -> dict[str, torch.Tensor]: ...
+    @abstractmethod
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        return transition
 
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None: ...
+    def get_config(self) -> dict[str, Any]:
+        return {}
 
-    def reset(self) -> None: ...
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        return {}
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]: ...
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        return None
+
+    def reset(self) -> None:
+        return None
+
+    # TODO(Steven): Consider making this abstract so it is more explicit
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
 
 
 def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
@@ -837,7 +854,7 @@ class RobotProcessor(ModelHubMixin):
         return features
 
 
-class ObservationProcessor:
+class ObservationProcessor(ProcessorStep, ABC):
     """Base class for processors that modify only the observation component of a transition.
 
     Subclasses should override the `observation` method to implement custom observation processing.
@@ -858,7 +875,8 @@ class ObservationProcessor:
     manipulation, focusing only on the specific observation processing logic.
     """
 
-    def observation(self, observation):
+    @abstractmethod
+    def observation(self, observation) -> dict[str, Any]:
         """Process the observation component.
 
         Args:
@@ -867,36 +885,22 @@ class ObservationProcessor:
         Returns:
             The processed observation
         """
-        return observation
+        ...
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION)
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        observation = new_transition.get(TransitionKey.OBSERVATION)
         if observation is None:
-            return transition
+            return new_transition
 
         processed_observation = self.observation(observation)
-        # Create a new transition dict with the processed observation
-        new_transition = transition.copy()
         new_transition[TransitionKey.OBSERVATION] = processed_observation
         return new_transition
 
-    def get_config(self) -> dict[str, Any]:
-        return {}
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
-
-class ActionProcessor:
+class ActionProcessor(ProcessorStep, ABC):
     """Base class for processors that modify only the action component of a transition.
 
     Subclasses should override the `action` method to implement custom action processing.
@@ -918,7 +922,8 @@ class ActionProcessor:
     manipulation, focusing only on the specific action processing logic.
     """
 
-    def action(self, action):
+    @abstractmethod
+    def action(self, action) -> Any | torch.Tensor:
         """Process the action component.
 
         Args:
@@ -927,36 +932,22 @@ class ActionProcessor:
         Returns:
             The processed action
         """
-        return action
+        ...
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        action = new_transition.get(TransitionKey.ACTION)
         if action is None:
-            return transition
+            return new_transition
 
         processed_action = self.action(action)
-        # Create a new transition dict with the processed action
-        new_transition = transition.copy()
         new_transition[TransitionKey.ACTION] = processed_action
         return new_transition
 
-    def get_config(self) -> dict[str, Any]:
-        return {}
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
-
-class RewardProcessor:
+class RewardProcessor(ProcessorStep, ABC):
     """Base class for processors that modify only the reward component of a transition.
 
     Subclasses should override the `reward` method to implement custom reward processing.
@@ -977,7 +968,8 @@ class RewardProcessor:
     manipulation, focusing only on the specific reward processing logic.
     """
 
-    def reward(self, reward):
+    @abstractmethod
+    def reward(self, reward) -> float | torch.Tensor:
         """Process the reward component.
 
         Args:
@@ -986,36 +978,22 @@ class RewardProcessor:
         Returns:
             The processed reward
         """
-        return reward
+        ...
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        reward = transition.get(TransitionKey.REWARD)
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        reward = new_transition.get(TransitionKey.REWARD)
         if reward is None:
-            return transition
+            return new_transition
 
         processed_reward = self.reward(reward)
-        # Create a new transition dict with the processed reward
-        new_transition = transition.copy()
         new_transition[TransitionKey.REWARD] = processed_reward
         return new_transition
 
-    def get_config(self) -> dict[str, Any]:
-        return {}
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
-
-class DoneProcessor:
+class DoneProcessor(ProcessorStep, ABC):
     """Base class for processors that modify only the done flag of a transition.
 
     Subclasses should override the `done` method to implement custom done flag processing.
@@ -1041,7 +1019,8 @@ class DoneProcessor:
     manipulation, focusing only on the specific done flag processing logic.
     """
 
-    def done(self, done):
+    @abstractmethod
+    def done(self, done) -> bool | torch.Tensor:
         """Process the done flag.
 
         Args:
@@ -1050,36 +1029,22 @@ class DoneProcessor:
         Returns:
             The processed done flag
         """
-        return done
+        ...
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        done = transition.get(TransitionKey.DONE)
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        done = new_transition.get(TransitionKey.DONE)
         if done is None:
-            return transition
+            return new_transition
 
         processed_done = self.done(done)
-        # Create a new transition dict with the processed done flag
-        new_transition = transition.copy()
         new_transition[TransitionKey.DONE] = processed_done
         return new_transition
 
-    def get_config(self) -> dict[str, Any]:
-        return {}
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
-
-class TruncatedProcessor:
+class TruncatedProcessor(ProcessorStep, ABC):
     """Base class for processors that modify only the truncated flag of a transition.
 
     Subclasses should override the `truncated` method to implement custom truncated flag processing.
@@ -1101,7 +1066,8 @@ class TruncatedProcessor:
     manipulation, focusing only on the specific truncated flag processing logic.
     """
 
-    def truncated(self, truncated):
+    @abstractmethod
+    def truncated(self, truncated) -> bool | torch.Tensor:
         """Process the truncated flag.
 
         Args:
@@ -1110,36 +1076,22 @@ class TruncatedProcessor:
         Returns:
             The processed truncated flag
         """
-        return truncated
+        ...
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        truncated = transition.get(TransitionKey.TRUNCATED)
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        truncated = new_transition.get(TransitionKey.TRUNCATED)
         if truncated is None:
-            return transition
+            return new_transition
 
         processed_truncated = self.truncated(truncated)
-        # Create a new transition dict with the processed truncated flag
-        new_transition = transition.copy()
         new_transition[TransitionKey.TRUNCATED] = processed_truncated
         return new_transition
 
-    def get_config(self) -> dict[str, Any]:
-        return {}
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
-
-class InfoProcessor:
+class InfoProcessor(ProcessorStep, ABC):
     """Base class for processors that modify only the info dictionary of a transition.
 
     Subclasses should override the `info` method to implement custom info processing.
@@ -1166,7 +1118,8 @@ class InfoProcessor:
     manipulation, focusing only on the specific info dictionary processing logic.
     """
 
-    def info(self, info):
+    @abstractmethod
+    def info(self, info) -> dict[str, Any]:
         """Process the info dictionary.
 
         Args:
@@ -1175,36 +1128,22 @@ class InfoProcessor:
         Returns:
             The processed info dictionary
         """
-        return info
+        ...
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        info = transition.get(TransitionKey.INFO)
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        info = new_transition.get(TransitionKey.INFO)
         if info is None:
-            return transition
+            return new_transition
 
         processed_info = self.info(info)
-        # Create a new transition dict with the processed info
-        new_transition = transition.copy()
         new_transition[TransitionKey.INFO] = processed_info
         return new_transition
 
-    def get_config(self) -> dict[str, Any]:
-        return {}
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
-
-class ComplementaryDataProcessor:
+class ComplementaryDataProcessor(ProcessorStep, ABC):
     """Base class for processors that modify only the complementary data of a transition.
 
     Subclasses should override the `complementary_data` method to implement custom complementary data processing.
@@ -1212,7 +1151,8 @@ class ComplementaryDataProcessor:
     into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
     """
 
-    def complementary_data(self, complementary_data):
+    @abstractmethod
+    def complementary_data(self, complementary_data) -> dict[str, Any]:
         """Process the complementary data.
 
         Args:
@@ -1221,52 +1161,23 @@ class ComplementaryDataProcessor:
         Returns:
             The processed complementary data
         """
-        return complementary_data
+        ...
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
         if complementary_data is None:
-            return transition
+            return new_transition
 
         processed_complementary_data = self.complementary_data(complementary_data)
-        # Create a new transition dict with the processed complementary data
-        new_transition = transition.copy()
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = processed_complementary_data
         return new_transition
 
-    def get_config(self) -> dict[str, Any]:
-        return {}
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
-
-class IdentityProcessor:
+class IdentityProcessor(ProcessorStep):
     """Identity processor that does nothing."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
-
-    def get_config(self) -> dict[str, Any]:
-        return {}
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features

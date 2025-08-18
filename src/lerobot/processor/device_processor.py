@@ -18,14 +18,13 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import PolicyFeature
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import EnvTransition, ProcessorStep, ProcessorStepRegistry, TransitionKey
 from lerobot.utils.utils import get_safe_torch_device
 
 
 @ProcessorStepRegistry.register("device_processor")
 @dataclass
-class DeviceProcessor:
+class DeviceProcessor(ProcessorStep):
     """Processes transitions by moving tensors to the specified device and optionally converting float dtypes.
 
     This processor ensures that all tensors in the transition are moved to the
@@ -145,18 +144,3 @@ class DeviceProcessor:
     def get_config(self) -> dict[str, Any]:
         """Return configuration for serialization."""
         return {"device": self.device, "float_dtype": self.float_dtype}
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        """Return state dictionary (empty for this processor)."""
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """Load state dictionary (no-op for this processor)."""
-        pass
-
-    def reset(self) -> None:
-        """Reset processor state (no-op for this processor)."""
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
