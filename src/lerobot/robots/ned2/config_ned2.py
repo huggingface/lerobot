@@ -22,7 +22,8 @@ from ..config import RobotConfig
 @RobotConfig.register_subclass("ned2")
 @dataclass
 class Ned2Config(RobotConfig):
-    port: str
+    port: str = "/tmp/ttyVIRTUAL"
+    ip: str | None = None
     disable_torque_on_disconnect: bool = True
     max_relative_target: int | None = None
     cameras: dict[str, CameraConfig] = field(default_factory=dict)

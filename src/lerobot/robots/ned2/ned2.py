@@ -19,6 +19,7 @@ import sys
 import time
 from functools import cached_property
 from typing import Any
+import shutil
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.constants import OBS_STATE
@@ -45,6 +46,7 @@ class Ned2(Robot):
     def __init__(self, config: Ned2Config):
         super().__init__(config)
         self.config = config
+        self._socat_process: subprocess.Popen | None = None
         norm_mode = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
@@ -60,6 +62,67 @@ class Ned2(Robot):
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
+
+    def _start_socat_tunnel(self) -> None:
+        if self.config.ip is None:
+            return
+        if self._socat_process is not None and self._socat_process.poll() is None:
+            return
+        if shutil.which("socat") is None:
+            logger.error("Please install socat to use IP connection.")
+            return
+
+        link_path = self.config.port
+        remote = f"TCP:{self.config.ip}:7777"
+        cmd = [
+            "socat",
+            "-d",
+            "-d",
+            f"PTY,link={link_path},raw,echo=0",
+            remote,
+        ]
+
+        try:
+            self._socat_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            logger.error(f"Failed to start socat: {exc}")
+            self._socat_process = None
+            return
+
+        start_time = time.time()
+        timeout_s = 5.0
+        while not os.path.exists(link_path):
+            if self._socat_process.poll() is not None:
+                logger.error("Socat process stopped prematurely.")
+                self._socat_process = None
+                return
+            if time.time() - start_time > timeout_s:
+                logger.error("Timeout waiting for virtual device creation by socat.")
+                self._socat_process.terminate()
+                try:
+                    self._socat_process.wait(timeout=1)
+                except Exception:
+                    self._socat_process.kill()
+                self._socat_process = None
+                return
+            time.sleep(0.1)
+        logger.info(f"Tunnel socat started to {remote} and linked to {link_path}.")
+
+    def _stop_socat_tunnel(self) -> None:
+        if self._socat_process is None:
+            return
+        if self._socat_process.poll() is None:
+            try:
+                self._socat_process.terminate()
+                self._socat_process.wait(timeout=2)
+            except Exception:
+                self._socat_process.kill()
+        self._socat_process = None
+        logger.info("Tunnel socat arrêté.")
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -86,6 +149,8 @@ class Ned2(Robot):
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
+
+        self._start_socat_tunnel()
 
         self.bus.connect()
         if not self.is_calibrated and calibrate:
@@ -220,5 +285,7 @@ class Ned2(Robot):
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
+
+        self._stop_socat_tunnel()
 
         logger.info(f"{self} disconnected.") 
