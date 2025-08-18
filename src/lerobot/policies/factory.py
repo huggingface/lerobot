@@ -168,7 +168,7 @@ def make_pre_post_processors(
             config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
-    elif isinstance(policy_cfg.type, ACTConfig):
+    elif isinstance(policy_cfg, ACTConfig):
         from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
         processors = make_act_pre_post_processors(
