@@ -23,7 +23,7 @@ import torch
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.diffusion.processor_diffusion import make_diffusion_processor
+from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
 from lerobot.processor import (
     DeviceProcessor,
     NormalizerProcessor,
@@ -81,7 +81,7 @@ def test_make_diffusion_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_processor(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Check processor names
     assert preprocessor.name == "robot_preprocessor"
@@ -105,7 +105,7 @@ def test_diffusion_processor_with_images():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_processor(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Create test data with images
     observation = {
@@ -131,7 +131,7 @@ def test_diffusion_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_processor(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Create CPU data
     observation = {
@@ -164,7 +164,7 @@ def test_diffusion_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_processor(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Simulate Accelerate: data already on GPU
     device = torch.device("cuda:0")
@@ -191,7 +191,7 @@ def test_diffusion_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_processor(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Simulate data on different GPU
     device = torch.device("cuda:1")
@@ -215,7 +215,7 @@ def test_diffusion_processor_without_stats():
     """Test Diffusion processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_diffusion_processor(config, dataset_stats=None)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, dataset_stats=None)
 
     # Should still create processors
     assert preprocessor is not None
@@ -238,7 +238,7 @@ def test_diffusion_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_processor(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
@@ -269,7 +269,7 @@ def test_diffusion_processor_mixed_precision():
     stats = create_default_stats()
 
     # Create processor
-    preprocessor, postprocessor = make_diffusion_processor(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Replace DeviceProcessor with one that uses float16
     for i, step in enumerate(preprocessor.steps):
@@ -298,7 +298,7 @@ def test_diffusion_processor_identity_normalization():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_processor(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Create test data
     image_value = torch.rand(3, 224, 224) * 255  # Large values
@@ -322,7 +322,7 @@ def test_diffusion_processor_batch_consistency():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_processor(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Test with different batch sizes
     for batch_size in [1, 8, 32]:

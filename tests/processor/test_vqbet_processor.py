@@ -23,7 +23,7 @@ import torch
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.policies.vqbet.processor_vqbet import make_vqbet_processor
+from lerobot.policies.vqbet.processor_vqbet import make_vqbet_pre_post_processors
 from lerobot.processor import (
     DeviceProcessor,
     NormalizerProcessor,
@@ -81,7 +81,7 @@ def test_make_vqbet_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_processor(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
 
     # Check processor names
     assert preprocessor.name == "robot_preprocessor"
@@ -105,7 +105,7 @@ def test_vqbet_processor_with_images():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_processor(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
 
     # Create test data with images and states
     observation = {
@@ -131,7 +131,7 @@ def test_vqbet_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_processor(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
 
     # Create CPU data
     observation = {
@@ -164,7 +164,7 @@ def test_vqbet_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_processor(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
 
     # Simulate Accelerate: data already on GPU and batched
     device = torch.device("cuda:0")
@@ -191,7 +191,7 @@ def test_vqbet_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_processor(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
 
     # Simulate data on different GPU
     device = torch.device("cuda:1")
@@ -215,7 +215,7 @@ def test_vqbet_processor_without_stats():
     """Test VQBeT processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_vqbet_processor(config, dataset_stats=None)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, dataset_stats=None)
 
     # Should still create processors
     assert preprocessor is not None
@@ -238,7 +238,7 @@ def test_vqbet_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_processor(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
@@ -269,7 +269,7 @@ def test_vqbet_processor_mixed_precision():
     stats = create_default_stats()
 
     # Create processor
-    preprocessor, postprocessor = make_vqbet_processor(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
 
     # Replace DeviceProcessor with one that uses float16
     for i, step in enumerate(preprocessor.steps):
@@ -298,7 +298,7 @@ def test_vqbet_processor_large_batch():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_processor(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
 
     # Test with large batch
     batch_size = 128
@@ -323,7 +323,7 @@ def test_vqbet_processor_sequential_processing():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_processor(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
 
     # Process multiple samples sequentially
     results = []
