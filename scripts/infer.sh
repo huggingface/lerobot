@@ -1,0 +1,12 @@
+python -m lerobot.scripts.server.robot_client \
+  --server_address=128.135.245.211:8080 \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM1 \
+  --robot.id=follower0 \
+  --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video8, width: 640, height: 480, fps: 30} }" \
+  --policy_type=act \
+  --pretrained_name_or_path=/ripl/data/projects/lerobot/outputs/train/aug15_so101_pick_50_all_aug/checkpoints/020000/pretrained_model \
+  --policy_device=cuda \
+  --actions_per_chunk=100 \
+  --chunk_size_threshold=0.0 \
+  --verify_robot_cameras=False

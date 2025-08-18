@@ -313,8 +313,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.policy_image_features,
             self.device,
         )
-        # processed Observation - right keys, right dtype, right image shape
-
         return observation
 
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:

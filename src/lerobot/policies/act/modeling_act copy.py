@@ -20,7 +20,6 @@ The majority of changes here involve removing unused code, unifying naming, and 
 """
 
 import math
-import os
 from collections import deque
 from collections.abc import Callable
 from itertools import chain
@@ -30,7 +29,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
-import cv2
 from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
@@ -139,7 +137,7 @@ class ACTPolicy(PreTrainedPolicy):
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
-        # batch = self.normalize_inputs(batch)
+        batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
@@ -150,9 +148,7 @@ class ACTPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""            
-        # batch-level preprocessing and loss computation
-
-        # batch = self.normalize_inputs(batch)
+        batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
@@ -490,17 +486,6 @@ class ACT(nn.Module):
             )
 
         if self.config.image_features:
-            # # Save first image sample before encoding (applies to all forward passes)
-            # print("=============================================")
-            # debug_dir = "/ripl/data/projects/lerobot/outputs/act_forward_inputs"
-            # os.makedirs(debug_dir, exist_ok=True)
-            # imgs = batch["observation.images"][0]  # (B, C, H, W)
-            # sample = imgs[0]  # (C, H, W)
-            # img = (sample.detach().cpu().clamp(0, 1) * 255).to(torch.uint8)
-            # img = img.permute(1, 2, 0).numpy()  # (H, W, C) RGB
-            # img_bgr = img[..., ::-1]  # convert to BGR for OpenCV
-            # cv2.imwrite(os.path.join(debug_dir, "input.jpg"), img_bgr)
-
             # For a list of images, the H and W may vary but H*W is constant.
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).

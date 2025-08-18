@@ -173,3 +173,15 @@ outputs/
 
 # Dev folders
 .cache/*
+
+datasets/
+dataset/
+
+# Model folders
+models/
+model/
+
+# Checkpoint folders
+checkpoints/
+
+*.env
