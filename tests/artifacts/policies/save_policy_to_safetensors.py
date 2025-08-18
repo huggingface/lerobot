@@ -23,7 +23,7 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies.factory import make_policy, make_policy_config, make_processor
+from lerobot.policies.factory import make_policy, make_policy_config, make_pre_post_processors
 from lerobot.processor import TransitionKey
 from lerobot.utils.random_utils import set_seed
 
@@ -40,7 +40,7 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
     dataset = make_dataset(train_cfg)
     dataset_stats = dataset.meta.stats
     policy = make_policy(train_cfg.policy, ds_meta=dataset.meta)
-    preprocessor, postprocessor = make_processor(train_cfg.policy, dataset_stats=dataset_stats)
+    preprocessor, postprocessor = make_pre_post_processors(train_cfg.policy, dataset_stats=dataset_stats)
     policy.train()
 
     optimizer, _ = make_optimizer_and_scheduler(train_cfg, policy)

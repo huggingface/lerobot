@@ -28,7 +28,7 @@ from lerobot.processor import (
 )
 
 
-def make_diffusion_processor(
+def make_diffusion_pre_post_processors(
     config: DiffusionConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [

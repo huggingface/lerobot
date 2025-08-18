@@ -64,7 +64,7 @@ class Pi0NewLineProcessor(ComplementaryDataProcessor):
         return new_complementary_data
 
 
-def make_pi0_processor(
+def make_pi0_pre_post_processors(
     config: PI0Config, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
     # Add remaining processors

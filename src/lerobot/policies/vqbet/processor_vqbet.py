@@ -29,7 +29,7 @@ from lerobot.processor import (
 )
 
 
-def make_vqbet_processor(
+def make_vqbet_pre_post_processors(
     config: VQBeTConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [

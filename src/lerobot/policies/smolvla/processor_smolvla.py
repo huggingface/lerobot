@@ -33,7 +33,7 @@ from lerobot.processor.pipeline import (
 )
 
 
-def make_smolvla_processor(
+def make_smolvla_pre_post_processors(
     config: SmolVLAConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [

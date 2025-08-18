@@ -74,7 +74,7 @@ from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.datasets.video_utils import VideoEncodingManager
-from lerobot.policies.factory import make_policy, make_processor
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
 from lerobot.processor.converters import (
@@ -434,7 +434,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     preprocessor = None
     postprocessor = None
     if cfg.policy is not None:
-        preprocessor, postprocessor = make_processor(
+        preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
             pretrained_path=cfg.policy.pretrained_path,
             dataset_stats=rename_stats(dataset.meta.stats, cfg.dataset.rename_map),
