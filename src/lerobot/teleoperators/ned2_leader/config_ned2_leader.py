@@ -21,6 +21,7 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("ned2_leader")
 @dataclass
 class Ned2LeaderConfig(TeleoperatorConfig):
-    port: str
+    port: str = "/tmp/ttyVIRTUAL1"
+    ip: str | None = None
     use_degrees: bool = False 
     
