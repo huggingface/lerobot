@@ -14,12 +14,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
+
+
+@ProcessorStepRegistry.register("map_tensor_to_delta_action_dict")
+@dataclass
+class MapTensorToDeltaActionDict(ActionProcessor):
+    """
+    Map a tensor to a delta action dictionary.
+    """
+
+    def action(self, action: Tensor) -> dict:
+        if isinstance(action, dict):
+            return action
+        if action.dim() > 1:
+            action = action.squeeze(0)
+
+        # TODO (maractingi): add rotation
+        delta_action = {
+            "action.delta_x": action[0],
+            "action.delta_y": action[1],
+            "action.delta_z": action[2],
+        }
+        if action.shape[0] > 3:
+            delta_action["action.gripper"] = action[3]
+        return delta_action
 
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
@@ -53,25 +77,17 @@ class MapDeltaActionToRobotAction(ActionProcessor):
     # Scale factors for delta movements
     position_scale: float = 1.0
     rotation_scale: float = 0.0  # No rotation deltas for gamepad/keyboard
-    gripper_deadzone: float = 0.1  # Threshold for gripper activation
-    _prev_enabled: bool = field(default=False, init=False, repr=False)
 
-    def action(self, action: dict | Tensor | None) -> dict:
+    def action(self, action: dict | None) -> dict:
         if action is None:
             return {}
 
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
         # TODO (maractingi): changing this target_xyz naming convention from the teleop_devices
-        if isinstance(action, dict):
-            delta_x = action.pop("action.delta_x", 0.0)
-            delta_y = action.pop("action.delta_y", 0.0)
-            delta_z = action.pop("action.delta_z", 0.0)
-            gripper = action.pop("action.gripper", 1.0)  # Default to "stay" (1.0)
-        else:
-            delta_x = action[0].item()
-            delta_y = action[1].item()
-            delta_z = action[2].item()
-            gripper = action[3].item()
+        delta_x = action.pop("action.delta_x", 0.0)
+        delta_y = action.pop("action.delta_y", 0.0)
+        delta_z = action.pop("action.delta_z", 0.0)
+        gripper = action.pop("action.gripper", 1.0)  # Default to "stay" (1.0)
 
         # Determine if the teleoperator is actively providing input
         # Consider enabled if any significant movement delta is detected
@@ -101,7 +117,6 @@ class MapDeltaActionToRobotAction(ActionProcessor):
             "action.gripper": float(gripper),
         }
 
-        self._prev_enabled = enabled
         return action
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
@@ -120,6 +135,3 @@ class MapDeltaActionToRobotAction(ActionProcessor):
             }
         )
         return features
-
-    def reset(self):
-        self._prev_enabled = False

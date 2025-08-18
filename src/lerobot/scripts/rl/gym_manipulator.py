@@ -37,6 +37,7 @@ from lerobot.processor import (
     InterventionActionProcessor,
     JointVelocityProcessor,
     MapDeltaActionToRobotAction,
+    MapTensorToDeltaActionDict,
     MotorCurrentProcessor,
     Numpy2TorchActionProcessor,
     RewardClassifierProcessor,
@@ -80,11 +81,11 @@ class DatasetConfig:
     """Configuration for dataset creation and management."""
 
     repo_id: str
-    dataset_root: str
     task: str
-    num_episodes: int
-    episode: int
-    push_to_hub: bool
+    root: str | None = None
+    num_episodes_to_record: int = 5
+    replay_episode: int | None = None
+    push_to_hub: bool = False
 
 
 @dataclass
@@ -401,9 +402,7 @@ def make_processors(
             joint_names=motor_names,
         )
 
-    env_pipeline_steps = [
-        VanillaObservationProcessor(),
-    ]
+    env_pipeline_steps = [VanillaObservationProcessor()]
 
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
@@ -473,6 +472,7 @@ def make_processors(
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
+            MapTensorToDeltaActionDict(),
             MapDeltaActionToRobotAction(),
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
@@ -625,7 +625,7 @@ def control_loop(
         dataset = LeRobotDataset.create(
             cfg.dataset.repo_id,
             cfg.env.fps,
-            root=cfg.dataset.dataset_root,
+            root=cfg.dataset.root,
             use_videos=True,
             image_writer_threads=4,
             image_writer_processes=0,
@@ -636,7 +636,7 @@ def control_loop(
     episode_step = 0
     episode_start_time = time.perf_counter()
 
-    while episode_idx < cfg.dataset.num_episodes:
+    while episode_idx < cfg.dataset.num_episodes_to_record:
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
@@ -711,10 +711,12 @@ def control_loop(
 
 def replay_trajectory(env: gym.Env, action_processor: RobotProcessor, cfg: GymManipulatorConfig) -> None:
     """Replay recorded trajectory on robot environment."""
+    assert cfg.dataset.replay_episode is not None, "Replay episode must be provided for replay"
+
     dataset = LeRobotDataset(
         cfg.dataset.repo_id,
-        root=cfg.dataset.dataset_root,
-        episodes=[cfg.dataset.episode],
+        root=cfg.dataset.root,
+        episodes=[cfg.dataset.replay_episode],
         download_videos=False,
     )
     dataset_actions = dataset.hf_dataset.select_columns(["action"])
