@@ -57,6 +57,7 @@ class Phone(Teleoperator):
         self._enabled: bool = False
         self._calib_pos: np.ndarray | None = None
         self._calib_rot_inv: Rotation | None = None
+        self._android_lock = threading.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -151,17 +152,21 @@ class Phone(Teleoperator):
             ar_quat = getattr(pose, "ar_orientation", None)
             if ar_pos is None or ar_quat is None:
                 return False, None, None, None
+            # HEBI provides orientation in w, x, y, z format.
+            # Scipy's Rotation expects x, y, z, w.
             quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))  # wxyz to xyzw
             rot = Rotation.from_quat(quat_xyzw)
             pos = ar_pos - rot.apply(self.config.camera_offset)
             return True, pos, rot, pose
         else:
-            p = self._latest_pose
-            if p is None:
-                return False, None, None, None
+            with self._android_lock:
+                if self._latest_pose is None:
+                    return False, None, None, None
+                p = self._latest_pose.copy()
+                pose = self._latest_pose
+
             rot = Rotation.from_matrix(p[:3, :3])
             pos = p[:3, 3] - rot.apply(self.config.camera_offset)
-            pose = self._latest_pose
             return True, pos, rot, pose
 
     @property
@@ -174,9 +179,9 @@ class Phone(Teleoperator):
         pass
 
     def _android_callback(self, pose: np.ndarray, message: dict) -> None:
-        self._latest_pose = pose
-        self._latest_message = message
-        time.sleep(0.001)  # 1ms delay to avoid race condition
+        with self._android_lock:
+            self._latest_pose = pose
+            self._latest_message = message
 
     def get_action(self) -> dict:
         ok, raw_pos, raw_rot, pose = self._read_current_pose()
