@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from typing import Dict
 
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
@@ -51,9 +52,9 @@ class Reachy2RobotConfig(RobotConfig):
     with_right_teleop_camera: bool = True
     with_torso_camera: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Add cameras
-        self.cameras: dict[str, CameraConfig] = {}
+        self.cameras: Dict[str, CameraConfig] = {}
         if self.with_left_teleop_camera:
             self.cameras["teleop_left"] = Reachy2CameraConfig(
                 name="teleop",
