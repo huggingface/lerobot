@@ -95,13 +95,13 @@ repos:
   ##### Docstring Checks #####
   # - repo: https://github.com/akaihola/darglint2
   #   rev: v1.8.2
-    hooks:
+  #   hooks:
   #     - id: darglint2
   #       args: ["--docstring-style", "google", "-v", "2"]
   #       exclude: ^tests/.*$
 
   # - repo: https://github.com/econchick/interrogate
   #   rev: 1.7.0
-    hooks:
+  #   hooks:
   #     - id: interrogate
   #       args: ["-vv", "--config=pyproject.toml"]
