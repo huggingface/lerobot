@@ -77,6 +77,7 @@ class MapDeltaActionToRobotAction(ActionProcessor):
     # Scale factors for delta movements
     position_scale: float = 1.0
     rotation_scale: float = 0.0  # No rotation deltas for gamepad/keyboard
+    noise_threshold: float = 1e-3  # 1 mm threshold to filter out noise
 
     def action(self, action: dict) -> dict:
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
@@ -88,13 +89,13 @@ class MapDeltaActionToRobotAction(ActionProcessor):
 
         # Determine if the teleoperator is actively providing input
         # Consider enabled if any significant movement delta is detected
-        position_magnitude = abs(delta_x) + abs(delta_y) + abs(delta_z)
-        enabled = position_magnitude > 1e-6  # Small threshold to avoid noise
+        position_magnitude = (delta_x**2 + delta_y**2 + delta_z**2) ** 0.5  # Use Euclidean norm for position
+        enabled = position_magnitude > self.noise_threshold  # Small threshold to avoid noise
 
         # Scale the deltas appropriately
-        scaled_delta_x = float(delta_x) * self.position_scale
-        scaled_delta_y = float(delta_y) * self.position_scale
-        scaled_delta_z = float(delta_z) * self.position_scale
+        scaled_delta_x = delta_x * self.position_scale
+        scaled_delta_y = delta_y * self.position_scale
+        scaled_delta_z = delta_z * self.position_scale
 
         # For gamepad/keyboard, we don't have rotation input, so set to 0
         # These could be extended in the future for more sophisticated teleoperators
