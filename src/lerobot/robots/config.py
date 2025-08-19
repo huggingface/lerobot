@@ -15,6 +15,7 @@
 import abc
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import draccus
 
@@ -37,4 +38,4 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @property
     def type(self) -> str:
-        return self.get_choice_name(self.__class__)
+        return cast(str, self.get_choice_name(self.__class__))
