@@ -30,7 +30,7 @@ import imageio
 import numpy
 import torch
 
-from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.act.modeling_act import ACTPolicy, ACTTemporalEnsembler
 from lerobot.policies.dact.modeling_dact_a import DACTPolicyA
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
@@ -42,12 +42,19 @@ output_directory.mkdir(parents=True, exist_ok=True)
 device = "cuda"
 
 # Provide the [hugging face repo id](https://huggingface.co/lerobot/diffusion_pusht):
-pretrained_policy_path = "arclabmit/pusht_act_model"
+pretrained_policy_path = "pepijn223/act-pusht"
 # pretrained_policy_path = "lerobot/diffusion_pusht"
 # OR a path to a local outputs/train folder.
 
 # policy = DACTPolicyA.from_pretrained(pretrained_policy_path)
 policy = ACTPolicy.from_pretrained(pretrained_policy_path)
+# Enable temporal ensembling with correct configuration
+policy.config.temporal_ensemble_coeff = 0.01
+policy.config.n_action_steps = 1  # Required for temporal ensembling
+
+# Initialize temporal ensembler
+policy.temporal_ensembler = ACTTemporalEnsembler(policy.config.temporal_ensemble_coeff, policy.config.chunk_size)
+
 # policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
 
 # Initialize evaluation environment to render two observation types:
@@ -56,7 +63,7 @@ policy = ACTPolicy.from_pretrained(pretrained_policy_path)
 env = gym.make(
     "gym_pusht/PushT-v0",
     obs_type="pixels_agent_pos",
-    max_episode_steps=300,
+    max_episode_steps=150,
 )
 
 # We can verify that the shapes of the features expected by the policy match the ones from the observations

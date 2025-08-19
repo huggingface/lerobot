@@ -37,7 +37,7 @@ from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.policies.dact.configuration_dact_a import DACTConfigA
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import populate_queues
+from lerobot.policies.utils import get_device_from_parameters, populate_queues
 
 
 class DACTPolicyA(PreTrainedPolicy):
@@ -200,7 +200,8 @@ class DACTPolicyA(PreTrainedPolicy):
         """(B, T) mask with ones for valid timesteps, zeros for duplicated/padded."""
         t = self.config.n_obs_steps
         k = min(self._obs_steps_seen, t)
-        mask = torch.zeros(b, t, dtype=torch.bool, device=self.device)
+        device = get_device_from_parameters(self)
+        mask = torch.zeros(b, t, dtype=torch.bool, device=device)
         mask[:, :k] = 1
         return mask
 
