@@ -281,19 +281,19 @@ warn_redundant_casts = false
 # Exclude test files, examples, auto-generated protobuf files, and complex ML modules
 exclude = [
     "tests/",
-    "examples/", 
-    ".*_pb2\\.py$", 
+    "examples/",
+    ".*_pb2\\.py$",
     ".*_pb2_grpc\\.py$",
     # Complex ML/AI policy modules - exclude for gradual adoption
     ".*/policies/smolvla/.*\\.py$",
-    ".*/policies/pi0/.*\\.py$", 
+    ".*/policies/pi0/.*\\.py$",
     # Complex processor pipeline - exclude for now
     ".*/processor/pipeline\\.py$",
     # Import utilities with dynamic imports
     ".*/utils/import_utils\\.py$",
     # Camera utilities with complex type hierarchies
     ".*/cameras/utils\\.py$",
-    # Video utilities with external dependencies  
+    # Video utilities with external dependencies
     ".*/datasets/video_utils\\.py$",
     # Platform-specific utilities
     ".*/utils/utils\\.py$",

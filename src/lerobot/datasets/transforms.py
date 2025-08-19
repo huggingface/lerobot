@@ -16,7 +16,7 @@
 import collections
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any
 
 import torch
 from torchvision.transforms import v2
