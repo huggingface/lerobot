@@ -91,6 +91,7 @@ repos:
     hooks:
       - id: mypy
         args: [--python-version=3.10]
+        exclude: ^examples/
 
   ##### Docstring Checks #####
   # - repo: https://github.com/akaihola/darglint2
