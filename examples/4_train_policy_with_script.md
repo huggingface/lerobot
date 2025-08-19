@@ -62,7 +62,7 @@ By default, every field takes its default value specified in the dataclass. If a
 Let's say that we want to train [Diffusion Policy](../src/lerobot/policies/diffusion) on the [pusht](https://huggingface.co/datasets/lerobot/pusht) dataset, using the [gym_pusht](https://github.com/huggingface/gym-pusht) environment for evaluation. The command to do so would look like this:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --dataset.repo_id=lerobot/pusht \
     --policy.type=diffusion \
     --env.type=pusht
@@ -77,7 +77,7 @@ Let's break this down:
 Let's see another example. Let's say you've been training [ACT](../src/lerobot/policies/act) on [lerobot/aloha_sim_insertion_human](https://huggingface.co/datasets/lerobot/aloha_sim_insertion_human) using the [gym-aloha](https://github.com/huggingface/gym-aloha) environment for evaluation with:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --policy.type=act \
     --dataset.repo_id=lerobot/aloha_sim_insertion_human \
     --env.type=aloha \
@@ -90,7 +90,7 @@ We now want to train a different policy for aloha on another task. We'll change 
 Looking at the [`AlohaEnv`](../src/lerobot/envs/configs.py) config, the task is `"AlohaInsertion-v0"` by default, which corresponds to the task we trained on in the command above. The [gym-aloha](https://github.com/huggingface/gym-aloha?tab=readme-ov-file#description) environment also has the `AlohaTransferCube-v0` task which corresponds to this other task we want to train on. Putting this together, we can train this new policy on this different task using:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --policy.type=act \
     --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
     --env.type=aloha \
@@ -127,7 +127,7 @@ Now, let's assume that we want to reproduce the run just above. That run has pro
 We can then simply load the config values from this file using:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
     --output_dir=outputs/train/act_aloha_transfer_2
 ```
@@ -137,7 +137,7 @@ python -m lerobot.scripts.train \
 Similarly to Hydra, we can still override some parameters in the CLI if we want to, e.g.:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
     --output_dir=outputs/train/act_aloha_transfer_2
     --policy.n_action_steps=80
@@ -148,7 +148,7 @@ python -m lerobot.scripts.train \
 `--config_path` can also accept the repo_id of a repo on the hub that contains a `train_config.json` file, e.g. running:
 
 ```bash
-python -m lerobot.scripts.train --config_path=lerobot/diffusion_pusht
+lerobot-train --config_path=lerobot/diffusion_pusht
 ```
 
 will start a training run with the same configuration used for training [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht)
@@ -160,7 +160,7 @@ Being able to resume a training run is important in case it crashed or aborted f
 Let's reuse the command from the previous run and add a few more options:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --policy.type=act \
     --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
     --env.type=aloha \
@@ -179,7 +179,7 @@ INFO 2025-01-24 16:10:56 ts/train.py:263 Checkpoint policy after step 100
 Now let's simulate a crash by killing the process (hit `ctrl`+`c`). We can then simply resume this run from the last checkpoint available with:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
     --resume=true
 ```
@@ -190,7 +190,7 @@ Another reason for which you might want to resume a run is simply to extend trai
 You could double the number of steps of the previous run with:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
     --resume=true \
     --steps=200000
@@ -224,7 +224,7 @@ In addition to the features currently in Draccus, we've added a special `.path` 
 For example, we could fine-tune a [policy pre-trained on the aloha transfer task](https://huggingface.co/lerobot/act_aloha_sim_transfer_cube_human) on the aloha insertion task. We can achieve this with:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --policy.path=lerobot/act_aloha_sim_transfer_cube_human \
     --dataset.repo_id=lerobot/aloha_sim_insertion_human \
     --env.type=aloha \
@@ -270,7 +270,7 @@ We'll summarize here the main use cases to remember from this tutorial.
 #### Train a policy from scratch – CLI
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --policy.type=act \  # <- select 'act' policy
     --env.type=pusht \  # <- select 'pusht' environment
     --dataset.repo_id=lerobot/pusht  # <- train on this dataset
@@ -279,7 +279,7 @@ python -m lerobot.scripts.train \
 #### Train a policy from scratch - config file + CLI
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --config_path=path/to/pretrained_model \  # <- can also be a repo_id
     --policy.n_action_steps=80  # <- you may still override values
 ```
@@ -287,7 +287,7 @@ python -m lerobot.scripts.train \
 #### Resume/continue a training run
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --config_path=checkpoint/pretrained_model/ \
     --resume=true \
     --steps=200000  # <- you can change some training parameters
@@ -296,7 +296,7 @@ python -m lerobot.scripts.train \
 #### Fine-tuning
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
     --policy.path=lerobot/act_aloha_sim_transfer_cube_human \  # <- can also be a local path to a checkpoint
     --dataset.repo_id=lerobot/aloha_sim_insertion_human \
     --env.type=aloha \

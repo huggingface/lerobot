@@ -29,7 +29,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Install system dependencies and uv (as root)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git curl libglib2.0-0 libegl1-mesa ffmpeg \
+    build-essential git curl libglib2.0-0 libegl1-mesa-dev ffmpeg \
     libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
