@@ -34,7 +34,7 @@ from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
-from lerobot.policies.dact.variant_a.configuration_dact_a import DACTConfigA
+from lerobot.policies.dact.configuration_dact_a import DACTConfigA
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
@@ -73,7 +73,7 @@ class DACTPolicyA(PreTrainedPolicy):
             config.output_features, config.normalization_mapping, dataset_stats
         )
 
-        self.model = ACT(config)
+        self.model = DACT(config)
 
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
@@ -301,7 +301,7 @@ class DACTPolicyA(PreTrainedPolicy):
 
         # 7) Loss (masking unchanged)
         l1_loss = (
-            F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
+            F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch[f"{ACTION}_is_pad"].unsqueeze(-1)
         ).mean()
 
         loss_dict = {"l1_loss": l1_loss.item()}
@@ -406,7 +406,7 @@ class ACTTemporalEnsembler:
         return action
 
 
-class ACT(nn.Module):
+class DACT(nn.Module):
     """Action Chunking Transformer: The underlying neural network for ACTPolicy.
 
     Note: In this code we use the terms `vae_encoder`, 'encoder', `decoder`. The meanings are as follows.
@@ -548,25 +548,25 @@ class ACT(nn.Module):
             latent dimension.
         """
         if self.config.use_vae and self.training:
-            assert "action" in batch, (
+            assert ACTION in batch, (
                 "actions must be provided when using the variational objective in training mode."
             )
 
-        if "observation.images" in batch:
-            batch_size = batch["observation.images"][0].shape[0]
+        if OBS_IMAGES in batch:
+            batch_size = batch[OBS_IMAGES][0].shape[0]
         else:
-            batch_size = batch["observation.environment_state"].shape[0]
+            batch_size = batch[OBS_ENV_STATE].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
-        if self.config.use_vae and "action" in batch and self.training:
+        if self.config.use_vae and ACTION in batch and self.training:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
             )  # (B, 1, D)
             if self.config.robot_state_feature:
-                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch["observation.state"])
+                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch[OBS_STATE])
                 robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
-            action_embed = self.vae_encoder_action_input_proj(batch["action"])  # (B, S, D)
+            action_embed = self.vae_encoder_action_input_proj(batch[ACTION])  # (B, S, D)
 
             if self.config.robot_state_feature:
                 vae_encoder_input = [cls_embed, robot_state_embed, action_embed]  # (B, S+2, D)
@@ -584,10 +584,10 @@ class ACT(nn.Module):
             cls_joint_is_pad = torch.full(
                 (batch_size, 2 if self.config.robot_state_feature else 1),
                 False,
-                device=batch["observation.state"].device,
+                device=batch[OBS_STATE].device,
             )
             key_padding_mask = torch.cat(
-                [cls_joint_is_pad, batch["action_is_pad"]], axis=1
+                [cls_joint_is_pad, batch[f"{ACTION}_is_pad"]], axis=1
             )  # (bs, seq+1 or 2)
 
             # Forward pass through VAE encoder to get the latent PDF parameters.
@@ -608,7 +608,7 @@ class ACT(nn.Module):
             mu = log_sigma_x2 = None
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
             latent_sample = torch.zeros([batch_size, self.config.latent_dim], dtype=torch.float32).to(
-                batch["observation.state"].device
+                batch[OBS_STATE].device
             )
 
         # Prepare transformer encoder inputs.
@@ -616,18 +616,18 @@ class ACT(nn.Module):
         encoder_in_pos_embed = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
         # Robot state token.
         if self.config.robot_state_feature:
-            encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch["observation.state"]))
+            encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch[OBS_STATE]))
         # Environment state token.
         if self.config.env_state_feature:
             encoder_in_tokens.append(
-                self.encoder_env_state_input_proj(batch["observation.environment_state"])
+                self.encoder_env_state_input_proj(batch[OBS_ENV_STATE])
             )
 
         if self.config.image_features:
             # For a list of images, the H and W may vary but H*W is constant.
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
-            for img in batch["observation.images"]:
+            for img in batch[OBS_IMAGES]:
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)

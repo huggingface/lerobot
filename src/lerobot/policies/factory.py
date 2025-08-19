@@ -25,7 +25,7 @@ from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.dact.variant_a.configuration_dact_a import DACTConfigA
+from lerobot.policies.dact.configuration_dact_a import DACTConfigA
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
@@ -76,7 +76,7 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
 
         return SmolVLAPolicy
     elif name == "dact_a":
-        from lerobot.policies.dact.variant_a.modeling_dact_a import DACTPolicyA
+        from lerobot.policies.dact.modeling_dact_a import DACTPolicyA
 
         return DACTPolicyA
     else:
