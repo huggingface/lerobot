@@ -564,7 +564,7 @@ def eval_policy_multitask(
     def eval_task(task_group, task_id, env):
         """Evaluates a single task in parallel."""
         print(f"Evaluating: task_group: {task_group}, task_id: {task_id} ...")
-        # jadechoghari : added multi video eval support 
+        # jadechoghari : added multi video eval support
         if videos_dir is not None:
             task_videos_dir = videos_dir / f"{task_group}_{task_id}"
             task_videos_dir.mkdir(parents=True, exist_ok=True)
