@@ -37,7 +37,7 @@ class EpisodeAwareSampler:
             drop_n_last_frames: Number of frames to drop from the end of each episode.
             shuffle: Whether to shuffle the indices.
         """
-        indices = []
+        indices: list[int] = []
         for episode_idx, (start_index, end_index) in enumerate(
             zip(episode_data_index["from"], episode_data_index["to"], strict=True)
         ):

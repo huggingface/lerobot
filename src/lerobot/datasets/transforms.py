@@ -16,7 +16,7 @@
 import collections
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, List, Optional
 
 import torch
 from torchvision.transforms import v2
@@ -68,6 +68,7 @@ class RandomSubsetApply(Transform):
         self.p = [prob / total for prob in p]
         self.n_subset = n_subset
         self.random_order = random_order
+        self.selected_transforms: Optional[List[Callable]] = None
 
         self.selected_transforms = None
 
