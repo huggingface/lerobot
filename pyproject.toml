@@ -279,7 +279,7 @@ module = [
     "torch",
     "torch.*",
     "numpy",
-    "numpy.*", 
+    "numpy.*",
     "transformers",
     "transformers.*",
     "torchvision",
