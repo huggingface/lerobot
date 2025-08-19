@@ -257,7 +257,6 @@ def eval_policy(
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
     # divisible by env.num_envs we end up discarding some data in the last batch.
     n_batches = n_episodes // env.num_envs + int((n_episodes % env.num_envs) != 0)
-    print("n_batches", n_batches)
 
     # Keep track of some metrics.
     sum_rewards = []
@@ -565,12 +564,16 @@ def eval_policy_multitask(
     def eval_task(task_group, task_id, env):
         """Evaluates a single task in parallel."""
         print(f"Evaluating: task_group: {task_group}, task_id: {task_id} ...")
+        # jadechoghari : added multi video eval support 
+        if videos_dir is not None:
+            task_videos_dir = videos_dir / f"{task_group}_{task_id}"
+            task_videos_dir.mkdir(parents=True, exist_ok=True)
         task_result = eval_policy(
             env,
             policy,
             n_episodes,
             max_episodes_rendered,
-            videos_dir,
+            task_videos_dir,
             return_episode_data,
             start_seed,
             # verbose=verbose,

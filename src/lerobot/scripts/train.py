@@ -262,17 +262,15 @@ def train(cfg: TrainPipelineConfig):
                         start_seed=cfg.seed,
                         max_parallel_tasks=cfg.env.max_parallel_tasks,
                     )
-                    aggregated_results = eval_info["overall"]["aggregated"]
+                    aggregated = eval_info["overall"]["aggregated"]
                     # Print per-suite stats
                     for task_group, task_group_info in eval_info.items():
                         if task_group == "overall":
                             continue  # Skip the overall stats since we already printed it
                         print(f"\nAggregated Metrics for {task_group}:")
                         print(task_group_info["aggregated"])
-                    breakpoint()
                 else:
                     print("START EVAL")
-                    breakpoint()
                     eval_info = eval_policy(
                         eval_env,
                         policy,
@@ -302,7 +300,13 @@ def train(cfg: TrainPipelineConfig):
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
 
     if eval_env:
-        eval_env.close()
+        # added by jade, close all env in multi eval setup
+        if cfg.env.multitask_eval:
+            for task_group, envs_dict in eval_env.items():
+                for idx, env in envs_dict.items():
+                    env.close()
+        else:
+            eval_env.close()
     logging.info("End of training")
 
     if cfg.policy.push_to_hub:
