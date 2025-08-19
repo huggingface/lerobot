@@ -275,6 +275,22 @@ exclude = ["tests/", "examples/", ".*_pb2\\.py$", ".*_pb2_grpc\\.py$"]
 # External libraries without type stubs
 [[tool.mypy.overrides]]
 module = [
+    # Core ML/AI libraries
+    "torch",
+    "torch.*",
+    "numpy",
+    "numpy.*", 
+    "transformers",
+    "transformers.*",
+    "torchvision",
+    "torchvision.*",
+    "packaging",
+    "packaging.*",
+    "huggingface_hub",
+    "huggingface_hub.*",
+    "pytest",
+    "pytest.*",
+    # Hardware libraries
     "draccus",
     "draccus.*",
     "pyrealsense2",
@@ -285,6 +301,7 @@ module = [
     "feetech_servo_sdk.*",
     "dynamixel_sdk",
     "dynamixel_sdk.*",
+    # Environment libraries
     "gymnasium",
     "gymnasium.*",
     "gym_aloha",
@@ -293,6 +310,7 @@ module = [
     "gym_pusht.*",
     "gym_xarm",
     "gym_xarm.*",
+    # Input/System libraries
     "pynput",
     "pynput.*",
     "pygame",
