@@ -70,8 +70,6 @@ class RandomSubsetApply(Transform):
         self.random_order = random_order
         self.selected_transforms: list[Callable] | None = None
 
-        self.selected_transforms = None
-
     def forward(self, *inputs: Any) -> Any:
         needs_unpacking = len(inputs) > 1
 
