@@ -257,8 +257,79 @@ default.extend-ignore-identifiers-re = [
 # color = true
 # paths = ["src/lerobot"]
 
-# [tool.mypy]
-# python_version = "3.10"
-# warn_return_any = true
-# warn_unused_configs = true
-# ignore_missing_imports = false
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = false
+# Gradual typing
+no_implicit_optional = true
+strict_optional = true
+# Display error codes
+show_error_codes = true
+# Better error messages  
+pretty = true
+# Exclude test files, examples, and auto-generated protobuf files
+exclude = ["tests/", "examples/", ".*_pb2\\.py$", ".*_pb2_grpc\\.py$"]
+
+# External libraries without type stubs
+[[tool.mypy.overrides]]
+module = [
+    "draccus",
+    "draccus.*",
+    "pyrealsense2",
+    "pyrealsense2.*",
+    "placo",
+    "placo.*",
+    "feetech_servo_sdk",
+    "feetech_servo_sdk.*",
+    "dynamixel_sdk",
+    "dynamixel_sdk.*",
+    "gymnasium",
+    "gymnasium.*",
+    "gym_aloha",
+    "gym_aloha.*",
+    "gym_pusht",
+    "gym_pusht.*",
+    "gym_xarm",
+    "gym_xarm.*",
+    "pynput",
+    "pynput.*",
+    "pygame",
+    "pygame.*",
+    "av",
+    "av.*",
+    "pyzmq",
+    "pyzmq.*",
+    "grpcio",
+    "grpcio.*",
+    "protobuf",
+    "protobuf.*",
+    "wandb",
+    "wandb.*",
+    "hidapi",
+    "hidapi.*",
+    "num2words",
+    "num2words.*",
+    "accelerate",
+    "accelerate.*",
+    "pymunk",
+    "pymunk.*",
+    "gym_hil",
+    "gym_hil.*",
+    "mock_serial",
+    "mock_serial.*",
+    "serial",
+    "serial.*",
+    "pyserial",
+    "pyserial.*",
+    "rerun",
+    "rerun.*",
+    "lerobot.transport.services_pb2",
+    "lerobot.transport.services_pb2_grpc",
+    "google.protobuf",
+    "google.protobuf.*",
+    "cv2",
+    "hid",
+]
+ignore_missing_imports = true
