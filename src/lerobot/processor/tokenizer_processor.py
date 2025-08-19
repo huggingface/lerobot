@@ -187,19 +187,6 @@ class TokenizerProcessor(ObservationProcessor):
         if isinstance(action, torch.Tensor):
             return action.device
 
-        # Check other tensor fields
-        for key in [TransitionKey.REWARD, TransitionKey.DONE, TransitionKey.TRUNCATED]:
-            value = transition.get(key)
-            if isinstance(value, torch.Tensor):
-                return value.device
-
-        # Check complementary data for tensors
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
-        if complementary_data:
-            for value in complementary_data.values():
-                if isinstance(value, torch.Tensor):
-                    return value.device
-
         return None  # No tensors found, keep on CPU
 
     def _tokenize_text(self, text: str | list[str]) -> dict[str, torch.Tensor]:
@@ -235,7 +222,8 @@ class TokenizerProcessor(ObservationProcessor):
         }
 
         # Only include tokenizer_name if it was used (not when tokenizer object was provided)
-        if self.tokenizer_name is not None:
+        # TODO(steven): Consider saving the name of the _tokenizer if it was loaded
+        if self.tokenizer_name is not None and self.tokenizer is None:
             config["tokenizer_name"] = self.tokenizer_name
 
         return config
