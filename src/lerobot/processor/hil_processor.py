@@ -1,3 +1,4 @@
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -236,6 +237,7 @@ class InterventionActionProcessor(ProcessorStep):
     def get_config(self) -> dict[str, Any]:
         return {
             "use_gripper": self.use_gripper,
+            "terminate_on_success": self.terminate_on_success,
         }
 
 
@@ -283,7 +285,7 @@ class RewardClassifierProcessor(ProcessorStep):
         reward = transition.get(TransitionKey.REWARD, 0.0)
         terminated = transition.get(TransitionKey.DONE, False)
 
-        if success == 1.0:
+        if math.isclose(success, 1, abs_tol=1e-2):
             reward = self.success_reward
             if self.terminate_on_success:
                 terminated = True
