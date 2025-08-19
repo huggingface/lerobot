@@ -68,7 +68,7 @@ class RandomSubsetApply(Transform):
         self.p = [prob / total for prob in p]
         self.n_subset = n_subset
         self.random_order = random_order
-        self.selected_transforms: Optional[List[Callable]] = None
+        self.selected_transforms: list[Callable] | None = None
 
         self.selected_transforms = None
 

@@ -284,7 +284,7 @@ exclude = [
     # Complex ML/AI policy modules - exclude for gradual adoption
     "src/lerobot/policies/smolvla/.*",
     "src/lerobot/policies/pi0/.*",
-    # Complex processor pipeline - exclude for now  
+    # Complex processor pipeline - exclude for now
     "src/lerobot/processor/pipeline.py",
     # Import utilities with dynamic imports
     "src/lerobot/utils/import_utils.py",
