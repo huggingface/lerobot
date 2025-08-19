@@ -270,7 +270,8 @@ class DACTPolicyA(PreTrainedPolicy):
         if OBS_STATE in hist:
             mask_key_candidates.append(f"{OBS_STATE}_is_pad")
         if self.config.image_features:
-            mask_key_candidates.append(f"{self.config.image_features[0]}_is_pad")
+            for key in self.config.image_features:
+                mask_key_candidates.append(f"{key}_is_pad")
         if OBS_ENV_STATE in hist:
             mask_key_candidates.append(f"{OBS_ENV_STATE}_is_pad")
 
