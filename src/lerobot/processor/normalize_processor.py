@@ -55,7 +55,7 @@ class _NormalizationMixin:
 
     def __post_init__(self):
         # Handle deserialization from JSON config
-        if self.features and isinstance(list(self.features.values())[0], dict):
+        if self.features and isinstance(next(iter(self.features.values())), dict):
             # Features came from JSON - need to reconstruct PolicyFeature objects
             reconstructed_features = {}
             for key, ft_dict in self.features.items():
@@ -100,7 +100,6 @@ class _NormalizationMixin:
 
         if norm_mode not in (NormalizationMode.MEAN_STD, NormalizationMode.MIN_MAX):
             raise ValueError(f"Unsupported normalization mode : {norm_mode}")
-        print(f"Tensor stats for {key}: {self._tensor_stats[key]}")
         stats = {k: v.to(tensor.device) for k, v in self._tensor_stats[key].items()}
         tensor = tensor.to(dtype=torch.float32)
 
@@ -115,9 +114,6 @@ class _NormalizationMixin:
             return 2 * (tensor - min_val) / (max_val - min_val + self.eps) - 1
 
         return tensor
-
-
-# missing keys_to_norm
 
 
 @dataclass
@@ -165,24 +161,32 @@ class ActionUnnormalizer(ActionProcessor, _NormalizationMixin):
 
 
 @dataclass
+class _BaseNormalizerProcessor(ProcessorStep, _NormalizationMixin):
+    _obs_processor: ObservationProcessor = field(init=False, repr=False)
+    _action_processor: ActionProcessor = field(init=False, repr=False)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        transition = self._obs_processor(transition)
+        transition = self._action_processor(transition)
+        return transition
+
+    def get_config(self) -> dict[str, Any]:
+        config = {
+            "eps": self.eps,
+            "features": {
+                key: {"type": ft.type.value, "shape": ft.shape} for key, ft in self.features.items()
+            },
+            "norm_map": {ft_type.value: norm_mode.value for ft_type, norm_mode in self.norm_map.items()},
+        }
+        if self.normalize_keys is not None:
+            config["normalize_keys"] = sorted(self.normalize_keys)
+        return config
+
+
+@dataclass
 @ProcessorStepRegistry.register(name="normalizer_processor")
-class NormalizerProcessor(ProcessorStep):
+class NormalizerProcessor(_BaseNormalizerProcessor):
     """A composite processor that normalizes both observations and actions."""
-
-    # --- Attributes required to build sub-processors ---
-    features: dict[str, PolicyFeature]
-    norm_map: dict[FeatureType, NormalizationMode]
-    stats: dict[str, dict[str, Any]] | None = None
-    eps: float = 1e-8
-
-    # Explicit subset of keys to normalise. If ``None`` every key (except
-    # "action") found in ``stats`` will be normalised. Using a ``set`` makes
-    # membership checks O(1).
-    normalize_keys: set[str] | None = None
-
-    # --- Sub-processors (will be initialized in __post_init__) ---
-    _obs_normalizer: ObservationNormalizer = field(init=False, repr=False)
-    _action_normalizer: ActionNormalizer = field(init=False, repr=False)
 
     @classmethod
     def from_lerobot_dataset(
@@ -209,67 +213,25 @@ class NormalizerProcessor(ProcessorStep):
         )
 
     def __post_init__(self):
-        self._obs_normalizer = ObservationNormalizer(
+        # The parent's __post_init__ handles stats and JSON deserialization
+        super().__post_init__()
+
+        self._obs_processor = ObservationNormalizer(
             features=self.features,
             norm_map=self.norm_map,
             stats=self.stats,
             eps=self.eps,
             normalize_keys=self.normalize_keys,
         )
-        self._action_normalizer = ActionNormalizer(
+        self._action_processor = ActionNormalizer(
             features=self.features, norm_map=self.norm_map, stats=self.stats, eps=self.eps
         )
-
-        # Ensure *normalize_keys* is a set for fast look-ups and compare by
-        # value later when returning the configuration.
-        if self.normalize_keys is not None and not isinstance(self.normalize_keys, set):
-            self.normalize_keys = set(self.normalize_keys)
-
-        if self.stats is not None:
-            self._tensor_stats = _convert_stats_to_tensors(self.stats)
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Delegates processing to the specialized sub-processors."""
-        transition = self._obs_normalizer(transition)
-        transition = self._action_normalizer(transition)
-        return transition
-
-    def get_config(self) -> dict[str, Any]:
-        config = {
-            "eps": self.eps,
-            "features": {
-                key: {"type": ft.type.value, "shape": ft.shape} for key, ft in self.features.items()
-            },
-            "norm_map": {ft_type.value: norm_mode.value for ft_type, norm_mode in self.norm_map.items()},
-        }
-        if self.normalize_keys is not None:
-            # Serialise as a list for YAML / JSON friendliness
-            config["normalize_keys"] = sorted(self.normalize_keys)
-        return config
-
-    def state_dict(self) -> dict[str, Tensor]:
-        return self._obs_normalizer.state_dict()  # Stats are shared
-
-    def load_state_dict(self, state: dict[str, Tensor]) -> None:
-        self._obs_normalizer.load_state_dict(
-            state
-        )  # TODO(Steven): self._tensor_stats Doesn't get updated when for example we call load_state_dict
-        self._action_normalizer.load_state_dict(state)
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="unnormalizer_processor")
-class UnnormalizerProcessor(ProcessorStep):
+class UnnormalizerProcessor(_BaseNormalizerProcessor):
     """A composite processor that unnormalizes both observations and actions."""
-
-    # --- Attributes ---
-    features: dict[str, PolicyFeature]
-    norm_map: dict[FeatureType, NormalizationMode]
-    stats: dict[str, dict[str, Any]] | None = None
-
-    # --- Sub-processors ---
-    _obs_unnormalizer: ObservationUnnormalizer = field(init=False, repr=False)
-    _action_unnormalizer: ActionUnnormalizer = field(init=False, repr=False)
 
     @classmethod
     def from_lerobot_dataset(
@@ -281,58 +243,25 @@ class UnnormalizerProcessor(ProcessorStep):
         return cls(features=features, norm_map=norm_map, stats=dataset.meta.stats)
 
     def __post_init__(self):
-        self._obs_unnormalizer = ObservationUnnormalizer(
+        super().__post_init__()
+
+        self._obs_processor = ObservationUnnormalizer(
             features=self.features, norm_map=self.norm_map, stats=self.stats
         )
-        self._action_unnormalizer = ActionUnnormalizer(
+        self._action_processor = ActionUnnormalizer(
             features=self.features, norm_map=self.norm_map, stats=self.stats
         )
-        if self.stats is not None:
-            self._tensor_stats = _convert_stats_to_tensors(self.stats)
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Delegates processing to the specialized sub-processors."""
-        transition = self._obs_unnormalizer(transition)
-        transition = self._action_unnormalizer(transition)
-        return transition
-
-    def get_config(self) -> dict[str, Any]:
-        return {
-            "features": {
-                key: {"type": ft.type.value, "shape": ft.shape} for key, ft in self.features.items()
-            },
-            "norm_map": {ft_type.value: norm_mode.value for ft_type, norm_mode in self.norm_map.items()},
-        }
-
-    def state_dict(self) -> dict[str, Tensor]:
-        return self._obs_unnormalizer.state_dict()
-
-    def load_state_dict(self, state: dict[str, Tensor]) -> None:
-        self._obs_unnormalizer.load_state_dict(state)
-        self._action_unnormalizer.load_state_dict(state)
 
 
 def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, Any]]) -> RobotProcessor:
     """Replaces normalization statistics in a RobotProcessor pipeline."""
     robot_processor = deepcopy(robot_processor)
     for step in robot_processor.steps:
-        # Check if the step has the stats we need to replace
-        if hasattr(step, "stats") and hasattr(step, "_tensor_stats"):
+        # Check if the step is a normalizer/unnormalizer
+        if isinstance(step, _BaseNormalizerProcessor):
+            # Update the state in one place
             step.stats = stats
             step._tensor_stats = _convert_stats_to_tensors(stats)
-        # For composite processors, also update their sub-processors
-        if hasattr(step, "_obs_normalizer"):
-            step._obs_normalizer.stats = stats
-            step._obs_normalizer._tensor_stats = _convert_stats_to_tensors(stats)
-        if hasattr(step, "_action_normalizer"):
-            step._action_normalizer.stats = stats
-            step._action_normalizer._tensor_stats = _convert_stats_to_tensors(stats)
-        if hasattr(step, "_obs_unnormalizer"):
-            step._obs_unnormalizer.stats = stats
-            step._obs_unnormalizer._tensor_stats = _convert_stats_to_tensors(stats)
-        if hasattr(step, "_action_unnormalizer"):
-            step._action_unnormalizer.stats = stats
-            step._action_unnormalizer._tensor_stats = _convert_stats_to_tensors(stats)
     return robot_processor
 
 
