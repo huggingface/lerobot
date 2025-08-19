@@ -267,7 +267,7 @@ no_implicit_optional = true
 strict_optional = true
 # Display error codes
 show_error_codes = true
-# Better error messages  
+# Better error messages
 pretty = true
 # Exclude test files, examples, and auto-generated protobuf files
 exclude = ["tests/", "examples/", ".*_pb2\\.py$", ".*_pb2_grpc\\.py$"]
