@@ -234,6 +234,12 @@ class DACTPolicyA(PreTrainedPolicy):
         b = next(iter(hist.values())).shape[0]
         t_mask = self._time_mask(b)
         hist = self._temporal_pool(hist, t_mask)
+
+        # Convert images to list format
+        if self.config.image_features:
+            hist = dict(hist)  # shallow copy
+            hist[OBS_IMAGES] = [hist[key] for key in self.config.image_features]
+
         actions = self.model(hist)[0]
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
