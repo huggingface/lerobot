@@ -14,19 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypedDict, Optional, Union, Dict, Any
+from typing import Dict, Optional, TypedDict, Union
 
 import torch
 
 
 class Transition(TypedDict, total=False):
-    state: Dict[str, torch.Tensor]
+    state: dict[str, torch.Tensor]
     action: torch.Tensor
     reward: float
-    next_state: Dict[str, torch.Tensor]
+    next_state: dict[str, torch.Tensor]
     done: bool
     truncated: bool
-    complementary_info: Optional[Dict[str, Union[torch.Tensor, float, int]]]
+    complementary_info: dict[str, torch.Tensor | float | int] | None
 
 
 def move_transition_to_device(transition: Transition, device: str = "cpu") -> Transition:
