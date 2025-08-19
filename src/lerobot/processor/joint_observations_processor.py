@@ -16,9 +16,7 @@ from lerobot.robots import Robot
 class JointVelocityProcessor(ObservationProcessor):
     """Add joint velocity information to observations."""
 
-    joint_velocity_limits: float = 100.0
-    dt: float = 1.0 / 10
-    num_dof: int | None = None
+    dt: float = 0.1
 
     last_joint_positions: torch.Tensor | None = None
 
@@ -26,14 +24,17 @@ class JointVelocityProcessor(ObservationProcessor):
         # Get current joint positions (assuming they're in observation.state)
         current_positions = observation.get("observation.state")
         if current_positions is None:
+            # TODO(steven): if we get here, then the transform_features method will not hold
             return observation
 
         # Initialize last joint positions if not already set
         if self.last_joint_positions is None:
             self.last_joint_positions = current_positions.clone()
+            joint_velocities = torch.zeros_like(current_positions)
+        else:
+            # Compute velocities
+            joint_velocities = (current_positions - self.last_joint_positions) / self.dt
 
-        # Compute velocities
-        joint_velocities = (current_positions - self.last_joint_positions) / self.dt
         self.last_joint_positions = current_positions.clone()
 
         # Extend observation with velocities
@@ -47,7 +48,6 @@ class JointVelocityProcessor(ObservationProcessor):
 
     def get_config(self) -> dict[str, Any]:
         return {
-            "joint_velocity_limits": self.joint_velocity_limits,
             "dt": self.dt,
         }
 
@@ -55,12 +55,11 @@ class JointVelocityProcessor(ObservationProcessor):
         self.last_joint_positions = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        if "observation.state" in features and self.num_dof is not None:
-            from lerobot.configs.types import PolicyFeature
-
+        if "observation.state" in features:
             original_feature = features["observation.state"]
             # Double the shape to account for positions + velocities
-            new_shape = (original_feature.shape[0] + self.num_dof,) + original_feature.shape[1:]
+            new_shape = (original_feature.shape[0] * 2,) + original_feature.shape[1:]
+
             features["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
         return features
 
