@@ -126,7 +126,7 @@ class DACTConfigA(PreTrainedConfig):
 
     # Inference.
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
-    temporal_ensemble_coeff: float | None = None
+    temporal_ensemble_coeff: float | None = 0.01
 
     # Training and loss computation.
     dropout: float = 0.1

@@ -116,6 +116,10 @@ class DACTPolicyA(PreTrainedPolicy):
             self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
 
         self._obs_steps_seen = 0
+        if self.config.temporal_ensemble_coeff is not None:
+            self.temporal_ensembler.reset()
+        else:
+            self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -406,6 +410,31 @@ class ACTTemporalEnsembler:
         )
         return action
 
+class TemporalAttentionPool1D(nn.Module):
+    """
+    Pools a temporal sequence (B, T, D) -> (B, D) with a learnable query.
+    'mask': (B, T) with True=valid will be converted for the attention mask.
+    """
+    def __init__(self, config: DACTConfigA):
+        super().__init__()
+        self.query =  nn.Parameter(torch.randn(1, 1, config.dim_model)) # (1, 1, D)
+        self.attn = nn.MultiheadAttention(num_heads=config.n_heads, embed_dim=config.dim_model, batch_first=True)
+        self.time_pos_embed = nn.Embedding(config.chunk_size, config.dim_model) # (T, D)
+
+    def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+        # x: (B, T, D), mask: (B, T) True=valid
+        b, t, d = x.shape
+
+        # Fetch the first T positional vectors and broadcast across the batch
+        t_ids = torch.arange(t, device=x.device)
+        t_pos_embed = self.time_pos_embed(t_ids)[None, :, :].expand(b, t, d)
+
+        x = x + t_pos_embed
+
+        kpm = None if mask is None else ~mask
+        q = self.query.expand(b, -1, -1)
+        out, _ = self.attn(q, x, x, key_padding_mask=kpm)
+        return out
 
 class DACT(nn.Module):
     """Action Chunking Transformer: The underlying neural network for ACTPolicy.
