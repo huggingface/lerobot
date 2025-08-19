@@ -236,9 +236,11 @@ class DACTPolicyA(PreTrainedPolicy):
         hist = self._temporal_pool(hist, t_mask)
 
         # Convert images to list format
-        if self.config.image_features:
+        if self.config.image_features and OBS_IMAGES in hist:
             hist = dict(hist)  # shallow copy
-            hist[OBS_IMAGES] = [hist[key] for key in self.config.image_features]
+            # hist[OBS_IMAGES] already contains the pooled images (B, n_cams, C, H, W)
+            # Convert to list format: (B, n_cams, C, H, W) -> list of (B, C, H, W)
+            hist[OBS_IMAGES] = [hist[OBS_IMAGES][:, i] for i in range(hist[OBS_IMAGES].shape[1])]
 
         actions = self.model(hist)[0]
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
@@ -433,14 +435,41 @@ class TemporalAttentionPool1D(nn.Module):
         b, t, d = x.shape
 
         # Fetch the first T positional vectors and broadcast across the batch
-        t_ids = torch.arange(t, device=x.device)
-        t_pos_embed = self.time_pos_embed(t_ids)[None, :, :].expand(b, t, d)
+        device = get_device_from_parameters(self)
+        t_ids = torch.arange(t, device=device)
+        t_pos_embed = self.time_pos_embed(t_ids).unsqueeze(0).expand(b, t, d)
 
         x = x + t_pos_embed
 
         kpm = None if mask is None else ~mask
         q = self.query.expand(b, -1, -1)
         out, _ = self.attn(q, x, x, key_padding_mask=kpm)
+        return out
+
+class TemporalAttentionPool2D(nn.Module):
+    """
+    Pools a stack of feature maps (B, T, C, H, W) -> (B, C, H, W) with frame-level attention.
+    Weights are derived from global pooled descriptors (B, T, C).
+    """
+    def __init__(self, config: DACTConfigA):
+        super().__init__()
+        self.query = nn.Parameter(torch.randn(1, 1, config.dim_model)) # (1, 1, D)
+        self.attn = nn.MultiheadAttention(num_heads=config.n_heads, embed_dim=config.dim_model, batch_first=True)
+        self.time_pos_embed = nn.Embedding(config.chunk_size, config.dim_model) # (T, D)
+
+    def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+        # x: (B, T, C, H, W), mask: (B, T) True=valid
+        b, t, c, h, w = x.shape
+        g = x.mean(dim=(3, 4)) # (B, T, C) global avg-pooled descriptors
+        device = get_device_from_parameters(self)
+        t_ids = torch.arange(t, device=device)
+        g = g + self.time_pos_embed(t_ids).unsqueeze(0).expand(b, t, c)
+        kpm = None if mask is None else ~mask
+        query = self.query.expand(b, 1, c) # (B, 1, C)
+        _, attn = self.attn(query, g, g, key_padding_mask=kpm)
+        # attn: (B, 1, T) softmax over time t
+        w = attn.squeeze(1).view(b, t, 1, 1, 1) # (B, T, 1, 1, 1)
+        out = (x * w).sum(dim=1) # (B, C, H, W)
         return out
 
 class DACT(nn.Module):
