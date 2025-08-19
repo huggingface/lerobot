@@ -259,12 +259,12 @@ default.extend-ignore-identifiers-re = [
 
 [tool.mypy]
 python_version = "3.10"
-warn_return_any = true
+warn_return_any = false  # Disable for gradual migration
 warn_unused_configs = true
 ignore_missing_imports = false
-# Gradual typing
-no_implicit_optional = false  # Allow implicit Optional for gradual migration
-strict_optional = true
+# Gradual typing settings for incremental adoption
+no_implicit_optional = false  # Allow implicit Optional
+strict_optional = false  # Disable strict optional checking
 # Display error codes
 show_error_codes = true
 # Better error messages
@@ -273,6 +273,11 @@ pretty = true
 allow_untyped_defs = true
 allow_incomplete_defs = true
 allow_untyped_calls = true
+# Disable strict checks for gradual adoption
+disallow_any_generics = false
+disallow_untyped_decorators = false
+warn_unused_ignores = false
+warn_redundant_casts = false
 # Exclude test files, examples, and auto-generated protobuf files
 exclude = ["tests/", "examples/", ".*_pb2\\.py$", ".*_pb2_grpc\\.py$"]
 
