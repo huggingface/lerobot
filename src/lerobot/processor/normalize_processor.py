@@ -11,12 +11,11 @@ from torch import Tensor
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor.pipeline import (
-    ActionProcessor,
     EnvTransition,
-    ObservationProcessor,
     ProcessorStep,
     ProcessorStepRegistry,
     RobotProcessor,
+    TransitionKey,
 )
 
 
@@ -53,14 +52,22 @@ def _convert_stats_to_tensors(
 
 @dataclass
 class _NormalizationMixin:
+    """
+    A mixin class providing core functionality for normalization and unnormalization.
+
+    This class manages normalization statistics, their conversion to tensors, device placement,
+    and the application of normalization transformations. It is designed to be inherited by
+    concrete ProcessorStep implementations.
+    """
+
     features: dict[str, PolicyFeature]
     norm_map: dict[FeatureType, NormalizationMode]
     stats: dict[str, dict[str, Any]] | None = None
+    device: torch.device | str | None = None
+    eps: float = 1e-8
+    normalize_observation_keys: set[str] | None = None
 
     _tensor_stats: dict[str, dict[str, Tensor]] = field(default_factory=dict, init=False, repr=False)
-
-    eps: float = 1e-8
-    normalize_keys: set[str] | None = None
 
     def __post_init__(self):
         # Robust JSON deserialization handling (guard empty maps)
@@ -82,116 +89,31 @@ class _NormalizationMixin:
                     reconstructed[FeatureType(ft_type_str)] = NormalizationMode(norm_mode_str)
                 self.norm_map = reconstructed
 
-        # convert stats once; leave device unspecified (converted later when used)
+        # Convert stats to tensors and move to the target device once during initialization.
         self.stats = self.stats or {}
-        # store as float32 CPU tensors by default; they will be moved to the runtime device in _apply_transform
-        self._tensor_stats = _convert_stats_to_tensors(self.stats, device=None)
+        self._tensor_stats = _convert_stats_to_tensors(self.stats, device=self.device)
+
+    def to(self, device: torch.device | str) -> _NormalizationMixin:
+        """Moves the processor's normalization stats to the specified device and returns self."""
+        self.device = device
+        self._tensor_stats = _convert_stats_to_tensors(self.stats, device=self.device)
+        return self
 
     def state_dict(self) -> dict[str, Tensor]:
         flat: dict[str, Tensor] = {}
         for key, sub in self._tensor_stats.items():
             for stat_name, tensor in sub.items():
-                flat[f"{key}.{stat_name}"] = tensor
+                flat[f"{key}.{stat_name}"] = tensor.cpu()  # Always save to CPU
         return flat
 
     def load_state_dict(self, state: dict[str, Tensor]) -> None:
         self._tensor_stats.clear()
         for flat_key, tensor in state.items():
             key, stat_name = flat_key.rsplit(".", 1)
-            self._tensor_stats.setdefault(key, {})[stat_name] = tensor.to(dtype=torch.float32)
-
-    def _apply_transform(
-        self, tensor: Tensor, key: str, feature_type: FeatureType, *, inverse: bool = False
-    ) -> Tensor:
-        """Core logic to apply normalization or unnormalization.
-
-        - Moves stats to the input tensor's device to avoid device mismatch.
-        - Uses numeric safeguards to avoid division by zero.
-        """
-        norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
-            return tensor
-
-        if norm_mode not in (NormalizationMode.MEAN_STD, NormalizationMode.MIN_MAX):
-            raise ValueError(f"Unsupported normalization mode: {norm_mode}")
-
-        # move stats to input device and ensure float32
-        device = tensor.device
-        stats = {k: v.to(device=device, dtype=torch.float32) for k, v in self._tensor_stats[key].items()}
-        tensor = tensor.to(dtype=torch.float32)
-
-        if norm_mode == NormalizationMode.MEAN_STD and "mean" in stats and "std" in stats:
-            mean, std = stats["mean"], stats["std"]
-            # avoid dividing by zero
-            denom = std + self.eps
-            if inverse:
-                return tensor * std + mean
-            return (tensor - mean) / denom
-
-        if norm_mode == NormalizationMode.MIN_MAX and "min" in stats and "max" in stats:
-            min_val, max_val = stats["min"], stats["max"]
-            denom = max_val - min_val
-            # replace zero denom with eps to avoid NaNs
-            denom = torch.where(denom == 0, torch.tensor(self.eps, device=device, dtype=torch.float32), denom)
-            if inverse:
-                # map from [-1, 1] back to [min, max]
-                return (tensor + 1) / 2 * denom + min_val
-            # map from [min, max] to [-1, 1]
-            return 2 * (tensor - min_val) / denom - 1
-
-        # if necessary stats are missing, return input unchanged
-        return tensor
-
-
-@dataclass
-class ObservationNormalizer(ObservationProcessor, _NormalizationMixin):
-    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
-        new_observation = dict(observation)
-        for key, feature in self.features.items():
-            if self.normalize_keys is not None and key not in self.normalize_keys:
-                continue
-            if feature.type != FeatureType.ACTION and key in new_observation:
-                tensor = torch.as_tensor(new_observation[key], dtype=torch.float32)
-                new_observation[key] = self._apply_transform(tensor, key, feature.type, inverse=False)
-        return new_observation
-
-
-@dataclass
-class ObservationUnnormalizer(ObservationProcessor, _NormalizationMixin):
-    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
-        new_observation = dict(observation)
-        for key, feature in self.features.items():
-            if self.normalize_keys is not None and key not in self.normalize_keys:
-                continue
-            if feature.type != FeatureType.ACTION and key in new_observation:
-                tensor = torch.as_tensor(new_observation[key], dtype=torch.float32)
-                new_observation[key] = self._apply_transform(tensor, key, feature.type, inverse=True)
-        return new_observation
-
-
-@dataclass
-class ActionNormalizer(ActionProcessor, _NormalizationMixin):
-    def action(self, action: Tensor) -> Tensor:
-        tensor = torch.as_tensor(action, dtype=torch.float32)
-        return self._apply_transform(tensor, "action", FeatureType.ACTION, inverse=False)
-
-
-@dataclass
-class ActionUnnormalizer(ActionProcessor, _NormalizationMixin):
-    def action(self, action: Tensor) -> Tensor:
-        tensor = torch.as_tensor(action, dtype=torch.float32)
-        return self._apply_transform(tensor, "action", FeatureType.ACTION, inverse=True)
-
-
-@dataclass
-class _BaseNormalizerProcessor(ProcessorStep, _NormalizationMixin):
-    _obs_processor: ObservationProcessor = field(init=False, repr=False)
-    _action_processor: ActionProcessor = field(init=False, repr=False)
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        transition = self._obs_processor(transition)
-        transition = self._action_processor(transition)
-        return transition
+            # Load to the processor's configured device.
+            self._tensor_stats.setdefault(key, {})[stat_name] = tensor.to(
+                dtype=torch.float32, device=self.device
+            )
 
     def get_config(self) -> dict[str, Any]:
         config = {
@@ -201,14 +123,81 @@ class _BaseNormalizerProcessor(ProcessorStep, _NormalizationMixin):
             },
             "norm_map": {ft_type.value: norm_mode.value for ft_type, norm_mode in self.norm_map.items()},
         }
-        if self.normalize_keys is not None:
-            config["normalize_keys"] = sorted(self.normalize_keys)
+        if self.normalize_observation_keys is not None:
+            config["normalize_observation_keys"] = sorted(self.normalize_observation_keys)
         return config
+
+    def _process_observation(self, observation: dict[str, Any], inverse: bool) -> dict[str, Tensor]:
+        new_observation = dict(observation)
+        for key, feature in self.features.items():
+            if self.normalize_observation_keys is not None and key not in self.normalize_observation_keys:
+                continue
+            if feature.type != FeatureType.ACTION and key in new_observation:
+                tensor = torch.as_tensor(new_observation[key], dtype=torch.float32)
+                new_observation[key] = self._apply_transform(tensor, key, feature.type, inverse=inverse)
+        return new_observation
+
+    def _process_action(self, action: Any, inverse: bool) -> Tensor:
+        tensor = torch.as_tensor(action, dtype=torch.float32)
+        processed_action = self._apply_transform(tensor, "action", FeatureType.ACTION, inverse=inverse)
+        return processed_action
+
+    def _apply_transform(
+        self, tensor: Tensor, key: str, feature_type: FeatureType, *, inverse: bool = False
+    ) -> Tensor:
+        """Core logic to apply normalization or unnormalization."""
+        norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
+        if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
+            return tensor
+
+        if norm_mode not in (NormalizationMode.MEAN_STD, NormalizationMode.MIN_MAX):
+            raise ValueError(f"Unsupported normalization mode: {norm_mode}")
+
+        # Ensure input tensor is on the same device as the stats.
+        if self.device and tensor.device != self.device:
+            tensor = tensor.to(self.device)
+
+        stats = self._tensor_stats[key]
+        tensor = tensor.to(dtype=torch.float32)
+
+        if norm_mode == NormalizationMode.MEAN_STD and "mean" in stats and "std" in stats:
+            mean, std = stats["mean"], stats["std"]
+            # Avoid division by zero by adding a small epsilon.
+            denom = std + self.eps
+            if inverse:
+                return tensor * std + mean
+            return (tensor - mean) / denom
+
+        if norm_mode == NormalizationMode.MIN_MAX and "min" in stats and "max" in stats:
+            min_val, max_val = stats["min"], stats["max"]
+            denom = max_val - min_val
+            # When min_val == max_val, substitute the denominator with a small epsilon
+            # to prevent division by zero. This consistently maps an input equal to
+            # min_val to -1, ensuring a stable transformation.
+            denom = torch.where(
+                denom == 0, torch.tensor(self.eps, device=self.device, dtype=torch.float32), denom
+            )
+            if inverse:
+                # Map from [-1, 1] back to [min, max]
+                return (tensor + 1) / 2 * denom + min_val
+            # Map from [min, max] to [-1, 1]
+            return 2 * (tensor - min_val) / denom - 1
+
+        # If necessary stats are missing, return input unchanged.
+        return tensor
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="normalizer_processor")
-class NormalizerProcessor(_BaseNormalizerProcessor):
+class NormalizerProcessor(_NormalizationMixin, ProcessorStep):
+    """
+    A processor that applies normalization to observations and actions in a transition.
+
+    This class directly implements the normalization logic for both observation and action
+    components of an `EnvTransition`, using statistics (mean/std or min/max) provided at
+    initialization.
+    """
+
     @classmethod
     def from_lerobot_dataset(
         cls,
@@ -216,71 +205,88 @@ class NormalizerProcessor(_BaseNormalizerProcessor):
         features: dict[str, PolicyFeature],
         norm_map: dict[FeatureType, NormalizationMode],
         *,
-        normalize_keys: set[str] | None = None,
+        normalize_observation_keys: set[str] | None = None,
         eps: float = 1e-8,
+        device: torch.device | str | None = None,
     ) -> NormalizerProcessor:
         return cls(
             features=features,
             norm_map=norm_map,
             stats=dataset.meta.stats,
-            normalize_keys=normalize_keys,
+            normalize_observation_keys=normalize_observation_keys,
             eps=eps,
+            device=device,
         )
 
-    def __post_init__(self):
-        super().__post_init__()
-        self._obs_processor = ObservationNormalizer(
-            features=self.features,
-            norm_map=self.norm_map,
-            stats=self.stats,
-            eps=self.eps,
-            normalize_keys=self.normalize_keys,
-        )
-        self._action_processor = ActionNormalizer(
-            features=self.features, norm_map=self.norm_map, stats=self.stats, eps=self.eps
-        )
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        new_transition = transition.copy()
+
+        # Handle observation normalization.
+        observation = new_transition.get(TransitionKey.OBSERVATION)
+        if observation is not None:
+            new_transition[TransitionKey.OBSERVATION] = self._process_observation(observation, inverse=False)
+
+        # Handle action normalization.
+        action = new_transition.get(TransitionKey.ACTION)
+        if action is not None:
+            new_transition[TransitionKey.ACTION] = self._process_action(action, inverse=False)
+
+        return new_transition
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="unnormalizer_processor")
-class UnnormalizerProcessor(_BaseNormalizerProcessor):
+class UnnormalizerProcessor(_NormalizationMixin, ProcessorStep):
+    """
+    A processor that applies unnormalization (the inverse of normalization) to
+    observations and actions in a transition.
+
+    This is typically used to transform actions from a normalized policy output back into
+    the original scale for execution in an environment.
+    """
+
     @classmethod
     def from_lerobot_dataset(
         cls,
         dataset: LeRobotDataset,
         features: dict[str, PolicyFeature],
         norm_map: dict[FeatureType, NormalizationMode],
+        *,
+        device: torch.device | str | None = None,
     ) -> UnnormalizerProcessor:
-        return cls(features=features, norm_map=norm_map, stats=dataset.meta.stats)
+        return cls(features=features, norm_map=norm_map, stats=dataset.meta.stats, device=device)
 
-    def __post_init__(self):
-        super().__post_init__()
-        self._obs_processor = ObservationUnnormalizer(
-            features=self.features, norm_map=self.norm_map, stats=self.stats
-        )
-        self._action_processor = ActionUnnormalizer(
-            features=self.features, norm_map=self.norm_map, stats=self.stats
-        )
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        new_transition = transition.copy()
+
+        # Handle observation unnormalization.
+        observation = new_transition.get(TransitionKey.OBSERVATION)
+        if observation is not None:
+            new_transition[TransitionKey.OBSERVATION] = self._process_observation(observation, inverse=True)
+
+        # Handle action unnormalization.
+        action = new_transition.get(TransitionKey.ACTION)
+        if action is not None:
+            new_transition[TransitionKey.ACTION] = self._process_action(action, inverse=True)
+
+        return new_transition
 
 
 def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, Any]]) -> RobotProcessor:
-    """Replaces normalization statistics in a RobotProcessor pipeline.
+    """
+    Replaces normalization statistics in a RobotProcessor pipeline.
 
-    Updates both the composite step and any inner sub-processors that hold stats.
+    This function creates a deep copy of the provided `RobotProcessor` and updates the
+    statistics of any `NormalizerProcessor` or `UnnormalizerProcessor` steps within it.
+    It's useful for adapting a trained policy to a new environment or dataset with
+    different data distributions.
     """
     rp = deepcopy(robot_processor)
     for step in rp.steps:
-        if isinstance(step, _BaseNormalizerProcessor):
-            # update composite step stats
+        if isinstance(step, _NormalizationMixin):
             step.stats = stats
-            step._tensor_stats = _convert_stats_to_tensors(stats)
-            # ensure inner processors are in sync if present
-            if getattr(step, "_obs_processor", None):
-                step._obs_processor.stats = stats
-                step._obs_processor._tensor_stats = _convert_stats_to_tensors(stats)
-            if getattr(step, "_action_processor", None):
-                step._action_processor.stats = stats
-                step._action_processor._tensor_stats = _convert_stats_to_tensors(stats)
+            # Re-initialize tensor_stats on the correct device.
+            step._tensor_stats = _convert_stats_to_tensors(stats, device=step.device)
     return rp
 
 

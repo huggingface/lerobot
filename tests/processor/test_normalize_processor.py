@@ -182,7 +182,10 @@ def test_selective_normalization(observation_stats):
     features = _create_observation_features()
     norm_map = _create_observation_norm_map()
     normalizer = NormalizerProcessor(
-        features=features, norm_map=norm_map, stats=observation_stats, normalize_keys={"observation.image"}
+        features=features,
+        norm_map=norm_map,
+        stats=observation_stats,
+        normalize_observation_keys={"observation.image"},
     )
 
     observation = {
@@ -465,10 +468,10 @@ def test_processor_from_lerobot_dataset(full_stats):
     norm_map = _create_full_norm_map()
 
     processor = NormalizerProcessor.from_lerobot_dataset(
-        mock_dataset, features, norm_map, normalize_keys={"observation.image"}
+        mock_dataset, features, norm_map, normalize_observation_keys={"observation.image"}
     )
 
-    assert processor.normalize_keys == {"observation.image"}
+    assert processor.normalize_observation_keys == {"observation.image"}
     assert "observation.image" in processor._tensor_stats
     assert "action" in processor._tensor_stats
 
@@ -477,12 +480,16 @@ def test_get_config(full_stats):
     features = _create_full_features()
     norm_map = _create_full_norm_map()
     processor = NormalizerProcessor(
-        features=features, norm_map=norm_map, stats=full_stats, normalize_keys={"observation.image"}, eps=1e-6
+        features=features,
+        norm_map=norm_map,
+        stats=full_stats,
+        normalize_observation_keys={"observation.image"},
+        eps=1e-6,
     )
 
     config = processor.get_config()
     expected_config = {
-        "normalize_keys": ["observation.image"],
+        "normalize_observation_keys": ["observation.image"],
         "eps": 1e-6,
         "features": {
             "observation.image": {"type": "VISUAL", "shape": (3, 96, 96)},
@@ -581,7 +588,11 @@ def test_serialization_roundtrip(full_stats):
     features = _create_full_features()
     norm_map = _create_full_norm_map()
     original_processor = NormalizerProcessor(
-        features=features, norm_map=norm_map, stats=full_stats, normalize_keys={"observation.image"}, eps=1e-6
+        features=features,
+        norm_map=norm_map,
+        stats=full_stats,
+        normalize_observation_keys={"observation.image"},
+        eps=1e-6,
     )
 
     # Get config (serialization)
@@ -592,7 +603,7 @@ def test_serialization_roundtrip(full_stats):
         features=config["features"],
         norm_map=config["norm_map"],
         stats=full_stats,
-        normalize_keys=set(config["normalize_keys"]),
+        normalize_observation_keys=set(config["normalize_observation_keys"]),
         eps=config["eps"],
     )
 
@@ -1150,11 +1161,15 @@ def test_hotswap_stats_preserves_other_attributes():
         "observation.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
     }
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
-    normalize_keys = {"observation.image"}
+    normalize_observation_keys = {"observation.image"}
     eps = 1e-6
 
     normalizer = NormalizerProcessor(
-        features=features, norm_map=norm_map, stats=initial_stats, normalize_keys=normalize_keys, eps=eps
+        features=features,
+        norm_map=norm_map,
+        stats=initial_stats,
+        normalize_observation_keys=normalize_observation_keys,
+        eps=eps,
     )
     robot_processor = RobotProcessor(steps=[normalizer])
 
@@ -1165,7 +1180,7 @@ def test_hotswap_stats_preserves_other_attributes():
     new_normalizer = new_processor.steps[0]
     assert new_normalizer.features == features
     assert new_normalizer.norm_map == norm_map
-    assert new_normalizer.normalize_keys == normalize_keys
+    assert new_normalizer.normalize_observation_keys == normalize_observation_keys
     assert new_normalizer.eps == eps
 
     # But stats should be updated
@@ -1365,8 +1380,8 @@ def test_min_equals_max_maps_to_minus_one():
     assert torch.allclose(out[TransitionKey.OBSERVATION]["observation.state"], torch.tensor([-1.0]))
 
 
-def test_action_normalized_despite_normalize_keys():
-    """Action normalization is independent of normalize_keys filter for observations."""
+def test_action_normalized_despite_normalize_observation_keys():
+    """Action normalization is independent of normalize_observation_keys filter for observations."""
     features = {
         "observation.state": PolicyFeature(FeatureType.STATE, (1,)),
         "action": PolicyFeature(FeatureType.ACTION, (2,)),
@@ -1374,7 +1389,7 @@ def test_action_normalized_despite_normalize_keys():
     norm_map = {FeatureType.STATE: NormalizationMode.IDENTITY, FeatureType.ACTION: NormalizationMode.MEAN_STD}
     stats = {"action": {"mean": np.array([1.0, -1.0]), "std": np.array([2.0, 4.0])}}
     normalizer = NormalizerProcessor(
-        features=features, norm_map=norm_map, stats=stats, normalize_keys={"observation.state"}
+        features=features, norm_map=norm_map, stats=stats, normalize_observation_keys={"observation.state"}
     )
 
     transition = create_transition(
