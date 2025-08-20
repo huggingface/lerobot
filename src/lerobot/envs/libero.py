@@ -14,7 +14,6 @@ from libero.libero.envs import OffScreenRenderEnv
 
 from lerobot.constants import (
     OBS_IMAGE,
-    OBS_IMAGE_2,
 )
 
 
@@ -238,12 +237,12 @@ class LiberoEnv(gym.Env):
         raw_obs = self._env.env._get_observations()
         image = self._format_raw_obs(raw_obs)["pixels"][OBS_IMAGE]
         return image
+
     def render(self):
         raw_obs = self._env.env._get_observations()
         formatted = self._format_raw_obs(raw_obs)
         # grab the "main" camera
         return formatted["pixels"]["image"]
-
 
     def _make_envs_task(self, task_suite, task_id: int = 0):
         task = task_suite.get_task(task_id)

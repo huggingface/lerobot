@@ -26,6 +26,7 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
 from lerobot.utils.utils import get_channel_first_image_shape
 
+
 def preprocess_observation(
     observations: dict[str, np.ndarray], cfg: dict[str, Any] = None
 ) -> dict[str, Tensor]:
@@ -52,7 +53,7 @@ def preprocess_observation(
             imgs = {"pixels": observations["pixels"]}
 
         # build rename map env_key -> policy_key
-        rename_map = dict(zip(env_img_keys, policy_img_keys))
+        rename_map = dict(zip(env_img_keys, policy_img_keys, strict=False))
 
         for imgkey, img in imgs.items():
             target_key = rename_map.get(imgkey, imgkey)
@@ -82,6 +83,7 @@ def preprocess_observation(
         return_observations["task"] = observations["task"]
 
     return return_observations
+
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
