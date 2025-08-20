@@ -346,13 +346,14 @@ def record_loop(
         else:
             logging.info(
                 "No policy or teleoperator provided, skipping action generation. "
-                "This is likely to happen during environment reset."
+                "This is likely to happen when resetting the environment without a teleop device."
+                "The robot won't be at its rest position at the start of the next episode."
             )
-            # Still continue to next loop to respect timing
+            continue
 
         # Applies a pipeline to the action, default is IdentityProcessor
         # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
-        if policy_transition is not None:
+        if policy is not None and policy_transition is not None:
             robot_action_to_send = robot_action_processor(policy_transition)
         else:
             robot_action_to_send = robot_action_processor(teleop_transition)
