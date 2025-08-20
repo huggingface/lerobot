@@ -127,7 +127,7 @@ class _NormalizationMixin:
             config["normalize_observation_keys"] = sorted(self.normalize_observation_keys)
         return config
 
-    def _process_observation(self, observation: dict[str, Any], inverse: bool) -> dict[str, Tensor]:
+    def _normalize_observation(self, observation: dict[str, Any], inverse: bool) -> dict[str, Tensor]:
         new_observation = dict(observation)
         for key, feature in self.features.items():
             if self.normalize_observation_keys is not None and key not in self.normalize_observation_keys:
@@ -137,7 +137,7 @@ class _NormalizationMixin:
                 new_observation[key] = self._apply_transform(tensor, key, feature.type, inverse=inverse)
         return new_observation
 
-    def _process_action(self, action: Any, inverse: bool) -> Tensor:
+    def _normalize_action(self, action: Any, inverse: bool) -> Tensor:
         tensor = torch.as_tensor(action, dtype=torch.float32)
         processed_action = self._apply_transform(tensor, "action", FeatureType.ACTION, inverse=inverse)
         return processed_action
@@ -224,12 +224,14 @@ class NormalizerProcessor(_NormalizationMixin, ProcessorStep):
         # Handle observation normalization.
         observation = new_transition.get(TransitionKey.OBSERVATION)
         if observation is not None:
-            new_transition[TransitionKey.OBSERVATION] = self._process_observation(observation, inverse=False)
+            new_transition[TransitionKey.OBSERVATION] = self._normalize_observation(
+                observation, inverse=False
+            )
 
         # Handle action normalization.
         action = new_transition.get(TransitionKey.ACTION)
         if action is not None:
-            new_transition[TransitionKey.ACTION] = self._process_action(action, inverse=False)
+            new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=False)
 
         return new_transition
 
@@ -262,12 +264,12 @@ class UnnormalizerProcessor(_NormalizationMixin, ProcessorStep):
         # Handle observation unnormalization.
         observation = new_transition.get(TransitionKey.OBSERVATION)
         if observation is not None:
-            new_transition[TransitionKey.OBSERVATION] = self._process_observation(observation, inverse=True)
+            new_transition[TransitionKey.OBSERVATION] = self._normalize_observation(observation, inverse=True)
 
         # Handle action unnormalization.
         action = new_transition.get(TransitionKey.ACTION)
         if action is not None:
-            new_transition[TransitionKey.ACTION] = self._process_action(action, inverse=True)
+            new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=True)
 
         return new_transition
 
@@ -288,14 +290,3 @@ def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, An
             # Re-initialize tensor_stats on the correct device.
             step._tensor_stats = _convert_stats_to_tensors(stats, device=step.device)
     return rp
-
-
-def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -> dict[str, dict[str, Any]]:
-    """Rename keys in the stats dictionary according to rename_map (defensive copy)."""
-    if not stats:
-        return {}
-    renamed: dict[str, dict[str, Any]] = {}
-    for old_key, sub_stats in stats.items():
-        new_key = rename_map.get(old_key, old_key)
-        renamed[new_key] = deepcopy(sub_stats) if sub_stats is not None else {}
-    return renamed

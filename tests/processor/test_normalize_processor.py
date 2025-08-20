@@ -25,7 +25,6 @@ from lerobot.processor.normalize_processor import (
     UnnormalizerProcessor,
     _convert_stats_to_tensors,
     hotswap_stats,
-    rename_stats,
 )
 from lerobot.processor.pipeline import IdentityProcessor, RobotProcessor, TransitionKey
 
@@ -1427,19 +1426,6 @@ def test_unnormalize_observations_mean_std_and_min_max():
     out_mm = unnorm_mm(tr)[TransitionKey.OBSERVATION]["observation.mm"]
     assert torch.allclose(out_ms, torch.tensor([1.0, -1.0]))
     assert torch.allclose(out_mm, torch.tensor([1.0, 0.0]))  # mid of [0,2] and [-2,2]
-
-
-def test_rename_stats_basic():
-    orig = {
-        "observation.state": {"mean": np.array([0.0]), "std": np.array([1.0])},
-        "action": {"mean": np.array([0.0])},
-    }
-    mapping = {"observation.state": "observation.robot_state"}
-    renamed = rename_stats(orig, mapping)
-    assert "observation.robot_state" in renamed and "observation.state" not in renamed
-    # Ensure deep copy: mutate original and verify renamed unaffected
-    orig["observation.state"]["mean"][0] = 42.0
-    assert renamed["observation.robot_state"]["mean"][0] != 42.0
 
 
 def test_unknown_observation_keys_ignored():

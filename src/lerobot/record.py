@@ -83,8 +83,8 @@ from lerobot.processor.converters import (
     to_transition_robot_observation,
     to_transition_teleop_action,
 )
-from lerobot.processor.normalize_processor import rename_stats
 from lerobot.processor.pipeline import IdentityProcessor, TransitionKey
+from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
