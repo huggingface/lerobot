@@ -66,6 +66,7 @@ class OctoConfig(PreTrainedConfig):
     n_diffusion_samples: int = 1
     max_action: float = 5.0
     loss_type: str = "mse"
+    action_dim: int = 7
     time_dim: int = 32
     num_blocks: int = 3
     hidden_dim: int = 256
