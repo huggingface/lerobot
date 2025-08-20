@@ -20,7 +20,6 @@ import logging
 from typing import Any, TypedDict
 
 import torch
-from torch import nn
 from typing_extensions import Unpack
 
 from lerobot.configs.policies import PreTrainedConfig
@@ -292,7 +291,7 @@ def make_policy(
         policy = policy_cls(**kwargs)
 
     policy.to(cfg.device)
-    assert isinstance(policy, nn.Module)
+    assert isinstance(policy, torch.nn.Module)
 
     # policy = torch.compile(policy, mode="reduce-overhead")
 
