@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import abc
-from typing import Callable
+from collections.abc import Callable
 
 import scservo_sdk as scs
 import serial

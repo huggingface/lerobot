@@ -21,8 +21,8 @@ The majority of changes here involve removing unused code, unifying naming, and 
 
 import math
 from collections import deque
+from collections.abc import Callable
 from itertools import chain
-from typing import Callable
 
 import einops
 import numpy as np
@@ -216,7 +216,7 @@ class ACTTemporalEnsembler:
                 continue
             avg *= exp_weights[:i].sum()
             avg += item * exp_weights[i]
-            avg /= exp_weights[:i+1].sum()
+            avg /= exp_weights[: i + 1].sum()
         print("online", avg)
         ```
         """
@@ -420,7 +420,7 @@ class ACT(nn.Module):
             batch_size = batch["observation.environment_state"].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
-        if self.config.use_vae and "action" in batch:
+        if self.config.use_vae and "action" in batch and self.training:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size

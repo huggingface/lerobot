@@ -17,10 +17,10 @@
 # limitations under the License.
 
 import math
+from collections.abc import Callable
 from functools import partial
 from math import ceil
 from random import randrange
-from typing import Callable
 
 import torch
 import torch.distributed as distributed
@@ -198,7 +198,7 @@ class GPT(nn.Module):
 
         # report number of parameters
         n_params = sum(p.numel() for p in self.parameters())
-        print("number of parameters: {:.2f}M".format(n_params / 1e6))
+        print(f"number of parameters: {n_params / 1e6:.2f}M")
 
     def forward(self, input, targets=None):
         device = input.device
@@ -255,7 +255,7 @@ class GPT(nn.Module):
         blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
         for mn, m in self.named_modules():
             for pn, _p in m.named_parameters():
-                fpn = "{}.{}".format(mn, pn) if mn else pn  # full param name
+                fpn = f"{mn}.{pn}" if mn else pn  # full param name
                 if pn.endswith("bias"):
                     # all biases will not be decayed
                     no_decay.add(fpn)

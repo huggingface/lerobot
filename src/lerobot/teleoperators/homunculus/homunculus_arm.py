@@ -18,7 +18,7 @@ import logging
 import threading
 from collections import deque
 from pprint import pformat
-from typing import Deque, Dict, Optional
+from typing import Deque
 
 import serial
 
@@ -60,7 +60,7 @@ class HomunculusArm(Teleoperator):
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
         # one deque *per joint* so we can inspect raw history if needed
-        self._buffers: Dict[str, Deque[int]] = {
+        self._buffers: dict[str, Deque[int]] = {
             joint: deque(maxlen=n)
             for joint in (
                 "shoulder_pitch",
@@ -73,7 +73,7 @@ class HomunculusArm(Teleoperator):
             )
         }
         # running EMA value per joint – lazily initialised on first read
-        self._ema: Dict[str, Optional[float]] = dict.fromkeys(self._buffers)
+        self._ema: dict[str, float | None] = dict.fromkeys(self._buffers)
 
         self._state: dict[str, float] | None = None
         self.new_state_event = threading.Event()
@@ -217,9 +217,9 @@ class HomunculusArm(Teleoperator):
 
         return normalized_values
 
-    def _apply_ema(self, raw: Dict[str, int]) -> Dict[str, float]:
+    def _apply_ema(self, raw: dict[str, int]) -> dict[str, float]:
         """Update buffers & running EMA values; return smoothed dict."""
-        smoothed: Dict[str, float] = {}
+        smoothed: dict[str, float] = {}
         for joint, value in raw.items():
             # maintain raw history
             self._buffers[joint].append(value)

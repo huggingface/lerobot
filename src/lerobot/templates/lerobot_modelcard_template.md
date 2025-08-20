@@ -1,7 +1,8 @@
 ---
 # For reference on model card metadata, see the spec: https://github.com/huggingface/hub-docs/blob/main/modelcard.md?plain=1
 # Doc / guide: https://huggingface.co/docs/hub/model-cards
-{{ card_data }}
+# prettier-ignore
+{{card_data}}
 ---
 
 # Model Card for {{ model_name | default("Model ID", true) }}
@@ -43,7 +44,7 @@ Below is the short version on how to train and run inference/eval:
 ### Train from scratch
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
   --dataset.repo_id=${HF_USER}/<dataset> \
   --policy.type=act \
   --output_dir=outputs/train/<desired_policy_repo_id> \
@@ -53,12 +54,12 @@ python -m lerobot.scripts.train \
   --wandb.enable=true
 ```
 
-*Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`.*
+_Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._
 
 ### Evaluate the policy/run inference
 
 ```bash
-python -m lerobot.record \
+lerobot-record \
   --robot.type=so100_follower \
   --dataset.repo_id=<hf_user>/eval_<dataset> \
   --policy.path=<hf_user>/<desired_policy_repo_id> \
@@ -71,4 +72,4 @@ Prefix the dataset repo with **eval\_** and supply `--policy.path` pointing to a
 
 ## Model Details
 
-* **License:** {{ license | default("\[More Information Needed]", true) }}
+- **License:** {{ license | default("\[More Information Needed]", true) }}

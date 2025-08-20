@@ -24,9 +24,9 @@ The comments in this code may sometimes refer to these references:
 # ruff: noqa: N806
 
 from collections import deque
+from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
-from typing import Callable
 
 import einops
 import numpy as np
@@ -143,7 +143,12 @@ class TDMPCPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
+        # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
+        if ACTION in batch:
+            batch.pop(ACTION)
+
         batch = self.normalize_inputs(batch)
+
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
