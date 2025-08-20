@@ -59,12 +59,14 @@ from pprint import pformat
 import draccus
 import rerun as rr
 
+from lerobot.cameras.kinect.configuration_kinect import KinectCameraConfig  # noqa: F401
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    bi_so101_follower,
     hope_jr,
     koch_follower,
     make_robot_from_config,
@@ -75,6 +77,7 @@ from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_so100_leader,
+    bi_so101_leader,
     gamepad,
     homunculus,
     koch_leader,

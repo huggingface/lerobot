@@ -1,4 +1,6 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,13 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .camera import Camera
-from .configs import CameraConfig, ColorMode, Cv2Rotation
-from .utils import make_cameras_from_configs
-
-try:
-    from .kinect import available_kinect
-
-    del available_kinect
-except ImportError:
-    pass
+from .bi_so101_follower import BiSO101Follower
+from .config_bi_so101_follower import BiSO101FollowerConfig

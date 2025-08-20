@@ -38,6 +38,8 @@ import numpy as np
 from PIL import Image
 
 from lerobot.cameras.configs import ColorMode
+from lerobot.cameras.kinect.camera_kinect import KinectCamera
+from lerobot.cameras.kinect.configuration_kinect import KinectCameraConfig
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
@@ -88,12 +90,34 @@ def find_all_realsense_cameras() -> list[dict[str, Any]]:
     return all_realsense_cameras_info
 
 
+def find_all_kinect_cameras() -> list[dict[str, Any]]:
+    """
+    Finds all available Kinect v2 cameras plugged into the system.
+
+    Returns:
+        A list of all available Kinect v2 cameras with their metadata.
+    """
+    all_kinect_cameras_info: list[dict[str, Any]] = []
+    logger.info("Searching for Kinect v2 cameras...")
+    try:
+        kinect_cameras = KinectCamera.find_cameras()
+        for cam_info in kinect_cameras:
+            all_kinect_cameras_info.append(cam_info)
+        logger.info(f"Found {len(kinect_cameras)} Kinect v2 cameras.")
+    except ImportError:
+        logger.warning("Skipping Kinect camera search: pylibfreenect2 library not found or not importable.")
+    except Exception as e:
+        logger.error(f"Error finding Kinect cameras: {e}")
+
+    return all_kinect_cameras_info
+
+
 def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[str, Any]]:
     """
     Finds available cameras based on an optional filter and prints their information.
 
     Args:
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type_filter: Optional string to filter cameras ("realsense", "kinect", or "opencv").
                             If None, lists all cameras.
 
     Returns:
@@ -108,12 +132,14 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
         all_cameras_info.extend(find_all_opencv_cameras())
     if camera_type_filter is None or camera_type_filter == "realsense":
         all_cameras_info.extend(find_all_realsense_cameras())
+    if camera_type_filter is None or camera_type_filter == "kinect":
+        all_cameras_info.extend(find_all_kinect_cameras())
 
     if not all_cameras_info:
         if camera_type_filter:
             logger.warning(f"No {camera_type_filter} cameras were detected.")
         else:
-            logger.warning("No cameras (OpenCV or RealSense) were detected.")
+            logger.warning("No cameras (OpenCV, RealSense, or Kinect) were detected.")
     else:
         print("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
@@ -174,6 +200,12 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
                 color_mode=ColorMode.RGB,
             )
             instance = RealSenseCamera(rs_config)
+        elif cam_type == "Kinect v2":
+            kinect_config = KinectCameraConfig(
+                device_index=cam_meta.get("index", 0),
+                color_mode=ColorMode.RGB,
+            )
+            instance = KinectCamera(kinect_config)
         else:
             logger.warning(f"Unknown camera type: {cam_type} for ID {cam_id}. Skipping.")
             return None
@@ -239,7 +271,7 @@ def save_images_from_all_cameras(
     Args:
         output_dir: Directory to save images.
         record_time_s: Duration in seconds to record images.
-        camera_type: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type: Optional string to filter cameras ("realsense", "opencv", or "kinect").
                             If None, uses all detected cameras.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -296,8 +328,8 @@ def main():
         type=str,
         nargs="?",
         default=None,
-        choices=["realsense", "opencv"],
-        help="Specify camera type to capture from (e.g., 'realsense', 'opencv'). Captures from all if omitted.",
+        choices=["realsense", "opencv", "kinect"],
+        help="Specify camera type to capture from (e.g., 'realsense', 'opencv', 'kinect'). Captures from all if omitted.",
     )
     parser.add_argument(
         "--output-dir",
