@@ -269,6 +269,7 @@ def train(cfg: TrainPipelineConfig):
                             continue  # Skip the overall stats since we already printed it
                         print(f"\nAggregated Metrics for {task_group}:")
                         print(task_group_info["aggregated"])
+                        breakpoint()
                 else:
                     print("START EVAL")
                     eval_info = eval_policy(
@@ -279,6 +280,7 @@ def train(cfg: TrainPipelineConfig):
                         max_episodes_rendered=4,
                         start_seed=cfg.seed,
                     )
+                    breakpoint()
                     aggregated = eval_info["aggregated"]
                     print("END EVAL")
 

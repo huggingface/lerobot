@@ -180,8 +180,8 @@ class LiberoEnv(gym.Env):
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
         # TODO: jadechoghari, check mapping
         self.camera_name_mapping = {
-            "agentview_image": OBS_IMAGE,
-            "robot0_eye_in_hand_image": OBS_IMAGE_2,
+            "agentview_image": "image",
+            "robot0_eye_in_hand_image": "image2",
         }
 
         self.num_steps_wait = (
@@ -234,10 +234,16 @@ class LiberoEnv(gym.Env):
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(7,), dtype=np.float32)
 
-    def render(self):
+    def render1(self):
         raw_obs = self._env.env._get_observations()
         image = self._format_raw_obs(raw_obs)["pixels"][OBS_IMAGE]
         return image
+    def render(self):
+        raw_obs = self._env.env._get_observations()
+        formatted = self._format_raw_obs(raw_obs)
+        # grab the "main" camera
+        return formatted["pixels"]["image"]
+
 
     def _make_envs_task(self, task_suite, task_id: int = 0):
         task = task_suite.get_task(task_id)

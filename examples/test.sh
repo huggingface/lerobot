@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# Example evaluation script for LeRobot policies
 unset LEROBOT_HOME
 unset HF_LEROBOT_HOME
 # === CONFIGURATION ===
@@ -12,11 +11,11 @@ N_EPISODES=1
 USE_AMP=false
 DEVICE=cuda
 
-# === RUN EVALUATION ===
+# RUN EVALUATION
 python src/lerobot/scripts/eval.py \
     --policy.path="$POLICY_PATH" \
     --env.type="$ENV_TYPE" \
     --eval.batch_size="$BATCH_SIZE" \
     --eval.n_episodes="$N_EPISODES" \
-    --env.multitask_eval=False \
+    --env.multitask_eval=True \
     --env.task=$TASK \

@@ -295,8 +295,8 @@ class LiberoEnv(EnvConfig):
         default_factory=lambda: {
             "action": ACTION,
             "agent_pos": OBS_STATE,
-            "pixels/agentview_image": f"observation.images.{OBS_IMAGE}",
-            "pixels/robot0_eye_in_hand_image": f"observation.images.{OBS_IMAGE_2}",
+            "pixels/agentview_image": f"{OBS_IMAGE}",
+            "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGE_2}",
         }
     )
 

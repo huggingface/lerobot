@@ -146,7 +146,8 @@ def rollout(
     check_env_attributes_and_types(env)
     while not np.all(done) and step < max_steps:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        observation = preprocess_observation(observation)
+        # observation = preprocess_observation(observation)
+        observation = preprocess_observation(observation, cfg=policy.config)
         if return_observations:
             all_observations.append(deepcopy(observation))
 
@@ -159,7 +160,6 @@ def rollout(
         observation = add_envs_task(env, observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
-        observation["observation.images.image"]
         # Convert to CPU / numpy.
         action = action.to("cpu").numpy()
         assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
@@ -198,7 +198,7 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        observation = preprocess_observation(observation)
+        observation = preprocess_observation(observation, cfg=policy.config)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.

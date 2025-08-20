@@ -26,60 +26,62 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
 from lerobot.utils.utils import get_channel_first_image_shape
 
-
-def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
-    # TODO(aliberts, rcadene): refactor this to use features from the environment (no hardcoding)
+def preprocess_observation(
+    observations: dict[str, np.ndarray], cfg: dict[str, Any] = None
+) -> dict[str, Tensor]:
     """Convert environment observation to LeRobot format observation.
     Args:
-        observation: Dictionary of observation batches from a Gym vector environment.
+        observations: Dictionary of observation batches from a Gym vector environment.
+        cfg: Policy config containing expected feature keys.
     Returns:
-        Dictionary of observation batches with keys renamed to LeRobot format and values as tensors.
+        Dictionary of observation batches with keys renamed to match policy expectations.
     """
-    # map to expected inputs for the policy
     return_observations = {}
+
+    # expected keys from policy
+    policy_img_keys = list(cfg.image_features.keys()) if cfg else ["observation.image"]
+    state_key = cfg.robot_state_feature_key if cfg else "observation.state"
+
+    # handle images
     if "pixels" in observations:
         if isinstance(observations["pixels"], dict):
-            imgs = {f"observation.images.{key}": img for key, img in observations["pixels"].items()}
+            env_img_keys = list(observations["pixels"].keys())
+            imgs = observations["pixels"]
         else:
-            imgs = {"observation.image": observations["pixels"]}
+            env_img_keys = ["pixels"]
+            imgs = {"pixels": observations["pixels"]}
+
+        # build rename map env_key -> policy_key
+        rename_map = dict(zip(env_img_keys, policy_img_keys))
 
         for imgkey, img in imgs.items():
-            # TODO(aliberts, rcadene): use transforms.ToTensor()?
+            target_key = rename_map.get(imgkey, imgkey)
+
             img = torch.from_numpy(img)
 
-            # When preprocessing observations in a non-vectorized environment, we need to add a batch dimension.
-            # This is the case for human-in-the-loop RL where there is only one environment.
-            if img.ndim == 3:
-                img = img.unsqueeze(0)
-            # sanity check that images are channel last
+            # sanity checks
             _, h, w, c = img.shape
-            assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
+            assert c < h and c < w, f"expect channel last images, got {img.shape=}"
+            assert img.dtype == torch.uint8, f"expect torch.uint8, got {img.dtype=}"
 
-            # sanity check that images are uint8
-            assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
-
-            # convert to channel first of type float32 in range [0,1]
+            # channel last → channel first, normalize
             img = einops.rearrange(img, "b h w c -> b c h w").contiguous()
-            img = img.type(torch.float32)
-            img /= 255
+            img = img.float() / 255.0
 
-            return_observations[imgkey] = img
+            return_observations[target_key] = img
 
+    # handle state
     if "environment_state" in observations:
-        env_state = torch.from_numpy(observations["environment_state"]).float()
-        if env_state.dim() == 1:
-            env_state = env_state.unsqueeze(0)
+        return_observations["observation.environment_state"] = torch.from_numpy(
+            observations["environment_state"]
+        ).float()
 
-        return_observations["observation.environment_state"] = env_state
+    return_observations[state_key] = torch.from_numpy(observations["agent_pos"]).float()
 
-    # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
-    agent_pos = torch.from_numpy(observations["agent_pos"]).float()
-    if agent_pos.dim() == 1:
-        agent_pos = agent_pos.unsqueeze(0)
-    return_observations["observation.state"] = agent_pos
+    if "task" in observations:
+        return_observations["task"] = observations["task"]
 
     return return_observations
-
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
