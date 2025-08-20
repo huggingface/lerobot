@@ -21,6 +21,7 @@ import torch
 
 from lerobot.configs.types import FeatureType
 from lerobot.processor import ProcessorStepRegistry, RenameProcessor, RobotProcessor, TransitionKey
+from lerobot.processor.rename_processor import rename_stats
 from tests.conftest import assert_contract_is_typed
 
 
@@ -465,3 +466,16 @@ def test_features_chained_processors(policy_feature_factory):
     assert out["observation.image"] == spec["img"]
     assert out["extra"] == spec["extra"]
     assert_contract_is_typed(out)
+
+
+def test_rename_stats_basic():
+    orig = {
+        "observation.state": {"mean": np.array([0.0]), "std": np.array([1.0])},
+        "action": {"mean": np.array([0.0])},
+    }
+    mapping = {"observation.state": "observation.robot_state"}
+    renamed = rename_stats(orig, mapping)
+    assert "observation.robot_state" in renamed and "observation.state" not in renamed
+    # Ensure deep copy: mutate original and verify renamed unaffected
+    orig["observation.state"]["mean"][0] = 42.0
+    assert renamed["observation.robot_state"]["mean"][0] != 42.0

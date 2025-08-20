@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,3 +50,14 @@ class RenameProcessor(ObservationProcessor):
         - Keys not in `rename_map` remain unchanged.
         """
         return {self.rename_map.get(k, k): v for k, v in features.items()}
+
+
+def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -> dict[str, dict[str, Any]]:
+    """Rename keys in the stats dictionary according to rename_map (defensive copy)."""
+    if not stats:
+        return {}
+    renamed: dict[str, dict[str, Any]] = {}
+    for old_key, sub_stats in stats.items():
+        new_key = rename_map.get(old_key, old_key)
+        renamed[new_key] = deepcopy(sub_stats) if sub_stats is not None else {}
+    return renamed
