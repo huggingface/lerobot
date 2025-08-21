@@ -867,16 +867,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
 
         # Check if we should trigger batch encoding
-        if has_video_keys and use_batched_encoding:
-            self.episodes_since_last_encoding += 1
-            if self.episodes_since_last_encoding == self.batch_encoding_size:
-                start_ep = self.num_episodes - self.batch_encoding_size
-                end_ep = self.num_episodes
-                logging.info(
-                    f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
-                )
-                self.batch_encode_videos(start_ep, end_ep)
-                self.episodes_since_last_encoding = 0
+        if has_video_keys:
+            if use_batched_encoding:
+                self.episodes_since_last_encoding += 1
+                if self.episodes_since_last_encoding == self.batch_encoding_size:
+                    start_ep = self.num_episodes - self.batch_encoding_size
+                    end_ep = self.num_episodes
+                    logging.info(
+                        f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
+                    )
+                    self.batch_encode_videos(start_ep, end_ep)
+                    self.episodes_since_last_encoding = 0
         else:
             # delete images
             img_dir = self.root / "images"
