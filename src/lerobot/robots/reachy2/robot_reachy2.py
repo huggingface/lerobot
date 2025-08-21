@@ -203,7 +203,7 @@ class Reachy2Robot(Robot):
                     else:
                         vel[REACHY2_VEL[key]] = val
                 else:
-                    self.reachy.joints[self.joints_dict[key]].goal_position = val
+                    self.reachy.joints[self.joints_dict[key]].goal_position = float(val)
 
             if self.config.with_mobile_base:
                 self.reachy.mobile_base.set_goal_speed(
