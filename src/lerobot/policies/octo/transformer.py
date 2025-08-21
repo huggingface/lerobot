@@ -416,7 +416,6 @@ class OctoTransformer(nn.Module):
         nhead: int,
         num_layers: int,
         dim_feedforward: int,
-        max_horizon: int,
         repeat_task_tokens: bool = False,
     ):
         super().__init__()
@@ -511,10 +510,7 @@ class OctoWithoutHead(nn.Module):
             nhead=self.num_heads,
             num_layers=self.num_layers,
             dim_feedforward=self.mlp_dim,
-            max_horizon=self.max_horizon,
             repeat_task_tokens=self.repeat_task_tokens,
-            dropout_rate=dropout_rate,
-            attention_dropout_rate=attention_dropout_rate,
         )
 
         # Projections

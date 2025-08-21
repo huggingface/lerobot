@@ -121,6 +121,7 @@ class OctoPolicy(PreTrainedPolicy):
         image_wrist = batch["observation.images.wrist"].to(device)
         proprio = batch["observation.state"].to(device)
         raw_actions = batch["action"].to(device)
+        raw_actions = raw_actions[:, 0, :]
 
         batch_size = raw_actions.shape[0]
         raw_tasks = ["pick the pink cube"] * batch_size
@@ -343,11 +344,11 @@ class OctoPolicy(PreTrainedPolicy):
         # actions = batch[ACTION]
         # action_pad_mask = torch.ones_like(actions, dtype=torch.bool)
 
-        loss, metrics = self.model.head.loss(
+        loss, loss_dict = self.model.head.loss(
             transformer_outputs, actions, timestep_pad_mask, action_pad_mask
         )
 
-        return {"loss": loss, **metrics}
+        return loss, loss_dict
 
 
 class OctoDiffusion(nn.Module):
