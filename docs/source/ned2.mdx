@@ -107,7 +107,7 @@ sudo systemctl start ser2net
 systemctl status ser2net
 ```
   - Tip: you only need to do this once; it will persist.
-  - Tip 2: if your robot runs a "HF ready stack, you can avoid the netplan and ser2net part. 
+  - Tip 2: if your robot runs a "HF ready stack", you can avoid the netplan and ser2net part. 
 
 
 ### PC side
@@ -123,7 +123,7 @@ ping <follower-ip> # e.g., 169.254.U.V
 
 ## Calibration
 
-Our robots are a bit special: after each reboot you need to calibrate them. This is because they use relative encoders instead of classic absolute encoders.
+Our robots need a calibration after each reboot. This is because they use relative encoders instead of classic absolute encoders.
 
 Run the following command to calibrate a Ned2 robot:
 
