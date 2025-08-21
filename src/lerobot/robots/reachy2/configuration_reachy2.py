@@ -60,33 +60,30 @@ class Reachy2RobotConfig(RobotConfig):
                 name="teleop",
                 image_type="left",
                 ip_address=self.ip_address,
-                fps=30,
+                fps=15,
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,
-                rotation=Cv2Rotation.NO_ROTATION,
             )
         if self.with_right_teleop_camera:
             self.cameras["teleop_right"] = Reachy2CameraConfig(
                 name="teleop",
                 image_type="right",
                 ip_address=self.ip_address,
-                fps=30,
+                fps=15,
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,
-                rotation=Cv2Rotation.NO_ROTATION,
             )
         if self.with_torso_camera:
             self.cameras["torso_rgb"] = Reachy2CameraConfig(
                 name="depth",
                 image_type="rgb",
                 ip_address=self.ip_address,
-                fps=30,
+                fps=15,
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,
-                rotation=Cv2Rotation.NO_ROTATION,
             )
 
         super().__post_init__()

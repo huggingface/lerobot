@@ -13,15 +13,13 @@
 # limitations under the License.
 
 """
-Provides the OpenCVCamera class for capturing frames from cameras using OpenCV.
+Provides the Reachy2Camera class for capturing frames from Reachy 2 cameras using Reachy 2's CameraManager.
 """
 
 import logging
-import math
 import os
 import platform
 import time
-from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
 
@@ -33,8 +31,7 @@ if (
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 import numpy as np
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from reachy2_sdk import ReachySDK
+from lerobot.errors import DeviceNotConnectedError
 from reachy2_sdk.media.camera import CameraView
 from reachy2_sdk.media.camera_manager import CameraManager
 
@@ -61,7 +58,7 @@ class Reachy2Camera(Camera):
 
     def __init__(self, config: Reachy2CameraConfig):
         """
-        Initializes the OpenCVCamera instance.
+        Initializes the Reachy2Camera instance.
 
         Args:
             config: The configuration settings for the camera.
@@ -72,8 +69,6 @@ class Reachy2Camera(Camera):
 
         self.fps = config.fps
         self.color_mode = config.color_mode
-
-        self.reachy2_sdk: ReachySDK | None = None
 
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
@@ -90,12 +85,8 @@ class Reachy2Camera(Camera):
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
         return (
-            (
-                self.reachy.is_connected()
-                and self.reachy.cameras.teleop is not None
-                and self.reachy.cameras.depth is not None
-            )
-            if self.reachy is not None
+            (self.cam_manager.teleop is not None and self.cam_manager.depth is not None)
+            if self.cam_manager is not None
             else False
         )
 
@@ -103,8 +94,6 @@ class Reachy2Camera(Camera):
         """
         Connects to the Reachy2 CameraManager as specified in the configuration.
         """
-        self.reachy = ReachySDK(self.config.ip_address)
-
         self.cam_manager = CameraManager(
             host=self.config.ip_address, port=self.config.port
         )
@@ -114,23 +103,43 @@ class Reachy2Camera(Camera):
         print(f"{self} connected.")
 
     @staticmethod
-    def find_cameras() -> list[dict[str, Any]]:
+    def find_cameras(
+        ip_address: str = "localhost", port: int = 50065
+    ) -> list[dict[str, Any]]:
         """
         Detects available Reachy 2 cameras.
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
-            where each dictionary contains 'type', 'id' (port index or path),
-            and the default profile properties (width, height, fps, format).
+            where each dictionary contains 'name', 'stereo',
+            and the default profile properties (width, height, fps).
         """
-        pass
+        initialized_cameras = []
+        camera_manager = CameraManager(host=ip_address, port=port)
+
+        for camera in [camera_manager.teleop, camera_manager.depth]:
+            if camera is None:
+                continue
+
+            height, width, _, _, _, _, _ = camera.get_parameters()
+
+            camera_info = {
+                "name": camera._cam_info.name,
+                "stereo": camera._cam_info.stereo,
+                "default_profile": {
+                    "width": width,
+                    "height": height,
+                    "fps": 30,
+                },
+            }
+            initialized_cameras.append(camera_info)
+        return initialized_cameras
 
     def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
         """
         Reads a single frame synchronously from the camera.
 
-        This is a blocking call. It waits for the next available frame from the
-        camera hardware via OpenCV.
+        This is a blocking call.
 
         Args:
             color_mode (Optional[ColorMode]): If specified, overrides the default
@@ -165,9 +174,9 @@ class Reachy2Camera(Camera):
                 frame = self.cam_manager.depth.get_frame(size=(640, 480))[0]
 
         if frame is None:
-            return None
+            return np.empty((0, 0, 3), dtype=np.uint8)
 
-        if frame is not None and self.config.color_mode == "rgb":
+        if self.config.color_mode == "rgb":
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
@@ -271,10 +280,7 @@ class Reachy2Camera(Camera):
 
     def disconnect(self):
         """
-        Disconnects from the camera and cleans up resources.
-
-        Stops the background read thread (if running) and releases the OpenCV
-        VideoCapture object.
+        Stops the background read thread (if running).
 
         Raises:
             DeviceNotConnectedError: If the camera is already disconnected.

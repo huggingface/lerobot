@@ -20,31 +20,36 @@ from ..configs import CameraConfig, ColorMode, Cv2Rotation
 @CameraConfig.register_subclass("reachy2_camera")
 @dataclass
 class Reachy2CameraConfig(CameraConfig):
-    """Configuration class for OpenCV-based camera devices or video files.
+    """Configuration class for Reachy 2 camera devices.
 
-    This class provides configuration options for cameras accessed through OpenCV,
-    supporting both physical camera devices and video files. It includes settings
-    for resolution, frame rate, color mode, and image rotation.
+    This class provides configuration options for Reachy 2 cameras,
+    supporting both the teleop and torso cameras. It includes settings
+    for resolution, frame rate, color mode, and the selection of the cameras.
 
     Example configurations:
     ```python
     # Basic configurations
-    OpenCVCameraConfig(0, 30, 1280, 720)   # 1280x720 @ 30FPS
-    OpenCVCameraConfig(/dev/video4, 60, 640, 480)   # 640x480 @ 60FPS
-
-    # Advanced configurations
-    OpenCVCameraConfig(128422271347, 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)     # With 90° rotation
+    Reachy2CameraConfig(
+            name="teleop",
+            image_type="left",
+            ip_address="192.168.0.200",  # IP address of the robot
+            fps=15,
+            width=640,
+            height=480,
+            color_mode=ColorMode.RGB,
+        )  # Left teleop camera, 640x480 @ 15FPS
     ```
 
     Attributes:
-        index_or_path: Either an integer representing the camera device index,
-                      or a Path object pointing to a video file.
+        name: Name of the camera device. Can be "teleop" or "torso".
+        image_type: Type of image stream. For "teleop" camera, can be "left" or "right".
+                    For "torso" camera, can be "rgb" or "depth". (depth is not supported yet)
         fps: Requested frames per second for the color stream.
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
-        rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
-        warmup_s: Time reading frames before returning from connect (in seconds)
+        ip_address: IP address of the robot. Defaults to "localhost".
+        port: Port number for the camera server. Defaults to 50065.
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
@@ -53,11 +58,21 @@ class Reachy2CameraConfig(CameraConfig):
     name: str
     image_type: str
     color_mode: ColorMode = ColorMode.RGB
-    rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     ip_address: str | None = "localhost"
     port: int = 50065
     # use_depth: bool = False
 
     def __post_init__(self):
+        if self.name not in ["teleop", "torso"]:
+            raise ValueError(f"`name` is expected to be 'teleop' or 'torso', but {self.name} is provided.")
+        if (
+            (self.name == "teleop" and self.image_type not in ["left", "right"])
+            or (self.name == "torso")
+            and self.image_type not in ["rgb", "depth"]
+        ):
+            raise ValueError(
+                f"`image_type` is expected to be 'left' or 'right' for teleop camera, and 'rgb' or 'depth' for torso camera, but {self.image_type} is provided."
+            )
+
         if self.color_mode not in ["rgb", "bgr"]:
             raise ValueError(f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided.")
