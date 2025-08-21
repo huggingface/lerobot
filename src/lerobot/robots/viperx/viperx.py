@@ -33,18 +33,17 @@ from .config_viperx import ViperXConfig
 
 logger = logging.getLogger(__name__)
 
-horn_radius = 0.022
-arm_length = 0.036
+HORN_RADIUS = 0.022
+ARM_LENGTH = 0.036
 
 def gripper_to_linear(gripper_pos):
-    a1 = horn_radius * math.sin(gripper_pos)
-    c = math.sqrt(pow(horn_radius,2) - pow(a1,2))
-    a2 = math.sqrt(pow(arm_length,2) - pow(c,2))
+    a1 = HORN_RADIUS * math.sin(gripper_pos)
+    c = math.sqrt(pow(HORN_RADIUS,2) - pow(a1,2))
+    a2 = math.sqrt(pow(ARM_LENGTH,2) - pow(c,2))
     return a1 + a2
 
 def linear_to_gripper(linear_position):
-    half_dist = linear_position
-    result = 3.14159/2.0 - math.acos((pow(horn_radius, 2) + pow(half_dist,2) - pow(arm_length, 2)) / (2 * horn_radius * half_dist))
+    result = math.pi/2.0 - math.acos((pow(HORN_RADIUS, 2) + pow(linear_position,2) - pow(ARM_LENGTH, 2)) / (2 * HORN_RADIUS * linear_position))
     return result
 
 class ViperX(Robot):

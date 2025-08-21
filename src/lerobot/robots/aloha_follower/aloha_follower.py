@@ -23,7 +23,7 @@ from lerobot.cameras.utils import make_cameras_from_configs
 
 from lerobot.robots.robot import Robot
 
-from viperx import ViperXConfig, ViperX
+from lerobot.robots.viperx import ViperXConfig, ViperX
 
 from .config_aloha_follower import AlohaFollowerConfig
 
@@ -119,7 +119,7 @@ class AlohaFollower(Robot):
     def configure(self) -> None:
         self.left_arm.configure()
         self.right_arm.configure()
-        
+
     def get_observation(self) -> dict[str, Any]:
         obs_dict = {}
 
@@ -144,28 +144,22 @@ class AlohaFollower(Robot):
         return obs_dict
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        # Remove "left_" prefix
-        left_action = {
-            key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
-        }
-        # Remove "right_" prefix
-        right_action = {
-            key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
-        }
+        def process_arm(prefix):
+            # Remove prefix
+            arm_action = {
+            key.removeprefix(f"{prefix}_"): value for key, value in action.items() if key.startswith(f"{prefix}_")
+            }
+            # Normalize gripper if needed
+            if "finger.pos" in arm_action and self.config.normalized_gripper:
+                arm_action["finger.pos"] = max(0, min(1.0, arm_action["finger.pos"]))
+                arm_action["finger.pos"] = PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(arm_action["finger.pos"])
+            # Send action
+            send_action = getattr(self, f"{prefix}_arm").send_action(arm_action)
+            # Add prefix back
+            return {f"{prefix}_{key}": value for key, value in send_action.items()}
 
-        if "finger.pos" in left_action and self.config.normalized_gripper:
-            left_action["finger.pos"] = max(0.1, min(1.0, left_action["finger.pos"]))
-            left_action["finger.pos"] = PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(left_action["finger.pos"])
-        if "finger.pos" in right_action and self.config.normalized_gripper:
-            right_action["finger.pos"] = max(0.1, min(1.0, right_action["finger.pos"]))
-            right_action["finger.pos"] = PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(right_action["finger.pos"])
-
-        send_action_left = self.left_arm.send_action(left_action)
-        send_action_right = self.right_arm.send_action(right_action)
-
-        # Add prefixes back
-        prefixed_send_action_left = {f"left_{key}": value for key, value in send_action_left.items()}
-        prefixed_send_action_right = {f"right_{key}": value for key, value in send_action_right.items()}
+        prefixed_send_action_left = process_arm("left")
+        prefixed_send_action_right = process_arm("right")
 
         return {**prefixed_send_action_left, **prefixed_send_action_right}
 
