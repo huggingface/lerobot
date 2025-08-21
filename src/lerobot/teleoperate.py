@@ -144,12 +144,6 @@ def teleop_loop(
     while True:
         loop_start = time.perf_counter()
 
-        # Get robot observation
-        obs = robot.get_observation()
-
-        # Process robot observation through pipeline
-        obs_transition = robot_observation_processor(obs)
-
         # Get teleop action
         raw_action = teleop.get_action()
 
@@ -163,24 +157,26 @@ def teleop_loop(
         robot.send_action(robot_action_to_send)  # type: ignore[arg-type]
 
         if display_data:
+            # Get robot observation
+            obs = robot.get_observation()
+            # Process robot observation through pipeline
+            obs_transition = robot_observation_processor(obs)
             log_rerun_data([obs_transition, teleop_transition])
+
+            print("\n" + "-" * (display_len + 10))
+            print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+            # Display the final robot action that was sent
+            for motor, value in robot_action_to_send.items():
+                print(f"{motor:<{display_len}} | {value:>7.2f}")
+            move_cursor_up(len(robot_action_to_send) + 5)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
-
         loop_s = time.perf_counter() - loop_start
-
-        print("\n" + "-" * (display_len + 10))
-        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        # Display the final robot action that was sent
-        for motor, value in robot_action_to_send.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
-
-        move_cursor_up(len(robot_action_to_send) + 5)
 
 
 @parser.wrap()

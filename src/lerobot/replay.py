@@ -97,7 +97,7 @@ def replay(cfg: ReplayConfig):
     # Initialize robot action processor with default if not provided
     robot_action_processor = cfg.robot_action_processor or RobotProcessor(
         steps=[IdentityProcessor()],
-        to_transition=lambda tr: tr,
+        to_transition=to_transition_teleop_action,
         to_output=to_output_robot_action,  # type: ignore[arg-type]
     )
 
@@ -119,9 +119,7 @@ def replay(cfg: ReplayConfig):
             action[name] = action_array[i]
 
         # Process action through robot action processor
-        # Note: We need to convert the action dict to a transition format first
-        action_transition = to_transition_teleop_action(action)
-        processed_action = robot_action_processor(action_transition)
+        processed_action = robot_action_processor(action)
 
         robot.send_action(processed_action)  # type: ignore[arg-type]
 
