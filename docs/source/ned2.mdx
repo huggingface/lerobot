@@ -132,7 +132,7 @@ Run the following command to calibrate a Ned2 robot:
 lerobot-calibrate \
     --robot.type=ned2 \
     --robot.ip=169.254.XX.XX \
-    --robot.id=my_awesome_follower_arm
+    --robot.id=my_awesome_follower_arm #<- Give your robot a unique name
 ```
 
 During calibration, you will be prompted to place the robot roughly in the middle of its motion range and press Enter. This corresponds to a "right-angle" pose with the gripper open. This safe reference pose reduces the risk of erroneous or corrupted readings from the stepper motor encoders that can occur when joints are too close to their mechanical end-stops.
