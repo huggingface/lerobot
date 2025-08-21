@@ -25,14 +25,14 @@ Disclaimer: It is not expected to perform as well as the original implementation
 
 Example of finetuning the pi0+FAST pretrained model (`pi0_fast_base` in `openpi`):
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.path=lerobot/pi0fast_base \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
 
 Example of training the pi0+FAST neural network with from scratch:
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.type=pi0fast \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
@@ -488,6 +488,8 @@ class PI0FAST(nn.Module):
                 param.data = param.data.to(dtype=torch_precision)
         self.set_requires_grad()
         self.image_keys = self.config.image_features.keys()
+        # TODO: Remove this once we bump transformers to >4.52.0 because the attribute will be removed
+        # AttributeError: 'PaliGemmaConfig' object has no attribute 'ignore_index'
         self.ignore_index = self.pi0_paligemma.config.ignore_index
         self.padding_side = self.config.padding_side
 
