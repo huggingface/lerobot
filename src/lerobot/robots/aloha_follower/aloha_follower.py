@@ -31,10 +31,12 @@ logger = logging.getLogger(__name__)
 PUPPET_GRIPPER_POSITION_OPEN = 0.05800
 PUPPET_GRIPPER_POSITION_CLOSE = 0.01844
 
-def puppet_gripper_normalize(x): 
+
+def puppet_gripper_normalize(x):
     return (x - PUPPET_GRIPPER_POSITION_CLOSE) / (
         PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE
     )
+
 
 def puppet_gripper_unnormalize(x):
     return x * (PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE) + PUPPET_GRIPPER_POSITION_CLOSE
