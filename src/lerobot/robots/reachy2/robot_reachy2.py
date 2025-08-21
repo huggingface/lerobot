@@ -125,7 +125,6 @@ class Reachy2Robot(Robot):
     def connect(self, calibrate: bool = False) -> None:
         self.reachy = ReachySDK(self.config.ip_address)
         if not self.is_connected:
-            print("Error connecting to Reachy 2.")
             raise ConnectionError()
 
         for cam in self.cameras.values():
