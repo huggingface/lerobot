@@ -1,6 +1,6 @@
-from lerobot.cameras.reachy2_camera import Reachy2Camera, Reachy2CameraConfig
 import time
 
+from lerobot.cameras.reachy2_camera import Reachy2Camera, Reachy2CameraConfig
 
 camera_config = Reachy2CameraConfig(name="teleop", image_type="left")
 camera = Reachy2Camera(camera_config)
