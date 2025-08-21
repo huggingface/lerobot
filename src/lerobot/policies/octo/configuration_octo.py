@@ -45,6 +45,8 @@ class OctoConfig(PreTrainedConfig):
             "ACTION": NormalizationMode.MEAN_STD,
         }
     )
+
+    push_to_hub: bool = False
     
     # Image preprocessing
     resize_primary_image: tuple[int, int] = (256, 256)
