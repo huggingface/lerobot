@@ -31,14 +31,12 @@ logger = logging.getLogger(__name__)
 PUPPET_GRIPPER_POSITION_OPEN = 0.05800
 PUPPET_GRIPPER_POSITION_CLOSE = 0.01844
 
-
-def PUPPET_GRIPPER_POSITION_NORMALIZE_FN(x):
+def puppet_gripper_normalize(x): 
     return (x - PUPPET_GRIPPER_POSITION_CLOSE) / (
         PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE
     )
 
-
-def PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(x):
+def puppet_gripper_unnormalize(x):
     return x * (PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE) + PUPPET_GRIPPER_POSITION_CLOSE
 
 
@@ -134,8 +132,8 @@ class AlohaFollower(Robot):
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
         if self.config.normalized_gripper:
-            obs_dict["left_finger.pos"] = PUPPET_GRIPPER_POSITION_NORMALIZE_FN(obs_dict["left_finger.pos"])
-            obs_dict["right_finger.pos"] = PUPPET_GRIPPER_POSITION_NORMALIZE_FN(obs_dict["right_finger.pos"])
+            obs_dict["left_finger.pos"] = puppet_gripper_normalize(obs_dict["left_finger.pos"])
+            obs_dict["right_finger.pos"] = puppet_gripper_normalize(obs_dict["right_finger.pos"])
 
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
@@ -156,7 +154,7 @@ class AlohaFollower(Robot):
             # Normalize gripper if needed
             if "finger.pos" in arm_action and self.config.normalized_gripper:
                 arm_action["finger.pos"] = max(0, min(1.0, arm_action["finger.pos"]))
-                arm_action["finger.pos"] = PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(arm_action["finger.pos"])
+                arm_action["finger.pos"] = puppet_gripper_unnormalize(arm_action["finger.pos"])
             # Send action
             send_action = getattr(self, f"{prefix}_arm").send_action(arm_action)
             # Add prefix back
