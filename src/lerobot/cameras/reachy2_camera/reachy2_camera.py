@@ -133,6 +133,8 @@ class Reachy2Camera(Camera):
                 },
             }
             initialized_cameras.append(camera_info)
+
+        camera_manager.disconnect()
         return initialized_cameras
 
     def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
@@ -290,5 +292,8 @@ class Reachy2Camera(Camera):
 
         if self.thread is not None:
             self._stop_read_thread()
+
+        if self.cam_manager is not None:
+            self.cam_manager.disconnect()
 
         logger.info(f"{self} disconnected.")
