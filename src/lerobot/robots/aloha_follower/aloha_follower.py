@@ -31,13 +31,11 @@ logger = logging.getLogger(__name__)
 PUPPET_GRIPPER_POSITION_OPEN = 0.05800
 PUPPET_GRIPPER_POSITION_CLOSE = 0.01844
 
-PUPPET_GRIPPER_POSITION_NORMALIZE_FN = lambda x: (x - PUPPET_GRIPPER_POSITION_CLOSE) / (
-    PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE
-)
-PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN = (
-    lambda x: x * (PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE)
-    + PUPPET_GRIPPER_POSITION_CLOSE
-)
+def PUPPET_GRIPPER_POSITION_NORMALIZE_FN(x): 
+    return (x - PUPPET_GRIPPER_POSITION_CLOSE) / (PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE)
+
+def PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(x):
+    return x * (PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE) + PUPPET_GRIPPER_POSITION_CLOSE
 
 
 class AlohaFollower(Robot):
@@ -190,14 +188,14 @@ class AlohaFollower(Robot):
         self.send_action({**left_cmd, **right_cmd})
 
     def reset_arms(self):
-        for i in range(300):
+        for _ in range(300):
             self.send_home_cmd()
             time.sleep(0.01)
 
     def __enter__(self):
         if not self.is_connected:
             self.connect(calibrate=False)
-        for i in range(200):
+        for _ in range(200):
             self.send_home_cmd()
             time.sleep(0.01)
         self.active = True
@@ -206,10 +204,10 @@ class AlohaFollower(Robot):
     def __exit__(self, exc_type, exc_val, exc_tb):
         while True:
             try:
-                for i in range(100):
+                for _ in range(100):
                     self.send_home_cmd()
                     time.sleep(0.01)
-                for i in range(100):
+                for _ in range(100):
                     self.send_sleep_cmd()
                     time.sleep(0.01)
                 self.active = False
