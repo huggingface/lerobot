@@ -98,7 +98,6 @@ from lerobot.utils.utils import (
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
-
 #################################################
 # Main entry point #
 #################################################
@@ -288,7 +287,9 @@ def act_with_policy(
             logging.info("[ACTOR] Shutting down act_with_policy")
             return
 
-        observation = transition[TransitionKey.OBSERVATION]
+        observation = {
+            k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
+        }
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
@@ -308,8 +309,16 @@ def act_with_policy(
         )
 
         # Extract values from processed transition
-        next_observation = new_transition[TransitionKey.OBSERVATION]
-        executed_action = new_transition[TransitionKey.ACTION]
+        next_observation = {
+            k: v
+            for k, v in new_transition[TransitionKey.OBSERVATION].items()
+            if k in cfg.policy.input_features
+        }
+
+        # Teleop action is the action that was executed in the environment
+        # It is either the action from the teleop device or the action from the policy
+        executed_action = new_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"]
+
         reward = new_transition[TransitionKey.REWARD]
         done = new_transition.get(TransitionKey.DONE, False)
         truncated = new_transition.get(TransitionKey.TRUNCATED, False)

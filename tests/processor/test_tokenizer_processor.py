@@ -98,7 +98,11 @@ def test_basic_tokenization(mock_auto_tokenizer):
 
     processor = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=10)
 
-    transition = create_transition(complementary_data={"task": "pick up the red cube"})
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"task": "pick up the red cube"},
+    )
 
     result = processor(transition)
 
@@ -126,7 +130,11 @@ def test_basic_tokenization_with_tokenizer_object():
 
     processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=10)
 
-    transition = create_transition(complementary_data={"task": "pick up the red cube"})
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"task": "pick up the red cube"},
+    )
 
     result = processor(transition)
 
@@ -156,7 +164,11 @@ def test_list_of_strings_tokenization(mock_auto_tokenizer):
 
     processor = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=8)
 
-    transition = create_transition(complementary_data={"task": ["pick up cube", "place on table"]})
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"task": ["pick up cube", "place on table"]},
+    )
 
     result = processor(transition)
 
@@ -180,7 +192,11 @@ def test_custom_keys(mock_auto_tokenizer):
 
     processor = TokenizerProcessor(tokenizer_name="test-tokenizer", task_key="instruction", max_length=5)
 
-    transition = create_transition(complementary_data={"instruction": "move forward"})
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"instruction": "move forward"},
+    )
 
     result = processor(transition)
 
@@ -421,7 +437,11 @@ def test_save_and_load_pretrained_with_tokenizer_name(mock_auto_tokenizer):
         loaded_processor = RobotProcessor.from_pretrained(temp_dir)
 
         # Test that loaded processor works
-        transition = create_transition(complementary_data={"instruction": "test instruction"})
+        transition = create_transition(
+            observation={"state": torch.tensor([1.0, 2.0])},
+            action=torch.tensor([0.1, 0.2]),
+            complementary_data={"instruction": "test instruction"},
+        )
 
         result = loaded_processor(transition)
         assert TransitionKey.OBSERVATION in result
@@ -448,7 +468,11 @@ def test_save_and_load_pretrained_with_tokenizer_object():
         )
 
         # Test that loaded processor works
-        transition = create_transition(complementary_data={"instruction": "test instruction"})
+        transition = create_transition(
+            observation={"state": torch.tensor([1.0, 2.0])},
+            action=torch.tensor([0.1, 0.2]),
+            complementary_data={"instruction": "test instruction"},
+        )
 
         result = loaded_processor(transition)
         assert TransitionKey.OBSERVATION in result
@@ -569,7 +593,11 @@ def test_tokenization_parameters(mock_auto_tokenizer):
         padding_side="left",
     )
 
-    transition = create_transition(complementary_data={"task": "test task"})
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"task": "test task"},
+    )
 
     processor(transition)
 
@@ -592,12 +620,14 @@ def test_preserves_other_complementary_data(mock_auto_tokenizer):
     processor = TokenizerProcessor(tokenizer_name="test-tokenizer")
 
     transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
         complementary_data={
             "task": "test task",
             "episode_id": 123,
             "timestamp": 456.789,
             "other_field": {"nested": "data"},
-        }
+        },
     )
 
     result = processor(transition)
@@ -624,7 +654,11 @@ def test_deterministic_tokenization(mock_auto_tokenizer):
 
     processor = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=10)
 
-    transition = create_transition(complementary_data={"task": "consistent test"})
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"task": "consistent test"},
+    )
 
     result1 = processor(transition)
     result2 = processor(transition)
@@ -648,7 +682,11 @@ def test_empty_string_task(mock_auto_tokenizer):
 
     processor = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=8)
 
-    transition = create_transition(complementary_data={"task": ""})
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"task": ""},
+    )
 
     result = processor(transition)
 
@@ -669,7 +707,11 @@ def test_very_long_task(mock_auto_tokenizer):
     processor = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=5, truncation=True)
 
     long_task = " ".join(["word"] * 100)  # Very long task
-    transition = create_transition(complementary_data={"task": long_task})
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"task": long_task},
+    )
 
     result = processor(transition)
 
@@ -714,7 +756,11 @@ def test_custom_padding_side(mock_auto_tokenizer):
     # Test left padding
     processor_left = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=10, padding_side="left")
 
-    transition = create_transition(complementary_data={"task": "test task"})
+    transition = create_transition(
+        observation={"state": torch.tensor([1.0, 2.0])},
+        action=torch.tensor([0.1, 0.2]),
+        complementary_data={"task": "test task"},
+    )
     processor_left(transition)
 
     assert tracking_tokenizer.padding_side_calls[-1] == "left"

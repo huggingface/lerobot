@@ -45,9 +45,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 
-import draccus
-
+from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.processor import RobotProcessor
+from lerobot.processor.converters import to_output_robot_action, to_transition_teleop_action
+from lerobot.processor.pipeline import IdentityProcessor
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -83,12 +85,24 @@ class ReplayConfig:
     dataset: DatasetReplayConfig
     # Use vocal synthesis to read events.
     play_sounds: bool = True
+    # Optional processor for actions before sending to robot
+    robot_action_processor: RobotProcessor | None = None
 
 
-@draccus.wrap()
+@parser.wrap()
 def replay(cfg: ReplayConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
+
+    # Initialize robot action processor with default if not provided
+    robot_action_processor = cfg.robot_action_processor or RobotProcessor(
+        steps=[IdentityProcessor()],
+        to_transition=to_transition_teleop_action,
+        to_output=to_output_robot_action,  # type: ignore[arg-type]
+    )
+
+    # Reset processor
+    robot_action_processor.reset()
 
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
@@ -104,7 +118,10 @@ def replay(cfg: ReplayConfig):
         for i, name in enumerate(dataset.features["action"]["names"]):
             action[name] = action_array[i]
 
-        robot.send_action(action)
+        # Process action through robot action processor
+        processed_action = robot_action_processor(action)
+
+        robot.send_action(processed_action)  # type: ignore[arg-type]
 
         dt_s = time.perf_counter() - start_episode_t
         busy_wait(1 / dataset.fps - dt_s)

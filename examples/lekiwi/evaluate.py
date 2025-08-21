@@ -1,7 +1,7 @@
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_processor
+from lerobot.policies.factory import make_pre_post_processors
 from lerobot.record import record_loop
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.utils.control_utils import init_keyboard_listener
@@ -46,7 +46,7 @@ listener, events = init_keyboard_listener()
 if not robot.is_connected:
     raise ValueError("Robot is not connected!")
 
-preprocessor, postprocessor = make_processor(
+preprocessor, postprocessor = make_pre_post_processors(
     policy_cfg=policy,
     pretrained_path=HF_MODEL_ID,
     dataset_stats=dataset.meta.stats,

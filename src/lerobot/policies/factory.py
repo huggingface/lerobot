@@ -17,10 +17,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 
 import torch
-from torch import nn
 from typing_extensions import Unpack
 
 from lerobot.configs.policies import PreTrainedConfig
@@ -117,7 +116,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
 
 
-def make_processor(
+def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
     **kwargs: Unpack[ProcessorConfigKwargs],
@@ -154,68 +153,65 @@ def make_processor(
         )
 
     # Create a new processor based on policy type
-    if policy_cfg.type == "tdmpc":
-        from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
-        from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_processor
+    if isinstance(policy_cfg, TDMPCConfig):
+        from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
 
-        processors = make_tdmpc_processor(
-            config=cast(TDMPCConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        processors = make_tdmpc_pre_post_processors(
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
-    elif policy_cfg.type == "diffusion":
-        from lerobot.policies.diffusion.processor_diffusion import make_diffusion_processor
+    elif isinstance(policy_cfg, DiffusionConfig):
+        from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
 
-        processors = make_diffusion_processor(
-            cast(DiffusionConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        processors = make_diffusion_pre_post_processors(
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
-    elif policy_cfg.type == "act":
-        from lerobot.policies.act.processor_act import make_act_processor
+    elif isinstance(policy_cfg, ACTConfig):
+        from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
-        processors = make_act_processor(
-            config=cast(ACTConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        processors = make_act_pre_post_processors(
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
-    elif policy_cfg.type == "vqbet":
-        from lerobot.policies.vqbet.processor_vqbet import make_vqbet_processor
+    elif isinstance(policy_cfg, VQBeTConfig):
+        from lerobot.policies.vqbet.processor_vqbet import make_vqbet_pre_post_processors
 
-        processors = make_vqbet_processor(
-            config=cast(VQBeTConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        processors = make_vqbet_pre_post_processors(
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
-    elif policy_cfg.type == "pi0":
-        from lerobot.policies.pi0.processor_pi0 import make_pi0_processor
+    elif isinstance(policy_cfg, PI0Config):
+        from lerobot.policies.pi0.processor_pi0 import make_pi0_pre_post_processors
 
-        processors = make_pi0_processor(
-            config=cast(PI0Config, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        processors = make_pi0_pre_post_processors(
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
-    elif policy_cfg.type == "pi0fast":
-        from lerobot.policies.pi0fast.processor_pi0fast import make_pi0fast_processor
+    elif isinstance(policy_cfg, PI0Config):
+        from lerobot.policies.pi0fast.processor_pi0fast import make_pi0fast_pre_post_processors
 
-        processors = make_pi0fast_processor(
-            cast(PI0Config, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        processors = make_pi0fast_pre_post_processors(
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
-    elif policy_cfg.type == "sac":
-        from lerobot.policies.sac.processor_sac import make_sac_processor
+    elif isinstance(policy_cfg, SACConfig):
+        from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 
-        processors = make_sac_processor(
-            cast(SACConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        processors = make_sac_pre_post_processors(
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
-    elif policy_cfg.type == "reward_classifier":
+    elif isinstance(policy_cfg, RewardClassifierConfig):
         from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
 
-        processors = make_classifier_processor(
-            cast(RewardClassifierConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
-        )
+        processors = make_classifier_processor(config=policy_cfg, dataset_stats=kwargs.get("dataset_stats"))
 
-    elif policy_cfg.type == "smolvla":
-        from lerobot.policies.smolvla.processor_smolvla import make_smolvla_processor
+    elif isinstance(policy_cfg, SmolVLAConfig):
+        from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 
-        processors = make_smolvla_processor(
-            cast(SmolVLAConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        processors = make_smolvla_pre_post_processors(
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
     else:
@@ -295,7 +291,7 @@ def make_policy(
         policy = policy_cls(**kwargs)
 
     policy.to(cfg.device)
-    assert isinstance(policy, nn.Module)
+    assert isinstance(policy, torch.nn.Module)
 
     # policy = torch.compile(policy, mode="reduce-overhead")
 

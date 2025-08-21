@@ -23,7 +23,7 @@ import torch
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
-from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_processor
+from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
 from lerobot.processor import (
     DeviceProcessor,
     NormalizerProcessor,
@@ -81,7 +81,7 @@ def test_make_tdmpc_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_tdmpc_processor(config, stats)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, stats)
 
     # Check processor names
     assert preprocessor.name == "robot_preprocessor"
@@ -105,7 +105,7 @@ def test_tdmpc_processor_normalization():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_tdmpc_processor(config, stats)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, stats)
 
     # Create test data
     observation = {
@@ -138,7 +138,7 @@ def test_tdmpc_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_tdmpc_processor(config, stats)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, stats)
 
     # Create CPU data
     observation = {
@@ -171,7 +171,7 @@ def test_tdmpc_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_tdmpc_processor(config, stats)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, stats)
 
     # Simulate Accelerate: data already on GPU
     device = torch.device("cuda:0")
@@ -198,7 +198,7 @@ def test_tdmpc_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_tdmpc_processor(config, stats)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, stats)
 
     # Simulate data on different GPU
     device = torch.device("cuda:1")
@@ -222,7 +222,7 @@ def test_tdmpc_processor_without_stats():
     """Test TDMPC processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_tdmpc_processor(config, dataset_stats=None)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, dataset_stats=None)
 
     # Should still create processors
     assert preprocessor is not None
@@ -245,7 +245,7 @@ def test_tdmpc_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_tdmpc_processor(config, stats)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, stats)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
@@ -276,7 +276,7 @@ def test_tdmpc_processor_mixed_precision():
     stats = create_default_stats()
 
     # Create processor
-    preprocessor, postprocessor = make_tdmpc_processor(config, stats)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, stats)
 
     # Replace DeviceProcessor with one that uses float16
     for i, step in enumerate(preprocessor.steps):
@@ -305,7 +305,7 @@ def test_tdmpc_processor_batch_data():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_tdmpc_processor(config, stats)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, stats)
 
     # Test with batched data
     batch_size = 64
@@ -330,7 +330,7 @@ def test_tdmpc_processor_edge_cases():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_tdmpc_processor(config, stats)
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, stats)
 
     # Test with only state observation (no image)
     observation = {OBS_STATE: torch.randn(12)}

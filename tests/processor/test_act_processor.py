@@ -23,7 +23,7 @@ import torch
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.processor_act import make_act_processor
+from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.processor import (
     DeviceProcessor,
     NormalizerProcessor,
@@ -78,7 +78,7 @@ def test_make_act_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_processor(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
     # Check processor names
     assert preprocessor.name == "robot_preprocessor"
@@ -102,7 +102,7 @@ def test_act_processor_normalization():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_processor(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
     # Create test data
     observation = {OBS_STATE: torch.randn(7)}
@@ -131,7 +131,7 @@ def test_act_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_processor(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
     # Create CPU data
     observation = {OBS_STATE: torch.randn(7)}
@@ -160,7 +160,7 @@ def test_act_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_processor(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
     # Simulate Accelerate: data already on GPU
     device = torch.device("cuda:0")
@@ -183,7 +183,7 @@ def test_act_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_processor(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
     # Simulate data on different GPU (like in multi-GPU training)
     device = torch.device("cuda:1")
@@ -203,7 +203,7 @@ def test_act_processor_without_stats():
     """Test ACT processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_act_processor(config, dataset_stats=None)
+    preprocessor, postprocessor = make_act_pre_post_processors(config, dataset_stats=None)
 
     # Should still create processors, but normalization won't have stats
     assert preprocessor is not None
@@ -223,7 +223,7 @@ def test_act_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_processor(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
@@ -249,7 +249,7 @@ def test_act_processor_device_placement_preservation():
 
     # Test with CPU config
     config.device = "cpu"
-    preprocessor, _ = make_act_processor(config, stats)
+    preprocessor, _ = make_act_pre_post_processors(config, stats)
 
     # Process CPU data
     observation = {OBS_STATE: torch.randn(7)}
@@ -269,7 +269,7 @@ def test_act_processor_mixed_precision():
     stats = create_default_stats()
 
     # Modify the device processor to use float16
-    preprocessor, postprocessor = make_act_processor(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
     # Replace DeviceProcessor with one that uses float16
     for i, step in enumerate(preprocessor.steps):
@@ -294,7 +294,7 @@ def test_act_processor_batch_consistency():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_processor(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
     # Test single sample (unbatched)
     observation = {OBS_STATE: torch.randn(7)}

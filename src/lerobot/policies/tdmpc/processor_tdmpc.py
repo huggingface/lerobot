@@ -28,7 +28,7 @@ from lerobot.processor import (
 )
 
 
-def make_tdmpc_processor(
+def make_tdmpc_pre_post_processors(
     config: TDMPCConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [

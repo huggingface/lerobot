@@ -177,16 +177,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 "names": {"action.delta_x": 0, "action.delta_y": 1, "action.delta_z": 2},
             }
 
-    def _on_press(self, key):
-        if hasattr(key, "char"):
-            key = key.char
-        self.event_queue.put((key, True))
-
-    def _on_release(self, key):
-        if hasattr(key, "char"):
-            key = key.char
-        self.event_queue.put((key, False))
-
     def get_action(self) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(

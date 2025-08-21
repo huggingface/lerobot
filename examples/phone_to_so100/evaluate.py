@@ -20,7 +20,7 @@ from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_featur
 from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_processor
+from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
@@ -127,7 +127,7 @@ robot.connect()
 episode_idx = 0
 
 policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
-preprocessor, postprocessor = make_processor(
+preprocessor, postprocessor = make_pre_post_processors(
     policy_cfg=policy,
     pretrained_path=HF_MODEL_ID,
     dataset_stats=dataset.meta.stats,

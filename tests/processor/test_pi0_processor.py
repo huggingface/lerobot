@@ -23,7 +23,7 @@ import torch
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
-from lerobot.policies.pi0.processor_pi0 import Pi0NewLineProcessor, make_pi0_processor
+from lerobot.policies.pi0.processor_pi0 import Pi0NewLineProcessor, make_pi0_pre_post_processors
 from lerobot.processor import (
     DeviceProcessor,
     NormalizerProcessor,
@@ -84,7 +84,7 @@ def test_make_pi0_processor_basic():
     stats = create_default_stats()
 
     with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor"):
-        preprocessor, postprocessor = make_pi0_processor(config, stats)
+        preprocessor, postprocessor = make_pi0_pre_post_processors(config, stats)
 
     # Check processor names
     assert preprocessor.name == "robot_preprocessor"
@@ -183,7 +183,7 @@ def test_pi0_processor_cuda():
             return features
 
     with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor", MockTokenizerProcessor):
-        preprocessor, postprocessor = make_pi0_processor(config, stats)
+        preprocessor, postprocessor = make_pi0_pre_post_processors(config, stats)
 
     # Create CPU data
     observation = {
@@ -233,7 +233,7 @@ def test_pi0_processor_accelerate_scenario():
             return features
 
     with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor", MockTokenizerProcessor):
-        preprocessor, postprocessor = make_pi0_processor(config, stats)
+        preprocessor, postprocessor = make_pi0_pre_post_processors(config, stats)
 
     # Simulate Accelerate: data already on GPU and batched
     device = torch.device("cuda:0")
@@ -284,7 +284,7 @@ def test_pi0_processor_multi_gpu():
             return features
 
     with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor", MockTokenizerProcessor):
-        preprocessor, postprocessor = make_pi0_processor(config, stats)
+        preprocessor, postprocessor = make_pi0_pre_post_processors(config, stats)
 
     # Simulate data on different GPU
     device = torch.device("cuda:1")
@@ -310,7 +310,7 @@ def test_pi0_processor_without_stats():
 
     # Mock the tokenizer processor
     with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor"):
-        preprocessor, postprocessor = make_pi0_processor(config, dataset_stats=None)
+        preprocessor, postprocessor = make_pi0_pre_post_processors(config, dataset_stats=None)
 
     # Should still create processors
     assert preprocessor is not None
