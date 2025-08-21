@@ -308,42 +308,13 @@ class OctoPolicy(PreTrainedPolicy):
         # batch = self.normalize_inputs(batch)
         # batch = self.normalize_targets(batch)
 
-        # # Prepare observations
-        # observations = {}
-
-        # # Handle images
-        # for key in batch:
-        #     if key.startswith("observation.images."):
-        #         camera_name = key.replace("observation.images.", "")
-        #         if "primary" in camera_name or "top" in camera_name:
-        #             observations["image_primary"] = batch[key]
-        #         elif "wrist" in camera_name:
-        #             observations["image_wrist"] = batch[key]
-
-        # # Handle state if present
-        # if OBS_STATE in batch:
-        #     observations["state"] = batch[OBS_STATE]
-
-        # # Create tasks
-        # texts = batch.get("task", ["Pick and place the object."] * batch[ACTION].shape[0])
-        # if isinstance(texts, str):
-        #     texts = [texts] * batch[ACTION].shape[0]
-        # device = batch[ACTION].device
-        # tasks = self.create_tasks(texts=texts, device=device)
-
-        # # Create timestep pad mask
-        # batch_size, horizon = batch[ACTION].shape[:2]
-        # timestep_pad_mask = torch.ones(batch_size, horizon, dtype=torch.bool, device=batch[ACTION].device)
-
+        # Prepare batch
         observations, tasks, actions, action_pad_mask, timestep_pad_mask = self._prepare_batch(batch)
 
         # Get transformer outputs for training
         transformer_outputs = self.model.octo_transformer(observations, tasks, timestep_pad_mask)
 
         # Compute diffusion loss
-        # actions = batch[ACTION]
-        # action_pad_mask = torch.ones_like(actions, dtype=torch.bool)
-
         loss, loss_dict = self.model.head.loss(
             transformer_outputs, actions, timestep_pad_mask, action_pad_mask
         )
