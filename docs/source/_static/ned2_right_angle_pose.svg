@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="100%" height="100%" fill="#F5F7FA"/>
+  <rect x="20" y="20" width="920" height="500" fill="none" stroke="#CBD5E1" stroke-width="2"/>
+  <text x="480" y="70" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#0F172A">Right-angle Pose — Placeholder</text>
+  <text x="480" y="100" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#475569">Replace this file with your real illustration</text>
+
+  <!-- Base -->
+  <rect x="430" y="360" width="100" height="40" fill="#E2E8F0" stroke="#94A3B8"/>
+  <!-- Shoulder -->
+  <rect x="475" y="280" width="10" height="80" fill="#BFDBFE" stroke="#60A5FA"/>
+  <!-- Elbow (right angle) -->
+  <rect x="485" y="280" width="80" height="10" fill="#BFDBFE" stroke="#60A5FA"/>
+  <!-- Forearm -->
+  <rect x="565" y="280" width="10" height="70" fill="#BFDBFE" stroke="#60A5FA"/>
+  <!-- Gripper open -->
+  <line x1="560" y1="350" x2="580" y2="370" stroke="#F59E0B" stroke-width="4"/>
+  <line x1="570" y1="350" x2="590" y2="370" stroke="#F59E0B" stroke-width="4"/>
+
+  <text x="480" y="420" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#475569">Approximate “right-angle” pose, gripper open</text>
+</svg> 
