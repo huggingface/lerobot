@@ -20,10 +20,8 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
-
 from lerobot.robots.robot import Robot
-
-from lerobot.robots.viperx import ViperXConfig, ViperX
+from lerobot.robots.viperx import ViperX, ViperXConfig
 
 from .config_aloha_follower import AlohaFollowerConfig
 
@@ -34,13 +32,15 @@ PUPPET_GRIPPER_POSITION_OPEN = 0.05800
 PUPPET_GRIPPER_POSITION_CLOSE = 0.01844
 
 PUPPET_GRIPPER_POSITION_NORMALIZE_FN = lambda x: (x - PUPPET_GRIPPER_POSITION_CLOSE) / (
-            PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE)
-PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN = lambda x: x * (
-            PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE) + PUPPET_GRIPPER_POSITION_CLOSE
+    PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE
+)
+PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN = (
+    lambda x: x * (PUPPET_GRIPPER_POSITION_OPEN - PUPPET_GRIPPER_POSITION_CLOSE)
+    + PUPPET_GRIPPER_POSITION_CLOSE
+)
 
 
 class AlohaFollower(Robot):
-
     config_class = AlohaFollowerConfig
     name = "aloha_follower"
 
@@ -101,7 +101,7 @@ class AlohaFollower(Robot):
     def connect(self, calibrate: bool = False) -> None:
         if calibrate:
             raise ValueError("Aloha robot does not support calibration on connect.")
-        
+
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
 
@@ -147,7 +147,9 @@ class AlohaFollower(Robot):
         def process_arm(prefix):
             # Remove prefix
             arm_action = {
-            key.removeprefix(f"{prefix}_"): value for key, value in action.items() if key.startswith(f"{prefix}_")
+                key.removeprefix(f"{prefix}_"): value
+                for key, value in action.items()
+                if key.startswith(f"{prefix}_")
             }
             # Normalize gripper if needed
             if "finger.pos" in arm_action and self.config.normalized_gripper:
@@ -173,7 +175,7 @@ class AlohaFollower(Robot):
     def send_home_cmd(self):
         start_pos = (0, -0.96, 1.16, 0, -0.3, 0, 0.02)
         joint_names = ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate", "finger"]
-        cmd = {name + '.pos': val for name, val in zip(joint_names, start_pos)}
+        cmd = {name + ".pos": val for name, val in zip(joint_names, start_pos, strict=False)}
         left_cmd = {f"left_{k}": v for k, v in cmd.items()}
         right_cmd = {f"right_{k}": v for k, v in cmd.items()}
         self.send_action({**left_cmd, **right_cmd})
@@ -182,7 +184,7 @@ class AlohaFollower(Robot):
     def send_sleep_cmd(self):
         start_pos = (0, -1.8, 1.6, 0.12, 0.65, 0, 0.05)
         joint_names = ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate", "finger"]
-        cmd = {name + '.pos': val for name, val in zip(joint_names, start_pos)}
+        cmd = {name + ".pos": val for name, val in zip(joint_names, start_pos, strict=False)}
         left_cmd = {f"left_{k}": v for k, v in cmd.items()}
         right_cmd = {f"right_{k}": v for k, v in cmd.items()}
         self.send_action({**left_cmd, **right_cmd})

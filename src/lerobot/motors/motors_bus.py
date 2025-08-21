@@ -21,6 +21,7 @@
 
 import abc
 import logging
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -29,7 +30,6 @@ from pprint import pformat
 from typing import Protocol, TypeAlias
 
 import serial
-import math
 from deepdiff import DeepDiff
 from tqdm import tqdm
 
@@ -83,7 +83,6 @@ class MotorNormMode(str, Enum):
     RANGE_M100_100 = "range_m100_100"
     DEGREES = "degrees"
     RADIANS = "radians"
-
 
 
 @dataclass

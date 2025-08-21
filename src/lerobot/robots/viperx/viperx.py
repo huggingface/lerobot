@@ -13,13 +13,12 @@
 # limitations under the License.
 
 import logging
-import time
 import math
+import time
 from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.constants import OBS_STATE
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
@@ -36,15 +35,21 @@ logger = logging.getLogger(__name__)
 HORN_RADIUS = 0.022
 ARM_LENGTH = 0.036
 
+
 def gripper_to_linear(gripper_pos):
     a1 = HORN_RADIUS * math.sin(gripper_pos)
-    c = math.sqrt(pow(HORN_RADIUS,2) - pow(a1,2))
-    a2 = math.sqrt(pow(ARM_LENGTH,2) - pow(c,2))
+    c = math.sqrt(pow(HORN_RADIUS, 2) - pow(a1, 2))
+    a2 = math.sqrt(pow(ARM_LENGTH, 2) - pow(c, 2))
     return a1 + a2
 
+
 def linear_to_gripper(linear_position):
-    result = math.pi/2.0 - math.acos((pow(HORN_RADIUS, 2) + pow(linear_position,2) - pow(ARM_LENGTH, 2)) / (2 * HORN_RADIUS * linear_position))
+    result = math.pi / 2.0 - math.acos(
+        (pow(HORN_RADIUS, 2) + pow(linear_position, 2) - pow(ARM_LENGTH, 2))
+        / (2 * HORN_RADIUS * linear_position)
+    )
     return result
+
 
 class ViperX(Robot):
     """
@@ -60,15 +65,23 @@ class ViperX(Robot):
     ):
         super().__init__(config)
         default_calibration = {
-            "waist": MotorCalibration(id=1, drive_mode=0, homing_offset=0, range_min=0, range_max=4095), 
-            'shoulder': MotorCalibration(id=2, drive_mode=1, homing_offset=0, range_min=0, range_max=4095), 
-            'shoulder_shadow': MotorCalibration(id=3, drive_mode=0, homing_offset=0, range_min=0, range_max=4095), 
-            'elbow': MotorCalibration(id=4, drive_mode=1, homing_offset=0, range_min=0, range_max=4095), 
-            'elbow_shadow': MotorCalibration(id=5, drive_mode=0, homing_offset=0, range_min=0, range_max=4095), 
-            'forearm_roll': MotorCalibration(id=6, drive_mode=0, homing_offset=0, range_min=0, range_max=4095), 
-            'wrist_angle': MotorCalibration(id=7, drive_mode=1, homing_offset=0, range_min=0, range_max=4095), 
-            'wrist_rotate': MotorCalibration(id=8, drive_mode=0, homing_offset=0, range_min=0, range_max=4095), 
-            'gripper': MotorCalibration(id=9, drive_mode=0, homing_offset=0, range_min=0, range_max=4095)
+            "waist": MotorCalibration(id=1, drive_mode=0, homing_offset=0, range_min=0, range_max=4095),
+            "shoulder": MotorCalibration(id=2, drive_mode=1, homing_offset=0, range_min=0, range_max=4095),
+            "shoulder_shadow": MotorCalibration(
+                id=3, drive_mode=0, homing_offset=0, range_min=0, range_max=4095
+            ),
+            "elbow": MotorCalibration(id=4, drive_mode=1, homing_offset=0, range_min=0, range_max=4095),
+            "elbow_shadow": MotorCalibration(
+                id=5, drive_mode=0, homing_offset=0, range_min=0, range_max=4095
+            ),
+            "forearm_roll": MotorCalibration(
+                id=6, drive_mode=0, homing_offset=0, range_min=0, range_max=4095
+            ),
+            "wrist_angle": MotorCalibration(id=7, drive_mode=1, homing_offset=0, range_min=0, range_max=4095),
+            "wrist_rotate": MotorCalibration(
+                id=8, drive_mode=0, homing_offset=0, range_min=0, range_max=4095
+            ),
+            "gripper": MotorCalibration(id=9, drive_mode=0, homing_offset=0, range_min=0, range_max=4095),
         }
         self.config = config
         self.bus = DynamixelMotorsBus(
@@ -84,7 +97,7 @@ class ViperX(Robot):
                 "wrist_rotate": Motor(8, "xm430-w350", MotorNormMode.RADIANS),
                 "gripper": Motor(9, "xm430-w350", MotorNormMode.RADIANS),
             },
-            calibration=default_calibration
+            calibration=default_calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 

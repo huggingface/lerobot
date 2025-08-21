@@ -17,8 +17,8 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
-
 from lerobot.robots.config import RobotConfig
+
 
 @RobotConfig.register_subclass("aloha_follower")
 @dataclass
