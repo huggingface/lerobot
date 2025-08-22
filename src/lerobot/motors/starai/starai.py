@@ -115,6 +115,10 @@ class StaraiMotorsBus(MotorsBus):
 
 
         self.uservo = PocketHandler("/dev/ttyUSB0",1000000)
+        for motor in self.motors:
+            if (self.uservo.ping(motor.id)!= True):
+                raise Exception(f"motor not found{motor.id}")
+        self.uservo.ResetLoop(0xff)
         # # HACK: monkeypatch
 
 
@@ -126,6 +130,7 @@ class StaraiMotorsBus(MotorsBus):
 
         # if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
         #     raise ValueError(f"Some motors are incompatible with protocol_version={self.protocol_version}")
+    @property    
     def is_connected(self) -> bool:
         """bool: `True` if the underlying serial port is open."""
         return self.uservo.is_open
@@ -165,6 +170,8 @@ class StaraiMotorsBus(MotorsBus):
         self._assert_motors_exist()
         # self._assert_same_firmware()
 
+    def connect(self, handshake: bool = True) -> None:
+        self.uservo.connect()
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         raise NotImplementedError(f"this function should never be called")
