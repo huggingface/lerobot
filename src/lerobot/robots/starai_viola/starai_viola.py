@@ -118,16 +118,6 @@ class StaraiViola(Robot):
                 logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
                 self.bus.write_calibration(self.calibration)
                 return
-    def calibrate(self) -> None:
-        if self.calibration:
-            # self.calibration is not empty here
-            user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
-                self.bus.write_calibration(self.calibration)
-                return
 
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
@@ -137,11 +127,6 @@ class StaraiViola(Robot):
         # input(f"Move {self} to the middle of its range of motion and press ENTER....")
         # homing_offsets = self.bus.set_half_turn_homings()
 
-        print(
-            "Move all joints sequentially through their entire ranges "
-            "of motion.\nRecording positions. Press ENTER to stop..."
-        )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion()
         print(
             "Move all joints sequentially through their entire ranges "
             "of motion.\nRecording positions. Press ENTER to stop..."
@@ -161,11 +146,9 @@ class StaraiViola(Robot):
         self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
-        self.bus.write_calibration(self.calibration)
-        self._save_calibration()
-        print("Calibration saved to", self.calibration_fpath)
 
-    # def configure(self) -> None:
+    def configure(self) -> None:
+        pass
     #     with self.bus.torque_disabled():
     #         self.bus.configure_motors()
             # for motor in self.bus.motors:
