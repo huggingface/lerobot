@@ -12,18 +12,18 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from fashionstar_uart_sdk import *
 
 from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address
-# from .tables import (
+from .tables import (
 #     FIRMWARE_MAJOR_VERSION,
 #     FIRMWARE_MINOR_VERSION,
 #     MODEL_BAUDRATE_TABLE,
-#     MODEL_CONTROL_TABLE,
+    # MODEL_CONTROL_TABLE,
 #     MODEL_ENCODING_TABLE,
 #     MODEL_NUMBER,
-#     MODEL_NUMBER_TABLE,
+    MODEL_NUMBER_TABLE,
 #     MODEL_PROTOCOL,
 #     MODEL_RESOLUTION,
 #     SCAN_BAUDRATES,
-# )
+)
 
 DEFAULT_PROTOCOL_VERSION = 0
 DEFAULT_BAUDRATE = 1_000_000
@@ -98,7 +98,7 @@ class StaraiMotorsBus(MotorsBus):
     # model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
     # model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
     # model_encoding_table = deepcopy(MODEL_ENCODING_TABLE)
-    # model_number_table = deepcopy(MODEL_NUMBER_TABLE)
+    model_number_table = deepcopy(MODEL_NUMBER_TABLE)
     # model_resolution_table = deepcopy(MODEL_RESOLUTION)
     # normalized_data = deepcopy(NORMALIZED_DATA)
 
@@ -117,15 +117,16 @@ class StaraiMotorsBus(MotorsBus):
         self.uservo = PocketHandler("/dev/ttyUSB0",1000000)
         # # HACK: monkeypatch
 
-
-        # # self.packet_handler = scs.PacketHandler(protocol_version)
+        
+        # self.packet_handler = scs.PacketHandler(protocol_version)
         # self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         # self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
-        # # self._comm_success = scs.COMM_SUCCESS
-        # # self._no_error = 0x00
+        # self._comm_success = scs.COMM_SUCCESS
+        # self._no_error = 0x00
 
         # if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
         #     raise ValueError(f"Some motors are incompatible with protocol_version={self.protocol_version}")
+    @property
     def is_connected(self) -> bool:
         """bool: `True` if the underlying serial port is open."""
         return self.uservo.is_open

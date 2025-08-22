@@ -1,0 +1,10 @@
+{
+    "robot": {
+        "type": "starai_viola",
+        "port": "/dev/ttyUSB0",
+        "id": "my_awesome_staraiviola_arm",
+        "disable_torque_on_disconnect": true,
+        "use_degrees": false
+    },
+    "teleop": null
+}
