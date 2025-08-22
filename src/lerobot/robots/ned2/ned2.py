@@ -122,7 +122,7 @@ class Ned2(Robot):
             except Exception:
                 self._socat_process.kill()
         self._socat_process = None
-        logger.info("Tunnel socat arrêté.")
+        logger.info("Tunnel socat stopped.")
 
     @property
     def _motors_ft(self) -> dict[str, type]:
