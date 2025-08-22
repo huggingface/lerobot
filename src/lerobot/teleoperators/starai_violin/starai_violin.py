@@ -19,31 +19,32 @@ import time
 
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
+from lerobot.motors.starai import (
+    StaraiMotorsBus,
     OperatingMode,
 )
 
 from ..teleoperator import Teleoperator
-from .config_so101_leader import SO101LeaderConfig
+from .config_starai_violin import StaraiViolinConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SO101Leader(Teleoperator):
+class StaraiViolin(Teleoperator):
     """
-    SO-101 Leader Arm designed by TheRobotStudio and Hugging Face.
+    Starai Violin designed by TheRobotStudio and Hugging Face.
     """
 
-    config_class = SO101LeaderConfig
-    name = "so101_leader"
+    config_class = StaraiViolinConfig
+    name = "starai_violin"
 
-    def __init__(self, config: SO101LeaderConfig):
+    def __init__(self, config: StaraiViolinConfig):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
+        self.bus = StaraiMotorsBus(
             port=self.config.port,
+            interval=100,
             motors={
                 "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
                 "shoulder_lift": Motor(2, "sts3215", norm_mode_body),

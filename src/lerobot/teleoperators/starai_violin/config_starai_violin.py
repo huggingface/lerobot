@@ -19,9 +19,9 @@ from dataclasses import dataclass
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("so101_leader")
+@TeleoperatorConfig.register_subclass("starai_violin")
 @dataclass
-class SO101LeaderConfig(TeleoperatorConfig):
+class StaraiViolinConfig(TeleoperatorConfig):
     # Port to connect to the arm
     port: str
 
