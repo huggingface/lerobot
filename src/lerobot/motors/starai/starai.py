@@ -115,10 +115,7 @@ class StaraiMotorsBus(MotorsBus):
 
 
         self.uservo = PocketHandler("/dev/ttyUSB0",1000000)
-        for motor in self.motors:
-            if (self.uservo.ping(motor.id)!= True):
-                raise Exception(f"motor not found{motor.id}")
-        self.uservo.ResetLoop(0xff)
+
         # # HACK: monkeypatch
 
         
@@ -172,6 +169,10 @@ class StaraiMotorsBus(MotorsBus):
 
     def connect(self, handshake: bool = True) -> None:
         self.uservo.connect()
+        for motor in self.motors:
+            if (self.uservo.ping(self.motors[motor].id)!= True):
+                raise Exception(f"motor not found id:{self.motors[motor].id}")
+        self.uservo.ResetLoop(0xff)
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         raise NotImplementedError(f"this function should never be called")
@@ -227,10 +228,10 @@ class StaraiMotorsBus(MotorsBus):
     def read_calibration(self) -> dict[str, MotorCalibration]:
         offsets, mins, maxes = {}, {}, {}
         for motor in self.motors:
-            mins[motor] = self.read("Min_Position_Limit", motor, normalize=False)
-            maxes[motor] = self.read("Max_Position_Limit", motor, normalize=False)
+            mins[motor] = self.uservo.read["Min_Position_Limit"](self.motors[motor].id)
+            maxes[motor] = self.uservo.read["Max_Position_Limit"]( self.motors[motor].id )
             offsets[motor] = (
-                self.read("Homing_Offset", motor, normalize=False) if self.protocol_version == 0 else 0
+                0
             )
 
         calibration = {}
@@ -268,7 +269,7 @@ class StaraiMotorsBus(MotorsBus):
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.write("Stop_On_Control_Mode",motor,"unlocked",0)
+            self.uservo.write["Stop_On_Control_Mode"](self.motors[motor].id,"unlocked",0)
 
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
@@ -280,8 +281,8 @@ class StaraiMotorsBus(MotorsBus):
 
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.write("Stop_On_Control_Mode",motor,"locked",0)
-            
+            self.uservo.write["Stop_On_Control_Mode"](motor, "locked",0)
+
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:
             model = self._id_to_model(id_)
