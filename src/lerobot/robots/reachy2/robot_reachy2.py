@@ -15,11 +15,12 @@
 # limitations under the License.
 
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
-from lerobot.cameras.utils import make_cameras_from_configs
 from reachy2_sdk import ReachySDK
+
+from lerobot.cameras.utils import make_cameras_from_configs
 
 from ..robot import Robot
 from .configuration_reachy2 import Reachy2RobotConfig
@@ -83,27 +84,24 @@ class Reachy2Robot(Robot):
         self.reachy: None | ReachySDK = None
         self.cameras = make_cameras_from_configs(config.cameras)
 
-        self.logs: Dict[str, float] = {}
+        self.logs: dict[str, float] = {}
 
-        self.joints_dict: Dict[str, str] = self._generate_joints_dict()
+        self.joints_dict: dict[str, str] = self._generate_joints_dict()
 
     @property
-    def observation_features(self) -> Dict[str, Any]:
+    def observation_features(self) -> dict[str, Any]:
         return {**self.motors_features, **self.camera_features}
 
     @property
-    def action_features(self) -> Dict[str, type]:
+    def action_features(self) -> dict[str, type]:
         return self.motors_features
 
     @property
-    def camera_features(self) -> Dict[str, Tuple[Optional[int], Optional[int], int]]:
-        return {
-            cam: (self.cameras[cam].height, self.cameras[cam].width, 3)
-            for cam in self.cameras
-        }
+    def camera_features(self) -> dict[str, tuple[int | None, int | None, int]]:
+        return {cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras}
 
     @property
-    def motors_features(self) -> Dict[str, type]:
+    def motors_features(self) -> dict[str, type]:
         if self.config.with_mobile_base:
             return {
                 **dict.fromkeys(
@@ -144,7 +142,7 @@ class Reachy2Robot(Robot):
     def calibrate(self) -> None:
         pass
 
-    def _generate_joints_dict(self) -> Dict[str, str]:
+    def _generate_joints_dict(self) -> dict[str, str]:
         self.joints = {}
         if self.config.with_neck:
             self.joints.update(REACHY2_NECK_JOINTS)
@@ -156,23 +154,18 @@ class Reachy2Robot(Robot):
             self.joints.update(REACHY2_ANTENNAS_JOINTS)
         return self.joints
 
-    def _get_state(self) -> Dict[str, float]:
+    def _get_state(self) -> dict[str, float]:
         if self.reachy is not None:
-            pos_dict = {
-                k: self.reachy.joints[v].present_position
-                for k, v in self.joints_dict.items()
-            }
+            pos_dict = {k: self.reachy.joints[v].present_position for k, v in self.joints_dict.items()}
             if not self.config.with_mobile_base:
                 return pos_dict
-            vel_dict = {
-                k: self.reachy.mobile_base.odometry[v] for k, v in REACHY2_VEL.items()
-            }
+            vel_dict = {k: self.reachy.mobile_base.odometry[v] for k, v in REACHY2_VEL.items()}
             return {**pos_dict, **vel_dict}
         else:
             return {}
 
-    def get_observation(self) -> Dict[str, np.ndarray]:
-        obs_dict: Dict[str, Any] = {}
+    def get_observation(self) -> dict[str, np.ndarray]:
+        obs_dict: dict[str, Any] = {}
 
         # Read Reachy 2 state
         before_read_t = time.perf_counter()
@@ -185,7 +178,7 @@ class Reachy2Robot(Robot):
 
         return obs_dict
 
-    def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if self.reachy is not None:
             if not self.is_connected:
                 raise ConnectionError()
@@ -196,18 +189,14 @@ class Reachy2Robot(Robot):
             for key, val in action.items():
                 if key not in self.joints_dict:
                     if key not in REACHY2_VEL:
-                        raise KeyError(
-                            f"Key '{key}' is not a valid motor key in Reachy 2."
-                        )
+                        raise KeyError(f"Key '{key}' is not a valid motor key in Reachy 2.")
                     else:
                         vel[REACHY2_VEL[key]] = val
                 else:
                     self.reachy.joints[self.joints_dict[key]].goal_position = float(val)
 
             if self.config.with_mobile_base:
-                self.reachy.mobile_base.set_goal_speed(
-                    vel["vx"], vel["vy"], vel["vtheta"]
-                )
+                self.reachy.mobile_base.set_goal_speed(vel["vx"], vel["vy"], vel["vtheta"])
 
             # We don't send the goal positions if we control Reachy 2 externally
             if not self.use_external_commands:

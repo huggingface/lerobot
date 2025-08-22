@@ -25,7 +25,6 @@ import time
 # )
 from reachy2_sdk import ReachySDK
 
-
 from ..teleoperator import Teleoperator
 from .config_reachy2_fake_teleoperator import Reachy2FakeTeleoperatorConfig
 
@@ -102,13 +101,16 @@ class Reachy2FakeTeleoperator(Teleoperator):
     @property
     def action_features(self) -> dict[str, type]:
         if self.config.with_mobile_base:
-            return {**dict.fromkeys(
-                        self.joints_dict.keys(),
-                        float,
-                    ), **dict.fromkeys(
-                        REACHY2_VEL.keys(),
-                        float,
-                    )}
+            return {
+                **dict.fromkeys(
+                    self.joints_dict.keys(),
+                    float,
+                ),
+                **dict.fromkeys(
+                    REACHY2_VEL.keys(),
+                    float,
+                ),
+            }
         else:
             return dict.fromkeys(self.joints_dict.keys(), float)
 

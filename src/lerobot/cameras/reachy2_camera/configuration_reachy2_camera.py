@@ -14,7 +14,7 @@
 
 from dataclasses import dataclass
 
-from ..configs import CameraConfig, ColorMode, Cv2Rotation
+from ..configs import CameraConfig, ColorMode
 
 
 @CameraConfig.register_subclass("reachy2_camera")
@@ -30,14 +30,14 @@ class Reachy2CameraConfig(CameraConfig):
     ```python
     # Basic configurations
     Reachy2CameraConfig(
-            name="teleop",
-            image_type="left",
-            ip_address="192.168.0.200",  # IP address of the robot
-            fps=15,
-            width=640,
-            height=480,
-            color_mode=ColorMode.RGB,
-        )  # Left teleop camera, 640x480 @ 15FPS
+        name="teleop",
+        image_type="left",
+        ip_address="192.168.0.200",  # IP address of the robot
+        fps=15,
+        width=640,
+        height=480,
+        color_mode=ColorMode.RGB,
+    )  # Left teleop camera, 640x480 @ 15FPS
     ```
 
     Attributes:
@@ -75,4 +75,6 @@ class Reachy2CameraConfig(CameraConfig):
             )
 
         if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided.")
+            raise ValueError(
+                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
+            )
