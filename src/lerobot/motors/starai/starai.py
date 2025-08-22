@@ -180,7 +180,7 @@ class StaraiMotorsBus(MotorsBus):
 
         names = self._get_motors_list(motors)
         ids = [self.motors[motor].id for motor in names]
-        
+
         read_data = {}
         if data_name == "Monitor":
             servos_id = dict(zip(names, ids))
@@ -264,7 +264,8 @@ class StaraiMotorsBus(MotorsBus):
             self.write("Stop_On_Control_Mode",motor,"unlocked",0)
 
 
-    # def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
+    def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
+        pass
     #     addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
     #     self._write(addr, length, motor_id, TorqueMode.DISABLED.value, num_retry=num_retry)
     #     addr, length = get_address(self.model_ctrl_table, model, "Lock")

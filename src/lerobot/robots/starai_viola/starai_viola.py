@@ -47,7 +47,6 @@ class StaraiViola(Robot):
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = StaraiMotorsBus(
             port=self.config.port,
-            interval=100,
             motors={
                 "Motor_0": Motor(0, "rx8-u50", norm_mode_body),
                 "Motor_1": Motor(1, "rx8-u50", norm_mode_body),
