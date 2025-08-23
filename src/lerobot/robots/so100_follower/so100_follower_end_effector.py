@@ -48,12 +48,12 @@ class SO100FollowerEndEffector(SO100Follower):
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, self.config.motor_type, MotorNormMode.DEGREES),
-                "shoulder_lift": Motor(2, self.config.motor_type, MotorNormMode.DEGREES),
-                "elbow_flex": Motor(3, self.config.motor_type, MotorNormMode.DEGREES),
-                "wrist_flex": Motor(4, self.config.motor_type, MotorNormMode.DEGREES),
-                "wrist_roll": Motor(5, self.config.motor_type, MotorNormMode.DEGREES),
-                "gripper": Motor(6, self.config.motor_type, MotorNormMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, "sts3215", MotorNormMode.DEGREES),
+                "shoulder_lift": Motor(2, "sts3215", MotorNormMode.DEGREES),
+                "elbow_flex": Motor(3, "sts3215", MotorNormMode.DEGREES),
+                "wrist_flex": Motor(4, "sts3215", MotorNormMode.DEGREES),
+                "wrist_roll": Motor(5, "sts3215", MotorNormMode.DEGREES),
+                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )

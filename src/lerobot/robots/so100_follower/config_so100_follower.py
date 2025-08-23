@@ -40,9 +40,6 @@ class SO100FollowerConfig(RobotConfig):
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
 
-    # Motor type
-    motor_type: str = "sts3215"
-
 
 @RobotConfig.register_subclass("so100_follower_end_effector")
 @dataclass
