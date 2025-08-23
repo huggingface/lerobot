@@ -21,33 +21,34 @@ from lerobot.utils.experiment_logger import ExperimentLogger
 from lerobot.utils.wandb_utils import WandBLogger
 
 
-def create_experiment_loggers(cfg: TrainPipelineConfig) -> Optional[ExperimentLogger]:
+def create_experiment_loggers(cfg: TrainPipelineConfig) -> ExperimentLogger | None:
     """Create experiment loggers based on configuration.
-    
+
     Args:
         cfg: Training pipeline configuration
-        
+
     Returns:
         ExperimentLogger instance, CompositeLogger for multiple backends, or None if no logging is enabled
     """
     loggers = []
-    
+
     # Create WandB logger if enabled
     if cfg.wandb.enable and cfg.wandb.project:
         try:
             loggers.append(WandBLogger(cfg))
         except Exception as e:
             logging.warning(f"Failed to initialize WandB logger: {e}")
-    
+
     # Create MLflow logger if enabled
     if cfg.mlflow.enable:
         try:
             # Lazy import to avoid dependency issues
             from lerobot.utils.mlflow_utils import MLflowLogger
+
             loggers.append(MLflowLogger(cfg))
         except Exception as e:
             logging.warning(f"Failed to initialize MLflow logger: {e}")
-    
+
     # Return appropriate logger based on count
     if len(loggers) == 0:
         return None
@@ -58,22 +59,22 @@ def create_experiment_loggers(cfg: TrainPipelineConfig) -> Optional[ExperimentLo
 
 class CompositeLogger(ExperimentLogger):
     """Logger that forwards calls to multiple backend loggers."""
-    
-    def __init__(self, loggers: List[ExperimentLogger]):
+
+    def __init__(self, loggers: list[ExperimentLogger]):
         self.loggers = [logger for logger in loggers if logger is not None]
-    
+
     def log_dict(self, d, step=None, mode="train", custom_step_key=None):
         for logger in self.loggers:
-            logger.log_dict(d, step, mode, custom_step_key)            
-    
+            logger.log_dict(d, step, mode, custom_step_key)
+
     def log_policy(self, checkpoint_dir):
         for logger in self.loggers:
-            logger.log_policy(checkpoint_dir)            
-    
+            logger.log_policy(checkpoint_dir)
+
     def log_video(self, video_path, step, mode="train"):
         for logger in self.loggers:
-            logger.log_video(video_path, step, mode)            
-    
+            logger.log_video(video_path, step, mode)
+
     def finish(self):
         for logger in self.loggers:
             try:

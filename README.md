@@ -200,7 +200,7 @@ wandb login
 To use [MLflow](https://www.mlflow.org/) for experimentation tracking:
 
 1. Enable MLflow when running a model training, with the command line parameter `--mlflow.enable=true`
-2. Configure tracking uri and experiment name using environment variables `MLFLOW_TRACKING_URI` and `MLFLOW_EXPERIMENT_NAME`. 
+2. Configure tracking uri and experiment name using environment variables `MLFLOW_TRACKING_URI` and `MLFLOW_EXPERIMENT_NAME`.
 3. Alternatively, follow the MLflow [quickstart](https://www.mlflow.org/docs/3.2.0/ml/tracking/quickstart/) to test it locally.
 
 ### Visualize datasets

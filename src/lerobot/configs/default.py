@@ -54,6 +54,7 @@ class WandBConfig:
 @dataclass
 class MLflowConfig:
     """Configuration for MLflow experiment tracking."""
+
     enable: bool = False
     # Tags to apply to the run
     tags: dict[str, str] = field(default_factory=dict)

@@ -165,5 +165,5 @@ class WandBLogger(ExperimentLogger):
 
     def finish(self) -> None:
         """Clean up and finish the wandb session."""
-        if hasattr(self, '_wandb') and self._wandb is not None:
+        if hasattr(self, "_wandb") and self._wandb is not None:
             self._wandb.finish()

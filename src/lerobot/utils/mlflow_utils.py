@@ -17,33 +17,32 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
+import mlflow
 import torch
 from termcolor import colored
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.experiment_logger import ExperimentLogger
 
-import mlflow
 
 class MLflowLogger(ExperimentLogger):
     """MLflow experiment logger implementation."""
-    
+
     def __init__(self, cfg: TrainPipelineConfig):
-        
         self.cfg = cfg.mlflow
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
         self.env_fps = cfg.env.fps if cfg.env else None
-        
+
         mlflow.start_run()
-        
+
         # Log configuration
         mlflow.log_params(self._flatten_config(cfg.to_dict()))
-        
+
         # Log tags
         if self.cfg.tags:
             mlflow.set_tags(self.cfg.tags)
-        
+
         # Add automatic tags
         auto_tags = {
             "policy_type": cfg.policy.type if cfg.policy else "none",
@@ -51,7 +50,7 @@ class MLflowLogger(ExperimentLogger):
             "env_type": cfg.env.type if cfg.env else "none",
         }
         mlflow.set_tags(auto_tags)
-        
+
         print(colored("Logs will be synced with MLflow.", "blue", attrs=["bold"]))
         run_info = mlflow.active_run()
         if run_info:
@@ -60,8 +59,8 @@ class MLflowLogger(ExperimentLogger):
             experiment_id = run_info.info.experiment_id
             url = f"{tracking_uri}/#/experiments/{experiment_id}/runs/{run_id}"
             logging.info(f"Track this run --> {colored(url, 'yellow', attrs=['bold'])}")
-    
-    def _flatten_config(self, config_dict: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
+
+    def _flatten_config(self, config_dict: dict[str, Any], prefix: str = "") -> dict[str, Any]:
         """Flatten nested configuration dictionary for MLflow params."""
         flat_dict = {}
         for key, value in config_dict.items():
@@ -73,18 +72,18 @@ class MLflowLogger(ExperimentLogger):
             elif value is not None:
                 flat_dict[new_key] = value
         return flat_dict
-    
+
     def log_dict(
-        self, 
-        d: Dict[str, Any], 
-        step: int | None = None, 
-        mode: str = "train", 
-        custom_step_key: str | None = None
+        self,
+        d: dict[str, Any],
+        step: int | None = None,
+        mode: str = "train",
+        custom_step_key: str | None = None,
     ) -> None:
         """Log a dictionary of metrics to MLflow."""
         if mode not in {"train", "eval"}:
             raise ValueError(f"Invalid mode: {mode}")
-        
+
         # Filter out non-numeric values and convert tensors
         metrics_to_log = {}
         for key, value in d.items():
@@ -110,40 +109,40 @@ class MLflowLogger(ExperimentLogger):
                 logging.warning(
                     f'MLflow logging of key "{key}" was ignored as its type "{type(value)}" is not supported.'
                 )
-        
+
         if metrics_to_log:
             mlflow.log_metrics(metrics_to_log, step=step)
-    
+
     def log_policy(self, checkpoint_dir: Path) -> None:
         """Log policy checkpoint as MLflow artifact."""
         if self.cfg.disable_artifact:
             return
-        
+
         try:
             # Log the entire checkpoint directory
             mlflow.log_artifacts(str(checkpoint_dir), artifact_path="checkpoints")
-            
+
             # Also log the model specifically if it exists
             model_path = checkpoint_dir / "pretrained_model" / "model.safetensors"
             if model_path.exists():
                 mlflow.log_artifact(str(model_path), artifact_path="models")
         except Exception as e:
             logging.warning(f"Failed to log policy checkpoint to MLflow: {e}")
-    
+
     def log_video(self, video_path: str, step: int, mode: str = "train") -> None:
         """Log video file to MLflow."""
         if mode not in {"train", "eval"}:
             raise ValueError(f"Invalid mode: {mode}")
-        
+
         try:
             # Log video as artifact
             mlflow.log_artifact(video_path, artifact_path=f"{mode}/videos")
-            
+
             # Also log a metric indicating video was logged
             mlflow.log_metric(f"{mode}/video_logged", 1.0, step=step)
         except Exception as e:
             logging.warning(f"Failed to log video to MLflow: {e}")
-    
+
     def finish(self) -> None:
         """End the MLflow run."""
         try:

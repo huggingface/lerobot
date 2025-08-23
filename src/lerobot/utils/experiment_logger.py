@@ -17,24 +17,25 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict
 
+
 class ExperimentLogger(ABC):
     """Abstract base class for experiment logging backends."""
-    
+
     @abstractmethod
     def __init__(self, cfg: Any):
         """Initialize the logger with configuration."""
         pass
-    
+
     @abstractmethod
     def log_dict(
-        self, 
-        d: Dict[str, Any], 
-        step: int | None = None, 
-        mode: str = "train", 
-        custom_step_key: str | None = None
+        self,
+        d: dict[str, Any],
+        step: int | None = None,
+        mode: str = "train",
+        custom_step_key: str | None = None,
     ) -> None:
         """Log a dictionary of metrics.
-        
+
         Args:
             d: Dictionary of metrics to log
             step: Global step number
@@ -42,27 +43,27 @@ class ExperimentLogger(ABC):
             custom_step_key: Custom step key for asynchronous training
         """
         pass
-    
+
     @abstractmethod
     def log_policy(self, checkpoint_dir: Path) -> None:
         """Log policy checkpoint as an artifact.
-        
+
         Args:
             checkpoint_dir: Path to the checkpoint directory
         """
         pass
-    
+
     @abstractmethod
     def log_video(self, video_path: str, step: int, mode: str = "train") -> None:
         """Log a video file.
-        
+
         Args:
             video_path: Path to the video file
             step: Global step number
             mode: Logging mode ("train" or "eval")
         """
         pass
-    
+
     @abstractmethod
     def finish(self) -> None:
         """Clean up and finish the logging session."""

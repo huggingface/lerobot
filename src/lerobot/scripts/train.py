@@ -35,6 +35,7 @@ from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
 from lerobot.scripts.eval import eval_policy
+from lerobot.utils.logger_factory import create_experiment_loggers
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -50,7 +51,6 @@ from lerobot.utils.utils import (
     has_method,
     init_logging,
 )
-from lerobot.utils.logger_factory import create_experiment_loggers
 
 
 def update_policy(
