@@ -50,7 +50,7 @@ from lerobot.utils.utils import (
     has_method,
     init_logging,
 )
-from lerobot.utils.wandb_utils import WandBLogger
+from lerobot.utils.logger_factory import create_experiment_loggers
 
 
 def update_policy(
@@ -110,10 +110,8 @@ def train(cfg: TrainPipelineConfig):
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
-    if cfg.wandb.enable and cfg.wandb.project:
-        wandb_logger = WandBLogger(cfg)
-    else:
-        wandb_logger = None
+    experiment_logger = create_experiment_loggers(cfg)
+    if experiment_logger is None:
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     if cfg.seed is not None:
@@ -230,11 +228,11 @@ def train(cfg: TrainPipelineConfig):
 
         if is_log_step:
             logging.info(train_tracker)
-            if wandb_logger:
-                wandb_log_dict = train_tracker.to_dict()
+            if experiment_logger:
+                log_dict = train_tracker.to_dict()
                 if output_dict:
-                    wandb_log_dict.update(output_dict)
-                wandb_logger.log_dict(wandb_log_dict, step)
+                    log_dict.update(output_dict)
+                experiment_logger.log_dict(log_dict, step)
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
@@ -242,8 +240,8 @@ def train(cfg: TrainPipelineConfig):
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
-            if wandb_logger:
-                wandb_logger.log_policy(checkpoint_dir)
+            if experiment_logger:
+                experiment_logger.log_policy(checkpoint_dir)
 
         if cfg.env and is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
@@ -273,14 +271,18 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
             eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
             logging.info(eval_tracker)
-            if wandb_logger:
-                wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
-                wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+            if experiment_logger:
+                log_dict = {**eval_tracker.to_dict(), **eval_info}
+                experiment_logger.log_dict(log_dict, step, mode="eval")
+                experiment_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
 
     if eval_env:
         eval_env.close()
     logging.info("End of training")
+
+    # Clean up experiment logger
+    if experiment_logger:
+        experiment_logger.finish()
 
     if cfg.policy.push_to_hub:
         policy.push_model_to_hub(cfg)

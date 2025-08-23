@@ -52,6 +52,16 @@ class WandBConfig:
 
 
 @dataclass
+class MLflowConfig:
+    """Configuration for MLflow experiment tracking."""
+    enable: bool = False
+    # Tags to apply to the run
+    tags: dict[str, str] = field(default_factory=dict)
+    # Set to true to disable saving an artifact despite training.save_checkpoint=True
+    disable_artifact: bool = False
+
+
+@dataclass
 class EvalConfig:
     n_episodes: int = 50
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.

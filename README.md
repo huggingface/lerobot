@@ -195,6 +195,14 @@ wandb login
 
 (note: you will also need to enable WandB in the configuration. See below.)
 
+### MLflow
+
+To use [MLflow](https://www.mlflow.org/) for experimentation tracking:
+
+1. Enable MLflow when running a model training, with the command line parameter `--mlflow.enable=true`
+2. Configure tracking uri and experiment name using environment variables `MLFLOW_TRACKING_URI` and `MLFLOW_EXPERIMENT_NAME`. 
+3. Alternatively, follow the MLflow [quickstart](https://www.mlflow.org/docs/3.2.0/ml/tracking/quickstart/) to test it locally.
+
 ### Visualize datasets
 
 Check out [example 1](https://github.com/huggingface/lerobot/blob/main/examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically downloads data from the Hugging Face hub.
