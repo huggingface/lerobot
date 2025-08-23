@@ -42,6 +42,7 @@ from lerobot.robots import (  # noqa: F401
     koch_follower,
     make_robot_from_config,
     so100_follower,
+    so101_follower
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
@@ -49,6 +50,7 @@ from lerobot.teleoperators import (  # noqa: F401
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
+    so101_leader
 )
 from lerobot.utils.robot_utils import busy_wait
 
