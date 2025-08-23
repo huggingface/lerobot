@@ -13,13 +13,19 @@ except ImportError:
 class PiperSDKInterface:
     def __init__(self, port: str = "can0"):
         if C_PiperInterface_V2 is None:
-            raise ImportError("piper_sdk is not installed.")
+            raise ImportError("piper_sdk is not installed. Please install it with `pip install piper_sdk`.")
         self.piper = C_PiperInterface_V2(port)
         self.piper.ConnectPort()
+        time.sleep(0.1)  # wait for connection to establish
+        
+        # reset the arm if it's not in idle state
+        print(self.piper.GetArmStatus().arm_status.motion_status)
+        if self.piper.GetArmStatus().arm_status.motion_status != 0:
+            self.piper.EmergencyStop(0x02) # resume
+            
         while not self.piper.EnablePiper():
             time.sleep(0.01)
-        self.piper.GripperCtrl(0, 1000, 0x01, 0)
-
+        
         # Get the min and max positions for each joint and gripper
         angel_status = self.piper.GetAllMotorAngleLimitMaxSpd()
         self.min_pos = [
@@ -78,5 +84,5 @@ class PiperSDKInterface:
         return obs_dict
 
     def disconnect(self):
-        # No explicit disconnect
-        pass
+        self.piper.JointCtrl(0, 0, 0, 0, 25000, 0)
+        
