@@ -17,15 +17,15 @@ class PiperSDKInterface:
         self.piper = C_PiperInterface_V2(port)
         self.piper.ConnectPort()
         time.sleep(0.1)  # wait for connection to establish
-        
+
         # reset the arm if it's not in idle state
         print(self.piper.GetArmStatus().arm_status.motion_status)
         if self.piper.GetArmStatus().arm_status.motion_status != 0:
-            self.piper.EmergencyStop(0x02) # resume
-            
+            self.piper.EmergencyStop(0x02)  # resume
+
         while not self.piper.EnablePiper():
             time.sleep(0.01)
-        
+
         # Get the min and max positions for each joint and gripper
         angel_status = self.piper.GetAllMotorAngleLimitMaxSpd()
         self.min_pos = [
@@ -85,4 +85,3 @@ class PiperSDKInterface:
 
     def disconnect(self):
         self.piper.JointCtrl(0, 0, 0, 0, 25000, 0)
-        
