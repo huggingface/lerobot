@@ -14,7 +14,6 @@
 
 
 import logging
-from typing import List, Optional
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.experiment_logger import ExperimentLogger
