@@ -70,25 +70,15 @@ class TestLatencyTracker:
         tracker = LatencyTracker()
 
         # Test None value
-        tracker.add(None)
-        assert len(tracker) == 0
-        assert tracker.max() == 0.0
-        assert tracker.percentile(0.5) == 0.0
-        assert tracker.p95() == 0.0
-        assert tracker.percentile(0.0) == 0.0
-        assert tracker.percentile(1.0) == 0.0
+        with pytest.raises(TypeError):
+            tracker.add(None)
+
+        # Test string value
+        with pytest.raises(ValueError):
+            tracker.add("not_a_number")
 
         # Test negative value
         tracker.add(-0.5)
-        assert len(tracker) == 0
-        assert tracker.max() == 0.0
-        assert tracker.percentile(0.5) == 0.0
-        assert tracker.p95() == 0.0
-        assert tracker.percentile(0.0) == 0.0
-        assert tracker.percentile(1.0) == 0.0
-
-        # Test non-numeric value
-        tracker.add("not_a_number")
         assert len(tracker) == 0
         assert tracker.max() == 0.0
         assert tracker.percentile(0.5) == 0.0
