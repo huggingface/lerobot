@@ -34,6 +34,9 @@ class RTCConfig:
     strategically handling overlapping timesteps between action chunks using prefix attention.
     """
 
+    # Infrastructure
+    enabled: bool = False
+
     # Core RTC settings
     prefix_attention_schedule: RTCAttentionSchedule = RTCAttentionSchedule.LINEAR
     max_guidance_weight: float = 5.0
