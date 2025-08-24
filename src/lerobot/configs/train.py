@@ -188,4 +188,5 @@ class TrainPipelineConfig(HubMixin):
 @dataclass(kw_only=True)
 class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # NOTE: In RL, we don't need an offline dataset
+    # TODO: Make `TrainPipelineConfig.dataset` optional
     dataset: DatasetConfig | None = None  # type: ignore[assignment] # because the parent class has made it's type non-optional

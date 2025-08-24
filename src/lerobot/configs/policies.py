@@ -63,7 +63,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # automatic gradient scaling is used.
     use_amp: bool = False
 
-    push_to_hub: bool = True  # type: ignore[assignment]
+    push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
 
     # Upload on private repository on the Hugging Face hub.
@@ -192,6 +192,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         # something like --policy.path (in addition to --policy.type)
         with draccus.config_type("json"):
             orig_config = draccus.parse(cls, config_file, args=[])
+
+        if config_file is None:
+            raise FileNotFoundError(f"{CONFIG_NAME} not found in {model_id}")
 
         if config_file is None:
             raise FileNotFoundError(f"{CONFIG_NAME} not found in {model_id}")
