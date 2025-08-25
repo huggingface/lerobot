@@ -54,7 +54,7 @@ class StaraiViola(Robot):
                 "Motor_3": Motor(3, "rx8-u50", norm_mode_body),
                 "Motor_4": Motor(4, "rx8-u50", norm_mode_body),
                 "Motor_5": Motor(5, "rx8-u50", norm_mode_body),
-                # "gripper": Motor(6, "rx8-u50", MotorNormMode.RANGE_0_100),
+                "gripper": Motor(6, "rx8-u50", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
@@ -100,7 +100,7 @@ class StaraiViola(Robot):
         for cam in self.cameras.values():
             cam.connect()
 
-        # self.configure()
+        self.configure()
         logger.info(f"{self} connected.")
 
     @property

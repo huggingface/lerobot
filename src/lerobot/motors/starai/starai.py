@@ -114,7 +114,7 @@ class StaraiMotorsBus(MotorsBus):
         self.protocol_version = protocol_version
 
 
-        self.port_handler = PortHandler("/dev/ttyUSB0",1000000)
+        self.port_handler = PortHandler(port,1000000)
 
         # # HACK: monkeypatch
 

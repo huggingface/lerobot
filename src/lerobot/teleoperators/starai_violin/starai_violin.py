@@ -44,14 +44,14 @@ class StaraiViolin(Teleoperator):
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = StaraiMotorsBus(
             port=self.config.port,
-            interval=100,
             motors={
-                "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
-                "shoulder_lift": Motor(2, "sts3215", norm_mode_body),
-                "elbow_flex": Motor(3, "sts3215", norm_mode_body),
-                "wrist_flex": Motor(4, "sts3215", norm_mode_body),
-                "wrist_roll": Motor(5, "sts3215", norm_mode_body),
-                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
+                "Motor_0": Motor(0, "rx8-u50", norm_mode_body),
+                "Motor_1": Motor(1, "rx8-u50", norm_mode_body),
+                "Motor_2": Motor(2, "rx8-u50", norm_mode_body),
+                "Motor_3": Motor(3, "rx8-u50", norm_mode_body),
+                "Motor_4": Motor(4, "rx8-u50", norm_mode_body),
+                "Motor_5": Motor(5, "rx8-u50", norm_mode_body),
+                "gripper": Motor(6, "rx8-u50", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
@@ -99,10 +99,10 @@ class StaraiViolin(Teleoperator):
 
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        # for motor in self.bus.motors:
+        #     self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-        input(f"Move {self} to the middle of its range of motion and press ENTER....")
+        # input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
         print(
@@ -121,21 +121,22 @@ class StaraiViolin(Teleoperator):
                 range_max=range_maxes[motor],
             )
 
-        self.bus.write_calibration(self.calibration)
+        # self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
-        self.bus.disable_torque()
-        self.bus.configure_motors()
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        pass
+        # self.bus.disable_torque()
+        # self.bus.configure_motors()
+        # for motor in self.bus.motors:
+        #     self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-    def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+    # def setup_motors(self) -> None:
+    #     for motor in reversed(self.bus.motors):
+    #         input(f"Connect the controller board to the '{motor}' motor only and press enter.")
+    #         self.bus.setup_motor(motor)
+    #         print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
