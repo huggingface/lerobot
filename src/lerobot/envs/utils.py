@@ -26,6 +26,7 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
 from lerobot.utils.utils import get_channel_first_image_shape
 
+
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
     # TODO(aliberts, rcadene): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
@@ -78,6 +79,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     return_observations["observation.state"] = agent_pos
 
     return return_observations
+
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
