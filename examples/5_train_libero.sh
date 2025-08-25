@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # config
-REPO_ID=yzembodied/libero_10_image_task_1
+REPO_ID=jadechoghari/smol-libero
 TASK=libero_10
 OUTPUT_DIR=./outputs/
 

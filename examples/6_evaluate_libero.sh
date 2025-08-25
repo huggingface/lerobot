@@ -2,14 +2,12 @@
 
 unset LEROBOT_HOME
 unset HF_LEROBOT_HOME
-# === CONFIGURATION ===
-POLICY_PATH="ganatrask/lerobot-pi0-libero-object"  # or outputs/train/.../pretrained_model
+# CONFIGURATION
+POLICY_PATH="ganatrask/lerobot-pi0-libero-object"
 TASK=libero_object
 ENV_TYPE="libero"
 BATCH_SIZE=1
 N_EPISODES=1
-USE_AMP=false
-DEVICE=cuda
 
 # RUN EVALUATION
 python src/lerobot/scripts/eval.py \
