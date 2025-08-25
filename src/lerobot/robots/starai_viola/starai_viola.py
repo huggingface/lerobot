@@ -54,7 +54,7 @@ class StaraiViola(Robot):
                 "Motor_3": Motor(3, "rx8-u50", norm_mode_body),
                 "Motor_4": Motor(4, "rx8-u50", norm_mode_body),
                 "Motor_5": Motor(5, "rx8-u50", norm_mode_body),
-                "gripper": Motor(6, "rx8-u50", MotorNormMode.RANGE_0_100),
+                # "gripper": Motor(6, "rx8-u50", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
@@ -124,7 +124,7 @@ class StaraiViola(Robot):
             # self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         # input(f"Move {self} to the middle of its range of motion and press ENTER....")
-        # homing_offsets = self.bus.set_half_turn_homings()
+        homing_offsets = self.bus.set_half_turn_homings()
 
         print(
             "Move all joints sequentially through their entire ranges "
@@ -137,12 +137,12 @@ class StaraiViola(Robot):
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=0,
-                # homing_offset=homing_offsets[motor],
+                homing_offset=homing_offsets[motor],
                 range_min=range_mins[motor],
                 range_max=range_maxes[motor],
             )
 
-        self.bus.write_calibration(self.calibration)
+        # self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
