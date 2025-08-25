@@ -15,5 +15,5 @@ python src/lerobot/scripts/eval.py \
     --env.type="$ENV_TYPE" \
     --eval.batch_size="$BATCH_SIZE" \
     --eval.n_episodes="$N_EPISODES" \
-    --env.multitask_eval=False \
+    --env.multitask_eval=True \
     --env.task=$TASK \
