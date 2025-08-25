@@ -208,16 +208,63 @@ class StaraiMotorsBus(MotorsBus):
         read_data = {}
         if data_name == "Monitor" or data_name == "Present_Position":
             servos_id = dict(zip(names, ids))
-            monitor_data = self.port_handler.sync_read["Monitor_4096"](servos_id)
-            
+            monitor_data = self.port_handler.sync_read["Monitor"](servos_id)
             for name in names:
-                read_data[name]=monitor_data[name].current_position
+                if monitor_data[name].current_position >=180:
+                    monitor_data[name].current_position = 180
+                elif monitor_data[name].current_position <=-180:
+                    monitor_data[name].current_position = -180
+                monitor_data[name].current_position = int(monitor_data[name].current_position+180)/360.0*4096
+            for name in names:
+                read_data[name]=int(monitor_data[name].current_position)
         
 
         return read_data
     
         # models = [self.motors[motor].model for motor in names]
 
+    def sync_write(
+        self,
+        data_name: str,
+        values: Value | dict[str, Value],
+        *,
+        normalize: bool = True,
+        num_retry: int = 0,
+    ) -> None:
+        """Write the same register on multiple motors.
+
+        Contrary to :pymeth:`write`, this *does not* expects a response status packet emitted by the motor, which
+        can allow for lost packets. It is faster than :pymeth:`write` and should typically be used when
+        frequency matters and losing some packets is acceptable (e.g. teleoperation loops).
+
+        Args:
+            data_name (str): Register name.
+            values (Value | dict[str, Value]): Either a single value (applied to every motor) or a mapping
+                *motor name → value*.
+            normalize (bool, optional): If `True` (default) convert values from the user range to raw units.
+            num_retry (int, optional): Retry attempts.  Defaults to `0`.
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
+            )
+
+        ids_values = self._get_ids_values_dict(values)
+        models = [self._id_to_model(id_) for id_ in ids_values]
+
+        names = self._get_motors_list(motors)
+        ids = [self.motors[motor].id for motor in names]
+
+        # model = next(iter(models))
+        # addr, length = get_address(self.model_ctrl_table, model, data_name)
+
+        # if normalize and data_name in self.normalized_data:
+        #     ids_values = self._unnormalize(ids_values)
+
+        # ids_values = self._encode_sign(data_name, ids_values)
+
+        # err_msg = f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
+        # self._sync_write(addr, length, ids_values, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
 
 
 
