@@ -114,7 +114,7 @@ class StaraiMotorsBus(MotorsBus):
         self.protocol_version = protocol_version
 
 
-        self.uservo = PocketHandler("/dev/ttyUSB0",1000000)
+        self.port_handler = PortHandler("/dev/ttyUSB0",1000000)
 
         # # HACK: monkeypatch
 
@@ -130,7 +130,7 @@ class StaraiMotorsBus(MotorsBus):
     @property
     def is_connected(self) -> bool:
         """bool: `True` if the underlying serial port is open."""
-        return self.uservo.is_open
+        return self.port_handler.is_open
 
     # def write(self,  data_name:str, motor:str, value, *, normalize = True, num_retry = 0):
     #     if not self.is_connected:
@@ -147,7 +147,7 @@ class StaraiMotorsBus(MotorsBus):
         elif not isinstance(motors, list):
             raise TypeError(motors)
 
-        list_of_homing_offsets = [0.0 for motor in motors]
+        list_of_homing_offsets = [0 for motor in motors]
         
 
         homing_offsets = dict(zip(motors,list_of_homing_offsets))
@@ -184,11 +184,11 @@ class StaraiMotorsBus(MotorsBus):
         # self._assert_same_firmware()
 
     def connect(self, handshake: bool = True) -> None:
-        self.uservo.connect()
+        self.port_handler.openPort()
         for motor in self.motors:
-            if (self.uservo.ping(self.motors[motor].id)!= True):
+            if (self.port_handler.ping(self.motors[motor].id)!= True):
                 raise Exception(f"motor not found id:{self.motors[motor].id}")
-        self.uservo.ResetLoop(0xff)
+        self.port_handler.ResetLoop(0xff)
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         raise NotImplementedError(f"this function should never be called")
@@ -208,7 +208,7 @@ class StaraiMotorsBus(MotorsBus):
         read_data = {}
         if data_name == "Monitor" or data_name == "Present_Position":
             servos_id = dict(zip(names, ids))
-            monitor_data = self.uservo.sync_read["Monitor"](servos_id)
+            monitor_data = self.port_handler.sync_read["Monitor_4096"](servos_id)
             
             for name in names:
                 read_data[name]=monitor_data[name].current_position
@@ -244,8 +244,8 @@ class StaraiMotorsBus(MotorsBus):
     def read_calibration(self) -> dict[str, MotorCalibration]:
         offsets, mins, maxes = {}, {}, {}
         for motor in self.motors:
-            mins[motor] = self.uservo.read["Min_Position_Limit"](self.motors[motor].id)
-            maxes[motor] = self.uservo.read["Max_Position_Limit"]( self.motors[motor].id )
+            mins[motor] = self.port_handler.read["Min_Position_Limit"](self.motors[motor].id)
+            maxes[motor] = self.port_handler.read["Max_Position_Limit"]( self.motors[motor].id )
             offsets[motor] = (
                 0
             )
@@ -263,12 +263,8 @@ class StaraiMotorsBus(MotorsBus):
         return calibration
 
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
-        for motor, calibration in calibration_dict.items():
-            self.write("Min_Position_Limit", calibration.id, calibration.range_min)
-            self.write("Max_Position_Limit", calibration.id, calibration.range_max)
+        return
 
-        if cache:
-            self.calibration = calibration_dict
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
@@ -285,7 +281,7 @@ class StaraiMotorsBus(MotorsBus):
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.uservo.write["Stop_On_Control_Mode"](self.motors[motor].id,"unlocked",0)
+            self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id,"unlocked",0)
 
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
@@ -297,7 +293,7 @@ class StaraiMotorsBus(MotorsBus):
 
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.uservo.write["Stop_On_Control_Mode"](motor, "locked",0)
+            self.port_handler.write["Stop_On_Control_Mode"](motor, "locked",0)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:
