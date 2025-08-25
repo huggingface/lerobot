@@ -4,7 +4,7 @@ import cv2
 
 
 def main() -> None:
-    device_path = "/dev/video4"
+    device_path = "/dev/video8"
     cap = cv2.VideoCapture(device_path, cv2.CAP_V4L2)
 
     if not cap.isOpened():

@@ -5,7 +5,7 @@ python -m lerobot.scripts.server.robot_client \
   --robot.id=follower0 \
   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video8, width: 640, height: 480, fps: 30} }" \
   --policy_type=act \
-  --pretrained_name_or_path=/ripl/data/projects/lerobot/outputs/train/aug15_so101_pick_50_all_aug/checkpoints/020000/pretrained_model \
+  --pretrained_name_or_path=/ripl/data/projects/lerobot/outputs/train/aug18_pick_50_no_norm/checkpoints/060000/pretrained_model \
   --policy_device=cuda \
   --actions_per_chunk=100 \
   --chunk_size_threshold=0.0 \
