@@ -573,31 +573,49 @@ def eval_policy_multitask(
             "video_paths": task_result.get("video_paths", []),
         }
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
-        future_to_task = {
-            executor.submit(eval_task, task_group, task_id, env): (task_group, task_id)
-            for task_group, tasks in envs.items()
-            for task_id, env in tasks.items()
-        }
+    task_group_results = {}
+    if max_parallel_tasks == 1:
+        # sequential mode (safe for colab / EGL)
+        for task_group, tasks in envs.items():
+            for task_id, env in tasks.items():
+                task_result = eval_task(task_group, task_id, env)
+                if task_group not in task_group_results:
+                    task_group_results[task_group] = {
+                        "sum_rewards": [],
+                        "max_rewards": [],
+                        "successes": [],
+                        "video_paths": [],
+                    }
+                task_group_results[task_group]["sum_rewards"].extend(task_result["sum_rewards"])
+                task_group_results[task_group]["max_rewards"].extend(task_result["max_rewards"])
+                task_group_results[task_group]["successes"].extend(task_result["successes"])
+                task_group_results[task_group]["video_paths"].extend(task_result["video_paths"])
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
+            future_to_task = {
+                executor.submit(eval_task, task_group, task_id, env): (task_group, task_id)
+                for task_group, tasks in envs.items()
+                for task_id, env in tasks.items()
+            }
 
-        task_group_results = {}
+            task_group_results = {}
 
-        for future in concurrent.futures.as_completed(future_to_task):
-            task_result = future.result()
-            task_group = task_result["task_group"]
+            for future in concurrent.futures.as_completed(future_to_task):
+                task_result = future.result()
+                task_group = task_result["task_group"]
 
-            if task_group not in task_group_results:
-                task_group_results[task_group] = {
-                    "sum_rewards": [],
-                    "max_rewards": [],
-                    "successes": [],
-                    "video_paths": [],
-                }
+                if task_group not in task_group_results:
+                    task_group_results[task_group] = {
+                        "sum_rewards": [],
+                        "max_rewards": [],
+                        "successes": [],
+                        "video_paths": [],
+                    }
 
-            task_group_results[task_group]["sum_rewards"].extend(task_result["sum_rewards"])
-            task_group_results[task_group]["max_rewards"].extend(task_result["max_rewards"])
-            task_group_results[task_group]["successes"].extend(task_result["successes"])
-            task_group_results[task_group]["video_paths"].extend(task_result["video_paths"])
+                task_group_results[task_group]["sum_rewards"].extend(task_result["sum_rewards"])
+                task_group_results[task_group]["max_rewards"].extend(task_result["max_rewards"])
+                task_group_results[task_group]["successes"].extend(task_result["successes"])
+                task_group_results[task_group]["video_paths"].extend(task_result["video_paths"])
 
     # Process results per task group
     for task_group, data in task_group_results.items():
