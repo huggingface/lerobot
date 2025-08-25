@@ -29,6 +29,10 @@ DEFAULT_PROTOCOL_VERSION = 0
 DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
+DEFAULT_ACC_TIME =100
+DEFAULT_DEC_TIME =100
+DEFAULT_MOTION_TIME = 500
+
 NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
 
 logger = logging.getLogger(__name__)
@@ -227,9 +231,6 @@ class StaraiMotorsBus(MotorsBus):
         self,
         data_name: str,
         values: Value | dict[str, Value],
-        *,
-        normalize: bool = True,
-        num_retry: int = 0,
     ) -> None:
         """Write the same register on multiple motors.
 
@@ -250,11 +251,20 @@ class StaraiMotorsBus(MotorsBus):
             )
 
         ids_values = self._get_ids_values_dict(values)
-        models = [self._id_to_model(id_) for id_ in ids_values]
+        # models = [self._id_to_model(id_) for id_ in ids_values]
 
-        names = self._get_motors_list(motors)
-        ids = [self.motors[motor].id for motor in names]
-
+        write_data = {} 
+        if data_name == "Goal_Position":
+            for motor in values:
+                data=SyncPositionControlOptions(self.motors[motor].id,
+                                                int((values[motor]/4096.0*360.0-180)*10),
+                                                DEFAULT_MOTION_TIME,
+                                                0,
+                                                DEFAULT_ACC_TIME,
+                                                DEFAULT_DEC_TIME)
+                write_data[motor] = data
+            self.port_handler.sync_write["Goal_Position"](write_data)
+        
         # model = next(iter(models))
         # addr, length = get_address(self.model_ctrl_table, model, data_name)
 
