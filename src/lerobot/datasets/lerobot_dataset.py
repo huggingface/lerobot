@@ -715,7 +715,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item[key] = val
 
         if len(self.meta.video_keys) > 0:
-            current_ts = item["timestamp"].item()
+            current_ts = item["timestamp"][0].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
             item = {**video_frames, **item}
