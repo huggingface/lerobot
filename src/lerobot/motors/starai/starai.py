@@ -139,6 +139,22 @@ class StaraiMotorsBus(MotorsBus):
     #         )
     #     id_ = self.motors[motor].id
     #     # model = self.motors[motor].model
+    def set_half_turn_homings(self, motors: NameOrID | list[NameOrID] | None = None) -> dict[NameOrID, Value]:
+        if motors is None:
+            motors = list(self.motors)
+        elif isinstance(motors, (str, int)):
+            motors = [motors]
+        elif not isinstance(motors, list):
+            raise TypeError(motors)
+
+        list_of_homing_offsets = [0.0 for motor in motors]
+        
+
+        homing_offsets = dict(zip(motors,list_of_homing_offsets))
+        # for motor, offset in homing_offsets.items():
+        #     self.write("Homing_Offset", motor, offset)
+
+        return homing_offsets
 
 
 
@@ -190,7 +206,7 @@ class StaraiMotorsBus(MotorsBus):
         ids = [self.motors[motor].id for motor in names]
 
         read_data = {}
-        if data_name == "Monitor":
+        if data_name == "Monitor" or data_name == "Present_Position":
             servos_id = dict(zip(names, ids))
             monitor_data = self.uservo.sync_read["Monitor"](servos_id)
             
