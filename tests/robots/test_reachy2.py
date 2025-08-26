@@ -56,7 +56,7 @@ REACHY2_VEL = {
 }
 
 PARAMS = [
-    {},  # config par défaut
+    {},  # default config
     {"with_mobile_base": False},
     {"with_mobile_base": False, "with_l_arm": False, "with_antennas": False},
     {"with_r_arm": False, "with_neck": False, "with_antennas": False},
