@@ -79,17 +79,17 @@ def _split_into_byte_chunks(value: int, length: int) -> list[int]:
     return data
 
 
-def patch_setPacketTimeout(self, packet_length):  # noqa: N802
-    """
-    HACK: This patches the PortHandler behavior to set the correct packet timeouts.
+# def patch_setPacketTimeout(self, packet_length):  # noqa: N802
+#     """
+#     HACK: This patches the PortHandler behavior to set the correct packet timeouts.
 
-    It fixes https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
-    The bug is fixed on the official Feetech SDK repo (https://gitee.com/ftservo/FTServo_Python)
-    but because that version is not published on PyPI, we rely on the (unofficial) on that is, which needs
-    patching.
-    """
-    self.packet_start_time = self.getCurrentTime()
-    self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
+#     It fixes https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
+#     The bug is fixed on the official Feetech SDK repo (https://gitee.com/ftservo/FTServo_Python)
+#     but because that version is not published on PyPI, we rely on the (unofficial) on that is, which needs
+#     patching.
+#     """
+#     self.packet_start_time = self.getCurrentTime()
+#     self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
 
 
 class StaraiMotorsBus(MotorsBus):
@@ -163,25 +163,10 @@ class StaraiMotorsBus(MotorsBus):
 
 
     def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
-        pass
-        if instruction_name == "sync_read" and self.protocol_version != 0:
-            raise NotImplementedError(
-                "'Sync Read' is not available with Feetech motors using Protocol 1. Use 'Read' sequentially instead."
-            )
-        if instruction_name == "broadcast_ping" and self.protocol_version == 0:
-            raise NotImplementedError(
-                "'Broadcast Ping' is not available with Feetech motors using Protocol 1. Use 'Ping' sequentially instead."
-            )
+        return
 
-    # def _assert_same_firmware(self) -> None:
-    #     firmware_versions = self._read_firmware_version(self.ids, raise_on_error=True)
-    #     if len(set(firmware_versions.values())) != 1:
-    #         raise RuntimeError(
-    #             "Some Motors use different firmware versions:"
-    #             f"\n{pformat(firmware_versions)}\n"
-    #             "Update their firmware first using Feetech's software. "
-    #             "Visit https://www.feetechrc.com/software."
-    #         )
+
+
 
     def _handshake(self) -> None:
         self._assert_motors_exist()
@@ -192,6 +177,7 @@ class StaraiMotorsBus(MotorsBus):
         for motor in self.motors:
             if (self.port_handler.ping(self.motors[motor].id)!= True):
                 raise Exception(f"motor not found id:{self.motors[motor].id}")
+        self.disable_torque()
         self.port_handler.ResetLoop(0xff)
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
@@ -352,17 +338,18 @@ class StaraiMotorsBus(MotorsBus):
 
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
-        """
-        On Feetech Motors:
-        Present_Position = Actual_Position - Homing_Offset
-        """
-        half_turn_homings = {}
-        for motor, pos in positions.items():
-            model = self._get_motor_model(motor)
-            max_res = self.model_resolution_table[model] - 1
-            half_turn_homings[motor] = pos - int(max_res / 2)
+        return
+    #     """
+    #     On Feetech Motors:
+    #     Present_Position = Actual_Position - Homing_Offset
+    #     """
+    #     half_turn_homings = {}
+    #     for motor, pos in positions.items():
+    #         model = self._get_motor_model(motor)
+    #         max_res = self.model_resolution_table[model] - 1
+    #         half_turn_homings[motor] = pos - int(max_res / 2)
 
-        return half_turn_homings
+    # #     return half_turn_homings
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
