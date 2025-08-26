@@ -75,9 +75,9 @@ def _make_reachy2_sdk_mock():
             "_on_set",
         )
 
-        def __init__(self, present_position=0.0, initial_goal=None, on_set=None):
+        def __init__(self, present_position=0.0, on_set=None):
             self.present_position = present_position
-            self._goal_position = initial_goal
+            self._goal_position = present_position
             self._on_set = on_set
 
         @property
@@ -109,7 +109,6 @@ def _make_reachy2_sdk_mock():
     joints = {
         k: JointSpy(
             present_position=float(i),
-            initial_goal=float(i) + 0.1,
             on_set=_on_any_goal_set,
         )
         for i, k in enumerate(REACHY2_JOINTS.values())

@@ -19,18 +19,14 @@
 # pytest tests/cameras/test_opencv.py::test_connect
 # ```
 
-from pathlib import Path
+import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import time
 import pytest
 
-from lerobot.cameras.configs import Cv2Rotation
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-
 from lerobot.cameras.reachy2_camera import Reachy2Camera, Reachy2CameraConfig
-
+from lerobot.errors import DeviceNotConnectedError
 
 PARAMS = [
     ("teleop", "left"),
@@ -88,7 +84,7 @@ def _make_cam_manager_mock():
 
 @pytest.fixture(
     params=PARAMS,
-    # ids=["teleop-left", "teleop-right", "torso-rgb", "torso-depth"],  # Depth camera is not available yet
+    # ids=["teleop-left", "teleop-right", "torso-rgb", "torso-depth"],
     ids=["teleop-left", "teleop-right", "torso-rgb"],
 )
 def camera(request):
@@ -141,7 +137,7 @@ def test_async_read(camera):
         assert isinstance(img, np.ndarray)
     finally:
         if camera.is_connected:
-            camera.disconnect()  # To stop/join the thread. Otherwise get warnings when the test ends
+            camera.disconnect()
 
 
 def test_async_read_timeout(camera):
