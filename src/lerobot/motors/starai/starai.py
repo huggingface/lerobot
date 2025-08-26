@@ -11,7 +11,7 @@ from lerobot.utils.encoding_utils import decode_sign_magnitude, encode_sign_magn
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from fashionstar_uart_sdk import *
 
-from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address
+from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address,MotorNormMode
 from .tables import (
 #     FIRMWARE_MAJOR_VERSION,
 #     FIRMWARE_MINOR_VERSION,
@@ -29,9 +29,9 @@ DEFAULT_PROTOCOL_VERSION = 0
 DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
-DEFAULT_ACC_TIME =100
-DEFAULT_DEC_TIME =100
-DEFAULT_MOTION_TIME = 500
+DEFAULT_ACC_TIME =50
+DEFAULT_DEC_TIME =50
+DEFAULT_MOTION_TIME = 100
 
 NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
 
@@ -116,7 +116,7 @@ class StaraiMotorsBus(MotorsBus):
     ):
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
-
+        self.apply_drive_mode = True
 
         self.port_handler = PortHandler(port,1000000)
 
@@ -221,7 +221,35 @@ class StaraiMotorsBus(MotorsBus):
                 monitor_data[name].current_position = int(monitor_data[name].current_position+180)/360.0*4096
             for name in names:
                 read_data[name]=int(monitor_data[name].current_position)
-        
+
+            if normalize:
+                if not self.calibration:
+                    raise RuntimeError(f"{self} has no calibration registered.")
+
+                normalized_values = {}
+                for name, val in read_data.items():
+                    motor = name
+                    min_ = self.calibration[motor].range_min
+                    max_ = self.calibration[motor].range_max
+                    drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
+                    if max_ == min_:
+                        raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
+
+                    bounded_val = min(max_, max(min_, val))
+                    if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
+                        norm = (((bounded_val - min_) / (max_ - min_)) * 200) - 100
+                        normalized_values[name] = -norm if drive_mode else norm
+                    elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
+                        norm = ((bounded_val - min_) / (max_ - min_)) * 100
+                        normalized_values[name] = 100 - norm if drive_mode else norm
+                    elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
+                        mid = (min_ + max_) / 2
+                        max_res = self.model_resolution_table[self._id_to_model(self.motors[motor].id)] - 1
+                        normalized_values[name] = (val - mid) * 360 / max_res
+                    else:
+                        raise NotImplementedError
+
+                read_data = normalized_values
 
         return read_data
     
