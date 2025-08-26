@@ -833,7 +833,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_buffer = self.episode_buffer
         else:
             episode_buffer = episode_data
- 
 
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 

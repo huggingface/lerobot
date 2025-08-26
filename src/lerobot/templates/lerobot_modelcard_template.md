@@ -44,7 +44,7 @@ Below is the short version on how to train and run inference/eval:
 ### Train from scratch
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
   --dataset.repo_id=${HF_USER}/<dataset> \
   --policy.type=act \
   --output_dir=outputs/train/<desired_policy_repo_id> \
@@ -59,7 +59,7 @@ _Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._
 ### Evaluate the policy/run inference
 
 ```bash
-python -m lerobot.record \
+lerobot-record \
   --robot.type=so100_follower \
   --dataset.repo_id=<hf_user>/eval_<dataset> \
   --policy.path=<hf_user>/<desired_policy_repo_id> \
