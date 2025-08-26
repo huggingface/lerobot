@@ -257,7 +257,7 @@ class StaraiMotorsBus(MotorsBus):
         if data_name == "Goal_Position":
             for motor in values:
                 data=SyncPositionControlOptions(self.motors[motor].id,
-                                                int((values[motor]/4096.0*360.0-180)*10),
+                                                int(values[motor]*10),
                                                 DEFAULT_MOTION_TIME,
                                                 0,
                                                 DEFAULT_ACC_TIME,
