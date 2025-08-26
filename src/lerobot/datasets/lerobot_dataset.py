@@ -704,7 +704,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx) -> dict:
         item = self.hf_dataset[idx]
-        ep_idx = item["episode_index"][0].item()
+
+        # ep idx should be local
+        if self.episodes is None:
+            ep_idx = item["episode_index"].item()
+        else:
+            ep_idx = self.episodes.index(item["episode_index"].item())
 
         query_indices = None
         if self.delta_indices is not None:
@@ -715,8 +720,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item[key] = val
 
         if len(self.meta.video_keys) > 0:
-            current_ts = item["timestamp"][0].item()
+            current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+
             video_frames = self._query_videos(query_timestamps, ep_idx)
             item = {**video_frames, **item}
 
@@ -825,6 +831,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         if not episode_data:
             episode_buffer = self.episode_buffer
+        else:
+            episode_buffer = episode_data
+ 
 
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 
