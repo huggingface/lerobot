@@ -117,7 +117,7 @@ class StaraiMotorsBus(MotorsBus):
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
         self.apply_drive_mode = True
-
+        # self.port_handler: PortHandler
         self.port_handler = PortHandler(port,1000000)
 
         # # HACK: monkeypatch
