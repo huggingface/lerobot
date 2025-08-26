@@ -143,16 +143,16 @@ class Reachy2Robot(Robot):
         pass
 
     def _generate_joints_dict(self) -> dict[str, str]:
-        self.joints = {}
+        joints = {}
         if self.config.with_neck:
-            self.joints.update(REACHY2_NECK_JOINTS)
+            joints.update(REACHY2_NECK_JOINTS)
         if self.config.with_l_arm:
-            self.joints.update(REACHY2_L_ARM_JOINTS)
+            joints.update(REACHY2_L_ARM_JOINTS)
         if self.config.with_r_arm:
-            self.joints.update(REACHY2_R_ARM_JOINTS)
+            joints.update(REACHY2_R_ARM_JOINTS)
         if self.config.with_antennas:
-            self.joints.update(REACHY2_ANTENNAS_JOINTS)
-        return self.joints
+            joints.update(REACHY2_ANTENNAS_JOINTS)
+        return joints
 
     def _get_state(self) -> dict[str, float]:
         if self.reachy is not None:
