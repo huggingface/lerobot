@@ -38,23 +38,23 @@ NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
 logger = logging.getLogger(__name__)
 
 
-class OperatingMode(Enum):
-    # position servo mode
-    POSITION = 0
-    # The motor is in constant speed mode, which is controlled by parameter 0x2e, and the highest bit 15 is
-    # the direction bit
-    VELOCITY = 1
-    # PWM open-loop speed regulation mode, with parameter 0x2c running time parameter control, bit11 as
-    # direction bit
-    PWM = 2
-    # In step servo mode, the number of step progress is represented by parameter 0x2a, and the highest bit 15
-    # is the direction bit
-    STEP = 3
+# class OperatingMode(Enum):
+#     # position servo mode
+#     POSITION = 0
+#     # The motor is in constant speed mode, which is controlled by parameter 0x2e, and the highest bit 15 is
+#     # the direction bit
+#     VELOCITY = 1
+#     # PWM open-loop speed regulation mode, with parameter 0x2c running time parameter control, bit11 as
+#     # direction bit
+#     PWM = 2
+#     # In step servo mode, the number of step progress is represented by parameter 0x2a, and the highest bit 15
+#     # is the direction bit
+#     STEP = 3
 
 
-class DriveMode(Enum):
-    NON_INVERTED = 0
-    INVERTED = 1
+# class DriveMode(Enum):
+#     NON_INVERTED = 0
+#     INVERTED = 1
 
 
 class TorqueMode(Enum):
@@ -79,32 +79,13 @@ def _split_into_byte_chunks(value: int, length: int) -> list[int]:
     return data
 
 
-# def patch_setPacketTimeout(self, packet_length):  # noqa: N802
-#     """
-#     HACK: This patches the PortHandler behavior to set the correct packet timeouts.
-
-#     It fixes https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
-#     The bug is fixed on the official Feetech SDK repo (https://gitee.com/ftservo/FTServo_Python)
-#     but because that version is not published on PyPI, we rely on the (unofficial) on that is, which needs
-#     patching.
-#     """
-#     self.packet_start_time = self.getCurrentTime()
-#     self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
-
 
 class StaraiMotorsBus(MotorsBus):
 
 
-    # apply_drive_mode = True
-    # available_baudrates = deepcopy(SCAN_BAUDRATES)
     default_baudrate = DEFAULT_BAUDRATE
     default_timeout = DEFAULT_TIMEOUT_MS
-    # model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
-    # model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-    # model_encoding_table = deepcopy(MODEL_ENCODING_TABLE)
     model_number_table = deepcopy(MODEL_NUMBER_TABLE)
-    # model_resolution_table = deepcopy(MODEL_RESOLUTION)
-    # normalized_data = deepcopy(NORMALIZED_DATA)
 
     def __init__(
         self,
@@ -117,32 +98,14 @@ class StaraiMotorsBus(MotorsBus):
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
         self.apply_drive_mode = True
-        # self.port_handler: PortHandler
         self.port_handler = PortHandler(port,1000000)
 
-        # # HACK: monkeypatch
 
-        
-        # self.packet_handler = scs.PacketHandler(protocol_version)
-        # self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
-        # self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
-        # self._comm_success = scs.COMM_SUCCESS
-        # self._no_error = 0x00
-
-        # if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
-        #     raise ValueError(f"Some motors are incompatible with protocol_version={self.protocol_version}")
     @property
     def is_connected(self) -> bool:
         """bool: `True` if the underlying serial port is open."""
         return self.port_handler.is_open
 
-    # def write(self,  data_name:str, motor:str, value, *, normalize = True, num_retry = 0):
-    #     if not self.is_connected:
-    #         raise DeviceNotConnectedError(
-    #             f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-    #         )
-    #     id_ = self.motors[motor].id
-    #     # model = self.motors[motor].model
     def set_half_turn_homings(self, motors: NameOrID | list[NameOrID] | None = None) -> dict[NameOrID, Value]:
         if motors is None:
             motors = list(self.motors)
@@ -155,8 +118,6 @@ class StaraiMotorsBus(MotorsBus):
         
 
         homing_offsets = dict(zip(motors,list_of_homing_offsets))
-        # for motor, offset in homing_offsets.items():
-        #     self.write("Homing_Offset", motor, offset)
 
         return homing_offsets
 
@@ -170,7 +131,6 @@ class StaraiMotorsBus(MotorsBus):
 
     def _handshake(self) -> None:
         self._assert_motors_exist()
-        # self._assert_same_firmware()
 
     def connect(self, handshake: bool = True) -> None:
         self.port_handler.openPort()
@@ -309,16 +269,6 @@ class StaraiMotorsBus(MotorsBus):
 
             self.port_handler.sync_write["Goal_Position"](write_data)
         
-        # model = next(iter(models))
-        # addr, length = get_address(self.model_ctrl_table, model, data_name)
-
-        # if normalize and data_name in self.normalized_data:
-        #     ids_values = self._unnormalize(ids_values)
-
-        # ids_values = self._encode_sign(data_name, ids_values)
-
-        # err_msg = f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
-        # self._sync_write(addr, length, ids_values, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
 
 
 
@@ -369,17 +319,6 @@ class StaraiMotorsBus(MotorsBus):
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         return
-    #     """
-    #     On Feetech Motors:
-    #     Present_Position = Actual_Position - Homing_Offset
-    #     """
-    #     half_turn_homings = {}
-    #     for motor, pos in positions.items():
-    #         model = self._get_motor_model(motor)
-    #         max_res = self.model_resolution_table[model] - 1
-    #         half_turn_homings[motor] = pos - int(max_res / 2)
-
-    # #     return half_turn_homings
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
@@ -388,10 +327,6 @@ class StaraiMotorsBus(MotorsBus):
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
         pass
-    #     addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
-    #     self._write(addr, length, motor_id, TorqueMode.DISABLED.value, num_retry=num_retry)
-    #     addr, length = get_address(self.model_ctrl_table, model, "Lock")
-    #     self._write(addr, length, motor_id, 0, num_retry=num_retry)
 
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
@@ -420,76 +355,6 @@ class StaraiMotorsBus(MotorsBus):
     def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
         return _split_into_byte_chunks(value, length)
 
-    # def _broadcast_ping(self) -> tuple[dict[int, int], int]:
-    #     import scservo_sdk as scs
-
-    #     data_list = {}
-
-    #     status_length = 6
-
-    #     rx_length = 0
-    #     wait_length = status_length * scs.MAX_ID
-
-    #     txpacket = [0] * 6
-
-    #     tx_time_per_byte = (1000.0 / self.port_handler.getBaudRate()) * 10.0
-
-    #     txpacket[scs.PKT_ID] = scs.BROADCAST_ID
-    #     txpacket[scs.PKT_LENGTH] = 2
-    #     txpacket[scs.PKT_INSTRUCTION] = scs.INST_PING
-
-    #     result = self.packet_handler.txPacket(self.port_handler, txpacket)
-    #     if result != scs.COMM_SUCCESS:
-    #         self.port_handler.is_using = False
-    #         return data_list, result
-
-    #     # set rx timeout
-    #     self.port_handler.setPacketTimeoutMillis((wait_length * tx_time_per_byte) + (3.0 * scs.MAX_ID) + 16.0)
-
-    #     rxpacket = []
-    #     while not self.port_handler.isPacketTimeout() and rx_length < wait_length:
-    #         rxpacket += self.port_handler.readPort(wait_length - rx_length)
-    #         rx_length = len(rxpacket)
-
-    #     self.port_handler.is_using = False
-
-    #     if rx_length == 0:
-    #         return data_list, scs.COMM_RX_TIMEOUT
-
-    #     while True:
-    #         if rx_length < status_length:
-    #             return data_list, scs.COMM_RX_CORRUPT
-
-    #         # find packet header
-    #         for idx in range(0, (rx_length - 1)):
-    #             if (rxpacket[idx] == 0xFF) and (rxpacket[idx + 1] == 0xFF):
-    #                 break
-
-    #         if idx == 0:  # found at the beginning of the packet
-    #             # calculate checksum
-    #             checksum = 0
-    #             for idx in range(2, status_length - 1):  # except header & checksum
-    #                 checksum += rxpacket[idx]
-
-    #             checksum = ~checksum & 0xFF
-    #             if rxpacket[status_length - 1] == checksum:
-    #                 result = scs.COMM_SUCCESS
-    #                 data_list[rxpacket[scs.PKT_ID]] = rxpacket[scs.PKT_ERROR]
-
-    #                 del rxpacket[0:status_length]
-    #                 rx_length = rx_length - status_length
-
-    #                 if rx_length == 0:
-    #                     return data_list, result
-    #             else:
-    #                 result = scs.COMM_RX_CORRUPT
-    #                 # remove header (0xFF 0xFF)
-    #                 del rxpacket[0:2]
-    #                 rx_length = rx_length - 2
-    #         else:
-    #             # remove unnecessary packets
-    #             del rxpacket[0:idx]
-    #             rx_length = rx_length - idx
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
         self._assert_protocol_is_compatible("broadcast_ping")
@@ -512,26 +377,9 @@ class StaraiMotorsBus(MotorsBus):
 
         return self._read_model_number(list(ids_status), raise_on_error)
 
-    # def _read_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, str]:
-    #     firmware_versions = {}
-    #     for id_ in motor_ids:
-    #         firm_ver_major, comm, error = self._read(
-    #             *FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error
-    #         )
-    #         if not self._is_comm_success(comm) or self._is_error(error):
-    #             continue
-
-    #         firm_ver_minor, comm, error = self._read(
-    #             *FIRMWARE_MINOR_VERSION, id_, raise_on_error=raise_on_error
-    #         )
-    #         if not self._is_comm_success(comm) or self._is_error(error):
-    #             continue
-
-    #         firmware_versions[id_] = f"{firm_ver_major}.{firm_ver_minor}"
-
-    #     return firmware_versions
 
     def _read_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
+        raise NotImplementedError("TODO")
         model_numbers = {}
         for id_ in motor_ids:
             model_nb, comm, error = self._read(*MODEL_NUMBER, id_, raise_on_error=raise_on_error)
