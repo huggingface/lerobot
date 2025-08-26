@@ -68,6 +68,8 @@ class Reachy2Camera(Camera):
         self.fps = config.fps
         self.color_mode = config.color_mode
 
+        self.cam_manager: CameraManager | None = None
+
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
@@ -80,11 +82,12 @@ class Reachy2Camera(Camera):
     @property
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
-        return (
-            (self.cam_manager.teleop is not None and self.cam_manager.depth is not None)
-            if self.cam_manager is not None
-            else False
-        )
+        if self.config.name == "teleop":
+            return self.cam_manager._grpc_connected and self.cam_manager.teleop if self.cam_manager else False
+        elif self.config.name == "depth":
+            return self.cam_manager._grpc_connected and self.cam_manager.depth if self.cam_manager else False
+        else:
+            raise ValueError(f"Invalid camera name '{self.config.name}'. Expected 'teleop' or 'depth'.")
 
     def connect(self, warmup: bool = True):
         """
@@ -94,7 +97,6 @@ class Reachy2Camera(Camera):
         self.cam_manager.initialize_cameras()
 
         logger.info(f"{self} connected.")
-        print(f"{self} connected.")
 
     @staticmethod
     def find_cameras(ip_address: str = "localhost", port: int = 50065) -> list[dict[str, Any]]:
@@ -152,22 +154,25 @@ class Reachy2Camera(Camera):
 
         frame = None
 
-        if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
-            if self.config.image_type == "left":
-                frame = self.cam_manager.teleop.get_frame(CameraView.LEFT, size=(640, 480))[0]
-            elif self.config.image_type == "right":
-                frame = self.cam_manager.teleop.get_frame(CameraView.RIGHT, size=(640, 480))[0]
-        elif self.config.name == "depth" and hasattr(self.cam_manager, "depth"):
-            if self.config.image_type == "depth":
-                frame = self.cam_manager.depth.get_depth_frame()[0]
-            elif self.config.image_type == "rgb":
-                frame = self.cam_manager.depth.get_frame(size=(640, 480))[0]
+        if self.cam_manager is None:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        else:
+            if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
+                if self.config.image_type == "left":
+                    frame = self.cam_manager.teleop.get_frame(CameraView.LEFT, size=(640, 480))[0]
+                elif self.config.image_type == "right":
+                    frame = self.cam_manager.teleop.get_frame(CameraView.RIGHT, size=(640, 480))[0]
+            elif self.config.name == "depth" and hasattr(self.cam_manager, "depth"):
+                if self.config.image_type == "depth":
+                    frame = self.cam_manager.depth.get_depth_frame()[0]
+                elif self.config.image_type == "rgb":
+                    frame = self.cam_manager.depth.get_frame(size=(640, 480))[0]
 
-        if frame is None:
-            return np.empty((0, 0, 3), dtype=np.uint8)
+            if frame is None:
+                return np.empty((0, 0, 3), dtype=np.uint8)
 
-        if self.config.color_mode == "rgb":
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if self.config.color_mode == "rgb":
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")

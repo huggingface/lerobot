@@ -23,7 +23,7 @@ class Reachy2CameraConfig(CameraConfig):
     """Configuration class for Reachy 2 camera devices.
 
     This class provides configuration options for Reachy 2 cameras,
-    supporting both the teleop and torso cameras. It includes settings
+    supporting both the teleop and depth cameras. It includes settings
     for resolution, frame rate, color mode, and the selection of the cameras.
 
     Example configurations:
@@ -41,9 +41,9 @@ class Reachy2CameraConfig(CameraConfig):
     ```
 
     Attributes:
-        name: Name of the camera device. Can be "teleop" or "torso".
+        name: Name of the camera device. Can be "teleop" or "depth".
         image_type: Type of image stream. For "teleop" camera, can be "left" or "right".
-                    For "torso" camera, can be "rgb" or "depth". (depth is not supported yet)
+                    For "depth" camera, can be "rgb" or "depth". (depth is not supported yet)
         fps: Requested frames per second for the color stream.
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
@@ -63,15 +63,15 @@ class Reachy2CameraConfig(CameraConfig):
     # use_depth: bool = False
 
     def __post_init__(self):
-        if self.name not in ["teleop", "torso"]:
-            raise ValueError(f"`name` is expected to be 'teleop' or 'torso', but {self.name} is provided.")
+        if self.name not in ["teleop", "depth"]:
+            raise ValueError(f"`name` is expected to be 'teleop' or 'depth', but {self.name} is provided.")
         if (
             (self.name == "teleop" and self.image_type not in ["left", "right"])
-            or (self.name == "torso")
+            or (self.name == "depth")
             and self.image_type not in ["rgb", "depth"]
         ):
             raise ValueError(
-                f"`image_type` is expected to be 'left' or 'right' for teleop camera, and 'rgb' or 'depth' for torso camera, but {self.image_type} is provided."
+                f"`image_type` is expected to be 'left' or 'right' for teleop camera, and 'rgb' or 'depth' for depth camera, but {self.image_type} is provided."
             )
 
         if self.color_mode not in ["rgb", "bgr"]:
