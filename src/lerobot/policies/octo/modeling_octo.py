@@ -284,11 +284,27 @@ class OctoPolicy(PreTrainedPolicy):
             rx_ry_rz = torch.zeros_like(x_y_z, dtype=raw_actions.dtype, device=device)  # rx, ry, rz as zeros
             raw_actions = torch.cat([x_y_z, rx_ry_rz, gripper], dim=-1)  # x, y, z, rx, ry, rz, gripper
 
-            # Expand actions to match expected shape instead of reshape
-            # raw_actions has shape [batch_size, action_dim]
+            # The dataloader provides a sequence of actions. We select the first `action_horizon`
+            # actions to be the target for the diffusion model.
+            # raw_actions has shape [batch_size, num_timestamps, action_dim]
             # We need shape [batch_size, window_size, action_horizon, action_dim]
-            actions = raw_actions.unsqueeze(1).unsqueeze(2)  # [batch_size, 1, 1, action_dim]
-            actions = actions.expand(batch_size, window_size, action_horizon, action_dim)
+            
+            # Select the first `action_horizon` actions from the sequence.
+            actions = raw_actions[:, :action_horizon]
+            
+            # Add the window_size dimension.
+            actions = actions.unsqueeze(1)
+
+            # Pad if the sequence is shorter than action_horizon.
+            if actions.shape[2] < action_horizon:
+                padding_shape = (
+                    batch_size,
+                    window_size,
+                    action_horizon - actions.shape[2],
+                    action_dim,
+                )
+                padding = torch.zeros(padding_shape, dtype=actions.dtype, device=actions.device)
+                actions = torch.cat([actions, padding], dim=2)
 
             action_pad_mask = torch.ones_like(actions, dtype=torch.bool, device=device)
             if action_dim >= 7:
