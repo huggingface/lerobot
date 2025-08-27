@@ -62,6 +62,9 @@ PARAMS = [
     {"with_r_arm": False, "with_neck": False, "with_antennas": False},
     {"use_external_commands": True},
     {"use_external_commands": True, "with_mobile_base": False, "with_neck": False},
+    {"with_right_teleop_camera": False},
+    {"with_left_teleop_camera": False, "with_right_teleop_camera": False},
+    {"with_left_teleop_camera": False, "with_torso_camera": True},
 ]
 
 
@@ -70,8 +73,6 @@ def _make_reachy2_sdk_mock():
         __slots__ = (
             "present_position",
             "_goal_position",
-            "set_calls",
-            "set_values",
             "_on_set",
         )
 
@@ -140,27 +141,34 @@ def _make_reachy2_sdk_mock():
     return r
 
 
+def _make_reachy2_camera_mock(*args, **kwargs):
+    cfg = args[0] if args else kwargs.get("config")
+    name = getattr(cfg, "name", kwargs.get("name", "cam"))
+    image_type = getattr(cfg, "image_type", kwargs.get("image_type", "cam"))
+    width = getattr(cfg, "width", kwargs.get("width", 640))
+    height = getattr(cfg, "height", kwargs.get("height", 480))
+
+    cam = MagicMock(name=f"Reachy2CameraMock:{name}")
+    cam.name = name
+    cam.image_type = image_type
+    cam.width = width
+    cam.height = height
+    cam.connect = MagicMock()
+    cam.disconnect = MagicMock()
+    cam.async_read = MagicMock(side_effect=lambda: np.zeros((height, width, 3), dtype=np.uint8))
+    return cam
+
+
 @pytest.fixture(params=PARAMS, ids=lambda p: "default" if not p else ",".join(p.keys()))
 def reachy2(request):
-    # Mock cameras
-    fake_cams = {
-        "teleop_left": MagicMock(
-            width=640,
-            height=480,
-            connect=MagicMock(),
-            disconnect=MagicMock(),
-            async_read=MagicMock(return_value=np.zeros((10, 10, 3), dtype=np.uint8)),
-        ),
-    }
-
     with (
         patch(
             "lerobot.robots.reachy2.robot_reachy2.ReachySDK",
             side_effect=lambda *a, **k: _make_reachy2_sdk_mock(),
         ),
         patch(
-            "lerobot.robots.reachy2.robot_reachy2.make_cameras_from_configs",
-            return_value=fake_cams,
+            "lerobot.cameras.reachy2_camera.reachy2_camera.Reachy2Camera",
+            side_effect=_make_reachy2_camera_mock,
         ),
     ):
         overrides = request.param
@@ -187,6 +195,64 @@ def test_connect_disconnect(reachy2):
     reachy2.reachy.disconnect.assert_called_once()
 
 
+def test_get_joints_dict(reachy2):
+    reachy2.connect()
+
+    if reachy2.config.with_neck:
+        assert "neck_yaw.pos" in reachy2.joints_dict
+        assert "neck_pitch.pos" in reachy2.joints_dict
+        assert "neck_roll.pos" in reachy2.joints_dict
+    else:
+        assert "neck_yaw.pos" not in reachy2.joints_dict
+        assert "neck_pitch.pos" not in reachy2.joints_dict
+        assert "neck_roll.pos" not in reachy2.joints_dict
+
+    if reachy2.config.with_antennas:
+        assert "l_antenna.pos" in reachy2.joints_dict
+        assert "r_antenna.pos" in reachy2.joints_dict
+    else:
+        assert "l_antenna.pos" not in reachy2.joints_dict
+        assert "r_antenna.pos" not in reachy2.joints_dict
+
+    if reachy2.config.with_r_arm:
+        assert "r_shoulder_pitch.pos" in reachy2.joints_dict
+        assert "r_shoulder_roll.pos" in reachy2.joints_dict
+        assert "r_elbow_yaw.pos" in reachy2.joints_dict
+        assert "r_elbow_pitch.pos" in reachy2.joints_dict
+        assert "r_wrist_roll.pos" in reachy2.joints_dict
+        assert "r_wrist_pitch.pos" in reachy2.joints_dict
+        assert "r_wrist_yaw.pos" in reachy2.joints_dict
+        assert "r_gripper.pos" in reachy2.joints_dict
+    else:
+        assert "r_shoulder_pitch.pos" not in reachy2.joints_dict
+        assert "r_shoulder_roll.pos" not in reachy2.joints_dict
+        assert "r_elbow_yaw.pos" not in reachy2.joints_dict
+        assert "r_elbow_pitch.pos" not in reachy2.joints_dict
+        assert "r_wrist_roll.pos" not in reachy2.joints_dict
+        assert "r_wrist_pitch.pos" not in reachy2.joints_dict
+        assert "r_wrist_yaw.pos" not in reachy2.joints_dict
+        assert "r_gripper.pos" not in reachy2.joints_dict
+
+    if reachy2.config.with_l_arm:
+        assert "l_shoulder_pitch.pos" in reachy2.joints_dict
+        assert "l_shoulder_roll.pos" in reachy2.joints_dict
+        assert "l_elbow_yaw.pos" in reachy2.joints_dict
+        assert "l_elbow_pitch.pos" in reachy2.joints_dict
+        assert "l_wrist_roll.pos" in reachy2.joints_dict
+        assert "l_wrist_pitch.pos" in reachy2.joints_dict
+        assert "l_wrist_yaw.pos" in reachy2.joints_dict
+        assert "l_gripper.pos" in reachy2.joints_dict
+    else:
+        assert "l_shoulder_pitch.pos" not in reachy2.joints_dict
+        assert "l_shoulder_roll.pos" not in reachy2.joints_dict
+        assert "l_elbow_yaw.pos" not in reachy2.joints_dict
+        assert "l_elbow_pitch.pos" not in reachy2.joints_dict
+        assert "l_wrist_roll.pos" not in reachy2.joints_dict
+        assert "l_wrist_pitch.pos" not in reachy2.joints_dict
+        assert "l_wrist_yaw.pos" not in reachy2.joints_dict
+        assert "l_gripper.pos" not in reachy2.joints_dict
+
+
 def test_get_observation(reachy2):
     reachy2.connect()
     obs = reachy2.get_observation()
@@ -201,6 +267,24 @@ def test_get_observation(reachy2):
     if reachy2.config.with_mobile_base:
         for vel in REACHY2_VEL.keys():
             assert obs[vel] == reachy2.reachy.mobile_base.odometry[REACHY2_VEL[vel]]
+    if reachy2.config.with_left_teleop_camera:
+        assert obs["teleop_left"].shape == (
+            reachy2.config.cameras["teleop_left"].height,
+            reachy2.config.cameras["teleop_left"].width,
+            3,
+        )
+    if reachy2.config.with_right_teleop_camera:
+        assert obs["teleop_right"].shape == (
+            reachy2.config.cameras["teleop_right"].height,
+            reachy2.config.cameras["teleop_right"].width,
+            3,
+        )
+    if reachy2.config.with_torso_camera:
+        assert obs["torso_rgb"].shape == (
+            reachy2.config.cameras["torso_rgb"].height,
+            reachy2.config.cameras["torso_rgb"].width,
+            3,
+        )
 
 
 def test_send_action(reachy2):
