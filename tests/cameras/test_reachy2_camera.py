@@ -14,11 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Example of running a specific test:
-# ```bash
-# pytest tests/cameras/test_opencv.py::test_connect
-# ```
-
 import time
 from unittest.mock import MagicMock, patch
 

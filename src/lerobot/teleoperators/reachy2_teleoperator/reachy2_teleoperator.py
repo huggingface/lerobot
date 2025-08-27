@@ -17,12 +17,6 @@
 import logging
 import time
 
-# from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-# from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-# from lerobot.motors.feetech import (
-#     FeetechMotorsBus,
-#     OperatingMode,
-# )
 from reachy2_sdk import ReachySDK
 
 from ..teleoperator import Teleoperator
