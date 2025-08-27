@@ -113,6 +113,13 @@ class OctoPolicy(PreTrainedPolicy):
  
     def _apply_selective_freezing(self):
         """Apply selective freezing based on configuration settings."""
+        if hasattr(self.model.octo_transformer, 'task_tokenizers'):
+            for name, tokenizer in self.model.octo_transformer.task_tokenizers.items():
+                if name == 'language_instruction':
+                    for param in tokenizer.parameters():
+                        param.requires_grad = False
+                    print(f"✓ T5 language encoder frozen (always frozen during finetuning)")
+        
         # If train_action_head_only is True, freeze everything except the action head
         if self.config.train_action_head_only:
             # Freeze transformer
@@ -129,8 +136,8 @@ class OctoPolicy(PreTrainedPolicy):
  
             if self.config.freeze_vision_encoder:
                 # Freeze vision encoder components in the transformer
-                if hasattr(self.model.octo_transformer, 'image_tokenizers'):
-                    for tokenizer in self.model.octo_transformer.image_tokenizers.values():
+                if hasattr(self.model.octo_transformer, 'observation_tokenizers'):
+                    for tokenizer in self.model.octo_transformer.observation_tokenizers.values():
                         for param in tokenizer.parameters():
                             param.requires_grad = False
 
