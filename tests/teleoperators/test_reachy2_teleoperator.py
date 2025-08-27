@@ -16,7 +16,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 from lerobot.teleoperators.reachy2_teleoperator import (
@@ -74,12 +73,6 @@ def _make_reachy2_sdk_mock():
     def _disconnect():
         r.is_connected.return_value = False
 
-    # Global counter of goal_position sets
-    r._goal_position_set_total = 0
-
-    def _on_any_goal_set():
-        r._goal_position_set_total += 1
-
     # Mock joints with some dummy positions
     joints = {
         k: MagicMock(
@@ -99,14 +92,6 @@ def _make_reachy2_sdk_mock():
 
     r.connect = MagicMock(side_effect=_connect)
     r.disconnect = MagicMock(side_effect=_disconnect)
-
-    # Mock methods
-    r.turn_on = MagicMock()
-    r.reset_default_limits = MagicMock()
-    r.send_goal_positions = MagicMock()
-    r.turn_off_smoothly = MagicMock()
-    r.mobile_base.set_goal_speed = MagicMock()
-    r.mobile_base.send_speed_command = MagicMock()
 
     return r
 
@@ -144,17 +129,11 @@ def test_get_action(reachy2):
     action = reachy2.get_action()
 
     expected_keys = set(reachy2.joints_dict)
-    expected_keys.update(
-        f"{v}" for v in REACHY2_VEL.keys() if reachy2.config.with_mobile_base
-    )
+    expected_keys.update(f"{v}" for v in REACHY2_VEL.keys() if reachy2.config.with_mobile_base)
     assert set(action.keys()) == expected_keys
 
     for motor in reachy2.joints_dict.keys():
-        assert (
-            action[motor] == reachy2.reachy.joints[REACHY2_JOINTS[motor]].goal_position
-        )
+        assert action[motor] == reachy2.reachy.joints[REACHY2_JOINTS[motor]].goal_position
     if reachy2.config.with_mobile_base:
         for vel in REACHY2_VEL.keys():
-            assert (
-                action[vel] == reachy2.reachy.mobile_base.last_cmd_vel[REACHY2_VEL[vel]]
-            )
+            assert action[vel] == reachy2.reachy.mobile_base.last_cmd_vel[REACHY2_VEL[vel]]

@@ -196,8 +196,6 @@ def test_get_observation(reachy2):
     expected_keys.update(reachy2.cameras.keys())
     assert set(obs.keys()) == expected_keys
 
-    print(obs)
-
     for motor in reachy2.joints_dict.keys():
         assert obs[motor] == reachy2.reachy.joints[REACHY2_JOINTS[motor]].present_position
     if reachy2.config.with_mobile_base:
