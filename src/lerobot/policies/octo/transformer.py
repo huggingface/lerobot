@@ -513,6 +513,10 @@ class OctoWithoutHead(nn.Module):
             repeat_task_tokens=self.repeat_task_tokens,
         )
 
+        # Attributes to store intermediate values for debugging
+        self.prefix_groups = None
+        self.timestep_groups = None
+
         # Projections
         self.obs_primary_projection = nn.Linear(512, self.token_embedding_size)
         self.obs_wrist_projection = nn.Linear(512, self.token_embedding_size)
@@ -655,6 +659,10 @@ class OctoWithoutHead(nn.Module):
                 attention_rules=readout_attention_rules,
             )
         )
+
+        # Store groups for debugging
+        self.prefix_groups = prefix_groups
+        self.timestep_groups = timestep_groups
 
         # Run transformer
         _, timestep_outputs = self.transformer(prefix_groups, timestep_groups)
