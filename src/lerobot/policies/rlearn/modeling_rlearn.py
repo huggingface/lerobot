@@ -604,12 +604,12 @@ def generate_causal_mask(T: int, device=None) -> Tensor:
 
 def extract_visual_sequence(batch: dict[str, Tensor]) -> Tensor:
     # Accept various image key formats from datasets
-    # Try multiple common key patterns
-
+    # With delta_indices, the dataset provides temporal sequences automatically
+    
     # List of possible image keys to check, in order of preference
     possible_keys = [
         OBS_IMAGES,  # 'observation.images'
-        OBS_IMAGE,  # 'observation.image'
+        OBS_IMAGE,   # 'observation.image'  
         "observation.images.image",  # nested format from some datasets
     ]
 
@@ -619,14 +619,15 @@ def extract_visual_sequence(batch: dict[str, Tensor]) -> Tensor:
 
             if isinstance(image_val, list) and len(image_val) > 0:
                 # List of (B, C, H, W) -> stack over time
+                # This happens when dataset provides temporal sequence as list
                 return torch.stack(image_val, dim=1)
             elif torch.is_tensor(image_val):
                 # Tensor of shape (B, T, C, H, W) or (B, C, H, W)
                 if image_val.dim() == 5:
-                    # Already has time dimension
+                    # Already has time dimension - this is what we expect with delta_indices
                     return image_val
                 elif image_val.dim() == 4:
-                    # Add time dimension (single frame)
+                    # Add time dimension (single frame) - fallback for datasets without temporal sequences
                     return image_val.unsqueeze(1)
                 else:
                     raise ValueError(
@@ -690,21 +691,28 @@ def pairwise_ranking_loss(logits: Tensor, target: Tensor, margin: float = 0.1, n
 
 
 def zscore(x: Tensor, eps: float = 1e-3) -> Tensor:
-    """Z-score normalization with numerical stability."""
+    """Z-score normalization with numerical stability.
+    
+    Args:
+        x: Tensor of shape (B, T) where B is batch size, T is sequence length
+        eps: Small epsilon for numerical stability
+    
+    Returns:
+        Z-scored tensor of same shape as input
+    """
     # Handle both (B,) and (B, T) shapes
     if x.dim() == 1:
         x = x.unsqueeze(1)  # Make it (B, 1)
 
     B, T = x.shape
 
-    # If only one timestep, can't compute meaningful std across time
     if T == 1:
-        # Just use tanh to bound values instead of z-score
-        return torch.tanh(x * 0.1)  # Scale and bound
-
-    # Compute mean and std across time dimension
-    mean = x.mean(dim=1, keepdim=True)
-    std = x.std(dim=1, keepdim=True, unbiased=False)
+        # Single timestep: use tanh to bound values instead of z-score
+        return torch.tanh(x * 0.1)
+    
+    # Multiple timesteps: compute z-score across time dimension for each batch
+    mean = x.mean(dim=1, keepdim=True)  # (B, 1)
+    std = x.std(dim=1, keepdim=True, unbiased=False)  # (B, 1)
 
     # Check if std is valid (not zero or NaN)
     std_is_valid = (std > eps) & (~torch.isnan(std))
@@ -715,7 +723,7 @@ def zscore(x: Tensor, eps: float = 1e-3) -> Tensor:
     # Compute z-score where valid
     z = (x - mean) / std_safe
 
-    # For invalid cases, use tanh of centered values
+    # For invalid cases (constant values across time), use tanh of centered values
     z_fallback = torch.tanh((x - mean) * 0.1)
     z = torch.where(std_is_valid.expand_as(z), z, z_fallback)
 
