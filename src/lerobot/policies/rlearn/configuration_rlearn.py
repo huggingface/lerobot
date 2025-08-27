@@ -105,7 +105,8 @@ class RLearNConfig(PreTrainedConfig):
     @property
     def observation_delta_indices(self) -> list | None:
         # Use temporal sequences: past frames from -(max_seq_len-1) to current (0)
-        # This gives us max_seq_len frames total, e.g. [-15, -14, ..., -1, 0] for max_seq_len=16
+        # This gives us max_seq_len frames total, e.g. [-3, -2, -1, 0] for max_seq_len=4
+        # The dataset will handle padding/repeating frames for episodes shorter than this
         return list(range(1 - self.max_seq_len, 1))
 
     @property

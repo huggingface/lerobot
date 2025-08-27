@@ -202,8 +202,8 @@ class RLearNPolicy(PreTrainedPolicy):
 
         batch = self.normalize_inputs(batch)
 
-        # Extract frames and form (B, T, C, H, W)
-        frames = extract_visual_sequence(batch)
+        # Extract frames and form (B, T, C, H, W), padding if needed
+        frames = extract_visual_sequence(batch, target_seq_len=self.config.max_seq_len)
         B, T, C, H, W = frames.shape
 
         # Apply stride (no dropout during eval)
@@ -284,8 +284,8 @@ class RLearNPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
 
-        # Extract frames and form (B, T, C, H, W)
-        frames = extract_visual_sequence(batch)
+        # Extract frames and form (B, T, C, H, W), padding if needed
+        frames = extract_visual_sequence(batch, target_seq_len=self.config.max_seq_len)
         B, T, C, H, W = frames.shape
 
         # Apply stride and frame dropout during training
@@ -374,6 +374,19 @@ class RLearNPolicy(PreTrainedPolicy):
         # Align target with sampled timesteps
         if target.dim() == 1:
             target = target.unsqueeze(1)  # (B, 1)
+        
+        # Handle target padding to match frame sequence if needed
+        if target.shape[1] < self.config.max_seq_len:
+            # Pad targets by repeating the first value (assuming it's the earliest)
+            padding_needed = self.config.max_seq_len - target.shape[1]
+            first_target = target[:, :1]  # (B, 1)
+            padding = first_target.expand(target.shape[0], padding_needed)
+            target = torch.cat([padding, target], dim=1)  # Prepend padding
+            
+            import logging
+            logging.debug(f"Padded targets from {target.shape[1] - padding_needed} to {self.config.max_seq_len}")
+        
+        # Now safely index with idx
         target = target[:, idx]
 
         # Composite loss
@@ -602,7 +615,17 @@ def generate_causal_mask(T: int, device=None) -> Tensor:
     return mask
 
 
-def extract_visual_sequence(batch: dict[str, Tensor]) -> Tensor:
+def extract_visual_sequence(batch: dict[str, Tensor], target_seq_len: int = None) -> Tensor:
+    """Extract visual sequence from batch and ensure it has the expected temporal length.
+    
+    Args:
+        batch: Input batch containing image data
+        target_seq_len: Expected sequence length. If provided and the actual sequence is shorter,
+                       it will be padded by repeating the first frame.
+    
+    Returns:
+        Tensor of shape (B, T, C, H, W)
+    """
     # Accept various image key formats from datasets
     # With delta_indices, the dataset provides temporal sequences automatically
 
@@ -613,6 +636,7 @@ def extract_visual_sequence(batch: dict[str, Tensor]) -> Tensor:
         "observation.images.image",  # nested format from some datasets
     ]
 
+    frames = None
     for key in possible_keys:
         if key in batch:
             image_val = batch[key]
@@ -620,28 +644,47 @@ def extract_visual_sequence(batch: dict[str, Tensor]) -> Tensor:
             if isinstance(image_val, list) and len(image_val) > 0:
                 # List of (B, C, H, W) -> stack over time
                 # This happens when dataset provides temporal sequence as list
-                return torch.stack(image_val, dim=1)
+                frames = torch.stack(image_val, dim=1)
+                break
             elif torch.is_tensor(image_val):
                 # Tensor of shape (B, T, C, H, W) or (B, C, H, W)
                 if image_val.dim() == 5:
                     # Already has time dimension - this is what we expect with delta_indices
-                    return image_val
+                    frames = image_val
+                    break
                 elif image_val.dim() == 4:
                     # Add time dimension (single frame) - fallback for datasets without temporal sequences
-                    return image_val.unsqueeze(1)
+                    frames = image_val.unsqueeze(1)
+                    break
                 else:
                     raise ValueError(
                         f"'{key}' must be a Tensor of shape (B,T,C,H,W) or (B,C,H,W), got shape {image_val.shape}"
                     )
 
-    # If no image key found, provide helpful error with available keys
-    available_keys = list(batch.keys())
-    image_like_keys = [k for k in available_keys if "image" in k.lower()]
-    raise ValueError(
-        f"Could not find image data in batch. Looked for keys: {possible_keys}. "
-        f"Available keys with 'image': {image_like_keys}. "
-        f"All keys: {available_keys}"
-    )
+    if frames is None:
+        # If no image key found, provide helpful error with available keys
+        available_keys = list(batch.keys())
+        image_like_keys = [k for k in available_keys if "image" in k.lower()]
+        raise ValueError(
+            f"Could not find image data in batch. Looked for keys: {possible_keys}. "
+            f"Available keys with 'image': {image_like_keys}. "
+            f"All keys: {available_keys}"
+        )
+    
+    # Pad sequence if needed
+    if target_seq_len is not None:
+        B, T, C, H, W = frames.shape
+        if T < target_seq_len:
+            # Pad by repeating the first frame (assumes first frame in sequence is the earliest)
+            padding_needed = target_seq_len - T
+            first_frame = frames[:, :1]  # (B, 1, C, H, W)
+            padding = first_frame.expand(B, padding_needed, C, H, W)
+            frames = torch.cat([padding, frames], dim=1)  # Prepend padding
+            
+            import logging
+            logging.debug(f"Padded sequence from {T} to {target_seq_len} frames by repeating first frame")
+    
+    return frames
 
 
 def encode_language(
