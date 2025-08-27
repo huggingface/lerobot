@@ -94,7 +94,7 @@ from lerobot.teleoperators import (  # noqa: F401
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
-    reachy2_fake_teleoperator,
+    reachy2_teleoperator,
     so100_leader,
     so101_leader,
 )
