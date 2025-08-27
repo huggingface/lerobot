@@ -605,11 +605,11 @@ def generate_causal_mask(T: int, device=None) -> Tensor:
 def extract_visual_sequence(batch: dict[str, Tensor]) -> Tensor:
     # Accept various image key formats from datasets
     # With delta_indices, the dataset provides temporal sequences automatically
-    
+
     # List of possible image keys to check, in order of preference
     possible_keys = [
         OBS_IMAGES,  # 'observation.images'
-        OBS_IMAGE,   # 'observation.image'  
+        OBS_IMAGE,  # 'observation.image'
         "observation.images.image",  # nested format from some datasets
     ]
 
@@ -692,11 +692,11 @@ def pairwise_ranking_loss(logits: Tensor, target: Tensor, margin: float = 0.1, n
 
 def zscore(x: Tensor, eps: float = 1e-3) -> Tensor:
     """Z-score normalization with numerical stability.
-    
+
     Args:
         x: Tensor of shape (B, T) where B is batch size, T is sequence length
         eps: Small epsilon for numerical stability
-    
+
     Returns:
         Z-scored tensor of same shape as input
     """
@@ -709,7 +709,7 @@ def zscore(x: Tensor, eps: float = 1e-3) -> Tensor:
     if T == 1:
         # Single timestep: use tanh to bound values instead of z-score
         return torch.tanh(x * 0.1)
-    
+
     # Multiple timesteps: compute z-score across time dimension for each batch
     mean = x.mean(dim=1, keepdim=True)  # (B, 1)
     std = x.std(dim=1, keepdim=True, unbiased=False)  # (B, 1)
