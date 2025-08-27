@@ -145,10 +145,13 @@ class TokenizerProcessor:
             observation = dict(observation)  # Make a copy
 
         # Add tokenized data to observation
-        observation[f"{OBS_LANGUAGE}.tokens"] = tokenized_prompt["input_ids"]
-        observation[f"{OBS_LANGUAGE}.attention_mask"] = tokenized_prompt["attention_mask"].to(
-            dtype=torch.bool
-        )
+        input_ids = tokenized_prompt["input_ids"]
+        attention_mask = tokenized_prompt.get("attention_mask")
+        if attention_mask is None:
+            # Some tokenizers (e.g., SigLIP text) may not return attention_mask; default to ones
+            attention_mask = torch.ones_like(input_ids)
+        observation[f"{OBS_LANGUAGE}.tokens"] = input_ids
+        observation[f"{OBS_LANGUAGE}.attention_mask"] = attention_mask.to(dtype=torch.bool)
 
         transition[TransitionKey.OBSERVATION.value] = observation  # type: ignore[misc]
         return transition

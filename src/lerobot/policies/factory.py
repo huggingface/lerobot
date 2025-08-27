@@ -34,6 +34,7 @@ from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rlearn.configuration_rlearn import RLearNConfig
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
@@ -80,6 +81,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "rlearn":
+        from lerobot.policies.rlearn.modeling_rlearn import RLearNPolicy
+
+        return RLearNPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -103,6 +108,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SmolVLAConfig(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
+    elif policy_type == "rlearn":
+        return RLearNConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
@@ -218,6 +225,13 @@ def make_processor(
 
         processors = make_smolvla_processor(
             cast(SmolVLAConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif policy_cfg.type == "rlearn":
+        from lerobot.policies.rlearn.processor_rlearn import make_rlearn_processor
+
+        processors = make_rlearn_processor(
+            cast(RLearNConfig, policy_cfg), dataset_stats=kwargs.get("dataset_stats")
         )
 
     else:
