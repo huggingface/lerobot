@@ -26,7 +26,7 @@ import time
 from reachy2_sdk import ReachySDK
 
 from ..teleoperator import Teleoperator
-from .config_reachy2_fake_teleoperator import Reachy2FakeTeleoperatorConfig
+from .config_reachy2_teleoperator import Reachy2TeleoperatorConfig
 
 logger = logging.getLogger(__name__)
 
@@ -71,15 +71,15 @@ REACHY2_VEL = {
 }
 
 
-class Reachy2FakeTeleoperator(Teleoperator):
+class Reachy2Teleoperator(Teleoperator):
     """
     [Reachy 2](https://www.pollen-robotics.com/reachy/), by Pollen Robotics.
     """
 
-    config_class = Reachy2FakeTeleoperatorConfig
+    config_class = Reachy2TeleoperatorConfig
     name = "reachy2_specific"
 
-    def __init__(self, config: Reachy2FakeTeleoperatorConfig):
+    def __init__(self, config: Reachy2TeleoperatorConfig):
         super().__init__(config)
         self.config = config
         self.reachy: None | ReachySDK = None
@@ -142,12 +142,18 @@ class Reachy2FakeTeleoperator(Teleoperator):
         start = time.perf_counter()
 
         if self.reachy and self.is_connected:
-            joint_action = {k: self.reachy.joints_dict[v].goal_position for k, v in self.joints_dict.items()}
+            joint_action = {
+                k: self.reachy.joints[v].goal_position
+                for k, v in self.joints_dict.items()
+            }
             if not self.config.with_mobile_base:
                 dt_ms = (time.perf_counter() - start) * 1e3
                 logger.debug(f"{self} read action: {dt_ms:.1f}ms")
                 return joint_action
-            vel_action = {k: self.reachy.mobile_base.last_cmd_vel[v] for k, v in REACHY2_VEL.items()}
+            vel_action = {
+                k: self.reachy.mobile_base.last_cmd_vel[v]
+                for k, v in REACHY2_VEL.items()
+            }
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return {**joint_action, **vel_action}

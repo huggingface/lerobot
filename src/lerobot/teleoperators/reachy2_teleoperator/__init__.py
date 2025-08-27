@@ -14,5 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_reachy2_fake_teleoperator import Reachy2FakeTeleoperatorConfig
-from .reachy2_fake_teleoperator import Reachy2FakeTeleoperator
+from .config_reachy2_teleoperator import Reachy2TeleoperatorConfig
+from .reachy2_teleoperator import Reachy2Teleoperator

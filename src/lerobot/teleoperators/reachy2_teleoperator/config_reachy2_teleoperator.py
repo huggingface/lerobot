@@ -19,9 +19,9 @@ from dataclasses import dataclass
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("reachy2_fake_teleoperator")
+@TeleoperatorConfig.register_subclass("reachy2_teleoperator")
 @dataclass
-class Reachy2FakeTeleoperatorConfig(TeleoperatorConfig):
+class Reachy2TeleoperatorConfig(TeleoperatorConfig):
     # Port to connect to the arm
     ip_address: str | None = "localhost"
     with_mobile_base: bool = True
