@@ -375,8 +375,8 @@ class LanguageTokenizer(nn.Module):
         super().__init__()
         self.proper_pad_mask = proper_pad_mask
 
-        # Load pretrained weights directly
-        self.t5_encoder = T5EncoderModel.from_pretrained("t5-base")
+        # Load pretrained weights directly with explicit float32 dtype
+        self.t5_encoder = T5EncoderModel.from_pretrained("t5-base", torch_dtype=torch.float32)
         self.finetune_encoder = finetune_encoder
 
         if not self.finetune_encoder:
@@ -387,7 +387,7 @@ class LanguageTokenizer(nn.Module):
         outputs = self.t5_encoder(
             input_ids=language_input["input_ids"], attention_mask=language_input["attention_mask"]
         )
-        tokens = outputs.last_hidden_state
+        tokens = outputs.last_hidden_state.float()
 
         # Generate padding mask
         if self.proper_pad_mask:
