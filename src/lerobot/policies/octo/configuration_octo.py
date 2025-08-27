@@ -74,6 +74,11 @@ class OctoConfig(PreTrainedConfig):
     hidden_dim: int = 256
     use_layer_norm: bool = True
     
+    # Finetuning settings
+    freeze_transformer: bool = False
+    freeze_vision_encoder: bool = True
+    train_action_head_only: bool = False
+    
     # Training presets
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.999)
