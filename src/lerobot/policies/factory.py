@@ -244,6 +244,7 @@ def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
     env_cfg: EnvConfig | None = None,
+    episode_data_index: dict | None = None,
 ) -> PreTrainedPolicy:
     """Make an instance of a policy class.
 
@@ -300,6 +301,10 @@ def make_policy(
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
+    
+    # Pass episode_data_index for RLearN policy to calculate proper progress
+    if cfg.type == "rlearn" and episode_data_index is not None:
+        kwargs["episode_data_index"] = episode_data_index
 
     if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time

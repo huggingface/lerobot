@@ -241,56 +241,70 @@ class RLearnEvaluator:
     @torch.no_grad()
     def predict_episode_rewards(self, frames: Tensor, language: str, batch_size: int = 16) -> np.ndarray:
         """
-        Predict rewards for a single episode.
+        Predict rewards for a single episode using proper temporal sequences.
 
         Args:
             frames: Video frames tensor of shape (T, C, H, W)
             language: Language instruction string
-            batch_size: Maximum sequence length to process at once
+            batch_size: Maximum number of temporal sequences to process at once
 
         Returns:
             Predicted rewards array of shape (T,)
         """
         T = frames.shape[0]
+        max_seq_len = self.model.config.max_seq_len
 
         # Preprocess frames to match model expectations
         processed_frames = self._preprocess_frames(frames)
 
-        # Process in chunks if episode is very long
-        if T <= batch_size:
-            # Single batch
+        # Create temporal sequences for each frame
+        # For frame i, we want frames [i-max_seq_len+1, ..., i-1, i]
+        temporal_sequences = []
+        
+        for i in range(T):
+            # Create sequence ending at frame i
+            seq_frames = []
+            for j in range(max(0, i - max_seq_len + 1), i + 1):
+                # Use frame j if available, otherwise repeat the first available frame
+                frame_idx = max(0, min(j, T - 1))
+                seq_frames.append(processed_frames[frame_idx])
+            
+            # Pad sequence to max_seq_len by repeating the first frame if needed
+            while len(seq_frames) < max_seq_len:
+                seq_frames.insert(0, seq_frames[0])  # Prepend first frame
+            
+            # Take only the last max_seq_len frames if we have too many
+            seq_frames = seq_frames[-max_seq_len:]
+            
+            temporal_sequences.append(torch.stack(seq_frames))  # (max_seq_len, C, H, W)
+
+        # Stack all temporal sequences: (T, max_seq_len, C, H, W)
+        all_sequences = torch.stack(temporal_sequences)
+
+        # Process in batches
+        rewards = []
+        for i in range(0, T, batch_size):
+            end_idx = min(i + batch_size, T)
+            batch_sequences = all_sequences[i:end_idx].to(self.device)  # (B, max_seq_len, C, H, W)
+            
+            # Create batch for model
             batch = {
-                OBS_IMAGES: processed_frames.unsqueeze(0).to(self.device),  # (1, T, C, H, W)
-                OBS_LANGUAGE: [language],
+                OBS_IMAGES: batch_sequences,  # (B, T, C, H, W) format expected by model
+                OBS_LANGUAGE: [language] * batch_sequences.shape[0],
             }
 
-            # Use the new predict_rewards method
-            values = self.model.predict_rewards(batch)  # (1, T')
-            rewards = values.squeeze(0).cpu().numpy()  # (T',)
+            # Predict rewards - model returns (B, T') but we want the last timestep for each sequence
+            values = self.model.predict_rewards(batch)  # (B, T')
+            
+            # Take the last timestep prediction for each sequence (represents current frame reward)
+            if values.dim() == 2:
+                batch_rewards = values[:, -1].cpu().numpy()  # (B,) - last timestep
+            else:
+                batch_rewards = values.cpu().numpy()  # (B,) - already single timestep
+            
+            rewards.extend(batch_rewards)
 
-        else:
-            # Process in overlapping chunks to handle very long episodes
-            rewards = []
-            stride = batch_size // 2  # 50% overlap
-
-            for i in range(0, T, stride):
-                end_idx = min(i + batch_size, T)
-                chunk_frames = processed_frames[i:end_idx]
-
-                batch = {OBS_IMAGES: chunk_frames.unsqueeze(0).to(self.device), OBS_LANGUAGE: [language]}
-
-                chunk_values = self.model.predict_rewards(batch)
-                chunk_rewards = chunk_values.squeeze(0).cpu().numpy()
-
-                # For overlapping chunks, only take the first half (except for the last chunk)
-                if i + batch_size < T:
-                    rewards.extend(chunk_rewards[:stride])
-                else:
-                    rewards.extend(chunk_rewards)
-
-            rewards = np.array(rewards[:T])  # Ensure exact length
-
-        return rewards
+        return np.array(rewards[:T])  # Ensure exact length
 
     def _preprocess_frames(self, frames: Tensor) -> Tensor:
         """

@@ -61,31 +61,14 @@ class RLearNConfig(PreTrainedConfig):
     # Training
     learning_rate: float = 1e-4
     weight_decay: float = 0.01
-    loss_type: str = "composite"  # Always use composite loss with spatial awareness
-    ranking_margin: float = 0.1
-
-    # Composite loss weights (with spatial awareness and ReWiND reversibility)
-    lambda_prog: float = 1.0  # Progress regression weight
-    lambda_spatial_nce: float = 0.5  # Spatial-aware InfoNCE weight
-    lambda_rewind: float = 0.4  # ReWiND reversible ranking weight
-
-    # Loss hyperparameters
-    nce_temperature: float = 0.07  # Temperature for InfoNCE
-    zscore_eps: float = 1e-5  # Epsilon for z-score normalization
-    min_rank_gap: int = 1  # Minimum gap for temporal ranking pairs
-    num_ranking_pairs: int = 64  # Number of (far, near) pairs to sample for ReWiND
-    last_k_for_nce: int = 3  # Use last k frames for InfoNCE
-    mismatch_lang_prob: float = 0.2  # Probability of language mismatch augmentation
-
-    # Value-based pairwise loss hyperparameters (for value_pairwise mode)
-    lambda_dir: float = 1.0  # Intra-trajectory directional ranking
-    lambda_text: float = 0.5  # Inter-instruction contrastive ranking
-    lambda_flat: float = 0.25  # Flatness under mismatch
-    dir_margin: float = 0.2  # Margin for directional ranking
-    text_margin: float = 0.2  # Margin for text contrastive ranking
-    flat_epsilon: float = 0.05  # Epsilon band for flatness loss
-    num_pairs_per_loss: int = 64  # Number of pairs to sample per loss term
-    use_hard_negatives: bool = True  # Whether to generate hard negative instructions
+    
+    # ReWiND-specific parameters
+    use_video_rewind: bool = True  # Enable video rewinding augmentation
+    rewind_prob: float = 0.5  # Probability of applying rewind to each batch
+    use_mismatch_loss: bool = True  # Enable mismatched language-video loss
+    
+    # Loss hyperparameters (simplified for ReWiND)
+    # The main loss is just MSE between predicted and target progress
 
     # Normalization presets
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -116,7 +99,7 @@ class RLearNConfig(PreTrainedConfig):
 
     @property
     def reward_delta_indices(self) -> list | None:
-        # By default we supervise every provided timestep equally.
+        # ReWiND generates progress labels on-the-fly, doesn't need reward data
         return None
 
     def get_optimizer_preset(self):  # type: ignore[override]

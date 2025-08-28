@@ -15,7 +15,12 @@
 # limitations under the License.
 
 """
-RLearN: Video-Language Conditioned Reward Model
+RLearN: Video-Language Conditioned Reward Model (ReWiND Implementation)
+
+This implementation follows the ReWiND paper approach:
+- Automatically generates linear progress labels (0 to 1) for each episode
+- No need for pre-annotated rewards in the dataset
+- Applies video rewinding augmentation to create synthetic failure trajectories
 
 Inputs
   - images: (B, T, C, H, W)  sequence of frames (or single frame with T=1)
@@ -95,9 +100,10 @@ class RLearNPolicy(PreTrainedPolicy):
     config_class = RLearNConfig
     name = "rlearn"
 
-    def __init__(self, config: RLearNConfig):
+    def __init__(self, config: RLearNConfig, episode_data_index: dict = None):
         super().__init__(config)
         self.config = config
+        self.episode_data_index = episode_data_index  # Store episode boundaries for progress calculation
 
         # Encoders
         from transformers import AutoModel, AutoProcessor
@@ -161,15 +167,6 @@ class RLearNPolicy(PreTrainedPolicy):
         if config.use_tanh_head:
             head_layers.append(nn.Tanh())
         self.head = nn.Sequential(*head_layers)
-        # Projection from scalar value summary to text embedding dim for InfoNCE
-        self.value_to_text_proj = nn.Linear(1, config.dim_model)
-
-        # Spatial attention for InfoNCE
-        self.spatial_cross_attn = nn.MultiheadAttention(
-            embed_dim=config.dim_model, num_heads=config.n_heads, batch_first=True
-        )
-        self.spatial_norm = nn.LayerNorm(config.dim_model)
-
         # Simple frame dropout probability
         self.frame_dropout_p = config.frame_dropout_p
         self.stride = max(1, config.stride)
@@ -274,12 +271,14 @@ class RLearNPolicy(PreTrainedPolicy):
         return batch
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """Compute training loss and logs.
+        """Compute ReWiND training loss with on-the-fly progress label generation.
 
         Expected batch keys:
           - OBS_IMAGES: list[Tensor] of shape [(B, C, H, W), ...] per time step or stacked (B, T, C, H, W)
           - OBS_LANGUAGE: optional string tokens already tokenized externally or raw strings
-          - REWARD: (B, T) or (B,) target rewards
+          
+        Note: Progress labels (0 to 1) are generated automatically for each episode.
+              No REWARD key is needed in the batch.
         """
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
@@ -287,6 +286,13 @@ class RLearNPolicy(PreTrainedPolicy):
         # Extract frames and form (B, T, C, H, W), padding if needed
         frames = extract_visual_sequence(batch, target_seq_len=self.config.max_seq_len)
         B, T, C, H, W = frames.shape
+
+        # Apply video rewinding augmentation during training
+        if self.training and self.config.use_video_rewind:
+            frames, augmented_target = apply_video_rewind(frames, rewind_prob=self.config.rewind_prob)
+            # Use augmented progress labels if rewinding was applied
+            if REWARD in batch:
+                target = augmented_target
 
         # Apply stride and frame dropout during training
         idx = torch.arange(0, T, self.stride, device=frames.device)
@@ -328,23 +334,14 @@ class RLearNPolicy(PreTrainedPolicy):
         # Encode through vision model
         vision_outputs = self.vision_encoder(pixel_values=pixel_values)
 
-        # Extract BOTH CLS token and spatial patches
+        # Extract CLS token for temporal modeling
         if hasattr(vision_outputs, "last_hidden_state"):
-            all_tokens = vision_outputs.last_hidden_state  # (BT, num_tokens, D)
-            cls_tokens = all_tokens[:, 0]  # (BT, D) - CLS token for temporal modeling
-            spatial_tokens = all_tokens[:, 1:]  # (BT, num_patches, D) - spatial patches
+            cls_tokens = vision_outputs.last_hidden_state[:, 0]  # (BT, D) - CLS token
         else:
-            raise RuntimeError("Vision encoder must output last_hidden_state with spatial features")
+            raise RuntimeError("Vision encoder must output last_hidden_state")
 
         # Project CLS tokens for temporal sequence
         visual_seq = self.visual_proj(cls_tokens).reshape(B, -1, self.config.dim_model)  # (B, T', D)
-
-        # Keep spatial features for spatial-aware losses (project them too)
-        # Assuming 16x16 patches for 256x256 image with patch_size=16
-        num_patches = spatial_tokens.shape[1]
-        spatial_features = self.visual_proj(spatial_tokens).reshape(
-            B, -1, num_patches, self.config.dim_model
-        )  # (B, T', num_patches, D)
 
         # Add temporal positional encodings and optional first-frame bias
         pe = (
@@ -362,150 +359,156 @@ class RLearNPolicy(PreTrainedPolicy):
         temporal_features = self.temporal(visual_seq, lang_emb, return_features=True)  # (B, T', D)
         values = self.head(temporal_features).squeeze(-1)  # (B, T')
 
-        # Targets
-        target = batch.get(REWARD, None)
+        # Generate progress labels on-the-fly (ReWiND approach)
+        # IMPORTANT: Progress should be 0-1 across the ENTIRE EPISODE, not just the temporal window
         loss_dict: dict[str, float] = {}
-        if target is None:
-            # If no labels, return zeros loss and logits for inference
+        
+        # Check if video rewinding already set the target
+        if self.training and self.config.use_video_rewind and 'augmented_target' in locals():
+            # Use the augmented target from video rewinding
+            target = augmented_target
+        else:
+            # Calculate true episode progress using episode_index and frame_index from batch
+            if "episode_index" in batch and "frame_index" in batch and hasattr(self, 'episode_data_index'):
+                # Get episode indices and frame indices from batch
+                episode_indices = batch["episode_index"]  # Shape: (B,)
+                frame_indices = batch["frame_index"]  # Shape: (B,)
+                
+                # Calculate progress for the current frame in each sample
+                progress_values = []
+                
+                for b_idx in range(B):
+                    ep_idx = episode_indices[b_idx].item()
+                    frame_idx = frame_indices[b_idx].item()
+                    
+                    # Get episode boundaries
+                    ep_start = self.episode_data_index["from"][ep_idx].item()
+                    ep_end = self.episode_data_index["to"][ep_idx].item()
+                    ep_length = ep_end - ep_start
+                    
+                    # Progress from 0 to 1 within the episode
+                    # frame_index is relative to the episode (0-based within episode)
+                    progress = frame_idx / max(1, ep_length - 1)
+                    progress_values.append(progress)
+                
+                # Create progress tensor for the current frame (last in temporal sequence)
+                current_progress = torch.tensor(progress_values, device=values.device, dtype=values.dtype)
+                
+                # Now calculate progress for ALL frames in the temporal window
+                # The observation_delta_indices tell us which frames we're looking at
+                delta_indices = self.config.observation_delta_indices  # e.g., [-15, -14, ..., 0]
+                
+                # Calculate progress for each frame in the temporal window
+                all_progress = []
+                for delta in delta_indices:
+                    # For each sample, calculate the progress of the frame at delta offset
+                    frame_progress = []
+                    for b_idx in range(B):
+                        ep_idx = episode_indices[b_idx].item()
+                        frame_idx = frame_indices[b_idx].item()
+                        
+                        # Calculate the actual frame index with delta
+                        target_frame_idx = frame_idx + delta
+                        
+                        # Get episode boundaries
+                        ep_start = self.episode_data_index["from"][ep_idx].item()
+                        ep_end = self.episode_data_index["to"][ep_idx].item()
+                        ep_length = ep_end - ep_start
+                        
+                        # Clamp to episode boundaries (frame_index is relative to episode)
+                        target_frame_idx = max(0, min(ep_length - 1, target_frame_idx))
+                        
+                        # Calculate progress for this frame
+                        prog = target_frame_idx / max(1, ep_length - 1)
+                        frame_progress.append(prog)
+                    
+                    all_progress.append(torch.tensor(frame_progress, device=values.device, dtype=values.dtype))
+                
+                # Stack to get (B, T) tensor where T is the temporal sequence length
+                target = torch.stack(all_progress, dim=1)  # (B, max_seq_len)
+                
+                # Apply stride/dropout indexing to match the processed frames
+                target = target[:, idx]
+                
+            elif "index" in batch and hasattr(self, 'episode_data_index'):
+                # Fallback: Use global index if available
+                global_indices = batch["index"]  # Shape: (B,)
+                
+                # For each index, find which episode it belongs to and its position
+                progress_values = []
+                
+                for global_idx in global_indices:
+                    # Find which episode this index belongs to
+                    episode_starts = self.episode_data_index["from"]
+                    episode_ends = self.episode_data_index["to"]
+                    
+                    # Find the episode by checking which range the index falls into
+                    episode_idx = None
+                    frame_in_episode = None
+                    for ep_idx in range(len(episode_starts)):
+                        if episode_starts[ep_idx] <= global_idx < episode_ends[ep_idx]:
+                            episode_idx = ep_idx
+                            frame_in_episode = global_idx.item() - episode_starts[ep_idx].item()
+                            break
+                    
+                    if episode_idx is not None:
+                        # Calculate position within episode
+                        ep_start = episode_starts[episode_idx].item()
+                        ep_end = episode_ends[episode_idx].item()
+                        ep_length = ep_end - ep_start
+                        
+                        # Progress from 0 to 1 within the episode
+                        progress = frame_in_episode / max(1, ep_length - 1)
+                    else:
+                        # Fallback if we can't find the episode (shouldn't happen)
+                        progress = 0.5
+                    
+                    progress_values.append(progress)
+                
+                # For temporal window, use simplified linear progress
+                # (proper calculation would need all frame indices in the window)
+                T_effective = len(idx)
+                target = torch.tensor(progress_values, device=values.device, dtype=values.dtype)
+                target = target.unsqueeze(1).expand(B, T_effective)  # Simple expansion
+                
+            else:
+                raise ValueError("No episode information found in batch. Please ensure 'episode_index' and 'frame_index' keys are present.")
+            
+        # During inference, we might not want to compute loss
+        if not self.training and target is None:
             loss = values.mean() * 0.0
             loss_dict["has_labels"] = 0.0
             return loss, {**loss_dict, "values_mean": values.mean().item()}
 
-        # Align target with sampled timesteps
-        if target.dim() == 1:
-            target = target.unsqueeze(1)  # (B, 1)
-
-        # Handle target padding to match frame sequence if needed
-        if target.shape[1] < self.config.max_seq_len:
-            # Pad targets by repeating the first value (assuming it's the earliest)
-            padding_needed = self.config.max_seq_len - target.shape[1]
-            first_target = target[:, :1]  # (B, 1)
-            padding = first_target.expand(target.shape[0], padding_needed)
-            target = torch.cat([padding, target], dim=1)  # Prepend padding
-
-            import logging
-
-            logging.debug(
-                f"Padded targets from {target.shape[1] - padding_needed} to {self.config.max_seq_len}"
-            )
-
-        # Now safely index with idx
-        target = target[:, idx]
-
-        # Composite loss
-        # 1) Progress regression on z-scored values to match normalized progress labels y in [0,1]
-
-        # Debug: Check if values have enough variance
-        values_std = values.std()
-        if values_std < 1e-4:
-            # Early in training, model outputs are nearly constant
-            # Use direct MSE loss without z-scoring to encourage variance
-            import logging
-
-            logging.info(f"Low variance in values (std={values_std:.6f}), using direct MSE")
-            # Apply sigmoid directly to raw values to get them in [0,1] range
-            prog_pred = torch.sigmoid(values * 10.0)  # Scale up to encourage learning
-            L_prog = F.mse_loss(prog_pred, torch.clamp(target, 0.0, 1.0))
-        else:
-            # Normal case: use z-score normalization
-            zV = zscore(values, eps=self.config.zscore_eps)
-            # Check for NaN after zscore
-            if torch.isnan(zV).any():
-                import logging
-
-                logging.warning(f"NaN after zscore. Values: {values}, zV: {zV}")
-                # Fallback to direct sigmoid
-                prog_pred = torch.sigmoid(values * 10.0)
-            else:
-                prog_pred = torch.sigmoid(zV)
-
-            L_prog = F.mse_loss(prog_pred, torch.clamp(target, 0.0, 1.0))
-
-        # Mismatched pairs: randomly shuffle language within batch and require near-zero progress
-        if self.training and torch.rand(()) < self.config.mismatch_lang_prob and values.size(0) > 1:
-            shuffled = torch.randperm(B, device=values.device)
-            lang_mismatch = lang_emb[shuffled]
+        # ReWiND Loss (following the paper exactly)
+        # The core loss is progress regression with video rewinding augmentation
+        
+        # 1) Main progress regression loss for matched sequences
+        # Target should be normalized progress from 0 to 1 (t/T)
+        L_progress = F.mse_loss(values, target)
+        
+        # 2) Mismatched video-language pairs should predict zero progress
+        L_mismatch = torch.zeros((), device=values.device)
+        if self.training and self.config.use_mismatch_loss and values.size(0) > 1:
+            # Randomly shuffle language instructions within the batch
+            shuffled_indices = torch.randperm(B, device=values.device)
+            lang_mismatch = lang_emb[shuffled_indices]
+            
+            # Forward pass with mismatched language
             mismatch_feat = self.temporal(visual_seq, lang_mismatch, return_features=True)
-            mismatch_V = self.head(mismatch_feat).squeeze(-1)
-            L_prog_mismatch = F.mse_loss(
-                torch.sigmoid(zscore(mismatch_V, eps=self.config.zscore_eps)), torch.zeros_like(target)
-            )
-        else:
-            L_prog_mismatch = torch.zeros((), device=values.device)
+            mismatch_values = self.head(mismatch_feat).squeeze(-1)
+            
+            # Mismatched pairs should predict zero progress
+            L_mismatch = F.mse_loss(mismatch_values, torch.zeros_like(target))
+        
+        # Total loss is just progress regression (rewinding is handled via data augmentation)
+        loss = L_progress + L_mismatch
 
-        # 2) Spatial-Aware InfoNCE: Use language to attend to relevant spatial regions
-        # Take late timesteps' spatial features
-        k = min(self.config.last_k_for_nce, spatial_features.shape[1])
-        late_spatial = spatial_features[:, -k:].mean(dim=1)  # (B, num_patches, D)
-
-        # Language queries spatial patches via cross-attention
-        lang_query = lang_emb.unsqueeze(1)  # (B, 1, D)
-        attended_spatial, spatial_attn_weights = self.spatial_cross_attn(
-            query=lang_query, key=late_spatial, value=late_spatial, need_weights=True
-        )
-        attended_spatial = self.spatial_norm(attended_spatial).squeeze(1)  # (B, D)
-
-        # Contrastive loss with spatially-attended features
-        attended_spatial = F.normalize(attended_spatial, dim=-1)
-        lang_norm = F.normalize(lang_emb, dim=-1)
-        logits_spatial = (attended_spatial @ lang_norm.t()) / self.config.nce_temperature  # (B, B)
-        targets_nce = torch.arange(B, device=values.device)
-        L_spatial_nce = F.cross_entropy(logits_spatial, targets_nce)
-
-        # 3) ReWiND Reversible Ranking: Learn from both forward and reversed trajectories
-        # This teaches the model what constitutes progress vs undoing progress
-        L_rank_forward, L_rank_reverse = reversible_ranking_loss(
-            values,
-            target,
-            margin=self.config.ranking_margin,
-            num_pairs=self.config.num_ranking_pairs,
-            min_gap=self.config.min_rank_gap,
-        )
-        L_rewind = L_rank_forward + L_rank_reverse
-
-        # Check for NaNs in individual loss components
-        if torch.isnan(L_prog):
-            import logging
-
-            logging.warning(f"NaN in L_prog. Values: {values}, Target: {target}")
-            # Return a small loss with gradients instead of zero
-            L_prog = values.mean() * 0.0 + 0.01
-
-        if torch.isnan(L_spatial_nce):
-            import logging
-
-            logging.warning("NaN in L_spatial_nce")
-            # Use a dummy loss that maintains gradients
-            L_spatial_nce = attended_spatial.mean() * 0.0 + 0.01
-
-        if torch.isnan(L_rewind):
-            import logging
-
-            logging.warning("NaN in L_rewind")
-            # Use values to maintain gradient flow
-            L_rewind = values.mean() * 0.0 + 0.01
-
-        loss = (
-            self.config.lambda_prog * (L_prog + L_prog_mismatch)
-            + self.config.lambda_spatial_nce * L_spatial_nce
-            + self.config.lambda_rewind * L_rewind
-        )
-
-        # Final NaN check
-        if torch.isnan(loss):
-            import logging
-
-            logging.warning("NaN loss detected, using fallback loss")
-            # Use a small loss that maintains gradients
-            loss = values.mean() * 0.0 + 0.01
-
+        # Log individual loss components
         loss_dict.update(
             {
-                "loss_prog": L_prog.item() if not torch.isnan(L_prog) else 0.0,
-                "loss_prog_mismatch": L_prog_mismatch.item() if not torch.isnan(L_prog_mismatch) else 0.0,
-                "loss_spatial_nce": L_spatial_nce.item() if not torch.isnan(L_spatial_nce) else 0.0,
-                "loss_rewind_forward": L_rank_forward.item() if not torch.isnan(L_rank_forward) else 0.0,
-                "loss_rewind_reverse": L_rank_reverse.item() if not torch.isnan(L_rank_reverse) else 0.0,
+                "loss_progress": L_progress.item(),
+                "loss_mismatch": L_mismatch.item(),
             }
         )
 
@@ -715,243 +718,75 @@ def encode_language(
     return emb
 
 
-def pairwise_ranking_loss(logits: Tensor, target: Tensor, margin: float = 0.1, num_pairs: int = 32) -> Tensor:
-    # logits, target: (B, T)
-    B, T = logits.shape
-    if T < 2:
-        return logits.mean() * 0.0
-    # Sample pairs i<j and enforce r_j > r_i when target_j > target_i
-    losses = []
-    for _ in range(num_pairs):
-        i = torch.randint(0, T - 1, (B,), device=logits.device)
-        j = i + torch.randint(1, T - i.max(), (1,), device=logits.device)
-        j = j.expand_as(i)
-        li = logits[torch.arange(B), i]
-        lj = logits[torch.arange(B), j]
-        yi = target[torch.arange(B), i]
-        yj = target[torch.arange(B), j]
-        sign = torch.sign(yj - yi)
-        # hinge: max(0, margin - sign*(lj-li))
-        loss = F.relu(margin - sign * (lj - li))
-        losses.append(loss.mean())
-    return torch.stack(losses).mean()
-
-
-def zscore(x: Tensor, eps: float = 1e-3) -> Tensor:
-    """Z-score normalization with numerical stability.
+def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5) -> tuple[Tensor, Tensor]:
+    """Apply video rewinding augmentation as described in ReWiND paper.
+    
+    Each video in the batch has an independent chance of being rewound.
 
     Args:
-        x: Tensor of shape (B, T) where B is batch size, T is sequence length
-        eps: Small epsilon for numerical stability
+        frames: Tensor of shape (B, T, C, H, W)
+        rewind_prob: Probability of applying rewind augmentation to each video
 
     Returns:
-        Z-scored tensor of same shape as input
+        Augmented frames and corresponding progress labels
     """
-    # Handle both (B,) and (B, T) shapes
-    if x.dim() == 1:
-        x = x.unsqueeze(1)  # Make it (B, 1)
-
-    B, T = x.shape
-
-    if T == 1:
-        # Single timestep: use tanh to bound values instead of z-score
-        return torch.tanh(x * 0.1)
-
-    # Multiple timesteps: compute z-score across time dimension for each batch
-    mean = x.mean(dim=1, keepdim=True)  # (B, 1)
-    std = x.std(dim=1, keepdim=True, unbiased=False)  # (B, 1)
-
-    # Check if std is valid (not zero or NaN)
-    std_is_valid = (std > eps) & (~torch.isnan(std))
-
-    # Safe std for division
-    std_safe = torch.where(std_is_valid, std, torch.ones_like(std))
-
-    # Compute z-score where valid
-    z = (x - mean) / std_safe
-
-    # For invalid cases (constant values across time), use tanh of centered values
-    z_fallback = torch.tanh((x - mean) * 0.1)
-    z = torch.where(std_is_valid.expand_as(z), z, z_fallback)
-
-    # Final safety clamp
-    z = torch.clamp(z, min=-5.0, max=5.0)
-
-    # Check for any remaining NaNs and replace with 0
-    z = torch.nan_to_num(z, nan=0.0)
-
-    return z
-
-
-def temporal_logistic_ranking(
-    values: Tensor, margin: float = 0.1, min_gap: int = 1, num_pairs: int = 64
-) -> Tensor:
-    """VLC-style temporal monotonicity: encourage V[j] > V[i] for j>i.
-
-    Samples pairs (i<j) with a minimum gap and applies softplus(m - (Vj - Vi)).
-    """
-    B, T = values.shape
-    if T < 2:
-        return values.mean() * 0.0
-    losses = []
-    device = values.device
-    for _ in range(num_pairs):
-        i = torch.randint(0, max(1, T - min_gap), (B,), device=device)
-        j = i + torch.randint(min_gap, T - i.max(), (1,), device=device)
-        j = j.expand_as(i)
-        vi = values[torch.arange(B), i]
-        vj = values[torch.arange(B), j]
-        losses.append(F.softplus(margin - (vj - vi)).mean())
-    return torch.stack(losses).mean()
-
-
-def reversible_ranking_loss(
-    values: Tensor, target: Tensor, margin: float = 0.1, num_pairs: int = 64, min_gap: int = 1
-) -> tuple[Tensor, Tensor]:
-    """ReWiND-style reversible ranking: learn from both forward and reversed trajectories.
-
-    Key insight: If a trajectory shows progress forward, its reverse shows undoing progress.
-    By training on both, the model learns what constitutes progress vs regression.
-
-    Args:
-        values: (B, T) predicted values
-        target: (B, T) progress labels (0 to 1 for forward progress)
-        margin: Margin for ranking loss
-        num_pairs: Number of (far, near) pairs to sample
-        min_gap: Minimum temporal gap between pairs
-
-    Returns:
-        forward_loss: Loss from forward trajectory pairs
-        reverse_loss: Loss from reversed trajectory pairs
-    """
-    B, T = values.shape
-    if T < 2:
-        zero_loss = values.mean() * 0.0
-        return zero_loss, zero_loss
-
-    device = values.device
-
-    # Forward trajectory ranking: later frames should have higher values
-    forward_losses = []
-    for _ in range(num_pairs // 2):
-        # Sample far-near pairs (far is earlier, near is later)
-        far_idx = torch.randint(0, max(1, T - min_gap), (B,), device=device)
-        near_idx = far_idx + torch.randint(min_gap, T - far_idx.max(), (1,), device=device)
-        near_idx = near_idx.expand_as(far_idx)
-
-        v_far = values[torch.arange(B), far_idx]
-        v_near = values[torch.arange(B), near_idx]
-
-        # Near (later) should have higher value than far (earlier)
-        forward_losses.append(F.softplus(margin - (v_near - v_far)).mean())
-
-    # Reversed trajectory ranking: treat reversed sequence with inverted progress
-    # Reverse both values and targets
-    reversed_values = values.flip(dims=[1])  # Reverse time dimension
-    reversed_target = 1.0 - target.flip(dims=[1])  # Invert and reverse progress
-
-    reverse_losses = []
-    for _ in range(num_pairs // 2):
-        # In reversed trajectory, what was "later" is now "earlier"
-        far_idx = torch.randint(0, max(1, T - min_gap), (B,), device=device)
-        near_idx = far_idx + torch.randint(min_gap, T - far_idx.max(), (1,), device=device)
-        near_idx = near_idx.expand_as(far_idx)
-
-        v_far_rev = reversed_values[torch.arange(B), far_idx]
-        v_near_rev = reversed_values[torch.arange(B), near_idx]
-
-        # In reversed trajectory with inverted progress,
-        # near (which was originally earlier) should still have higher value
-        reverse_losses.append(F.softplus(margin - (v_near_rev - v_far_rev)).mean())
-
-    forward_loss = torch.stack(forward_losses).mean() if forward_losses else values.mean() * 0.0
-    reverse_loss = torch.stack(reverse_losses).mean() if reverse_losses else values.mean() * 0.0
-
-    return forward_loss, reverse_loss
-
-
-def intra_trajectory_directional_ranking(
-    values: Tensor, progress: Tensor, margin: float = 0.2, num_pairs: int = 64, min_gap: int = 1
-) -> Tensor:
-    """Directional ranking within trajectory based on progress labels.
-
-    For pairs i<j within a trajectory:
-    - If progress increases (y_j > y_i), enforce V_j > V_i
-    - If progress decreases (y_j < y_i), enforce V_j < V_i
-    - Ignore pairs where progress is unchanged
-
-    Uses logistic loss: log(1 + exp(m - s_ij * (V_j - V_i)))
-    where s_ij = sign(y_j - y_i)
-    """
-    B, T = values.shape
-    if T < 2:
-        return values.mean() * 0.0
-
-    losses = []
-    device = values.device
-
-    for _ in range(num_pairs):
-        # Sample time pairs i < j
-        i = torch.randint(0, max(1, T - min_gap), (B,), device=device)
-        max_j = min(T, i.max() + T - min_gap)
-        j = i + torch.randint(min_gap, max_j - i.min(), (1,), device=device)
-        j = j.expand_as(i).clamp(max=T - 1)
-
-        # Get values and progress at sampled times
-        vi = values[torch.arange(B), i]
-        vj = values[torch.arange(B), j]
-        yi = progress[torch.arange(B), i]
-        yj = progress[torch.arange(B), j]
-
-        # Compute direction sign
-        s_ij = torch.sign(yj - yi)
-
-        # Only compute loss for non-zero progress differences
-        mask = s_ij != 0
-        if mask.any():
-            diff = vj - vi
-            loss = torch.log1p(torch.exp(margin - s_ij * diff))
-            losses.append(loss[mask].mean())
-
-    return torch.stack(losses).mean() if losses else values.mean() * 0.0
-
-
-def inter_instruction_contrastive_ranking(
-    values_correct: Tensor, values_incorrect: Tensor, margin: float = 0.2
-) -> Tensor:
-    """Ranking between correct and incorrect instructions for same frames.
-
-    Enforces V_t(z) > V_t(z') where z is correct instruction and z' is incorrect.
-    Uses logistic loss: log(1 + exp(m - (V_t(z) - V_t(z'))))
-    """
-    diff = values_correct - values_incorrect
-    return torch.log1p(torch.exp(margin - diff)).mean()
-
-
-def flatness_under_mismatch(values: Tensor, epsilon: float = 0.05, num_pairs: int = 32) -> Tensor:
-    """Enforce flat values over time for mismatched instructions.
-
-    For trajectory with wrong instruction, V should not change much over time.
-    Uses Huber loss to allow small variations within epsilon band.
-    """
-    B, T = values.shape
-    if T < 2:
-        return values.mean() * 0.0
-
-    losses = []
-    device = values.device
-
-    for _ in range(num_pairs):
-        i = torch.randint(0, T - 1, (B,), device=device)
-        j = torch.randint(i.min() + 1, T, (1,), device=device)
-        j = j.expand_as(i)
-
-        vi = values[torch.arange(B), i]
-        vj = values[torch.arange(B), j]
-
-        # Huber loss with small delta for near-zero target
-        diff = vj - vi
-        loss = F.huber_loss(diff, torch.zeros_like(diff), delta=epsilon)
-        losses.append(loss)
-
-    return torch.stack(losses).mean()
+    B, T, C, H, W = frames.shape
+    device = frames.device
+    
+    # Create default progress labels (linearly increasing from 0 to 1)
+    default_progress = torch.linspace(0, 1, T, device=device).unsqueeze(0).expand(B, -1)
+    
+    # Apply rewind augmentation to each sample in batch independently
+    augmented_frames = []
+    augmented_progress = []
+    
+    for b in range(B):
+        # Each video has independent chance of being rewound
+        should_rewind = torch.rand(1).item() < rewind_prob
+        
+        if not should_rewind or T < 3:
+            # Keep original sequence
+            augmented_frames.append(frames[b])
+            augmented_progress.append(default_progress[b])
+            continue
+            
+        # Apply rewinding to this video
+        # Split point i: between frame 2 and T-1
+        i = torch.randint(2, T, (1,)).item()
+        
+        # Rewind length k: between 1 and i-1 frames
+        k = torch.randint(1, min(i, T - i + 1), (1,)).item()
+        
+        # Create rewound sequence: o1...oi, oi-1, ..., oi-k
+        forward_frames = frames[b, :i]  # Frames up to split point
+        reverse_frames = frames[b, max(0, i-k):i].flip(dims=[0])  # Reversed frames
+        
+        # Concatenate forward and reverse parts
+        rewound_seq = torch.cat([forward_frames, reverse_frames], dim=0)
+        
+        # Pad with zeros if needed to maintain shape
+        if rewound_seq.shape[0] < T:
+            padding = torch.zeros(T - rewound_seq.shape[0], C, H, W, device=device)
+            rewound_seq = torch.cat([rewound_seq, padding], dim=0)
+        elif rewound_seq.shape[0] > T:
+            rewound_seq = rewound_seq[:T]
+        
+        # Create corresponding progress labels
+        # Forward part: increasing progress
+        forward_progress = torch.linspace(0, i/T, i, device=device)
+        # Reverse part: decreasing progress  
+        reverse_progress = torch.linspace(i/T, max(0, (i-k)/T), k, device=device)
+        
+        rewound_progress = torch.cat([forward_progress, reverse_progress])
+        
+        # Pad progress if needed
+        if rewound_progress.shape[0] < T:
+            padding = torch.zeros(T - rewound_progress.shape[0], device=device)
+            rewound_progress = torch.cat([rewound_progress, padding])
+        elif rewound_progress.shape[0] > T:
+            rewound_progress = rewound_progress[:T]
+            
+        augmented_frames.append(rewound_seq)
+        augmented_progress.append(rewound_progress)
+    
+    return torch.stack(augmented_frames), torch.stack(augmented_progress)
