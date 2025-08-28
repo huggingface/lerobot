@@ -320,7 +320,7 @@ def encode_video_frames(
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
 
-    video_path.parent.mkdir(parents=True, exist_ok=overwrite)
+    video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Encoders/pixel formats incompatibility check
     if (vcodec == "libsvtav1" or vcodec == "hevc") and pix_fmt == "yuv444p":
@@ -330,9 +330,9 @@ def encode_video_frames(
         pix_fmt = "yuv420p"
 
     # Get input frames
-    template = "frame_" + ("[0-9]" * 6) + ".png"
+    template = "frame-" + ("[0-9]" * 6) + ".png"
     input_list = sorted(
-        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("_")[-1].split(".")[0])
+        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
     )
 
     # Define video output frame size (assuming all input frames are the same size)
@@ -565,3 +565,25 @@ def get_image_pixel_channels(image: Image):
         return 4  # RGBA
     else:
         raise ValueError("Unknown format")
+
+
+def get_video_duration_in_s(video_path: Path | str) -> float:
+    """
+    Get the duration of a video file in seconds using PyAV.
+
+    Args:
+        video_path: Path to the video file.
+
+    Returns:
+        Duration of the video in seconds.
+    """
+    with av.open(str(video_path)) as container:
+        # Get the first video stream
+        video_stream = container.streams.video[0]
+        # Calculate duration: stream.duration * stream.time_base gives duration in seconds
+        if video_stream.duration is not None:
+            duration = float(video_stream.duration * video_stream.time_base)
+        else:
+            # Fallback to container duration if stream duration is not available
+            duration = float(container.duration / av.time_base)
+    return duration

@@ -53,7 +53,6 @@ from lerobot.datasets.utils import (
     get_parquet_file_size_in_mb,
     get_parquet_num_frames,
     get_safe_version,
-    get_video_duration_in_s,
     get_video_size_in_mb,
     hf_transform_to_torch,
     is_valid_version,
@@ -77,6 +76,7 @@ from lerobot.datasets.video_utils import (
     decode_video_frames,
     encode_video_frames,
     get_safe_default_codec,
+    get_video_duration_in_s,
     get_video_info,
 )
 

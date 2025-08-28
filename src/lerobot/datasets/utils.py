@@ -145,26 +145,6 @@ def get_video_size_in_mb(mp4_path: Path) -> float:
     return file_size_mb
 
 
-def get_video_duration_in_s(mp4_file: Path) -> float:
-    # TODO(rcadene): move to video_utils.py
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        str(mp4_file),
-    ]
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    return float(result.stdout)
-
-
 def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     """Flatten a nested dictionary structure by collapsing nested keys into one key with a separator.
 
