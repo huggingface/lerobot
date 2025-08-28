@@ -62,7 +62,6 @@ from lerobot.datasets.utils import (
     flatten_dict,
     get_parquet_file_size_in_mb,
     get_parquet_num_frames,
-    get_video_duration_in_s,
     get_video_size_in_mb,
     load_info,
     update_chunk_file_indices,
@@ -71,7 +70,7 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.video_utils import concat_video_files
+from lerobot.datasets.video_utils import concat_video_files, get_video_duration_in_s
 
 V21 = "v2.1"
 
