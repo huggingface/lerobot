@@ -66,8 +66,10 @@ class RLearNConfig(PreTrainedConfig):
 
     # ReWiND-specific parameters
     use_video_rewind: bool = True  # Enable video rewinding augmentation
-    rewind_prob: float = 0.5  # Probability of applying rewind to each batch
+    rewind_prob: float = 0.8  # Probability of applying rewind to each sample (paper: ~80%)
+    rewind_last3_prob: float = 0.1  # Of the rewinds, 10% only rewind the last 3 frames
     use_mismatch_loss: bool = True  # Enable mismatched language-video loss
+    mismatch_prob: float = 0.2  # Probability to include a mismatched video-language forward pass (paper: ~20%)
 
     # Loss hyperparameters (simplified for ReWiND)
     # The main loss is just MSE between predicted and target progress
@@ -79,6 +81,18 @@ class RLearNConfig(PreTrainedConfig):
             # Language is tokenized at the encoder level; no numeric normalization here.
         }
     )
+
+    # Architectural knobs to better mirror ReWiND
+    num_register_tokens: int = 4
+    mlp_predictor_depth: int = 3  # depth of the per-frame MLP head
+    
+    # HLGauss loss parameters
+    use_hl_gauss_loss: bool = True
+    reward_min_value: float = 0.0
+    reward_max_value: float = 1.0
+    reward_hl_gauss_loss_num_bins: int = 20
+    categorical_rewards: bool = False
+    reward_bins: int = 10  # only used if categorical_rewards=True
 
     def validate_features(self) -> None:
         # Require at least one image feature. Language is recommended but optional (can be blank).

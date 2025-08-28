@@ -75,10 +75,9 @@ _ HOWTO100M: https://www.di.ens.fr/willow/research/howto100m/
 - Implement on-the-fly progress label generation (no need for pre-annotated rewards) [x]
 - Try different losses
   - Only rewind loss [x]
+  - Exactly similar to: https://github.com/lucidrains/rewind-reward-pytorch/blob/main/rewind_reward_pytorch/rewind_reward.py#L11 [x]
   - Try DINO v2 as encoder Base 86 M: with https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2 [x]
-  - check code is same as rewind repo code (architecture and trainign details) []
   - Test only rewind loss (evaluate) []
-  - Check rewind implementation by hand/cleanup []
   - Only vlc loss then eval []
   - Vlc + Rewind loss then eval []
 - Cleanup code []
