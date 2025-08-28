@@ -35,6 +35,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from lerobot.policies.conrft.configuration_conrft import ConRFTConfig
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
@@ -79,6 +80,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.policies.octo.modeling_octo import OctoPolicy
 
         return OctoPolicy
+    elif name == "conrft":
+        from lerobot.policies.conrft.modeling_conrft import ConRFTPolicy
+
+        return ConRFTPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -104,6 +109,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return OctoConfig(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
+    elif policy_type == "conrft":
+        return ConRFTConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
