@@ -136,7 +136,12 @@ class Reachy2Teleoperator(Teleoperator):
         start = time.perf_counter()
 
         if self.reachy and self.is_connected:
-            joint_action = {k: self.reachy.joints[v].goal_position for k, v in self.joints_dict.items()}
+            if self.config.use_present_position:
+                joint_action = {
+                    k: self.reachy.joints[v].present_position for k, v in self.joints_dict.items()
+                }
+            else:
+                joint_action = {k: self.reachy.joints[v].goal_position for k, v in self.joints_dict.items()}
             if not self.config.with_mobile_base:
                 dt_ms = (time.perf_counter() - start) * 1e3
                 logger.debug(f"{self} read action: {dt_ms:.1f}ms")

@@ -60,6 +60,7 @@ PARAMS = [
     {"with_mobile_base": False, "with_l_arm": False, "with_antennas": False},
     {"with_r_arm": False, "with_neck": False, "with_antennas": False},
     {"with_mobile_base": False, "with_neck": False},
+    {"use_present_position": True},
 ]
 
 
@@ -76,7 +77,8 @@ def _make_reachy2_sdk_mock():
     # Mock joints with some dummy positions
     joints = {
         k: MagicMock(
-            goal_position=float(i),
+            present_position=float(i),
+            goal_position=float(i) + 0.5,
         )
         for i, k in enumerate(REACHY2_JOINTS.values())
     }
@@ -133,7 +135,10 @@ def test_get_action(reachy2):
     assert set(action.keys()) == expected_keys
 
     for motor in reachy2.joints_dict.keys():
-        assert action[motor] == reachy2.reachy.joints[REACHY2_JOINTS[motor]].goal_position
+        if reachy2.config.use_present_position:
+            assert action[motor] == reachy2.reachy.joints[REACHY2_JOINTS[motor]].present_position
+        else:
+            assert action[motor] == reachy2.reachy.joints[REACHY2_JOINTS[motor]].goal_position
     if reachy2.config.with_mobile_base:
         for vel in REACHY2_VEL.keys():
             assert action[vel] == reachy2.reachy.mobile_base.last_cmd_vel[REACHY2_VEL[vel]]
