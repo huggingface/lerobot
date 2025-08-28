@@ -301,7 +301,7 @@ def make_policy(
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
-    
+
     # Pass episode_data_index for RLearN policy to calculate proper progress
     if cfg.type == "rlearn" and episode_data_index is not None:
         kwargs["episode_data_index"] = episode_data_index

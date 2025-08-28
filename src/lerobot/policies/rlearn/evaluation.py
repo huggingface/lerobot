@@ -242,6 +242,9 @@ class RLearnEvaluator:
     def predict_episode_rewards(self, frames: Tensor, language: str, batch_size: int = 16) -> np.ndarray:
         """
         Predict rewards for a single episode using proper temporal sequences.
+        
+        Note: With ReWiND loss, the model predicts progress values (0-1) across episodes,
+        which serve as dense reward signals for policy learning.
 
         Args:
             frames: Video frames tensor of shape (T, C, H, W)
@@ -249,7 +252,7 @@ class RLearnEvaluator:
             batch_size: Maximum number of temporal sequences to process at once
 
         Returns:
-            Predicted rewards array of shape (T,)
+            Predicted progress/rewards array of shape (T,) with values typically in [0, 1]
         """
         T = frames.shape[0]
         max_seq_len = self.model.config.max_seq_len
@@ -260,7 +263,7 @@ class RLearnEvaluator:
         # Create temporal sequences for each frame
         # For frame i, we want frames [i-max_seq_len+1, ..., i-1, i]
         temporal_sequences = []
-        
+
         for i in range(T):
             # Create sequence ending at frame i
             seq_frames = []
@@ -268,14 +271,14 @@ class RLearnEvaluator:
                 # Use frame j if available, otherwise repeat the first available frame
                 frame_idx = max(0, min(j, T - 1))
                 seq_frames.append(processed_frames[frame_idx])
-            
+
             # Pad sequence to max_seq_len by repeating the first frame if needed
             while len(seq_frames) < max_seq_len:
                 seq_frames.insert(0, seq_frames[0])  # Prepend first frame
-            
+
             # Take only the last max_seq_len frames if we have too many
             seq_frames = seq_frames[-max_seq_len:]
-            
+
             temporal_sequences.append(torch.stack(seq_frames))  # (max_seq_len, C, H, W)
 
         # Stack all temporal sequences: (T, max_seq_len, C, H, W)
@@ -286,7 +289,7 @@ class RLearnEvaluator:
         for i in range(0, T, batch_size):
             end_idx = min(i + batch_size, T)
             batch_sequences = all_sequences[i:end_idx].to(self.device)  # (B, max_seq_len, C, H, W)
-            
+
             # Create batch for model
             batch = {
                 OBS_IMAGES: batch_sequences,  # (B, T, C, H, W) format expected by model
@@ -295,13 +298,13 @@ class RLearnEvaluator:
 
             # Predict rewards - model returns (B, T') but we want the last timestep for each sequence
             values = self.model.predict_rewards(batch)  # (B, T')
-            
+
             # Take the last timestep prediction for each sequence (represents current frame reward)
             if values.dim() == 2:
                 batch_rewards = values[:, -1].cpu().numpy()  # (B,) - last timestep
             else:
                 batch_rewards = values.cpu().numpy()  # (B,) - already single timestep
-            
+
             rewards.extend(batch_rewards)
 
         return np.array(rewards[:T])  # Ensure exact length
@@ -569,6 +572,83 @@ class RLearnEvaluator:
         print(f"  Episode pairs evaluated: {detection_results['num_pairs']}")
 
         return detection_results
+
+    def evaluate_rewind_progress(
+        self, dataset, num_episodes: int = 100
+    ) -> dict[str, Any]:
+        """
+        Evaluate ReWiND-specific progress properties.
+        
+        Checks:
+        1. Progress values are in [0, 1] range
+        2. Progress increases monotonically (or mostly)
+        3. First frames have low progress, last frames have high progress
+        """
+        episodes = np.random.choice(len(dataset.meta.episodes), min(num_episodes, len(dataset.meta.episodes)), replace=False)
+        
+        results = {
+            "progress_range_violations": 0,
+            "monotonicity_scores": [],
+            "start_progress_values": [],
+            "end_progress_values": [],
+            "episodes_evaluated": 0
+        }
+        
+        for ep_idx in episodes:
+            try:
+                # Get episode data
+                ep_start = dataset.episode_data_index["from"][ep_idx].item()
+                ep_end = dataset.episode_data_index["to"][ep_idx].item()
+                
+                # Sample some frames from episode
+                sample_indices = np.linspace(ep_start, ep_end-1, min(20, ep_end-ep_start), dtype=int)
+                
+                frames = []
+                for idx in sample_indices:
+                    item = dataset[idx]
+                    if OBS_IMAGES in item:
+                        frames.append(item[OBS_IMAGES])
+                    elif OBS_IMAGE in item:
+                        frames.append(item[OBS_IMAGE])
+                    else:
+                        continue
+                
+                if len(frames) < 2:
+                    continue
+                    
+                frames = torch.stack(frames)
+                language = dataset[ep_start].get("task", "")
+                
+                # Predict rewards/progress
+                progress = self.predict_episode_rewards(frames, language)
+                
+                # Check range violations
+                range_violations = np.sum((progress < 0) | (progress > 1))
+                results["progress_range_violations"] += range_violations
+                
+                # Check monotonicity (should generally increase)
+                if len(progress) > 1:
+                    diffs = np.diff(progress)
+                    monotonicity = np.mean(diffs >= 0)  # Fraction of non-decreasing steps
+                    results["monotonicity_scores"].append(monotonicity)
+                
+                # Record start/end values
+                results["start_progress_values"].append(progress[0])
+                results["end_progress_values"].append(progress[-1])
+                results["episodes_evaluated"] += 1
+                
+            except Exception as e:
+                print(f"Error evaluating episode {ep_idx}: {e}")
+                continue
+        
+        # Summarize results
+        if results["episodes_evaluated"] > 0:
+            results["mean_monotonicity"] = np.mean(results["monotonicity_scores"])
+            results["mean_start_progress"] = np.mean(results["start_progress_values"])
+            results["mean_end_progress"] = np.mean(results["end_progress_values"])
+            results["progress_increase"] = results["mean_end_progress"] - results["mean_start_progress"]
+        
+        return results
 
     def comprehensive_evaluation(
         self,

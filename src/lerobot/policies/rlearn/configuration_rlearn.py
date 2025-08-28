@@ -38,7 +38,7 @@ class RLearNConfig(PreTrainedConfig):
     """
 
     # Encoders
-    model_name: str = "google/siglip2-large-patch16-256"
+    model_name: str = "google/siglip2-base-patch16-256"
     freeze_backbones: bool = True
 
     # Temporal aggregator
@@ -61,12 +61,12 @@ class RLearNConfig(PreTrainedConfig):
     # Training
     learning_rate: float = 1e-4
     weight_decay: float = 0.01
-    
+
     # ReWiND-specific parameters
     use_video_rewind: bool = True  # Enable video rewinding augmentation
     rewind_prob: float = 0.5  # Probability of applying rewind to each batch
     use_mismatch_loss: bool = True  # Enable mismatched language-video loss
-    
+
     # Loss hyperparameters (simplified for ReWiND)
     # The main loss is just MSE between predicted and target progress
 

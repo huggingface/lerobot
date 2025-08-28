@@ -16,11 +16,11 @@ from .act.configuration_act import ACTConfig as ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi0.processor_pi0 import Pi0NewLineProcessor
+from .rlearn.configuration_rlearn import RLearNConfig as RLearNConfig
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .smolvla.processor_smolvla import SmolVLANewLineProcessor
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
-from .rlearn.configuration_rlearn import RLearNConfig as RLearNConfig
 
 __all__ = [
     "ACTConfig",

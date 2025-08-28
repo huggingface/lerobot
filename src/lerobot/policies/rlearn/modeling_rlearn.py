@@ -35,7 +35,7 @@ High-level Architecture
   +------------------------------+
   |  Vision Encoder (frozen)     |  e.g. SigLIP2 vision tower
   +------------------------------+
-        |
+        |s
         |  pooled per-frame embeddings (BT, H_v)
         v
   reshape -> (B, T, H_v) -- Linear proj --> (B, T, D)
@@ -214,7 +214,7 @@ class RLearNPolicy(PreTrainedPolicy):
         )
         lang_emb = self.text_proj(lang_emb)  # (B, D)
 
-        # ---- NEW: use the HF processor to standardize size & normalization ----
+        # Use the HF processor to standardize size & normalization
         # Flatten (B, T_eff, C, H, W) -> (BT, C, H, W)
         BT = B * T_eff
         flat = frames.reshape(BT, C, H, W).detach().cpu()
@@ -230,7 +230,6 @@ class RLearNPolicy(PreTrainedPolicy):
 
         proc_out = self.processor(images=images, return_tensors="pt")
         pixel_values = proc_out["pixel_values"].to(next(self.vision_encoder.parameters()).device)
-        # ----------------------------------------------------------------------
 
         # Encode frames through visual tower per frame
         vision_outputs = self.vision_encoder(pixel_values=pixel_values)
@@ -276,7 +275,7 @@ class RLearNPolicy(PreTrainedPolicy):
         Expected batch keys:
           - OBS_IMAGES: list[Tensor] of shape [(B, C, H, W), ...] per time step or stacked (B, T, C, H, W)
           - OBS_LANGUAGE: optional string tokens already tokenized externally or raw strings
-          
+
         Note: Progress labels (0 to 1) are generated automatically for each episode.
               No REWARD key is needed in the batch.
         """
@@ -362,42 +361,42 @@ class RLearNPolicy(PreTrainedPolicy):
         # Generate progress labels on-the-fly (ReWiND approach)
         # IMPORTANT: Progress should be 0-1 across the ENTIRE EPISODE, not just the temporal window
         loss_dict: dict[str, float] = {}
-        
+
         # Check if video rewinding already set the target
-        if self.training and self.config.use_video_rewind and 'augmented_target' in locals():
+        if self.training and self.config.use_video_rewind and "augmented_target" in locals():
             # Use the augmented target from video rewinding
             target = augmented_target
         else:
             # Calculate true episode progress using episode_index and frame_index from batch
-            if "episode_index" in batch and "frame_index" in batch and hasattr(self, 'episode_data_index'):
+            if "episode_index" in batch and "frame_index" in batch and hasattr(self, "episode_data_index"):
                 # Get episode indices and frame indices from batch
                 episode_indices = batch["episode_index"]  # Shape: (B,)
                 frame_indices = batch["frame_index"]  # Shape: (B,)
-                
+
                 # Calculate progress for the current frame in each sample
                 progress_values = []
-                
+
                 for b_idx in range(B):
                     ep_idx = episode_indices[b_idx].item()
                     frame_idx = frame_indices[b_idx].item()
-                    
+
                     # Get episode boundaries
                     ep_start = self.episode_data_index["from"][ep_idx].item()
                     ep_end = self.episode_data_index["to"][ep_idx].item()
                     ep_length = ep_end - ep_start
-                    
+
                     # Progress from 0 to 1 within the episode
                     # frame_index is relative to the episode (0-based within episode)
                     progress = frame_idx / max(1, ep_length - 1)
                     progress_values.append(progress)
-                
+
                 # Create progress tensor for the current frame (last in temporal sequence)
                 current_progress = torch.tensor(progress_values, device=values.device, dtype=values.dtype)
-                
+
                 # Now calculate progress for ALL frames in the temporal window
                 # The observation_delta_indices tell us which frames we're looking at
                 delta_indices = self.config.observation_delta_indices  # e.g., [-15, -14, ..., 0]
-                
+
                 # Calculate progress for each frame in the temporal window
                 all_progress = []
                 for delta in delta_indices:
@@ -406,42 +405,44 @@ class RLearNPolicy(PreTrainedPolicy):
                     for b_idx in range(B):
                         ep_idx = episode_indices[b_idx].item()
                         frame_idx = frame_indices[b_idx].item()
-                        
+
                         # Calculate the actual frame index with delta
                         target_frame_idx = frame_idx + delta
-                        
+
                         # Get episode boundaries
                         ep_start = self.episode_data_index["from"][ep_idx].item()
                         ep_end = self.episode_data_index["to"][ep_idx].item()
                         ep_length = ep_end - ep_start
-                        
+
                         # Clamp to episode boundaries (frame_index is relative to episode)
                         target_frame_idx = max(0, min(ep_length - 1, target_frame_idx))
-                        
+
                         # Calculate progress for this frame
                         prog = target_frame_idx / max(1, ep_length - 1)
                         frame_progress.append(prog)
-                    
-                    all_progress.append(torch.tensor(frame_progress, device=values.device, dtype=values.dtype))
-                
+
+                    all_progress.append(
+                        torch.tensor(frame_progress, device=values.device, dtype=values.dtype)
+                    )
+
                 # Stack to get (B, T) tensor where T is the temporal sequence length
                 target = torch.stack(all_progress, dim=1)  # (B, max_seq_len)
-                
+
                 # Apply stride/dropout indexing to match the processed frames
                 target = target[:, idx]
-                
-            elif "index" in batch and hasattr(self, 'episode_data_index'):
+
+            elif "index" in batch and hasattr(self, "episode_data_index"):
                 # Fallback: Use global index if available
                 global_indices = batch["index"]  # Shape: (B,)
-                
+
                 # For each index, find which episode it belongs to and its position
                 progress_values = []
-                
+
                 for global_idx in global_indices:
                     # Find which episode this index belongs to
                     episode_starts = self.episode_data_index["from"]
                     episode_ends = self.episode_data_index["to"]
-                    
+
                     # Find the episode by checking which range the index falls into
                     episode_idx = None
                     frame_in_episode = None
@@ -450,30 +451,32 @@ class RLearNPolicy(PreTrainedPolicy):
                             episode_idx = ep_idx
                             frame_in_episode = global_idx.item() - episode_starts[ep_idx].item()
                             break
-                    
+
                     if episode_idx is not None:
                         # Calculate position within episode
                         ep_start = episode_starts[episode_idx].item()
                         ep_end = episode_ends[episode_idx].item()
                         ep_length = ep_end - ep_start
-                        
+
                         # Progress from 0 to 1 within the episode
                         progress = frame_in_episode / max(1, ep_length - 1)
                     else:
                         # Fallback if we can't find the episode (shouldn't happen)
                         progress = 0.5
-                    
+
                     progress_values.append(progress)
-                
+
                 # For temporal window, use simplified linear progress
                 # (proper calculation would need all frame indices in the window)
                 T_effective = len(idx)
                 target = torch.tensor(progress_values, device=values.device, dtype=values.dtype)
                 target = target.unsqueeze(1).expand(B, T_effective)  # Simple expansion
-                
+
             else:
-                raise ValueError("No episode information found in batch. Please ensure 'episode_index' and 'frame_index' keys are present.")
-            
+                raise ValueError(
+                    "No episode information found in batch. Please ensure 'episode_index' and 'frame_index' keys are present."
+                )
+
         # During inference, we might not want to compute loss
         if not self.training and target is None:
             loss = values.mean() * 0.0
@@ -482,25 +485,25 @@ class RLearNPolicy(PreTrainedPolicy):
 
         # ReWiND Loss (following the paper exactly)
         # The core loss is progress regression with video rewinding augmentation
-        
+
         # 1) Main progress regression loss for matched sequences
         # Target should be normalized progress from 0 to 1 (t/T)
         L_progress = F.mse_loss(values, target)
-        
+
         # 2) Mismatched video-language pairs should predict zero progress
         L_mismatch = torch.zeros((), device=values.device)
         if self.training and self.config.use_mismatch_loss and values.size(0) > 1:
             # Randomly shuffle language instructions within the batch
             shuffled_indices = torch.randperm(B, device=values.device)
             lang_mismatch = lang_emb[shuffled_indices]
-            
+
             # Forward pass with mismatched language
             mismatch_feat = self.temporal(visual_seq, lang_mismatch, return_features=True)
             mismatch_values = self.head(mismatch_feat).squeeze(-1)
-            
+
             # Mismatched pairs should predict zero progress
             L_mismatch = F.mse_loss(mismatch_values, torch.zeros_like(target))
-        
+
         # Total loss is just progress regression (rewinding is handled via data augmentation)
         loss = L_progress + L_mismatch
 
@@ -720,7 +723,7 @@ def encode_language(
 
 def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5) -> tuple[Tensor, Tensor]:
     """Apply video rewinding augmentation as described in ReWiND paper.
-    
+
     Each video in the batch has an independent chance of being rewound.
 
     Args:
@@ -732,61 +735,61 @@ def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5) -> tuple[Tensor
     """
     B, T, C, H, W = frames.shape
     device = frames.device
-    
+
     # Create default progress labels (linearly increasing from 0 to 1)
     default_progress = torch.linspace(0, 1, T, device=device).unsqueeze(0).expand(B, -1)
-    
+
     # Apply rewind augmentation to each sample in batch independently
     augmented_frames = []
     augmented_progress = []
-    
+
     for b in range(B):
         # Each video has independent chance of being rewound
         should_rewind = torch.rand(1).item() < rewind_prob
-        
+
         if not should_rewind or T < 3:
             # Keep original sequence
             augmented_frames.append(frames[b])
             augmented_progress.append(default_progress[b])
             continue
-            
+
         # Apply rewinding to this video
         # Split point i: between frame 2 and T-1
         i = torch.randint(2, T, (1,)).item()
-        
+
         # Rewind length k: between 1 and i-1 frames
         k = torch.randint(1, min(i, T - i + 1), (1,)).item()
-        
+
         # Create rewound sequence: o1...oi, oi-1, ..., oi-k
         forward_frames = frames[b, :i]  # Frames up to split point
-        reverse_frames = frames[b, max(0, i-k):i].flip(dims=[0])  # Reversed frames
-        
+        reverse_frames = frames[b, max(0, i - k) : i].flip(dims=[0])  # Reversed frames
+
         # Concatenate forward and reverse parts
         rewound_seq = torch.cat([forward_frames, reverse_frames], dim=0)
-        
+
         # Pad with zeros if needed to maintain shape
         if rewound_seq.shape[0] < T:
             padding = torch.zeros(T - rewound_seq.shape[0], C, H, W, device=device)
             rewound_seq = torch.cat([rewound_seq, padding], dim=0)
         elif rewound_seq.shape[0] > T:
             rewound_seq = rewound_seq[:T]
-        
+
         # Create corresponding progress labels
         # Forward part: increasing progress
-        forward_progress = torch.linspace(0, i/T, i, device=device)
-        # Reverse part: decreasing progress  
-        reverse_progress = torch.linspace(i/T, max(0, (i-k)/T), k, device=device)
-        
+        forward_progress = torch.linspace(0, i / T, i, device=device)
+        # Reverse part: decreasing progress
+        reverse_progress = torch.linspace(i / T, max(0, (i - k) / T), k, device=device)
+
         rewound_progress = torch.cat([forward_progress, reverse_progress])
-        
+
         # Pad progress if needed
         if rewound_progress.shape[0] < T:
             padding = torch.zeros(T - rewound_progress.shape[0], device=device)
             rewound_progress = torch.cat([rewound_progress, padding])
         elif rewound_progress.shape[0] > T:
             rewound_progress = rewound_progress[:T]
-            
+
         augmented_frames.append(rewound_seq)
         augmented_progress.append(rewound_progress)
-    
+
     return torch.stack(augmented_frames), torch.stack(augmented_progress)

@@ -137,7 +137,7 @@ def train(cfg: TrainPipelineConfig):
 
     logging.info("Creating policy")
     # Pass episode_data_index for RLearN to calculate proper progress
-    episode_data_index = dataset.episode_data_index if hasattr(dataset, 'episode_data_index') else None
+    episode_data_index = dataset.episode_data_index if hasattr(dataset, "episode_data_index") else None
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,

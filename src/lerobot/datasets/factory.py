@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 from pprint import pformat
 
 import torch
@@ -87,7 +86,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
         )
         delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
-        
+
         # Handle percentage parameter
         episodes = cfg.dataset.episodes
         if cfg.dataset.percentage is not None:
@@ -96,8 +95,11 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             num_episodes_to_use = max(1, int(total_episodes * cfg.dataset.percentage / 100))
             episodes = list(range(num_episodes_to_use))
             import logging
-            logging.info(f"Using {cfg.dataset.percentage}% of dataset: {num_episodes_to_use}/{total_episodes} episodes")
-        
+
+            logging.info(
+                f"Using {cfg.dataset.percentage}% of dataset: {num_episodes_to_use}/{total_episodes} episodes"
+            )
+
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
