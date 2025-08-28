@@ -304,21 +304,6 @@ class LiberoEnv(gym.Env):
         info = {"is_success": False}
         return observation, info
 
-    def step1(self, action):
-        assert action.ndim == 1
-        raw_obs, reward, done, info = self._env.step(action)
-
-        is_success = self._env.check_success()
-        terminated = done or is_success
-        info["is_success"] = done  # is_success
-
-        observation = self._format_raw_obs(raw_obs)
-        if done:
-            self.reset()
-            print(self.task, self.task_id, done, is_success)
-        truncated = False
-        return observation, reward, terminated, truncated, info
-
     def step(self, action):
         assert action.ndim == 1
         raw_obs, reward, done, info = self._env.step(action)
