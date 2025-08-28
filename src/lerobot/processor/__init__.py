@@ -32,6 +32,7 @@ from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hot
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessor,
+    DataProcessorPipeline,
     DoneProcessor,
     EnvTransition,
     IdentityProcessor,
@@ -40,7 +41,6 @@ from .pipeline import (
     ProcessorStep,
     ProcessorStepRegistry,
     RewardProcessor,
-    RobotProcessor,
     TransitionKey,
     TruncatedProcessor,
 )
@@ -73,7 +73,7 @@ __all__ = [
     "RenameProcessor",
     "RewardClassifierProcessor",
     "RewardProcessor",
-    "RobotProcessor",
+    "DataProcessorPipeline",
     "ToBatchProcessor",
     "TokenizerProcessor",
     "TimeLimitProcessor",

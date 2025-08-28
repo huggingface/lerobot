@@ -609,9 +609,9 @@ class DataProcessorPipeline(ModelHubMixin):
             if config_filename is None:
                 # Try common config names
                 common_names = [
-                    "robot_processor.json",
-                    "robot_preprocessor.json",
-                    "robot_postprocessor.json",
+                    "data_processor.json",
+                    "data_preprocessor.json",
+                    "data_postprocessor.json",
                 ]
                 config_path = None
                 for name in common_names:
