@@ -199,7 +199,7 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        observation = preprocess_observation(observation, cfg=policy.config)
+        observation = preprocess_observation(observation)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
