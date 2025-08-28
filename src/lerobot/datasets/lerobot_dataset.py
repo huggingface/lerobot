@@ -104,9 +104,6 @@ class LeRobotDatasetMetadata:
                 self.revision = get_safe_version(self.repo_id, self.revision)
 
             (self.root / "meta").mkdir(exist_ok=True, parents=True)
-            # TODO(rcadene): instead of downloading all episodes metadata files,
-            # download only the ones associated to the requested episodes. This would
-            # require adding `episodes: list[int]` as argument.
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
 
