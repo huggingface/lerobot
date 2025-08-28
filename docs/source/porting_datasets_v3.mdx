@@ -150,7 +150,7 @@ gsutil -m cp -r gs://gresearch/robotics/droid_100 /your/data/
 ### Step 3: Port the Dataset
 
 ```bash
-python examples/port_datasets/droid_rlds/port_droid.py \
+python examples/port_datasets/port_droid_rlds.py \
     --raw-dir /your/data/droid/1.0.1 \
     --repo-id your_id/droid_1.0.1 \
     --push-to-hub
@@ -161,7 +161,7 @@ python examples/port_datasets/droid_rlds/port_droid.py \
 For development, you can port a single shard:
 
 ```bash
-python examples/port_datasets/droid_rlds/port_droid.py \
+python examples/port_datasets/port_droid_rlds.py \
     --raw-dir /your/data/droid/1.0.1 \
     --repo-id your_id/droid_1.0.1_test \
     --num-shards 2048 \
@@ -194,7 +194,7 @@ Choose a **CPU partition** - no GPU needed for dataset porting.
 ### Step 3: Launch Parallel Porting Jobs
 
 ```bash
-python examples/port_datasets/droid_rlds/slurm_port_shards.py \
+python examples/port_datasets/slurm_port_shards.py \
     --raw-dir /your/data/droid/1.0.1 \
     --repo-id your_id/droid_1.0.1 \
     --logs-dir /your/logs \
@@ -245,7 +245,7 @@ failed_logs /your/logs/port_droid
 Once all porting jobs complete:
 
 ```bash
-python examples/port_datasets/droid_rlds/slurm_aggregate_shards.py \
+python examples/port_datasets/slurm_aggregate_shards.py \
     --repo-id your_id/droid_1.0.1 \
     --logs-dir /your/logs \
     --job-name aggr_droid \
@@ -258,7 +258,7 @@ python examples/port_datasets/droid_rlds/slurm_aggregate_shards.py \
 ### Step 6: Upload to Hub
 
 ```bash
-python examples/port_datasets/droid_rlds/slurm_upload.py \
+python examples/port_datasets/slurm_upload.py \
     --repo-id your_id/droid_1.0.1 \
     --logs-dir /your/logs \
     --job-name upload_droid \
