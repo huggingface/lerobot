@@ -313,7 +313,7 @@ def add_actor_information_and_train(
 
     logging.info("Initializing policy")
 
-    policy: SACPolicy = make_policy(
+    policy: SACPolicy | ConRFTPolicy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
@@ -326,16 +326,7 @@ def add_actor_information_and_train(
 
     last_time_policy_pushed = time.time()
 
-    if isinstance(policy, ConRFTPolicy):
-        optimizers = {
-            "consistency_policy": torch.optim.Adam(
-                policy.consistency_policy.parameters(), lr=cfg.policy.actor_lr
-            ),
-            "critic": torch.optim.Adam(policy.critic.parameters(), lr=cfg.policy.critic_lr),
-        }
-        lr_scheduler = None
-    else:
-        optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg=cfg, policy=policy)
+    optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg=cfg, policy=policy)
 
     # If we are resuming, we need to load the training state
     resume_optimization_step, resume_interaction_step = load_training_state(cfg=cfg, optimizers=optimizers)
@@ -413,85 +404,9 @@ def add_actor_information_and_train(
             else:
                 policy.set_training_stage("online")
 
-            time_for_one_optimization_step = time.time()
-
+        time_for_one_optimization_step = time.time()
+        for _ in range(utd_ratio - 1):
             # Sample from the iterators
-            if policy.training_stage == "offline":
-                batch = next(offline_iterator)
-            else:
-                online_batch = next(online_iterator)
-                offline_batch = next(offline_iterator)
-                batch = concatenate_batch_transitions(
-                    left_batch_transitions=online_batch, right_batch_transition=offline_batch
-                )
-
-            # Perform one optimization step
-            if policy.training_stage == "offline":
-                training_infos = policy.update_offline(batch, optimizers)
-            else:
-                training_infos = policy.update_online(batch, optimizers)
-        else:
-            time_for_one_optimization_step = time.time()
-            for _ in range(utd_ratio - 1):
-                # Sample from the iterators
-                batch = next(online_iterator)
-
-                if dataset_repo_id is not None:
-                    batch_offline = next(offline_iterator)
-                    batch = concatenate_batch_transitions(
-                        left_batch_transitions=batch, right_batch_transition=batch_offline
-                    )
-
-                actions = batch["action"]
-                rewards = batch["reward"]
-                observations = batch["state"]
-                next_observations = batch["next_state"]
-                done = batch["done"]
-                check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
-
-                observation_features, next_observation_features = get_observation_features(
-                    policy=policy, observations=observations, next_observations=next_observations
-                )
-
-                # Create a batch dictionary with all required elements for the forward method
-                forward_batch = {
-                    "action": actions,
-                    "reward": rewards,
-                    "state": observations,
-                    "next_state": next_observations,
-                    "done": done,
-                    "observation_feature": observation_features,
-                    "next_observation_feature": next_observation_features,
-                    "complementary_info": batch["complementary_info"],
-                }
-
-                # Use the forward method for critic loss
-                critic_output = policy.forward(forward_batch, model="critic")
-
-                # Main critic optimization
-                loss_critic = critic_output["loss_critic"]
-                optimizers["critic"].zero_grad()
-                loss_critic.backward()
-                critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
-                )
-                optimizers["critic"].step()
-
-                # Discrete critic optimization (if available)
-                if policy.config.num_discrete_actions is not None:
-                    discrete_critic_output = policy.forward(forward_batch, model="discrete_critic")
-                    loss_discrete_critic = discrete_critic_output["loss_discrete_critic"]
-                    optimizers["discrete_critic"].zero_grad()
-                    loss_discrete_critic.backward()
-                    discrete_critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-                        parameters=policy.discrete_critic.parameters(), max_norm=clip_grad_norm_value
-                    )
-                    optimizers["discrete_critic"].step()
-
-                # Update target networks (main and discrete)
-                policy.update_target_networks()
-
-            # Sample for the last update in the UTD ratio
             batch = next(online_iterator)
 
             if dataset_repo_id is not None:
@@ -505,7 +420,6 @@ def add_actor_information_and_train(
             observations = batch["state"]
             next_observations = batch["next_state"]
             done = batch["done"]
-
             check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
 
             observation_features, next_observation_features = get_observation_features(
@@ -521,23 +435,23 @@ def add_actor_information_and_train(
                 "done": done,
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
+                "complementary_info": batch["complementary_info"],
             }
 
-            critic_output = policy.forward(forward_batch, model="critic")
+            # Use the forward method for critic loss
+            if isinstance(policy, ConRFTPolicy) and policy.training_stage == "offline":
+                critic_output = policy.forward(forward_batch, model="cal_ql")
+            else:
+                critic_output = policy.forward(forward_batch, model="critic")
 
+            # Main critic optimization
             loss_critic = critic_output["loss_critic"]
             optimizers["critic"].zero_grad()
             loss_critic.backward()
             critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-                parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
-            ).item()
+                parameters=policy.critic.parameters(), max_norm=clip_grad_norm_value
+            )
             optimizers["critic"].step()
-
-            # Initialize training info dictionary
-            training_infos = {
-                "loss_critic": loss_critic.item(),
-                "critic_grad_norm": critic_grad_norm,
-            }
 
             # Discrete critic optimization (if available)
             if policy.config.num_discrete_actions is not None:
@@ -547,31 +461,97 @@ def add_actor_information_and_train(
                 loss_discrete_critic.backward()
                 discrete_critic_grad_norm = torch.nn.utils.clip_grad_norm_(
                     parameters=policy.discrete_critic.parameters(), max_norm=clip_grad_norm_value
-                ).item()
+                )
                 optimizers["discrete_critic"].step()
 
-                # Add discrete critic info to training info
-                training_infos["loss_discrete_critic"] = loss_discrete_critic.item()
-                training_infos["discrete_critic_grad_norm"] = discrete_critic_grad_norm
+            # Update target networks (main and discrete)
+            policy.update_target_networks()
 
-            # Actor and temperature optimization (at specified frequency)
-            if optimization_step % policy_update_freq == 0:
-                for _ in range(policy_update_freq):
-                    # Actor optimization
-                    actor_output = policy.forward(forward_batch, model="actor")
-                    loss_actor = actor_output["loss_actor"]
-                    optimizers["actor"].zero_grad()
-                    loss_actor.backward()
-                    actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-                        parameters=policy.actor.parameters(), max_norm=clip_grad_norm_value
-                    ).item()
-                    optimizers["actor"].step()
+        # Sample for the last update in the UTD ratio
+        batch = next(online_iterator)
 
-                    # Add actor info to training info
-                    training_infos["loss_actor"] = loss_actor.item()
-                    training_infos["actor_grad_norm"] = actor_grad_norm
+        if dataset_repo_id is not None:
+            batch_offline = next(offline_iterator)
+            batch = concatenate_batch_transitions(
+                left_batch_transitions=batch, right_batch_transition=batch_offline
+            )
 
-                    # Temperature optimization
+        actions = batch["action"]
+        rewards = batch["reward"]
+        observations = batch["state"]
+        next_observations = batch["next_state"]
+        done = batch["done"]
+
+        check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
+
+        observation_features, next_observation_features = get_observation_features(
+            policy=policy, observations=observations, next_observations=next_observations
+        )
+
+        # Create a batch dictionary with all required elements for the forward method
+        forward_batch = {
+            "action": actions,
+            "reward": rewards,
+            "state": observations,
+            "next_state": next_observations,
+            "done": done,
+            "observation_feature": observation_features,
+            "next_observation_feature": next_observation_features,
+        }
+
+        if isinstance(policy, ConRFTPolicy) and policy.training_stage == "offline":
+            critic_output = policy.forward(forward_batch, model="cal_ql")
+        else:
+            critic_output = policy.forward(forward_batch, model="critic")
+
+        loss_critic = critic_output["loss_critic"]
+        optimizers["critic"].zero_grad()
+        loss_critic.backward()
+        critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+            parameters=policy.critic.parameters(), max_norm=clip_grad_norm_value
+        ).item()
+        optimizers["critic"].step()
+
+        # Initialize training info dictionary
+        training_infos = {
+            "loss_critic": loss_critic.item(),
+            "critic_grad_norm": critic_grad_norm,
+        }
+
+        # Discrete critic optimization (if available)
+        if policy.config.num_discrete_actions is not None:
+            discrete_critic_output = policy.forward(forward_batch, model="discrete_critic")
+            loss_discrete_critic = discrete_critic_output["loss_discrete_critic"]
+            optimizers["discrete_critic"].zero_grad()
+            loss_discrete_critic.backward()
+            discrete_critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+                parameters=policy.discrete_critic.parameters(), max_norm=clip_grad_norm_value
+            ).item()
+            optimizers["discrete_critic"].step()
+
+            # Add discrete critic info to training info
+            training_infos["loss_discrete_critic"] = loss_discrete_critic.item()
+            training_infos["discrete_critic_grad_norm"] = discrete_critic_grad_norm
+
+        # Actor and temperature optimization (at specified frequency)
+        if optimization_step % policy_update_freq == 0:
+            for _ in range(policy_update_freq):
+                # Actor optimization
+                actor_output = policy.forward(forward_batch, model="actor")
+                loss_actor = actor_output["loss_actor"]
+                optimizers["actor"].zero_grad()
+                loss_actor.backward()
+                actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    parameters=policy.actor.parameters(), max_norm=clip_grad_norm_value
+                ).item()
+                optimizers["actor"].step()
+
+                # Add actor info to training info
+                training_infos["loss_actor"] = loss_actor.item()
+                training_infos["actor_grad_norm"] = actor_grad_norm
+
+                # Temperature optimization
+                if not isinstance(policy, ConRFTPolicy):
                     temperature_output = policy.forward(forward_batch, model="temperature")
                     loss_temperature = temperature_output["loss_temperature"]
                     optimizers["temperature"].zero_grad()
@@ -828,6 +808,14 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
         - `lr_scheduler`: Currently set to `None` but can be extended to support learning rate scheduling.
 
     """
+    if isinstance(policy, ConRFTPolicy):
+        optimizers = {
+            "actor": torch.optim.Adam(policy.consistency_policy.parameters(), lr=cfg.policy.actor_lr),
+            "critic": torch.optim.Adam(policy.critic.parameters(), lr=cfg.policy.critic_lr),
+            "grasp_critic": torch.optim.Adam(policy.grasp_critic.parameters(), lr=cfg.policy.critic_lr),
+        }
+        return optimizers, None
+
     optimizer_actor = torch.optim.Adam(
         params=[
             p

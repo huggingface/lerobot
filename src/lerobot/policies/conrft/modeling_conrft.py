@@ -71,21 +71,23 @@ def get_scalings_for_boundary_condition(sigma, sigma_data, sigma_min):
 
 def compute_critic_loss(policy, batch):
     """Compute standard TD loss for critic (online stage)"""
-    observations = {k: v for k, v in batch.items() if "observation" in k}
+    observations = batch["state"]
     actions = batch["action"]
     rewards = batch["reward"]
     dones = batch["done"]
-    next_observations = {k.replace("next_", ""): v for k, v in batch.items() if "next_observation" in k}
+    next_observations = batch["next_state"]
+    obs_feat = batch.get("observation_feature")
+    nxt_feat = batch.get("next_observation_feature")
 
     # Compute target Q-values
     with torch.no_grad():
         next_action, _ = policy.consistency_policy(next_observations, training=False)
-        target_q_values = policy.critic_target(next_observations, next_action)
+        target_q_values = policy.critic_target(next_observations, next_action, nxt_feat)
         target_q = torch.min(target_q_values, dim=0)[0]
         target_value = rewards + policy.config.discount * (1 - dones) * target_q
 
     # Current Q-values
-    current_q_values = policy.critic(observations, actions)
+    current_q_values = policy.critic(observations, actions, obs_feat)
     current_q1, current_q2 = current_q_values[0], current_q_values[1]
 
     # TD loss
@@ -101,23 +103,27 @@ def compute_critic_loss(policy, batch):
 
 def compute_cal_ql_loss(policy, batch):
     """Compute Calibrated Q-Learning loss (offline stage)"""
-    observations = {k: v for k, v in batch.items() if "observation" in k}
+    observations = batch["state"]
     actions = batch["action"]
     rewards = batch["reward"]
     dones = batch["done"]
     mc_returns = batch.get("mc_returns", rewards)  # Use MC returns if available
-    next_observations = {k.replace("next_", ""): v for k, v in batch.items() if "next_observation" in k}
+    next_observations = batch["next_state"]
+    obs_feat = batch.get("observation_feature")
+    nxt_feat = batch.get("next_observation_feature")
 
     batch_size = actions.shape[0]
 
     # Standard TD loss
     with torch.no_grad():
         next_action, _ = policy.consistency_policy(next_observations, training=False)
-        target_q_values = policy.critic_target(next_observations, next_action)
+        target_q_values = policy.critic_target(next_observations, next_action, nxt_feat)
         target_q = torch.min(target_q_values, dim=0)[0]
         target_value = rewards + policy.config.discount * (1 - dones) * target_q
+        if "mc_returns" in batch:
+            target_value = torch.maximum(target_value, mc_returns)
 
-    current_q_values = policy.critic(observations, actions)
+    current_q_values = policy.critic(observations, actions, obs_feat)
     current_q1, current_q2 = current_q_values[0], current_q_values[1]
 
     td_loss = F.mse_loss(current_q1, target_value) + F.mse_loss(current_q2, target_value)
@@ -126,7 +132,16 @@ def compute_cal_ql_loss(policy, batch):
     num_random = policy.config.cql_n_actions
 
     # Sample random actions
-    random_actions = torch.rand(batch_size, num_random, actions.shape[1], device=actions.device) * 2 - 1
+    if policy.config.cql_action_sample_method == "uniform":
+        random_actions = (
+            torch.rand(batch_size, num_random, actions.shape[1], device=actions.device) * 2 - 1
+        )
+    elif policy.config.cql_action_sample_method == "normal":
+        random_actions = torch.randn(
+            batch_size, num_random, actions.shape[1], device=actions.device
+        )
+    else:
+        raise NotImplementedError
 
     # Sample actions from current policy
     policy_actions = []
@@ -148,7 +163,7 @@ def compute_cal_ql_loss(policy, batch):
     # Compute Q-values for all sampled actions
     cql_q_values = []
     for i in range(all_actions.shape[1]):
-        q_values = policy.critic(observations, all_actions[:, i])
+        q_values = policy.critic(observations, all_actions[:, i], obs_feat)
         cql_q_values.append(torch.min(q_values, dim=0)[0].unsqueeze(-1))
     cql_q_values = torch.cat(cql_q_values, dim=1)
 
@@ -161,13 +176,17 @@ def compute_cal_ql_loss(policy, batch):
     all_q_values = torch.cat([cql_q_values, current_q], dim=1)
 
     # CQL loss (logsumexp)
-    cql_loss = (
+    cql_q_diff = (
         torch.logsumexp(all_q_values / policy.config.cql_temp, dim=1).mean() * policy.config.cql_temp -
         current_q.squeeze(1).mean()
     )
+    cql_q_diff = torch.clamp(
+        cql_q_diff, policy.config.cql_clip_diff_min, policy.config.cql_clip_diff_max
+    )
+    cql_loss = policy.config.cql_alpha * cql_q_diff
 
     # Total loss
-    loss_critic = td_loss + policy.config.cql_alpha * cql_loss
+    loss_critic = td_loss + cql_loss
 
     return {
         "loss_critic": loss_critic,
@@ -180,7 +199,7 @@ def compute_cal_ql_loss(policy, batch):
 
 def compute_bc_loss(policy, batch):
     """Compute consistency-based BC loss"""
-    observations = {k: v for k, v in batch.items() if "observation" in k}
+    observations = batch["state"]
     actions = batch["action"]
     batch_size = actions.shape[0]
 
@@ -215,10 +234,16 @@ def compute_actor_loss(policy, batch):
     bc_loss = bc_output["loss_bc"]
 
     # Get Q loss
-    observations = {k: v for k, v in batch.items() if "observation" in k}
+    observations = batch["state"]
+    obs_feat = batch.get("observation_feature")
     policy_action, _ = policy.consistency_policy(observations, training=False)
 
-    q_values = policy.critic(observations, policy_action)
+    q_values = policy.critic(observations, policy_action, obs_feat)
+    if policy.config.critic_subsample_size is not None:
+        indices = torch.randperm(policy.config.critic_ensemble_size)[
+            : policy.config.critic_subsample_size
+        ]
+        q_values = q_values[indices]
     q_value = torch.min(q_values, dim=0)[0]
     q_loss = -q_value.mean()  # Negative for gradient ascent
 
@@ -376,10 +401,11 @@ class ConRFTPolicy(PreTrainedPolicy):
         self.eval()
 
         # Normalize inputs
-        batch = self.normalize_inputs(batch)
+        st = batch["state"] if "state" in batch else batch
+        st = self.normalize_inputs(st)
 
         # Generate action using consistency policy
-        action, _ = self.consistency_policy(batch, training=False)
+        action, _ = self.consistency_policy(st, training=False)
 
         # Unnormalize action
         action = self.unnormalize_outputs({ACTION: action})[ACTION]
@@ -400,10 +426,6 @@ class ConRFTPolicy(PreTrainedPolicy):
         Returns:
             Dictionary containing the computed loss and metrics
         """
-        # Normalize inputs and targets
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
-
         if model == "critic":
             return compute_critic_loss(self, batch)
         elif model == "actor":

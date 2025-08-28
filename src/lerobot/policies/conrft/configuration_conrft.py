@@ -16,11 +16,12 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 import numpy as np
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode, PolicyFeature
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
@@ -66,13 +67,13 @@ class ConRFTConfig(PreTrainedConfig):
 
     # Critic (ensemble + CQL/CalQL)
     critic_hidden_dim: int = 1024
-    critic_ensemble: int = 2
-    critic_subsample: int = 2
+    critic_ensemble_size: int = 2
+    critic_subsample_size: Optional[int] = None
     discount: float = 0.99
-    target_tau: float = 0.005
 
     cql_alpha: float = 1.0
     cql_n_actions: int = 10
+    cql_action_sample_method: str = "uniform"
     cql_clip_diff_min: float = -np.inf
     cql_clip_diff_max: float = np.inf
 
@@ -92,6 +93,13 @@ class ConRFTConfig(PreTrainedConfig):
     base_vla_model_path: str | None = None
     freeze_base_vla: bool = True
 
+    # Vision encoder
+    vision_encoder_name: str | None = "resnetv1-10-frozen"
+    freeze_vision_encoder: bool = True
+    shared_encoder: bool = True
+    image_embedding_pooling_dim: int = 8
+    latent_dim: int = 64
+
     # Optimization
     optim: AdamWConfig = field(
         default_factory=lambda: AdamWConfig(lr=3e-4, betas=(0.9, 0.999), weight_decay=0.0)
@@ -110,12 +118,12 @@ class ConRFTConfig(PreTrainedConfig):
     # Feature definitions (same as Octo)
     input_features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "observation.images.front": PolicyFeature(type="observation.images.front", shape=(3, 96, 96)),
-            "observation.images.wrist": PolicyFeature(type="observation.images.wrist", shape=(3, 64, 64)),
-            "observation.state": PolicyFeature(type="observation.state", shape=(8,)),
-            "action": PolicyFeature(type="action", shape=(8,)),
+            "observation.image_primary": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 96, 96)),
+            "observation.image_wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 64, 64)),
+            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(8,)),
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(8,)),
         }
     )
     output_features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {"action": PolicyFeature(type="action", shape=(8,))}
+        default_factory=lambda: {"action": PolicyFeature(type=FeatureType.ACTION, shape=(8,))}
     )
