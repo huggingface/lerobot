@@ -182,7 +182,7 @@ class _NormalizationMixin:
             # to prevent division by zero. This consistently maps an input equal to
             # min_val to -1, ensuring a stable transformation.
             denom = torch.where(
-                denom == 0, torch.tensor(self.eps, device=self.device, dtype=torch.float32), denom
+                denom == 0, torch.tensor(self.eps, device=input_device, dtype=torch.float32), denom
             )
             if inverse:
                 # Map from [-1, 1] back to [min, max]
