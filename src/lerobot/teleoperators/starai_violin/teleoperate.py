@@ -94,6 +94,8 @@ class TeleoperateConfig:
     # TODO: pepijn, steven: if more robots require multiple teleoperators (like lekiwi) its good to make this possibele in teleop.py and record.py with List[Teleoperator]
     teleop: TeleoperatorConfig
     robot: RobotConfig
+    teleop1: TeleoperatorConfig
+    robot1: RobotConfig
     # Limit the maximum frames per second.
     fps: int = 60
     teleop_time_s: float | None = None
@@ -102,18 +104,23 @@ class TeleoperateConfig:
 
 
 def teleop_loop(
-    teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
+    teleop: Teleoperator, robot: Robot,teleop1: Teleoperator, robot1: Robot, fps: int, display_data: bool = False, duration: float | None = None,
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
+        action1 = teleop1.get_action()
+
         if display_data:
             observation = robot.get_observation()
+            observation1 = robot1.get_observation()
             log_rerun_data(observation, action)
+            log_rerun_data(observation1, action1)
 
         robot.send_action(action)
+        robot1.send_action(action)
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
@@ -123,6 +130,8 @@ def teleop_loop(
         print(f"{'NAME':<{display_len}} | {'NORM':>7}")
         for motor, value in action.items():
             print(f"{motor:<{display_len}} | {value:>7.2f}")
+        for motor, value in action1.items():
+            print(f"{motor:<{display_len}} | {value:>7.2f}")            
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
@@ -132,27 +141,39 @@ def teleop_loop(
 
 
 @draccus.wrap()
-def teleoperate(cfg: TeleoperateConfig):
+def teleoperate(cfg0: TeleoperateConfig):
     init_logging()
-    logging.info(pformat(asdict(cfg)))
-    if cfg.display_data:
+    logging.info(pformat(asdict(cfg0)))
+
+    if cfg0.display_data:
         _init_rerun(session_name="teleoperation")
 
-    teleop = make_teleoperator_from_config(cfg.teleop)
-    robot = make_robot_from_config(cfg.robot)
+
+    teleop = make_teleoperator_from_config(cfg0.teleop)
+    robot = make_robot_from_config(cfg0.robot)
+
+    teleop1 = make_teleoperator_from_config(cfg0.teleop1)
+    robot1 = make_robot_from_config(cfg0.robot1)
 
     teleop.connect()
     robot.connect()
 
+    teleop1.connect()
+    robot1.connect()
+
     try:
-        teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)
+        teleop_loop(teleop, robot,teleop1, robot1, cfg0.fps, display_data=cfg0.display_data, duration=cfg0.teleop_time_s)
     except KeyboardInterrupt:
         pass
     finally:
-        if cfg.display_data:
+        if cfg0.display_data:
+            rr.rerun_shutdown()
+        if cfg1.display_data:
             rr.rerun_shutdown()
         teleop.disconnect()
         robot.disconnect()
+        teleop1.disconnect()
+        robot1.disconnect()
 
 
 def main():
