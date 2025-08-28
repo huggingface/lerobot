@@ -165,7 +165,7 @@ class _NormalizationMixin:
         # Move stats to input device if needed
         stats_device = next(iter(stats.values())).device
         if stats_device != input_device:
-            stats = _convert_stats_to_tensors({key: self.stats[key]}, device=input_device)[key]
+            stats = _convert_stats_to_tensors({key: self._tensor_stats[key]}, device=input_device)[key]
 
         if norm_mode == NormalizationMode.MEAN_STD and "mean" in stats and "std" in stats:
             mean, std = stats["mean"], stats["std"]
