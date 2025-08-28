@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
@@ -36,14 +36,14 @@ class ConRFTConfig(PreTrainedConfig):
     num_layers: int = 12
     num_heads: int = 12
     mlp_dim: int = 3072
-    chunk_size: int = 10 # max horizon
+    chunk_size: int = 10  # max horizon
 
     # IO structure
     n_obs_steps: int = 1
     n_action_steps: int = 4
 
     # Action space
-    action_dim: int = 8 # override at runtime from dataset meta
+    action_dim: int = 8  # override at runtime from dataset meta
     max_action: float = 1.0
     fix_gripper: bool = False
 
@@ -61,7 +61,7 @@ class ConRFTConfig(PreTrainedConfig):
     # Loss weights
     bc_weight: float = 1.0
     q_weight: float = 1.0
-    recon_weight: float = 1.0 # CP reconstruction
+    recon_weight: float = 1.0  # CP reconstruction
     snr_clip: float = 5.0
 
     # Critic (ensemble + CQL/CalQL)
@@ -76,8 +76,26 @@ class ConRFTConfig(PreTrainedConfig):
     cql_clip_diff_min: float = -np.inf
     cql_clip_diff_max: float = np.inf
 
+    # stage weights
+    bc_weight_offline: float = 1.0
+    q_weight_offline: float = 1.0
+    bc_weight_online: float = 0.5
+    q_weight_online: float = 1.0
+
+    # target update
+    soft_target_update_rate: float = 0.005  # OR delete and use target_tau consistently
+
+    # Cal-QL temperature
+    cql_temp: float = 1.0
+
+    # optional VLA init
+    base_vla_model_path: str | None = None
+    freeze_base_vla: bool = True
+
     # Optimization
-    optim: AdamWConfig = field(default_factory=lambda: AdamWConfig(lr=3e-4, betas=(0.9, 0.999), weight_decay=0.0))
+    optim: AdamWConfig = field(
+        default_factory=lambda: AdamWConfig(lr=3e-4, betas=(0.9, 0.999), weight_decay=0.0)
+    )
     scheduler: CosineDecayWithWarmupSchedulerConfig | None = None
 
     # Normalization
@@ -90,14 +108,14 @@ class ConRFTConfig(PreTrainedConfig):
     )
 
     # Feature definitions (same as Octo)
-    input_features: list[PolicyFeature] = field(
-        default_factory=lambda: [
-            PolicyFeature("observation.images.front", FeatureType.VISUAL),
-            PolicyFeature("observation.images.wrist", FeatureType.VISUAL),
-            PolicyFeature("observation.state", FeatureType.STATE),
-            PolicyFeature("action", FeatureType.ACTION),
-        ]
+    input_features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "observation.images.front": PolicyFeature(type="observation.images.front", shape=(3, 96, 96)),
+            "observation.images.wrist": PolicyFeature(type="observation.images.wrist", shape=(3, 64, 64)),
+            "observation.state": PolicyFeature(type="observation.state", shape=(8,)),
+            "action": PolicyFeature(type="action", shape=(8,)),
+        }
     )
-    output_features: list[PolicyFeature] = field(
-        default_factory=lambda: [PolicyFeature("action", FeatureType.ACTION)]
+    output_features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {"action": PolicyFeature(type="action", shape=(8,))}
     )
