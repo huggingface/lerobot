@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.configs import ColorMode
@@ -28,11 +28,17 @@ class Reachy2RobotConfig(RobotConfig):
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
     # the number of motors in your follower arms.
     max_relative_target: int | None = None
+
+    # IP address of the Reachy 2 robot
     ip_address: str | None = "localhost"
+
+    # If True, turn_off_smoothly() will be sent to the robot before disconnecting.
+    disable_torque_on_disconnect: bool = True
 
     # Tag for external commands control
     # Set to True if you use an external commands system to control the robot,
     # such as the official teleoperation application: https://github.com/pollen-robotics/Reachy2Teleoperation
+    # If True, robot.send_action() will not send commands to the robot.
     use_external_commands: bool = False
 
     # Robot parts
@@ -51,9 +57,10 @@ class Reachy2RobotConfig(RobotConfig):
     with_right_teleop_camera: bool = True
     with_torso_camera: bool = False
 
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
     def __post_init__(self) -> None:
-        # Add cameras
-        self.cameras: dict[str, CameraConfig] = {}
+        # Add cameras with same ip_address as the robot
         if self.with_left_teleop_camera:
             self.cameras["teleop_left"] = Reachy2CameraConfig(
                 name="teleop",
@@ -86,3 +93,16 @@ class Reachy2RobotConfig(RobotConfig):
             )
 
         super().__post_init__()
+
+        if not (
+            self.with_mobile_base
+            or self.with_l_arm
+            or self.with_r_arm
+            or self.with_neck
+            or self.with_antennas
+        ):
+            raise ValueError(
+                "No Reachy2Robot part used.\n"
+                "At least one part of the robot must be set to True "
+                "(with_mobile_base, with_l_arm, with_r_arm, with_neck, with_antennas)"
+            )

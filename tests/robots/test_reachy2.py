@@ -316,3 +316,15 @@ def test_send_action(reachy2):
         reachy2.reachy.send_goal_positions.assert_called_once()
         if reachy2.config.with_mobile_base:
             reachy2.reachy.mobile_base.send_speed_command.assert_called_once()
+
+
+def test_no_part_declared():
+    with pytest.raises(ValueError):
+        _ = Reachy2RobotConfig(
+            ip_address="192.168.0.200",
+            with_mobile_base=False,
+            with_l_arm=False,
+            with_r_arm=False,
+            with_neck=False,
+            with_antennas=False,
+        )

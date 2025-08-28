@@ -35,3 +35,17 @@ class Reachy2TeleoperatorConfig(TeleoperatorConfig):
     with_r_arm: bool = True
     with_neck: bool = True
     with_antennas: bool = True
+
+    def __post_init__(self):
+        if not (
+            self.with_mobile_base
+            or self.with_l_arm
+            or self.with_r_arm
+            or self.with_neck
+            or self.with_antennas
+        ):
+            raise ValueError(
+                "No Reachy2Teleoperator part used.\n"
+                "At least one part of the robot must be set to True "
+                "(with_mobile_base, with_l_arm, with_r_arm, with_neck, with_antennas)"
+            )

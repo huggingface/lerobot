@@ -142,3 +142,15 @@ def test_get_action(reachy2):
     if reachy2.config.with_mobile_base:
         for vel in REACHY2_VEL.keys():
             assert action[vel] == reachy2.reachy.mobile_base.last_cmd_vel[REACHY2_VEL[vel]]
+
+
+def test_no_part_declared():
+    with pytest.raises(ValueError):
+        _ = Reachy2TeleoperatorConfig(
+            ip_address="192.168.0.200",
+            with_mobile_base=False,
+            with_l_arm=False,
+            with_r_arm=False,
+            with_neck=False,
+            with_antennas=False,
+        )
