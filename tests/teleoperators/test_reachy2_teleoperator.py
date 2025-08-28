@@ -87,9 +87,17 @@ def _make_reachy2_sdk_mock():
     # Mock mobile base with some dummy odometry
     r.mobile_base = MagicMock()
     r.mobile_base.last_cmd_vel = {
-        "vx": 0.001,
-        "vy": 0.002,
-        "vtheta": 0.0,
+        "vx": -0.2,
+        "vy": 0.2,
+        "vtheta": 11.0,
+    }
+    r.mobile_base.odometry = {
+        "x": 1.0,
+        "y": 2.0,
+        "theta": 20.0,
+        "vx": 0.1,
+        "vy": -0.1,
+        "vtheta": 8.0,
     }
 
     r.connect = MagicMock(side_effect=_connect)
@@ -140,8 +148,12 @@ def test_get_action(reachy2):
         else:
             assert action[motor] == reachy2.reachy.joints[REACHY2_JOINTS[motor]].goal_position
     if reachy2.config.with_mobile_base:
-        for vel in REACHY2_VEL.keys():
-            assert action[vel] == reachy2.reachy.mobile_base.last_cmd_vel[REACHY2_VEL[vel]]
+        if reachy2.config.use_present_position:
+            for vel in REACHY2_VEL.keys():
+                assert action[vel] == reachy2.reachy.mobile_base.odometry[REACHY2_VEL[vel]]
+        else:
+            for vel in REACHY2_VEL.keys():
+                assert action[vel] == reachy2.reachy.mobile_base.last_cmd_vel[REACHY2_VEL[vel]]
 
 
 def test_no_part_declared():

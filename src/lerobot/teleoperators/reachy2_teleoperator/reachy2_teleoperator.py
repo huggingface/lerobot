@@ -142,11 +142,16 @@ class Reachy2Teleoperator(Teleoperator):
                 }
             else:
                 joint_action = {k: self.reachy.joints[v].goal_position for k, v in self.joints_dict.items()}
+
             if not self.config.with_mobile_base:
                 dt_ms = (time.perf_counter() - start) * 1e3
                 logger.debug(f"{self} read action: {dt_ms:.1f}ms")
                 return joint_action
-            vel_action = {k: self.reachy.mobile_base.last_cmd_vel[v] for k, v in REACHY2_VEL.items()}
+
+            if self.config.use_present_position:
+                vel_action = {k: self.reachy.mobile_base.odometry[v] for k, v in REACHY2_VEL.items()}
+            else:
+                vel_action = {k: self.reachy.mobile_base.last_cmd_vel[v] for k, v in REACHY2_VEL.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return {**joint_action, **vel_action}
