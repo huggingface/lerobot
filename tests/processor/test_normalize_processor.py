@@ -26,7 +26,7 @@ from lerobot.processor.normalize_processor import (
     _convert_stats_to_tensors,
     hotswap_stats,
 )
-from lerobot.processor.pipeline import IdentityProcessor, RobotProcessor, TransitionKey
+from lerobot.processor.pipeline import DataProcessorPipeline, IdentityProcessor, TransitionKey
 
 
 def create_transition(
@@ -505,8 +505,8 @@ def test_get_config(full_stats):
 
 
 def test_integration_with_robot_processor(normalizer_processor):
-    """Test integration with RobotProcessor pipeline"""
-    robot_processor = RobotProcessor([normalizer_processor])
+    """Test integration with DataProcessorPipeline pipeline"""
+    robot_processor = DataProcessorPipeline([normalizer_processor])
 
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]),
@@ -1007,7 +1007,7 @@ def test_hotswap_stats_basic_functionality():
     identity = IdentityProcessor()
 
     # Create robot processor
-    robot_processor = RobotProcessor(steps=[normalizer, unnormalizer, identity])
+    robot_processor = DataProcessorPipeline(steps=[normalizer, unnormalizer, identity])
 
     # Hotswap stats
     new_processor = hotswap_stats(robot_processor, new_stats)
@@ -1044,7 +1044,7 @@ def test_hotswap_stats_deep_copy():
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
 
     normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
-    original_processor = RobotProcessor(steps=[normalizer])
+    original_processor = DataProcessorPipeline(steps=[normalizer])
 
     # Store reference to original stats
     original_stats_reference = original_processor.steps[0].stats
@@ -1087,7 +1087,7 @@ def test_hotswap_stats_only_affects_normalizer_steps():
     unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
     identity = IdentityProcessor()
 
-    robot_processor = RobotProcessor(steps=[normalizer, identity, unnormalizer])
+    robot_processor = DataProcessorPipeline(steps=[normalizer, identity, unnormalizer])
 
     # Hotswap stats
     new_processor = hotswap_stats(robot_processor, new_stats)
@@ -1114,7 +1114,7 @@ def test_hotswap_stats_empty_stats():
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
 
     normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
-    robot_processor = RobotProcessor(steps=[normalizer])
+    robot_processor = DataProcessorPipeline(steps=[normalizer])
 
     # Hotswap with empty stats
     new_processor = hotswap_stats(robot_processor, empty_stats)
@@ -1131,7 +1131,7 @@ def test_hotswap_stats_no_normalizer_steps():
     }
 
     # Create processor with only identity steps
-    robot_processor = RobotProcessor(steps=[IdentityProcessor(), IdentityProcessor()])
+    robot_processor = DataProcessorPipeline(steps=[IdentityProcessor(), IdentityProcessor()])
 
     # Hotswap stats - should work without error
     new_processor = hotswap_stats(robot_processor, stats)
@@ -1170,7 +1170,7 @@ def test_hotswap_stats_preserves_other_attributes():
         normalize_observation_keys=normalize_observation_keys,
         eps=eps,
     )
-    robot_processor = RobotProcessor(steps=[normalizer])
+    robot_processor = DataProcessorPipeline(steps=[normalizer])
 
     # Hotswap stats
     new_processor = hotswap_stats(robot_processor, new_stats)
@@ -1213,7 +1213,7 @@ def test_hotswap_stats_multiple_normalizer_types():
     unnormalizer1 = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
     unnormalizer2 = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
 
-    robot_processor = RobotProcessor(steps=[normalizer1, unnormalizer1, normalizer2, unnormalizer2])
+    robot_processor = DataProcessorPipeline(steps=[normalizer1, unnormalizer1, normalizer2, unnormalizer2])
 
     # Hotswap stats
     new_processor = hotswap_stats(robot_processor, new_stats)
@@ -1261,7 +1261,7 @@ def test_hotswap_stats_with_different_data_types():
     }
 
     normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
-    robot_processor = RobotProcessor(steps=[normalizer])
+    robot_processor = DataProcessorPipeline(steps=[normalizer])
 
     # Hotswap stats
     new_processor = hotswap_stats(robot_processor, new_stats)
@@ -1317,7 +1317,7 @@ def test_hotswap_stats_functional_test():
 
     # Create original processor
     normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
-    original_processor = RobotProcessor(steps=[normalizer])
+    original_processor = DataProcessorPipeline(steps=[normalizer])
 
     # Process with original stats
     original_result = original_processor(transition)

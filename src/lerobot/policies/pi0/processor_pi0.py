@@ -20,9 +20,9 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
+    DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
-    RobotProcessor,
     ToBatchProcessor,
     TokenizerProcessor,
     UnnormalizerProcessor,
@@ -66,7 +66,7 @@ class Pi0NewLineProcessor(ComplementaryDataProcessor):
 
 def make_pi0_pre_post_processors(
     config: PI0Config, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
-) -> tuple[RobotProcessor, RobotProcessor]:
+) -> tuple[DataProcessorPipeline, DataProcessorPipeline]:
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
         RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
@@ -93,6 +93,6 @@ def make_pi0_pre_post_processors(
         ),
     ]
 
-    return RobotProcessor(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), RobotProcessor(
+    return DataProcessorPipeline(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), DataProcessorPipeline(
         steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
     )

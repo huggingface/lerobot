@@ -25,10 +25,10 @@ from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.vqbet.processor_vqbet import make_vqbet_pre_post_processors
 from lerobot.processor import (
+    DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
     RenameProcessor,
-    RobotProcessor,
     ToBatchProcessor,
     UnnormalizerProcessor,
 )
@@ -245,7 +245,7 @@ def test_vqbet_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(tmpdir)
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(tmpdir)
 
         # Test that loaded processor works
         observation = {

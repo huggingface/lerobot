@@ -25,10 +25,10 @@ from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 from lerobot.processor import (
+    DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
     RenameProcessor,
-    RobotProcessor,
     ToBatchProcessor,
     UnnormalizerProcessor,
 )
@@ -232,7 +232,7 @@ def test_sac_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(tmpdir)
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(tmpdir)
 
         # Test that loaded processor works
         observation = {OBS_STATE: torch.randn(10)}
