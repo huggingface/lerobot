@@ -131,7 +131,7 @@ conda install ffmpeg=7.1.1 -c conda-forge
 5.安装带有 fashionstar 电机依赖的 LeRobot：
 
 ```bash
-cd ~/lerobot && pip install -e ".[fetech]"
+cd ~/lerobot && pip install -e ".[dynamixel]"
 pip install fashionstar-uart-sdk==1.3.1
 ```
 6.检查 Pytorch 和 Torchvision
