@@ -139,7 +139,7 @@ class ProcessorStep(ABC):
     A step is any callable accepting a full `EnvTransition` dict and
     returning a (possibly modified) dict of the same structure. Implementers
     are encouraged—but not required—to expose the optional helper methods
-    listed below. When present, these hooks let `RobotProcessor`
+    listed below. When present, these hooks let `DataProcessorPipeline`
     automatically serialise the step's configuration and learnable state using
     a safe-to-share JSON + SafeTensors format.
 
@@ -280,7 +280,7 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
 
 
 @dataclass
-class RobotProcessor(ModelHubMixin):
+class DataProcessorPipeline(ModelHubMixin):
     """
     Composable, debuggable post-processing processor for robot transitions.
 
@@ -291,7 +291,7 @@ class RobotProcessor(ModelHubMixin):
     Args:
         steps: Ordered list of processing steps executed on every call. Defaults to empty list.
         name: Human-readable identifier that is persisted inside the JSON config.
-            Defaults to "RobotProcessor".
+            Defaults to "DataProcessorPipeline".
         to_transition: Function to convert batch dict to EnvTransition dict.
             Defaults to _default_batch_to_transition.
         to_output: Function to convert EnvTransition dict to the desired output format.
@@ -318,7 +318,7 @@ class RobotProcessor(ModelHubMixin):
     """
 
     steps: Sequence[ProcessorStep] = field(default_factory=list)
-    name: str = "RobotProcessor"
+    name: str = "DataProcessorPipeline"
 
     to_transition: Callable[[dict[str, Any]], EnvTransition] = field(
         default_factory=lambda: _default_batch_to_transition, repr=False
@@ -526,7 +526,7 @@ class RobotProcessor(ModelHubMixin):
         config_filename: str | None = None,
         overrides: dict[str, Any] | None = None,
         **kwargs,
-    ) -> RobotProcessor:
+    ) -> DataProcessorPipeline:
         """Load a serialized processor from source (local path or Hugging Face Hub identifier).
 
         Args:
@@ -542,7 +542,7 @@ class RobotProcessor(ModelHubMixin):
                 non-serializable objects like environment instances.
 
         Returns:
-            A RobotProcessor instance loaded from the saved configuration.
+            A DataProcessorPipeline instance loaded from the saved configuration.
 
         Raises:
             ImportError: If a processor step class cannot be loaded or imported.
@@ -552,12 +552,12 @@ class RobotProcessor(ModelHubMixin):
         Examples:
             Basic loading:
             ```python
-            processor = RobotProcessor.from_pretrained("path/to/processor")
+            processor = DataProcessorPipeline.from_pretrained("path/to/processor")
             ```
 
             Loading specific config file:
             ```python
-            processor = RobotProcessor.from_pretrained(
+            processor = DataProcessorPipeline.from_pretrained(
                 "username/multi-processor-repo", config_filename="preprocessor.json"
             )
             ```
@@ -567,14 +567,14 @@ class RobotProcessor(ModelHubMixin):
             import gym
 
             env = gym.make("CartPole-v1")
-            processor = RobotProcessor.from_pretrained(
+            processor = DataProcessorPipeline.from_pretrained(
                 "username/cartpole-processor", overrides={"ActionRepeatStep": {"env": env}}
             )
             ```
 
             Multiple overrides:
             ```python
-            processor = RobotProcessor.from_pretrained(
+            processor = DataProcessorPipeline.from_pretrained(
                 "path/to/processor",
                 overrides={
                     "CustomStep": {"param1": "new_value"},
@@ -756,19 +756,19 @@ class RobotProcessor(ModelHubMixin):
                 f"Make sure override keys match exact step class names or registry names."
             )
 
-        return cls(steps, loaded_config.get("name", "RobotProcessor"))
+        return cls(steps, loaded_config.get("name", "DataProcessorPipeline"))
 
     def __len__(self) -> int:
         """Return the number of steps in the processor."""
         return len(self.steps)
 
-    def __getitem__(self, idx: int | slice) -> ProcessorStep | RobotProcessor:
+    def __getitem__(self, idx: int | slice) -> ProcessorStep | DataProcessorPipeline:
         """Indexing helper exposing underlying steps.
         * ``int`` – returns the idx-th ProcessorStep.
-        * ``slice`` – returns a new RobotProcessor with the sliced steps.
+        * ``slice`` – returns a new DataProcessorPipeline with the sliced steps.
         """
         if isinstance(idx, slice):
-            return RobotProcessor(self.steps[idx], self.name)
+            return DataProcessorPipeline(self.steps[idx], self.name)
         return self.steps[idx]
 
     def register_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):
@@ -832,7 +832,7 @@ class RobotProcessor(ModelHubMixin):
 
         parts = [f"name='{self.name}'", steps_repr]
 
-        return f"RobotProcessor({', '.join(parts)})"
+        return f"DataProcessorPipeline({', '.join(parts)})"
 
     def __post_init__(self):
         for i, step in enumerate(self.steps):
