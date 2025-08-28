@@ -70,9 +70,9 @@ from lerobot.constants import (
 )
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies.conrft.modeling_conrft import ConRFTPolicy
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
-from lerobot.policies.conrft.modeling_conrft import ConRFTPolicy
 from lerobot.robots import so100_follower  # noqa: F401
 from lerobot.scripts.rl import learner_service
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
@@ -326,7 +326,16 @@ def add_actor_information_and_train(
 
     last_time_policy_pushed = time.time()
 
-    optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg=cfg, policy=policy)
+    if isinstance(policy, ConRFTPolicy):
+        optimizers = {
+            "consistency_policy": torch.optim.Adam(
+                policy.consistency_policy.parameters(), lr=cfg.policy.actor_lr
+            ),
+            "critic": torch.optim.Adam(policy.critic.parameters(), lr=cfg.policy.critic_lr),
+        }
+        lr_scheduler = None
+    else:
+        optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg=cfg, policy=policy)
 
     # If we are resuming, we need to load the training state
     resume_optimization_step, resume_interaction_step = load_training_state(cfg=cfg, optimizers=optimizers)
@@ -405,7 +414,7 @@ def add_actor_information_and_train(
                 policy.set_training_stage("online")
 
             time_for_one_optimization_step = time.time()
-            
+
             # Sample from the iterators
             if policy.training_stage == "offline":
                 batch = next(offline_iterator)
@@ -418,9 +427,9 @@ def add_actor_information_and_train(
 
             # Perform one optimization step
             if policy.training_stage == "offline":
-                training_infos = policy.update_offline(batch, optimization_step)
+                training_infos = policy.update_offline(batch, optimizers)
             else:
-                training_infos = policy.update_online(batch, optimization_step)
+                training_infos = policy.update_online(batch, optimizers)
         else:
             time_for_one_optimization_step = time.time()
             for _ in range(utd_ratio - 1):
@@ -1136,7 +1145,12 @@ def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
     logging.debug("[LEARNER] Pushing actor policy to the queue")
 
     # Create a dictionary to hold all the state dicts
-    state_dicts = {"policy": move_state_dict_to_device(policy.actor.state_dict(), device="cpu")}
+    if hasattr(policy, "consistency_policy"):
+        state_dicts = {
+            "policy": move_state_dict_to_device(policy.consistency_policy.state_dict(), device="cpu")
+        }
+    else:
+        state_dicts = {"policy": move_state_dict_to_device(policy.actor.state_dict(), device="cpu")}
 
     # Add discrete critic if it exists
     if hasattr(policy, "discrete_critic") and policy.discrete_critic is not None:

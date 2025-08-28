@@ -25,6 +25,7 @@ from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.conrft.configuration_conrft import ConRFTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.octo.configuration_octo import OctoConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
@@ -35,7 +36,6 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.policies.conrft.configuration_conrft import ConRFTConfig
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
