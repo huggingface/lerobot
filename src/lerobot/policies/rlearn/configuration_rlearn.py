@@ -59,7 +59,7 @@ class RLearNConfig(PreTrainedConfig):
     use_tanh_head: bool = False  # when True, bound outputs in [-1, 1]
 
     # Training
-    learning_rate: float = 5e-5  # Reduced for stability
+    learning_rate: float = 1e-4
     weight_decay: float = 0.01
     loss_type: str = "composite"  # Always use composite loss with spatial awareness
     ranking_margin: float = 0.1
