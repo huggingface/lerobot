@@ -31,16 +31,16 @@ def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
 def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
     for obs, val in observation.items():
         if isinstance(val, float):
-            rr.log(f"observation.{obs}", rr.Scalar(val))
+            rr.log(f"observation.{obs}", rr.Scalars(val))
         elif isinstance(val, np.ndarray):
             if val.ndim == 1:
                 for i, v in enumerate(val):
-                    rr.log(f"observation.{obs}_{i}", rr.Scalar(float(v)))
+                    rr.log(f"observation.{obs}_{i}", rr.Scalars(float(v)))
             else:
                 rr.log(f"observation.{obs}", rr.Image(val), static=True)
     for act, val in action.items():
         if isinstance(val, float):
-            rr.log(f"action.{act}", rr.Scalar(val))
+            rr.log(f"action.{act}", rr.Scalars(val))
         elif isinstance(val, np.ndarray):
             for i, v in enumerate(val):
-                rr.log(f"action.{act}_{i}", rr.Scalar(float(v)))
+                rr.log(f"action.{act}_{i}", rr.Scalars(float(v)))
