@@ -62,10 +62,10 @@ PARAMS = [
     {"with_r_arm": False, "with_neck": False, "with_antennas": False},
     {"use_external_commands": True, "disable_torque_on_disconnect": True},
     {"use_external_commands": True, "with_mobile_base": False, "with_neck": False},
+    {"disable_torque_on_disconnect": False},
     {"with_right_teleop_camera": False},
     {"with_left_teleop_camera": False, "with_right_teleop_camera": False},
     {"with_left_teleop_camera": False, "with_torso_camera": True},
-    {"disable_torque_on_disconnect": False},
 ]
 
 
