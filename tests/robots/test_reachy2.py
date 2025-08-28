@@ -60,11 +60,12 @@ PARAMS = [
     {"with_mobile_base": False},
     {"with_mobile_base": False, "with_l_arm": False, "with_antennas": False},
     {"with_r_arm": False, "with_neck": False, "with_antennas": False},
-    {"use_external_commands": True},
+    {"use_external_commands": True, "disable_torque_on_disconnect": True},
     {"use_external_commands": True, "with_mobile_base": False, "with_neck": False},
     {"with_right_teleop_camera": False},
     {"with_left_teleop_camera": False, "with_right_teleop_camera": False},
     {"with_left_teleop_camera": False, "with_torso_camera": True},
+    {"disable_torque_on_disconnect": False},
 ]
 
 
@@ -191,7 +192,10 @@ def test_connect_disconnect(reachy2):
     reachy2.disconnect()
     assert not reachy2.is_connected
 
-    reachy2.reachy.turn_off_smoothly.assert_called_once()
+    if reachy2.config.disable_torque_on_disconnect:
+        reachy2.reachy.turn_off_smoothly.assert_called_once()
+    else:
+        reachy2.reachy.turn_off_smoothly.assert_not_called()
     reachy2.reachy.disconnect.assert_called_once()
 
 

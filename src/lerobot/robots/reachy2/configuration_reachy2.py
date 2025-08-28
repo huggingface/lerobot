@@ -33,7 +33,7 @@ class Reachy2RobotConfig(RobotConfig):
     ip_address: str | None = "localhost"
 
     # If True, turn_off_smoothly() will be sent to the robot before disconnecting.
-    disable_torque_on_disconnect: bool = True
+    disable_torque_on_disconnect: bool = False
 
     # Tag for external commands control
     # Set to True if you use an external commands system to control the robot,

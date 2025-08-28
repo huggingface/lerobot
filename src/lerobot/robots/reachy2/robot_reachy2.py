@@ -211,5 +211,6 @@ class Reachy2Robot(Robot):
         if self.reachy is not None:
             for cam in self.cameras.values():
                 cam.disconnect()
-            self.reachy.turn_off_smoothly()
+            if self.config.disable_torque_on_disconnect:
+                self.reachy.turn_off_smoothly()
             self.reachy.disconnect()
