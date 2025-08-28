@@ -54,7 +54,6 @@ class LeRobotDatasetFactory(Protocol):
 
 
 def get_task_index(tasks: datasets.Dataset, task: str) -> int:
-    # TODO(rcadene): a bit complicated no? ^^
     task_idx = tasks.loc[task].task_index.item()
     return task_idx
 
