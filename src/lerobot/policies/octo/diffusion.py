@@ -19,7 +19,6 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
-
 from einops import rearrange
 
 from lerobot.policies.octo.base import TokenGroup

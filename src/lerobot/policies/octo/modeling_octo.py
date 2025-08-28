@@ -43,22 +43,19 @@ from typing import Dict, Optional, Sequence
 
 import torch
 import torch.nn as nn
-
 from torch import Tensor
 
-from lerobot.constants import ACTION, OBS_STATE
+from lerobot.constants import ACTION
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.octo.configuration_octo import OctoConfig
-
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import populate_queues, log_model_loading_keys
-
+from lerobot.policies.octo.diffusion import DiffusionActionHead
 from lerobot.policies.octo.tokenizers import TextProcessor
 from lerobot.policies.octo.transformer import OctoWithoutHead
-from lerobot.policies.octo.diffusion import DiffusionActionHead
-
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import log_model_loading_keys, populate_queues
 
 # TODO(lilkm): Be aware of normalization the image tokenizer (normalize_images function)
+
 
 class OctoPolicy(PreTrainedPolicy):
     """Wrapper class around Octo model to train and run inference within LeRobot."""
@@ -110,16 +107,16 @@ class OctoPolicy(PreTrainedPolicy):
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
- 
+
     def _apply_selective_freezing(self):
         """Apply selective freezing based on configuration settings."""
-        if hasattr(self.model.octo_transformer, 'task_tokenizers'):
+        if hasattr(self.model.octo_transformer, "task_tokenizers"):
             for name, tokenizer in self.model.octo_transformer.task_tokenizers.items():
-                if name == 'language_instruction':
+                if name == "language_instruction":
                     for param in tokenizer.parameters():
                         param.requires_grad = False
-                    print(f"✓ T5 language encoder frozen (always frozen during finetuning)")
-        
+                    print("✓ T5 language encoder frozen (always frozen during finetuning)")
+
         # If train_action_head_only is True, freeze everything except the action head
         if self.config.train_action_head_only:
             # Freeze transformer
@@ -133,10 +130,10 @@ class OctoPolicy(PreTrainedPolicy):
             if self.config.freeze_transformer:
                 for param in self.model.octo_transformer.parameters():
                     param.requires_grad = False
- 
+
             if self.config.freeze_vision_encoder:
                 # Freeze vision encoder components in the transformer
-                if hasattr(self.model.octo_transformer, 'observation_tokenizers'):
+                if hasattr(self.model.octo_transformer, "observation_tokenizers"):
                     for tokenizer in self.model.octo_transformer.observation_tokenizers.values():
                         for param in tokenizer.parameters():
                             param.requires_grad = False
@@ -170,18 +167,18 @@ class OctoPolicy(PreTrainedPolicy):
             # 1. Replace "action_head." with "head."
             if "action_head." in new_key:
                 new_key = new_key.replace("action_head.", "head.")
- 
+
             # 2. Adjust the transformer nesting to match the LeRobot model.
             # The checkpoint has `transformer.transformer` but LeRobot expects
             # `transformer.transformer.transformer`.
             if "octo_transformer.transformer.transformer." in new_key:
-                 new_key = new_key.replace(
-                     "octo_transformer.transformer.transformer.",
-                     "octo_transformer.transformer.transformer.transformer."
-                 )
+                new_key = new_key.replace(
+                    "octo_transformer.transformer.transformer.",
+                    "octo_transformer.transformer.transformer.transformer.",
+                )
 
             transformed_dict[new_key] = value
- 
+
         return transformed_dict
 
     @classmethod
@@ -190,8 +187,9 @@ class OctoPolicy(PreTrainedPolicy):
     ) -> "OctoPolicy":
         """Override to apply key transformations before loading."""
         from safetensors.torch import load_file
+
         from lerobot.utils.utils import init_logging
- 
+
         init_logging()
         # Load the state dict from file safely
         state_dict = load_file(model_file, device=map_location)
@@ -205,7 +203,7 @@ class OctoPolicy(PreTrainedPolicy):
         # Log message
         log_model_loading_keys(msg.missing_keys, msg.unexpected_keys)
         return model
- 
+
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
         """Override the from_pretrained method to display important information."""
@@ -217,7 +215,9 @@ class OctoPolicy(PreTrainedPolicy):
         )
         return super().from_pretrained(*args, **kwargs)
 
-    def _prepare_batch(self, batch: dict[str, Tensor], raw_tasks: Optional[Sequence[str]] = None) -> dict[str, Tensor]:
+    def _prepare_batch(
+        self, batch: dict[str, Tensor], raw_tasks: Optional[Sequence[str]] = None
+    ) -> dict[str, Tensor]:
         """
         Prepare batch for model input.
         Transforms a batch from the LeRobotDataset format to the format expected by the OctoModel.
@@ -225,7 +225,7 @@ class OctoPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         # Get device from any available tensor in the batch
         device = next(iter(batch.values())).device
- 
+
         image_primary = batch["observation.images.front"].to(device)
         image_wrist = batch["observation.images.wrist"].to(device)
         proprio = batch["observation.state"].to(device)
@@ -254,34 +254,36 @@ class OctoPolicy(PreTrainedPolicy):
         # Create timestep_pad_mask - all True since we have real data (no padding)
         timestep_pad_mask = torch.ones((batch_size, window_size), dtype=torch.bool, device=device)
 
-        task_completed = torch.zeros((batch_size, window_size, action_horizon), dtype=torch.bool, device=device)
+        task_completed = torch.zeros(
+            (batch_size, window_size, action_horizon), dtype=torch.bool, device=device
+        )
 
         # Create pad_mask_dict for observations
         obs_pad_mask_dict = {
-            'image_primary': torch.ones((batch_size, window_size), dtype=torch.bool, device=device),
-            'image_wrist': torch.ones((batch_size, window_size), dtype=torch.bool, device=device),
-            'proprio': torch.ones((batch_size, window_size), dtype=torch.bool, device=device),
-            'timestep': torch.ones((batch_size, window_size), dtype=torch.bool, device=device),
+            "image_primary": torch.ones((batch_size, window_size), dtype=torch.bool, device=device),
+            "image_wrist": torch.ones((batch_size, window_size), dtype=torch.bool, device=device),
+            "proprio": torch.ones((batch_size, window_size), dtype=torch.bool, device=device),
+            "timestep": torch.ones((batch_size, window_size), dtype=torch.bool, device=device),
         }
 
         observations = {
-            'image_primary': image_primary,
-            'image_wrist': image_wrist,
-            'proprio': proprio,
-            'timestep': timestep,
-            'timestep_pad_mask': timestep_pad_mask,
-            'task_completed': task_completed,
-            'pad_mask_dict': obs_pad_mask_dict
+            "image_primary": image_primary,
+            "image_wrist": image_wrist,
+            "proprio": proprio,
+            "timestep": timestep,
+            "timestep_pad_mask": timestep_pad_mask,
+            "task_completed": task_completed,
+            "pad_mask_dict": obs_pad_mask_dict,
         }
 
         language_instruction = self.text_processor.encode(raw_tasks)
         language_instruction = {k: v.to(device) for k, v in language_instruction.items()}
 
         tasks = {
-            'language_instruction': language_instruction,
-            'pad_mask_dict': {
-                'language_instruction': torch.ones(batch_size, dtype=torch.bool, device=device)
-            }
+            "language_instruction": language_instruction,
+            "pad_mask_dict": {
+                "language_instruction": torch.ones(batch_size, dtype=torch.bool, device=device)
+            },
         }
 
         # Handle actions only if they're present (during training)
@@ -295,10 +297,10 @@ class OctoPolicy(PreTrainedPolicy):
             # actions to be the target for the diffusion model.
             # raw_actions has shape [batch_size, num_timestamps, action_dim]
             # We need shape [batch_size, window_size, action_horizon, action_dim]
-            
+
             # Select the first `action_horizon` actions from the sequence.
             actions = raw_actions[:, :action_horizon]
-            
+
             # Add the window_size dimension.
             actions = actions.unsqueeze(1)
 
@@ -326,8 +328,10 @@ class OctoPolicy(PreTrainedPolicy):
         # return batch
 
     def create_tasks(
-        self, goals: Optional[Dict[str, torch.Tensor]] = None, texts: Optional[Sequence[str]] = None,
-        device: Optional[torch.device] = None
+        self,
+        goals: Optional[Dict[str, torch.Tensor]] = None,
+        texts: Optional[Sequence[str]] = None,
+        device: Optional[torch.device] = None,
     ):
         """Creates tasks dict from goals and texts."""
         assert goals is not None or texts is not None
@@ -348,9 +352,15 @@ class OctoPolicy(PreTrainedPolicy):
         else:
             batch_size = len(texts)
             # Create dummy goals if none are provided
-            tasks.update({"image_primary": torch.zeros((batch_size, 256, 256, 3), dtype=torch.uint8, device=device)})
+            tasks.update(
+                {"image_primary": torch.zeros((batch_size, 256, 256, 3), dtype=torch.uint8, device=device)}
+            )
             tasks["pad_mask_dict"].update(
-                {k: torch.zeros(batch_size, dtype=torch.bool, device=device) for k in tasks.keys() if k != "pad_mask_dict"}
+                {
+                    k: torch.zeros(batch_size, dtype=torch.bool, device=device)
+                    for k in tasks.keys()
+                    if k != "pad_mask_dict"
+                }
             )
 
         if texts is not None:
@@ -359,14 +369,18 @@ class OctoPolicy(PreTrainedPolicy):
             # Move to the correct device
             encoded = {k: v.to(device) for k, v in encoded.items()}
             tasks["language_instruction"] = encoded
-            tasks["pad_mask_dict"]["language_instruction"] = torch.ones(len(texts), dtype=torch.bool, device=device)
+            tasks["pad_mask_dict"]["language_instruction"] = torch.ones(
+                len(texts), dtype=torch.bool, device=device
+            )
         else:
             batch_size = next(iter(goals.values())).shape[0]
             dummy_texts = [""] * batch_size
             encoded = self.text_processor.encode(dummy_texts)
             encoded = {k: v.to(device) for k, v in encoded.items()}
             tasks["language_instruction"] = encoded
-            tasks["pad_mask_dict"]["language_instruction"] = torch.zeros(batch_size, dtype=torch.bool, device=device)
+            tasks["pad_mask_dict"]["language_instruction"] = torch.zeros(
+                batch_size, dtype=torch.bool, device=device
+            )
 
         return tasks
 
@@ -401,10 +415,10 @@ class OctoPolicy(PreTrainedPolicy):
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
         self.eval()
- 
+
         # First, populate queues with the original, simple batch
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
- 
+
         # Then, prepare the complex batch for the model
         prepared_batch = self._prepare_batch(batch)
 
@@ -489,7 +503,6 @@ class OctoDiffusion(nn.Module):
         timestep_pad_mask: torch.Tensor,
         embodiment_action_dim: Optional[int] = None,
     ) -> torch.Tensor:
-
         transformer_outputs = self.octo_transformer(observations, tasks, timestep_pad_mask)
         actions = self.head.predict_action(
             transformer_outputs=transformer_outputs, embodiment_action_dim=embodiment_action_dim

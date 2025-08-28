@@ -14,15 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Optional, Tuple, Sequence
-
 import re
+from typing import Dict, List, Optional, Sequence, Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
-
 from transformers import AutoTokenizer, T5EncoderModel
+
 from lerobot.policies.octo.base import TokenGroup
 
 
@@ -252,9 +252,7 @@ def generate_proper_pad_mask(
         return torch.ones(tokens.shape[:-1], dtype=torch.bool, device=tokens.device)
 
     if not all([key in pad_mask_dict for key in keys]):
-        print(
-            f"pad_mask_dict missing keys {set(keys) - set(pad_mask_dict.keys())}. Nothing will be masked."
-        )
+        print(f"pad_mask_dict missing keys {set(keys) - set(pad_mask_dict.keys())}. Nothing will be masked.")
         return torch.ones(tokens.shape[:-1], dtype=torch.bool, device=tokens.device)
 
     pad_mask = torch.stack([pad_mask_dict[key] for key in keys], dim=-1)
@@ -292,6 +290,7 @@ class ImageTokenizer(nn.Module):
         tasks: Optional[Dict[str, torch.Tensor]] = None,
     ):
         """Forward pass through image tokenizer."""
+
         def extract_inputs(keys, inputs, check_spatial=False):
             """Extract and concatenate inputs based on keys."""
             extracted_outputs = []

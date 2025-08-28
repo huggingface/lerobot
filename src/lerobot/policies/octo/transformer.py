@@ -19,8 +19,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 
-from lerobot.policies.octo.base import TokenMetadata, PrefixGroup, TimestepGroup, AttentionRule
-from lerobot.policies.octo.tokenizers import SmallStem16, ImageTokenizer, LanguageTokenizer
+from lerobot.policies.octo.base import AttentionRule, PrefixGroup, TimestepGroup, TokenMetadata
+from lerobot.policies.octo.tokenizers import ImageTokenizer, LanguageTokenizer, SmallStem16
 
 
 class MLPBlock(nn.Module):
@@ -364,7 +364,9 @@ class BlockTransformer(nn.Module):
 
         num_attention_heads = self.transformer_kwargs["num_attention_heads"]
 
-        attention_mask = attention_mask.unsqueeze(1).expand(batch_size, self.transformer_kwargs["num_attention_heads"], total_tokens, total_tokens)
+        attention_mask = attention_mask.unsqueeze(1).expand(
+            batch_size, self.transformer_kwargs["num_attention_heads"], total_tokens, total_tokens
+        )
         attention_mask = attention_mask.reshape(batch_size * num_attention_heads, total_tokens, total_tokens)
 
         return attention_mask
@@ -396,7 +398,7 @@ class BlockTransformer(nn.Module):
         # Broadcast to attention mask shape (batch, 1, total_tokens, total_tokens)
         # This matches the JAX implementation's broadcasting
         total_tokens = pad_mask.shape[1]
-        pad_mask = pad_mask.unsqueeze(1) # (batch, 1, total_tokens)
+        pad_mask = pad_mask.unsqueeze(1)  # (batch, 1, total_tokens)
         pad_mask = pad_mask.expand(batch_size, total_tokens, total_tokens)
 
         return pad_mask
