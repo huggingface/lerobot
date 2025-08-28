@@ -65,10 +65,8 @@ class Reachy2CameraConfig(CameraConfig):
     def __post_init__(self):
         if self.name not in ["teleop", "depth"]:
             raise ValueError(f"`name` is expected to be 'teleop' or 'depth', but {self.name} is provided.")
-        if (
-            (self.name == "teleop" and self.image_type not in ["left", "right"])
-            or (self.name == "depth")
-            and self.image_type not in ["rgb", "depth"]
+        if (self.name == "teleop" and self.image_type not in ["left", "right"]) or (
+            self.name == "depth" and self.image_type not in ["rgb", "depth"]
         ):
             raise ValueError(
                 f"`image_type` is expected to be 'left' or 'right' for teleop camera, and 'rgb' or 'depth' for depth camera, but {self.image_type} is provided."

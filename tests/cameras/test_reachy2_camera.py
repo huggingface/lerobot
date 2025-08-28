@@ -158,3 +158,20 @@ def test_disconnect_before_connect(camera):
 def test_async_read_before_connect(camera):
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.async_read()
+
+
+def test_wrong_camera_name():
+    with pytest.raises(ValueError):
+        _ = Reachy2CameraConfig(name="wrong-name", image_type="left")
+
+
+def test_wrong_image_type():
+    with pytest.raises(ValueError):
+        _ = Reachy2CameraConfig(name="teleop", image_type="rgb")
+    with pytest.raises(ValueError):
+        _ = Reachy2CameraConfig(name="depth", image_type="left")
+
+
+def test_wrong_color_mode():
+    with pytest.raises(ValueError):
+        _ = Reachy2CameraConfig(name="teleop", image_type="left", color_mode="wrong-color")
