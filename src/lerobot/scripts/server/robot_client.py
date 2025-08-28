@@ -307,11 +307,6 @@ class RobotClient:
                     if not old_timesteps:
                         old_timesteps = [latest_action]  # queue was empty
 
-                    # Get queue state before changes
-                    old_size, old_timesteps = self._inspect_action_queue()
-                    if not old_timesteps:
-                        old_timesteps = [latest_action]  # queue was empty
-
                     # Log incoming actions
                     incoming_timesteps = [a.get_timestep() for a in timed_actions]
 
