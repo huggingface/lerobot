@@ -191,7 +191,7 @@ class Reachy2Robot(Robot):
                     if key not in REACHY2_VEL:
                         raise KeyError(f"Key '{key}' is not a valid motor key in Reachy 2.")
                     else:
-                        vel[REACHY2_VEL[key]] = val
+                        vel[REACHY2_VEL[key]] = float(val)
                 else:
                     self.reachy.joints[self.joints_dict[key]].goal_position = float(val)
 
