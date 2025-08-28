@@ -16,7 +16,7 @@
 import json
 import warnings
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import imageio
 
@@ -24,7 +24,7 @@ JsonLike = str | int | float | bool | None | list["JsonLike"] | dict[str, "JsonL
 T = TypeVar("T", bound=JsonLike)
 
 
-def write_video(video_path, stacked_frames, fps):
+def write_video(video_path: str | Path, stacked_frames: list, fps: int | float) -> None:
     # Filter out DeprecationWarnings raised from pkg_resources
     with warnings.catch_warnings():
         warnings.filterwarnings(
@@ -43,7 +43,7 @@ def deserialize_json_into_object(fpath: Path, obj: T) -> T:
     with open(fpath, encoding="utf-8") as f:
         data = json.load(f)
 
-    def _deserialize(target, source):
+    def _deserialize(target: JsonLike, source: JsonLike) -> JsonLike:
         """
         Recursively overwrite the structure in `target` with data from `source`,
         performing strict checks on structure and type.
@@ -108,4 +108,5 @@ def deserialize_json_into_object(fpath: Path, obj: T) -> T:
 
     # Perform the in-place/recursive deserialization
     updated_obj = _deserialize(obj, data)
-    return updated_obj
+    # At this point, the structure of `updated_obj` matches `obj` and thus is safe to cast to T.
+    return cast(T, updated_obj)

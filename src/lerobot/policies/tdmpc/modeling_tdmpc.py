@@ -90,7 +90,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> object:
         return self.parameters()
 
     def reset(self):
@@ -187,7 +187,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             self.config.horizon,
             self.config.n_pi_samples,
             batch_size,
-            self.config.action_feature.shape[0],
+            self.action_dim,
             device=device,
         )
         if self.config.n_pi_samples > 0:
@@ -205,9 +205,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         # Model Predictive Path Integral (MPPI) with the cross-entropy method (CEM) as the optimization
         # algorithm.
         # The initial mean and standard deviation for the cross-entropy method (CEM).
-        mean = torch.zeros(
-            self.config.horizon, batch_size, self.config.action_feature.shape[0], device=device
-        )
+        mean = torch.zeros(self.config.horizon, batch_size, self.action_dim, device=device)
         # Maybe warm start CEM with the mean from the previous step.
         if self._prev_mean is not None:
             mean[:-1] = self._prev_mean[1:]
@@ -219,7 +217,7 @@ class TDMPCPolicy(PreTrainedPolicy):
                 self.config.horizon,
                 self.config.n_gaussian_samples,
                 batch_size,
-                self.config.action_feature.shape[0],
+                self.action_dim,
                 device=std.device,
             )
             gaussian_actions = torch.clamp(mean.unsqueeze(1) + std.unsqueeze(1) * std_normal_noise, -1, 1)
@@ -313,7 +311,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             G -= running_discount * self.config.uncertainty_regularizer_coeff * terminal_values.std(0)
         return G
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+    def forward(self, batch: dict[str, Tensor], **kwargs: object) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss.
 
         Returns a dictionary with loss as a tensor, and other information as native floats.
@@ -531,9 +529,12 @@ class TDMPCTOLD(nn.Module):
     def __init__(self, config: TDMPCConfig):
         super().__init__()
         self.config = config
+        _action_ft = config.action_feature
+        assert _action_ft is not None
+        self.action_dim = _action_ft.shape[0]
         self._encoder = TDMPCObservationEncoder(config)
         self._dynamics = nn.Sequential(
-            nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
+            nn.Linear(config.latent_dim + self.action_dim, config.mlp_dim),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
             nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -544,7 +545,7 @@ class TDMPCTOLD(nn.Module):
             nn.Sigmoid(),
         )
         self._reward = nn.Sequential(
-            nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
+            nn.Linear(config.latent_dim + self.action_dim, config.mlp_dim),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
             nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -559,12 +560,12 @@ class TDMPCTOLD(nn.Module):
             nn.Linear(config.mlp_dim, config.mlp_dim),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
-            nn.Linear(config.mlp_dim, config.action_feature.shape[0]),
+            nn.Linear(config.mlp_dim, self.action_dim),
         )
         self._Qs = nn.ModuleList(
             [
                 nn.Sequential(
-                    nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
+                    nn.Linear(config.latent_dim + self.action_dim, config.mlp_dim),
                     nn.LayerNorm(config.mlp_dim),
                     nn.Tanh(),
                     nn.Linear(config.mlp_dim, config.mlp_dim),

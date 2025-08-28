@@ -47,8 +47,11 @@ if "LEROBOT_HOME" in os.environ:
 
 # cache dir
 default_cache_path = Path(HF_HOME) / "lerobot"
-HF_LEROBOT_HOME = Path(os.getenv("HF_LEROBOT_HOME", default_cache_path)).expanduser()
+# Use explicit fallback instead of passing a Path as getenv default
+_home_env = os.getenv("HF_LEROBOT_HOME")
+HF_LEROBOT_HOME = (Path(_home_env) if _home_env else default_cache_path).expanduser()
 
 # calibration dir
 default_calibration_path = HF_LEROBOT_HOME / "calibration"
-HF_LEROBOT_CALIBRATION = Path(os.getenv("HF_LEROBOT_CALIBRATION", default_calibration_path)).expanduser()
+_calib_env = os.getenv("HF_LEROBOT_CALIBRATION")
+HF_LEROBOT_CALIBRATION = (Path(_calib_env) if _calib_env else default_calibration_path).expanduser()

@@ -18,7 +18,7 @@
 import math
 from collections.abc import Callable
 from dataclasses import asdict
-from typing import Literal
+from typing import Any, Optional, cast
 
 import einops
 import numpy as np
@@ -28,6 +28,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.normalize import NormalizeBuffer
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig, is_image_feature
@@ -47,9 +48,14 @@ class SACPolicy(
         config: SACConfig | None = None,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
+        # When config is None, deliberately delegate to base class to raise the
+        # expected ValueError checked in tests.
+        if config is None:
+            super().__init__(cast(PreTrainedConfig, config))
+            return
         super().__init__(config)
+        # Validate provided configuration early
         config.validate_features()
-        self.config = config
 
         # Determine action dimension and initialize all components
         continuous_action_dim = config.output_features["action"].shape[0]
@@ -59,7 +65,7 @@ class SACPolicy(
         self._init_actor(continuous_action_dim)
         self._init_temperature()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> object:
         optim_params = {
             "actor": [
                 p
@@ -141,8 +147,8 @@ class SACPolicy(
 
     def forward(
         self,
-        batch: dict[str, Tensor | dict[str, Tensor]],
-        model: Literal["actor", "critic", "temperature", "discrete_critic"] = "critic",
+        batch: dict[str, Any],
+        **kwargs: object,
     ) -> dict[str, Tensor]:
         """Compute the loss for the given model
 
@@ -160,17 +166,21 @@ class SACPolicy(
         Returns:
             The computed loss tensor
         """
-        # Extract common components from batch
-        actions: Tensor = batch["action"]
-        observations: dict[str, Tensor] = batch["state"]
-        observation_features: Tensor = batch.get("observation_feature")
+        # Parse model selection from kwargs (defaults to "critic")
+        kw = cast(dict[str, Any], kwargs)
+        _model = cast(str, kw.get("model", "critic"))
 
-        if model == "critic":
+        # Extract common components from batch
+        actions = cast(Tensor, batch["action"])
+        observations = cast(dict[str, Tensor], batch["state"])
+        observation_features = cast(Optional[Tensor], batch.get("observation_feature"))
+
+        if _model == "critic":
             # Extract critic-specific components
-            rewards: Tensor = batch["reward"]
-            next_observations: dict[str, Tensor] = batch["next_state"]
-            done: Tensor = batch["done"]
-            next_observation_features: Tensor = batch.get("next_observation_feature")
+            rewards = cast(Tensor, batch["reward"])
+            next_observations = cast(dict[str, Tensor], batch["next_state"])
+            done = cast(Tensor, batch["done"])
+            next_observation_features = cast(Optional[Tensor], batch.get("next_observation_feature"))
 
             loss_critic = self.compute_loss_critic(
                 observations=observations,
@@ -184,12 +194,12 @@ class SACPolicy(
 
             return {"loss_critic": loss_critic}
 
-        if model == "discrete_critic" and self.config.num_discrete_actions is not None:
+        if _model == "discrete_critic" and self.config.num_discrete_actions is not None:
             # Extract critic-specific components
-            rewards: Tensor = batch["reward"]
-            next_observations: dict[str, Tensor] = batch["next_state"]
-            done: Tensor = batch["done"]
-            next_observation_features: Tensor = batch.get("next_observation_feature")
+            rewards = cast(Tensor, batch["reward"])
+            next_observations = cast(dict[str, Tensor], batch["next_state"])
+            done = cast(Tensor, batch["done"])
+            next_observation_features = cast(Optional[Tensor], batch.get("next_observation_feature"))
             complementary_info = batch.get("complementary_info")
             loss_discrete_critic = self.compute_loss_discrete_critic(
                 observations=observations,
@@ -202,7 +212,7 @@ class SACPolicy(
                 complementary_info=complementary_info,
             )
             return {"loss_discrete_critic": loss_discrete_critic}
-        if model == "actor":
+        if _model == "actor":
             return {
                 "loss_actor": self.compute_loss_actor(
                     observations=observations,
@@ -210,7 +220,7 @@ class SACPolicy(
                 )
             }
 
-        if model == "temperature":
+        if _model == "temperature":
             return {
                 "loss_temperature": self.compute_loss_temperature(
                     observations=observations,
@@ -218,7 +228,7 @@ class SACPolicy(
                 )
             }
 
-        raise ValueError(f"Unknown model type: {model}")
+        raise ValueError(f"Unknown model type: {_model}")
 
     def update_target_networks(self):
         """Update target networks with exponential moving average"""
@@ -285,7 +295,7 @@ class SACPolicy(
             # NOTE: We only want to keep the continuous action part
             # In the buffer we have the full action space (continuous + discrete)
             # We need to split them before concatenating them in the critic forward
-            actions: Tensor = actions[:, :DISCRETE_DIMENSION_INDEX]
+            actions = actions[:, :DISCRETE_DIMENSION_INDEX]
         q_preds = self.critic_forward(
             observations=observations,
             actions=actions,
@@ -664,7 +674,7 @@ class MLP(nn.Module):
     Arguments:
         input_dim (int): Size of input feature dimension.
         hidden_dims (list[int]): Sizes for each hidden layer.
-        activations (Callable or str): Activation to apply between layers.
+        activations (nn.Module or str): Activation to apply between layers.
         activate_final (bool): Whether to apply activation at the final layer.
         dropout_rate (Optional[float]): Dropout probability applied before normalization and activation.
         final_activation (Optional[Callable or str]): Activation for the final layer when `activate_final` is True.
@@ -677,10 +687,10 @@ class MLP(nn.Module):
         self,
         input_dim: int,
         hidden_dims: list[int],
-        activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
+        activations: nn.Module | str = nn.SiLU(),
         activate_final: bool = False,
         dropout_rate: float | None = None,
-        final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
+        final_activation: nn.Module | str | None = None,
     ):
         super().__init__()
         layers: list[nn.Module] = []
@@ -698,7 +708,21 @@ class MLP(nn.Module):
                     layers.append(nn.Dropout(p=dropout_rate))
                 layers.append(nn.LayerNorm(out_dim))
                 act_cls = final_activation if is_last and final_activation else activations
-                act = act_cls if isinstance(act_cls, nn.Module) else getattr(nn, act_cls)()
+                if isinstance(act_cls, nn.Module):
+                    act = act_cls
+                elif isinstance(act_cls, str):
+                    act = getattr(nn, act_cls)()
+                else:
+                    # Fallback: wrap callable into a nn.Module-like object
+                    class _Lambda(nn.Module):
+                        def __init__(self, fn):
+                            super().__init__()
+                            self.fn = fn
+
+                        def forward(self, x: torch.Tensor) -> torch.Tensor:
+                            return self.fn(x)
+
+                    act = _Lambda(act_cls)
                 layers.append(act)
 
             in_dim = out_dim
@@ -776,9 +800,9 @@ class CriticEnsemble(nn.Module):
         # Move each tensor in observations to device
         observations = {k: v.to(device) for k, v in observations.items()}
         # NOTE: We normalize actions it helps for sample efficiency
-        actions: dict[str, torch.tensor] = {"action": actions}
-        # NOTE: Normalization layer took dict in input and outputs a dict that why
-        actions = self.output_normalization(actions)["action"]
+        action_dict: dict[str, Tensor] = {"action": actions}
+        # NOTE: Normalization layer takes a dict in input and outputs a dict
+        actions = self.output_normalization(action_dict)["action"]
         actions = actions.to(device)
 
         obs_enc = self.encoder(observations, cache=observation_features)
@@ -1106,7 +1130,7 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
 
 
 def _convert_normalization_params_to_tensor(normalization_params: dict) -> dict:
-    converted_params = {}
+    converted_params: dict[str, dict[str, Tensor]] = {}
     for outer_key, inner_dict in normalization_params.items():
         converted_params[outer_key] = {}
         for key, value in inner_dict.items():
