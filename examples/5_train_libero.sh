@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # config
-REPO_ID=jadechoghari/smol-libero
+REPO_ID=jadechoghari/smol-libero3
 TASK=libero_10
 OUTPUT_DIR=./outputs/
 
@@ -16,7 +16,7 @@ SAVE_FREQ=10000
 NUM_WORKERS=0
 
 # model params
-POLICY=pi0
+POLICY=smolvla
 USE_AMP=false
 OPTIMIZER_LR=1e-4
 PEFT_METHOD=lora
