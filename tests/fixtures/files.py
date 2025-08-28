@@ -17,8 +17,6 @@ from pathlib import Path
 import datasets
 import numpy as np
 import pandas as pd
-import pyarrow.compute as pc
-import pyarrow.parquet as pq
 import pytest
 from datasets import Dataset
 
@@ -186,53 +184,3 @@ def create_hf_dataset(hf_dataset_factory):
         write_hf_dataset(hf_dataset, dir, data_file_size_in_mb, chunk_size)
 
     return _create_hf_dataset
-
-
-@pytest.fixture(scope="session")
-def single_episode_parquet_path(hf_dataset_factory, info_factory):
-    def _create_single_episode_parquet(
-        dir: Path, ep_idx: int = 0, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
-    ) -> Path:
-        raise NotImplementedError()
-        if info is None:
-            info = info_factory()
-        if hf_dataset is None:
-            hf_dataset = hf_dataset_factory()
-
-        data_path = info["data_path"]
-        chunks_size = info["chunks_size"]
-        ep_chunk = ep_idx // chunks_size
-        fpath = dir / data_path.format(episode_chunk=ep_chunk, episode_index=ep_idx)
-        fpath.parent.mkdir(parents=True, exist_ok=True)
-        table = hf_dataset.data.table
-        ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
-        pq.write_table(ep_table, fpath)
-        return fpath
-
-    return _create_single_episode_parquet
-
-
-@pytest.fixture(scope="session")
-def multi_episode_parquet_path(hf_dataset_factory, info_factory):
-    def _create_multi_episode_parquet(
-        dir: Path, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
-    ) -> Path:
-        raise NotImplementedError()
-        if info is None:
-            info = info_factory()
-        if hf_dataset is None:
-            hf_dataset = hf_dataset_factory()
-
-        data_path = info["data_path"]
-        chunks_size = info["chunks_size"]
-        total_episodes = info["total_episodes"]
-        for ep_idx in range(total_episodes):
-            ep_chunk = ep_idx // chunks_size
-            fpath = dir / data_path.format(episode_chunk=ep_chunk, episode_index=ep_idx)
-            fpath.parent.mkdir(parents=True, exist_ok=True)
-            table = hf_dataset.data.table
-            ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
-            pq.write_table(ep_table, fpath)
-        return dir / "data"
-
-    return _create_multi_episode_parquet
