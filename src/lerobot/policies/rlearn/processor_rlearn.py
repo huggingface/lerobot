@@ -60,9 +60,9 @@ def make_rlearn_processor(
         ),
         ToBatchProcessor(),
         RLearnLanguageFromTaskProcessor(),
-        # Use the same model name for tokenizer to keep vocab aligned with text tower
+        # Use the text model name for tokenizer to keep vocab aligned with text tower
         TokenizerProcessor(
-            tokenizer_name=config.model_name,
+            tokenizer_name=config.text_model_name,
             max_length=128,
             padding="max_length",
             truncation=True,

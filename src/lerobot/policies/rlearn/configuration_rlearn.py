@@ -33,12 +33,14 @@ class RLearNConfig(PreTrainedConfig):
       - Per-timestep reward logits or a single-step reward logit.
 
     Notes:
-      - This is the initial architecture. It uses frozen vision/text encoders
-        (e.g. SigLIP2) and trains a lightweight temporal aggregator + head.
+      - This follows the ReWiND paper architecture. It uses frozen vision/text encoders
+        (DINO v3 for vision, sentence-transformers for language) and trains a 
+        lightweight temporal aggregator + head.
     """
 
-    # Encoders
-    model_name: str = "google/siglip2-base-patch16-256"
+    # Encoders - Using DINOv2 (base) for vision and sentence-transformers for text (ReWiND paper)
+    vision_model_name: str = "facebook/dinov2-base"
+    text_model_name: str = "sentence-transformers/all-MiniLM-L12-v2"
     freeze_backbones: bool = True
 
     # Temporal aggregator

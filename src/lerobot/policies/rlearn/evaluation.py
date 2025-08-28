@@ -323,8 +323,8 @@ class RLearnEvaluator:
 
         T, C, H, W = frames.shape
 
-        # Expected input size for SigLIP2 is typically 256x256
-        target_size = 256
+        # Expected input size for DINO v3 is 224x224
+        target_size = 224
 
         # Resize frames if needed
         if H != target_size or W != target_size:
@@ -402,12 +402,12 @@ class RLearnEvaluator:
                     if len(img.shape) == 3 and img.shape[-1] in [1, 3, 4]:
                         img = img.permute(2, 0, 1)  # HWC -> CHW
 
-                    # Resize to expected input size (256x256 for SigLIP2) BEFORE stacking
-                    if img.shape[-2:] != (256, 256):
+                    # Resize to expected input size (224x224 for DINO v3) BEFORE stacking
+                    if img.shape[-2:] != (224, 224):
                         import torch.nn.functional as F
 
                         img = F.interpolate(
-                            img.unsqueeze(0), size=(256, 256), mode="bilinear", align_corners=False
+                            img.unsqueeze(0), size=(224, 224), mode="bilinear", align_corners=False
                         ).squeeze(0)
 
                     # Normalize to [0, 1] if needed
@@ -527,12 +527,12 @@ class RLearnEvaluator:
                     if len(img.shape) == 3 and img.shape[-1] in [1, 3, 4]:
                         img = img.permute(2, 0, 1)
 
-                    # Resize to expected input size (256x256 for SigLIP2)
-                    if img.shape[-2:] != (256, 256):
+                    # Resize to expected input size (224x224 for DINO v3)
+                    if img.shape[-2:] != (224, 224):
                         import torch.nn.functional as F
 
                         img = F.interpolate(
-                            img.unsqueeze(0), size=(256, 256), mode="bilinear", align_corners=False
+                            img.unsqueeze(0), size=(224, 224), mode="bilinear", align_corners=False
                         ).squeeze(0)
 
                     # Normalize to [0, 1] if needed

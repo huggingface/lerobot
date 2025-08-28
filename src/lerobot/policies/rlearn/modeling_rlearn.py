@@ -17,7 +17,7 @@
 """
 RLearN: Video-Language Conditioned Reward Model (ReWiND Implementation)
 
-This implementation follows the ReWiND paper approach:
+This implementation follows the ReWiND paper approach (arXiv:2505.10911v1):
 - Automatically generates linear progress labels (0 to 1) for each episode
 - No need for pre-annotated rewards in the dataset
 - Applies video rewinding augmentation to create synthetic failure trajectories
@@ -33,7 +33,7 @@ High-level Architecture
         |  per-frame encode
         v
   +------------------------------+
-  |  Vision Encoder (frozen)     |  e.g. SigLIP2 vision tower
+  |  Vision Encoder (frozen)     |  e.g. DINOv2 (base)
   +------------------------------+
         |s
         |  pooled per-frame embeddings (BT, H_v)
@@ -46,7 +46,7 @@ High-level Architecture
                                     |                 |
                                     |                 v
                                     |      +------------------------------+
-                                    |      |  Text Encoder (frozen)       |  e.g. SigLIP2 text tower
+                                    |      |  Text Encoder (frozen)       |  e.g. sentence-transformers
                                     |      +------------------------------+
                                     |                 |
                                     |                 |  pooled text embedding (B, H_t)
@@ -67,10 +67,8 @@ High-level Architecture
   Output
     - reward_logits: (B, T', 1)  with T' ≤ T (affected by stride and frame dropout)
 
-Training
-  - Loss: composite loss with progress regression, spatial-aware InfoNCE, and ReWiND reversible ranking
-
 Notes
+  - Uses DINOv2 (base, ~ViT-B) for vision and sentence-transformers (all-MiniLM-L12-v2) for text encoding.
   - Backbones (vision/text) are frozen by default; only projections, temporal module, and head are trainable.
   - Stride/frame dropout applied during training can subsample timesteps.
 """
@@ -91,8 +89,8 @@ from lerobot.policies.rlearn.configuration_rlearn import RLearNConfig
 class RLearNPolicy(PreTrainedPolicy):
     """Video-language conditioned reward model.
 
-    - Visual encoder: frozen SigLIP2 (via transformers AutoModel), returns per-frame embeddings.
-    - Text encoder: frozen SigLIP2 text tower, returns a language embedding.
+    - Visual encoder: frozen DINOv2 (base), returns per-frame embeddings.
+    - Text encoder: frozen sentence-transformers (all-MiniLM-L12-v2), returns a language embedding.
     - Temporal module: causal transformer over time that cross-attends to language embedding.
     - Output: per-timestep reward logits; trainable small head.
     """
@@ -105,24 +103,20 @@ class RLearNPolicy(PreTrainedPolicy):
         self.config = config
         self.episode_data_index = episode_data_index  # Store episode boundaries for progress calculation
 
-        # Encoders
-        from transformers import AutoModel, AutoProcessor
-
-        self.vision_text_model = AutoModel.from_pretrained(config.model_name, trust_remote_code=True)
-        self.processor = AutoProcessor.from_pretrained(config.model_name, trust_remote_code=True)
-
-        # Detect towers
-        if hasattr(self.vision_text_model, "vision_model") and hasattr(self.vision_text_model, "text_model"):
-            self.vision_encoder = self.vision_text_model.vision_model
-            self.text_encoder = self.vision_text_model.text_model
-            self.vision_hidden = getattr(self.vision_text_model.config, "vision_config", None).hidden_size
-            self.text_hidden = getattr(self.vision_text_model.config, "text_config", None).hidden_size
-        else:
-            # Fallback if AutoModel exposes pooled outputs directly (rare for SigLIP2)
-            self.vision_encoder = self.vision_text_model
-            self.text_encoder = self.vision_text_model
-            self.vision_hidden = getattr(self.vision_text_model.config, "hidden_size", 768)
-            self.text_hidden = getattr(self.vision_text_model.config, "hidden_size", 768)
+        # Encoders - ReWiND paper setup: DINOv2 for vision, sentence-transformers for text
+        from transformers import AutoImageProcessor, AutoModel
+        from sentence_transformers import SentenceTransformer
+        
+        # Load DINOv2 (base) vision encoder with its processor
+        self.vision_processor = AutoImageProcessor.from_pretrained(config.vision_model_name)
+        self.vision_encoder = AutoModel.from_pretrained(config.vision_model_name)
+        
+        # Load sentence-transformers text encoder
+        self.text_encoder = SentenceTransformer(config.text_model_name)
+        
+        # DINOv2-base has 768 hidden size, all-MiniLM-L12-v2 has 384
+        self.vision_hidden = 768  # DINOv2-base
+        self.text_hidden = 384  # all-MiniLM-L12-v2
 
         if config.freeze_backbones:
             for p in self.vision_encoder.parameters():
@@ -208,33 +202,46 @@ class RLearNPolicy(PreTrainedPolicy):
         frames = frames[:, idx]
         B, T_eff, C, H, W = frames.shape  # NEW: effective length after stride
 
-        # Encode language
+        # Encode language using sentence-transformers
         lang_emb = encode_language(
-            batch.get(OBS_LANGUAGE, None), self.text_encoder, self.processor, batch_size=B
+            batch.get(OBS_LANGUAGE, None), self.text_encoder, batch_size=B
         )
+        # Ensure embeddings are normal tensors on the correct device (not inference tensors)
+        lang_emb = lang_emb.detach().clone().to(self.text_proj.weight.device)
         lang_emb = self.text_proj(lang_emb)  # (B, D)
 
-        # Use the HF processor to standardize size & normalization
+        # Process frames with DINOv2
         # Flatten (B, T_eff, C, H, W) -> (BT, C, H, W)
         BT = B * T_eff
-        flat = frames.reshape(BT, C, H, W).detach().cpu()
+        flat = frames.reshape(BT, C, H, W)
 
-        # Convert to uint8 HWC numpy (processor prefers PIL/np)
-        # If already in [0,1], scale to [0,255]
-        if flat.dtype != torch.uint8:
-            if flat.numel() > 0 and float(flat.max()) <= 1.0:
-                flat = flat * 255.0
-            flat = flat.clamp(0, 255).round().to(torch.uint8)
+        # Convert to list of PIL images or numpy arrays for the processor
+        # DINOv2 processor expects images in HWC format
+        images_list = []
+        for i in range(BT):
+            img = flat[i]  # (C, H, W)
+            # Convert to HWC format
+            img = img.permute(1, 2, 0)  # (H, W, C)
+            
+            # Convert to numpy if needed
+            if img.dtype == torch.uint8:
+                img = img.cpu().numpy()
+            else:
+                # Convert to uint8 range
+                img = (img.clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
+            
+            images_list.append(img)
+        
+        # Process with DINOv2 processor
+        processed = self.vision_processor(images=images_list, return_tensors="pt")
+        pixel_values = processed["pixel_values"].to(next(self.vision_encoder.parameters()).device)
 
-        images = [flat[k].permute(1, 2, 0).numpy() for k in range(flat.size(0))]
+        # Encode frames through DINOv2
+        vision_outputs = self.vision_encoder(pixel_values)
 
-        proc_out = self.processor(images=images, return_tensors="pt")
-        pixel_values = proc_out["pixel_values"].to(next(self.vision_encoder.parameters()).device)
-
-        # Encode frames through visual tower per frame
-        vision_outputs = self.vision_encoder(pixel_values=pixel_values)
-
-        # Extract CLS tokens for temporal modeling
+        # Extract CLS tokens for temporal modeling  
+        # DINOv2 outputs last_hidden_state of shape (batch_size, sequence_length, hidden_size)
+        # The CLS token is the first token
         if hasattr(vision_outputs, "last_hidden_state"):
             cls_tokens = vision_outputs.last_hidden_state[:, 0]  # (BT, D_vision)
         else:
@@ -302,38 +309,45 @@ class RLearNPolicy(PreTrainedPolicy):
                 idx = torch.tensor([0], device=frames.device)
         frames = frames[:, idx]
 
-        # Encode language
+        # Encode language using sentence-transformers
         lang_emb = encode_language(
-            batch.get(OBS_LANGUAGE, None), self.text_encoder, self.processor, batch_size=B
+            batch.get(OBS_LANGUAGE, None), self.text_encoder, batch_size=B
         )
+        # Ensure embeddings are normal tensors on the correct device (not inference tensors)
+        lang_emb = lang_emb.detach().clone().to(self.text_proj.weight.device)
         lang_emb = self.text_proj(lang_emb)  # (B, D)
 
-        # Encode frames through visual tower per frame
+        # Encode frames through DINOv2 visual encoder
         # Flatten time for batched encode
         BT = B * frames.shape[1]
         flat = frames.reshape(BT, C, H, W)
 
-        # Use HF processor to properly resize and normalize images
-        # Convert to CPU for processing, then move back to device
-        flat_cpu = flat.detach().cpu()
+        # Convert to list of PIL images or numpy arrays for the processor
+        # DINOv2 processor expects images in HWC format
+        images_list = []
+        for i in range(BT):
+            img = flat[i]  # (C, H, W)
+            # Convert to HWC format
+            img = img.permute(1, 2, 0)  # (H, W, C)
+            
+            # Convert to numpy if needed
+            if img.dtype == torch.uint8:
+                img = img.cpu().numpy()
+            else:
+                # Convert to uint8 range
+                img = (img.clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
+            
+            images_list.append(img)
+        
+        # Process with DINOv2 processor
+        processed = self.vision_processor(images=images_list, return_tensors="pt")
+        pixel_values = processed["pixel_values"].to(next(self.vision_encoder.parameters()).device)
 
-        # Convert to uint8 HWC numpy format expected by processor
-        if flat_cpu.dtype != torch.uint8:
-            if flat_cpu.numel() > 0 and float(flat_cpu.max()) <= 1.0:
-                flat_cpu = flat_cpu * 255.0
-            flat_cpu = flat_cpu.clamp(0, 255).round().to(torch.uint8)
-
-        # Convert to list of numpy arrays
-        images = [flat_cpu[k].permute(1, 2, 0).numpy() for k in range(flat_cpu.size(0))]
-
-        # Process with HF processor (resizes to 256x256 and normalizes)
-        proc_out = self.processor(images=images, return_tensors="pt")
-        pixel_values = proc_out["pixel_values"].to(next(self.vision_encoder.parameters()).device)
-
-        # Encode through vision model
-        vision_outputs = self.vision_encoder(pixel_values=pixel_values)
+        # Encode through DINOv2 model
+        vision_outputs = self.vision_encoder(pixel_values)
 
         # Extract CLS token for temporal modeling
+        # DINOv2 outputs last_hidden_state of shape (batch_size, sequence_length, hidden_size)
         if hasattr(vision_outputs, "last_hidden_state"):
             cls_tokens = vision_outputs.last_hidden_state[:, 0]  # (BT, D) - CLS token
         else:
@@ -430,48 +444,6 @@ class RLearNPolicy(PreTrainedPolicy):
 
                 # Apply stride/dropout indexing to match the processed frames
                 target = target[:, idx]
-
-            elif "index" in batch and hasattr(self, "episode_data_index"):
-                # Fallback: Use global index if available
-                global_indices = batch["index"]  # Shape: (B,)
-
-                # For each index, find which episode it belongs to and its position
-                progress_values = []
-
-                for global_idx in global_indices:
-                    # Find which episode this index belongs to
-                    episode_starts = self.episode_data_index["from"]
-                    episode_ends = self.episode_data_index["to"]
-
-                    # Find the episode by checking which range the index falls into
-                    episode_idx = None
-                    frame_in_episode = None
-                    for ep_idx in range(len(episode_starts)):
-                        if episode_starts[ep_idx] <= global_idx < episode_ends[ep_idx]:
-                            episode_idx = ep_idx
-                            frame_in_episode = global_idx.item() - episode_starts[ep_idx].item()
-                            break
-
-                    if episode_idx is not None:
-                        # Calculate position within episode
-                        ep_start = episode_starts[episode_idx].item()
-                        ep_end = episode_ends[episode_idx].item()
-                        ep_length = ep_end - ep_start
-
-                        # Progress from 0 to 1 within the episode
-                        progress = frame_in_episode / max(1, ep_length - 1)
-                    else:
-                        # Fallback if we can't find the episode (shouldn't happen)
-                        progress = 0.5
-
-                    progress_values.append(progress)
-
-                # For temporal window, use simplified linear progress
-                # (proper calculation would need all frame indices in the window)
-                T_effective = len(idx)
-                target = torch.tensor(progress_values, device=values.device, dtype=values.dtype)
-                target = target.unsqueeze(1).expand(B, T_effective)  # Simple expansion
-
             else:
                 raise ValueError(
                     "No episode information found in batch. Please ensure 'episode_index' and 'frame_index' keys are present."
@@ -698,8 +670,9 @@ def extract_visual_sequence(batch: dict[str, Tensor], target_seq_len: int = None
 
 
 def encode_language(
-    language_input: Tensor | list | str | None, text_encoder, processor, batch_size: int
+    language_input: Tensor | list | str | None, text_encoder, batch_size: int
 ) -> Tensor:
+    """Encode language using sentence-transformers (ReWiND paper setup)."""
     # language_input can be: list[str] length B, or None
     if language_input is None:
         texts = [""] * batch_size
@@ -709,16 +682,12 @@ def encode_language(
         # Single string for the batch
         texts = [str(language_input)] * batch_size
 
-    inputs = processor(text=texts, padding=True, return_tensors="pt")
-    inputs = {k: v.to(next(text_encoder.parameters()).device) for k, v in inputs.items()}
-    outputs = text_encoder(**inputs)
-    if hasattr(outputs, "pooler_output"):
-        emb = outputs.pooler_output
-    elif hasattr(outputs, "last_hidden_state"):
-        emb = outputs.last_hidden_state[:, 0]
-    else:
-        raise RuntimeError("Unsupported text encoder output structure")
-    return emb
+    # For sentence-transformers, we can directly encode
+    # Returns tensor of shape (batch_size, embedding_dim)
+    device = next(iter(text_encoder.parameters())).device if hasattr(text_encoder, 'parameters') else 'cpu'
+    embeddings = text_encoder.encode(texts, convert_to_tensor=True, device=device)
+    
+    return embeddings
 
 
 def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5) -> tuple[Tensor, Tensor]:
