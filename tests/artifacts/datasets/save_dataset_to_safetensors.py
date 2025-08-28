@@ -47,15 +47,15 @@ def save_dataset_to_safetensors(output_dir, repo_id="lerobot/pusht"):
     )
 
     # save 2 first frames of first episode
-    i = dataset.meta.episodes["dataset_from_index"][0].item()
+    i = dataset.meta.episodes["dataset_from_index"][0]
     save_file(dataset[i], repo_dir / f"frame_{i}.safetensors")
     save_file(dataset[i + 1], repo_dir / f"frame_{i + 1}.safetensors")
 
     # save 2 frames at the middle of first episode
     i = int(
         (
-            dataset.meta.episodes["dataset_to_index"][0].item()
-            - dataset.meta.episodes["dataset_from_index"][0].item()
+            dataset.meta.episodes["dataset_to_index"][0]
+            - dataset.meta.episodes["dataset_from_index"][0]
         )
         / 2
     )
@@ -63,7 +63,7 @@ def save_dataset_to_safetensors(output_dir, repo_id="lerobot/pusht"):
     save_file(dataset[i + 1], repo_dir / f"frame_{i + 1}.safetensors")
 
     # save 2 last frames of first episode
-    i = dataset.meta.episodes["dataset_to_index"][0].item()
+    i = dataset.meta.episodes["dataset_to_index"][0]
     save_file(dataset[i - 2], repo_dir / f"frame_{i - 2}.safetensors")
     save_file(dataset[i - 1], repo_dir / f"frame_{i - 1}.safetensors")
 
