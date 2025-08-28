@@ -90,9 +90,12 @@ def create_libero_envs(
                     f"Creating Libero envs with task ids {tasks_id} from suite {_task}, episode_indices: {episode_indices}"
                 )
                 envs_list = [
-                    (lambda i=i, task_suite=task_suite, tasks_id=tasks_id,
-                            _task=_task, episode_indices=episode_indices:
-                        LiberoEnv(
+                    (
+                        lambda i=i,
+                        task_suite=task_suite,
+                        tasks_id=tasks_id,
+                        _task=_task,
+                        episode_indices=episode_indices: LiberoEnv(
                             task_suite=task_suite,
                             task_id=tasks_id,
                             task_suite_name=_task,
