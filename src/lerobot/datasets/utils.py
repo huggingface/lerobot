@@ -45,7 +45,6 @@ from lerobot.datasets.backward_compatibility import (
     BackwardCompatibilityError,
     ForwardCompatibilityError,
 )
-from lerobot.robots import Robot
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
@@ -275,8 +274,21 @@ def load_tasks(local_dir: Path) -> pandas.DataFrame:
 
 
 def write_episodes(episodes: Dataset, local_dir: Path) -> None:
-    if get_hf_dataset_size_in_mb(episodes) > DEFAULT_DATA_FILE_SIZE_IN_MB:
-        raise NotImplementedError("Contact a maintainer.")
+    """Write episode metadata to a parquet file in the LeRobot v3.0 format.
+    This function writes episode-level metadata to a single parquet file.
+    Used primarily during dataset conversion (v2.1 → v3.0) and in test fixtures.
+
+    Args:
+        episodes: HuggingFace Dataset containing episode metadata
+        local_dir: Root directory where the dataset will be stored
+    """
+    episode_size_mb = get_hf_dataset_size_in_mb(episodes)
+    if episode_size_mb > DEFAULT_DATA_FILE_SIZE_IN_MB:
+        raise NotImplementedError(
+            f"Episodes dataset is too large ({episode_size_mb} MB) to write to a single file. "
+            f"The current limit is {DEFAULT_DATA_FILE_SIZE_IN_MB} MB. "
+            "This function only supports single-file episode metadata. "
+        )
 
     fpath = local_dir / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
     fpath.parent.mkdir(parents=True, exist_ok=True)
@@ -495,17 +507,6 @@ def build_dataset_frame(
     return frame
 
 
-def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
-    # TODO(rcadene): add fps for each feature
-    camera_ft = {}
-    if robot.cameras:
-        camera_ft = {
-            key: {"dtype": "video" if use_videos else "image", **ft}
-            for key, ft in robot.camera_features.items()
-        }
-    return {**robot.motor_features, **camera_ft, **DEFAULT_FEATURES}
-
-
 def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:
     # TODO(aliberts): Implement "type" in dataset features and simplify this
     policy_features = {}
@@ -636,7 +637,7 @@ def create_lerobot_dataset_card(
     **kwargs,
 ) -> DatasetCard:
     """
-    Keyword arguments will be used to replace values in ./lerobot/datasets/card_template.md.
+    Keyword arguments will be used to replace values in src/lerobot/datasets/card_template.md.
     Note: If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
     """
     card_tags = ["LeRobot"]
