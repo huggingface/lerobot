@@ -31,7 +31,7 @@ from termcolor import colored
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_FEATURES
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import RobotProcessor, TransitionKey
+from lerobot.processor import DataProcessorPipeline, TransitionKey
 from lerobot.robots import Robot
 
 
@@ -102,8 +102,8 @@ def predict_action(
     observation: dict[str, np.ndarray],
     policy: PreTrainedPolicy,
     device: torch.device,
-    preprocessor: RobotProcessor,
-    postprocessor: RobotProcessor,
+    preprocessor: DataProcessorPipeline,
+    postprocessor: DataProcessorPipeline,
     use_amp: bool,
     task: str | None = None,
     robot_type: str | None = None,

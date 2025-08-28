@@ -16,11 +16,11 @@ from collections.abc import Sequence
 from typing import Any
 
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.processor.pipeline import RobotProcessor
+from lerobot.processor.pipeline import DataProcessorPipeline
 
 
 def aggregate_pipeline_dataset_features(
-    pipeline: RobotProcessor,
+    pipeline: DataProcessorPipeline,
     initial_features: dict[str, Any],
     *,
     use_videos: bool = True,

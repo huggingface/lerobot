@@ -10,7 +10,7 @@ import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import OBS_LANGUAGE
-from lerobot.processor.pipeline import RobotProcessor, TransitionKey
+from lerobot.processor.pipeline import DataProcessorPipeline, TransitionKey
 from lerobot.processor.tokenizer_processor import TokenizerProcessor
 from tests.utils import require_package
 
@@ -384,12 +384,12 @@ def test_reset_method(mock_auto_tokenizer):
 @require_package("transformers")
 @patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
 def test_integration_with_robot_processor(mock_auto_tokenizer):
-    """Test integration with RobotProcessor."""
+    """Test integration with DataProcessorPipeline."""
     mock_tokenizer = MockTokenizer(vocab_size=100)
     mock_auto_tokenizer.from_pretrained.return_value = mock_tokenizer
 
     tokenizer_processor = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=6)
-    robot_processor = RobotProcessor([tokenizer_processor])
+    robot_processor = DataProcessorPipeline([tokenizer_processor])
 
     transition = create_transition(
         observation={"state": torch.tensor([1.0, 2.0])},
@@ -427,14 +427,14 @@ def test_save_and_load_pretrained_with_tokenizer_name(mock_auto_tokenizer):
         tokenizer_name="test-tokenizer", max_length=32, task_key="instruction"
     )
 
-    robot_processor = RobotProcessor([original_processor])
+    robot_processor = DataProcessorPipeline([original_processor])
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # Save processor
         robot_processor.save_pretrained(temp_dir)
 
         # Load processor - tokenizer will be recreated from saved config
-        loaded_processor = RobotProcessor.from_pretrained(temp_dir)
+        loaded_processor = DataProcessorPipeline.from_pretrained(temp_dir)
 
         # Test that loaded processor works
         transition = create_transition(
@@ -456,14 +456,14 @@ def test_save_and_load_pretrained_with_tokenizer_object():
 
     original_processor = TokenizerProcessor(tokenizer=mock_tokenizer, max_length=32, task_key="instruction")
 
-    robot_processor = RobotProcessor([original_processor])
+    robot_processor = DataProcessorPipeline([original_processor])
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # Save processor
         robot_processor.save_pretrained(temp_dir)
 
         # Load processor with tokenizer override (since tokenizer object wasn't saved)
-        loaded_processor = RobotProcessor.from_pretrained(
+        loaded_processor = DataProcessorPipeline.from_pretrained(
             temp_dir, overrides={"tokenizer_processor": {"tokenizer": mock_tokenizer}}
         )
 
@@ -952,7 +952,7 @@ def test_integration_with_device_processor(mock_auto_tokenizer):
     # Create pipeline with TokenizerProcessor then DeviceProcessor
     tokenizer_processor = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=6)
     device_processor = DeviceProcessor(device="cuda:0")
-    robot_processor = RobotProcessor([tokenizer_processor, device_processor])
+    robot_processor = DataProcessorPipeline([tokenizer_processor, device_processor])
 
     # Start with CPU tensors
     transition = create_transition(

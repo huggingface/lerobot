@@ -25,7 +25,7 @@ from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
 )
-from lerobot.processor.pipeline import RobotProcessor
+from lerobot.processor.pipeline import DataProcessorPipeline
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -65,7 +65,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints = RobotProcessor(
+robot_ee_to_joints = DataProcessorPipeline(
     steps=[
         AddRobotObservationAsComplimentaryData(robot=robot),
         InverseKinematicsEEToJoints(
@@ -79,7 +79,7 @@ robot_ee_to_joints = RobotProcessor(
 )
 
 # Build pipeline to convert joint observation to ee pose observation
-robot_joints_to_ee_pose = RobotProcessor(
+robot_joints_to_ee_pose = DataProcessorPipeline(
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],

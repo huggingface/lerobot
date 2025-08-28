@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import FeatureType
-from lerobot.processor import ProcessorStepRegistry, RenameProcessor, RobotProcessor, TransitionKey
+from lerobot.processor import DataProcessorPipeline, ProcessorStepRegistry, RenameProcessor, TransitionKey
 from lerobot.processor.rename_processor import rename_stats
 from tests.conftest import assert_contract_is_typed
 
@@ -181,14 +181,14 @@ def test_state_dict():
 
 
 def test_integration_with_robot_processor():
-    """Test integration with RobotProcessor pipeline."""
+    """Test integration with DataProcessorPipeline pipeline."""
     rename_map = {
         "agent_pos": "observation.state",
         "pixels": "observation.image",
     }
     rename_processor = RenameProcessor(rename_map=rename_map)
 
-    pipeline = RobotProcessor([rename_processor])
+    pipeline = DataProcessorPipeline([rename_processor])
 
     observation = {
         "agent_pos": np.array([1.0, 2.0, 3.0]),
@@ -215,13 +215,13 @@ def test_integration_with_robot_processor():
 
 
 def test_save_and_load_pretrained():
-    """Test saving and loading processor with RobotProcessor."""
+    """Test saving and loading processor with DataProcessorPipeline."""
     rename_map = {
         "old_state": "observation.state",
         "old_image": "observation.image",
     }
     processor = RenameProcessor(rename_map=rename_map)
-    pipeline = RobotProcessor([processor], name="TestRenameProcessor")
+    pipeline = DataProcessorPipeline([processor], name="TestRenameProcessor")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save pipeline
@@ -236,7 +236,7 @@ def test_save_and_load_pretrained():
         assert len(state_files) == 0
 
         # Load pipeline
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir)
 
         assert loaded_pipeline.name == "TestRenameProcessor"
         assert len(loaded_pipeline) == 1
@@ -277,7 +277,7 @@ def test_registry_functionality():
 def test_registry_based_save_load():
     """Test save/load using registry name instead of module path."""
     processor = RenameProcessor(rename_map={"key1": "renamed_key1"})
-    pipeline = RobotProcessor([processor])
+    pipeline = DataProcessorPipeline([processor])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save and load
@@ -286,7 +286,9 @@ def test_registry_based_save_load():
         # Verify config uses registry name
         import json
 
-        with open(Path(tmp_dir) / "robotprocessor.json") as f:  # Default name is "RobotProcessor"
+        with open(
+            Path(tmp_dir) / "dataprocessorpipeline.json"
+        ) as f:  # Default name is "DataProcessorPipeline"
             config = json.load(f)
 
         assert "registry_name" in config["steps"][0]
@@ -294,7 +296,7 @@ def test_registry_based_save_load():
         assert "class" not in config["steps"][0]  # Should use registry, not module path
 
         # Load should work
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir)
         loaded_processor = loaded_pipeline.steps[0]
         assert isinstance(loaded_processor, RenameProcessor)
         assert loaded_processor.rename_map == {"key1": "renamed_key1"}
@@ -318,7 +320,7 @@ def test_chained_rename_processors():
         }
     )
 
-    pipeline = RobotProcessor([processor1, processor2])
+    pipeline = DataProcessorPipeline([processor1, processor2])
 
     observation = {
         "pos": np.array([1.0, 2.0]),
@@ -452,7 +454,7 @@ def test_features_chained_processors(policy_feature_factory):
     processor2 = RenameProcessor(
         rename_map={"agent_position": "observation.state", "camera_image": "observation.image"}
     )
-    pipeline = RobotProcessor([processor1, processor2])
+    pipeline = DataProcessorPipeline([processor1, processor2])
 
     spec = {
         "pos": policy_feature_factory(FeatureType.STATE, (7,)),

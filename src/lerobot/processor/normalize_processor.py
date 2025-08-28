@@ -11,10 +11,10 @@ from torch import Tensor
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor.pipeline import (
+    DataProcessorPipeline,
     EnvTransition,
     ProcessorStep,
     ProcessorStepRegistry,
-    RobotProcessor,
     TransitionKey,
 )
 
@@ -281,11 +281,13 @@ class UnnormalizerProcessor(_NormalizationMixin, ProcessorStep):
         return new_transition
 
 
-def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, Any]]) -> RobotProcessor:
+def hotswap_stats(
+    robot_processor: DataProcessorPipeline, stats: dict[str, dict[str, Any]]
+) -> DataProcessorPipeline:
     """
-    Replaces normalization statistics in a RobotProcessor pipeline.
+    Replaces normalization statistics in a DataProcessorPipeline pipeline.
 
-    This function creates a deep copy of the provided `RobotProcessor` and updates the
+    This function creates a deep copy of the provided `DataProcessorPipeline` and updates the
     statistics of any `NormalizerProcessor` or `UnnormalizerProcessor` steps within it.
     It's useful for adapting a trained policy to a new environment or dataset with
     different data distributions.

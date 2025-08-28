@@ -22,7 +22,7 @@ import pytest
 import torch
 
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
-from lerobot.processor import ProcessorStepRegistry, RobotProcessor
+from lerobot.processor import DataProcessorPipeline, ProcessorStepRegistry
 from lerobot.processor.batch_processor import ToBatchProcessor
 from lerobot.processor.pipeline import TransitionKey
 
@@ -243,9 +243,9 @@ def test_mixed_observation():
 
 
 def test_integration_with_robot_processor():
-    """Test ToBatchProcessor integration with RobotProcessor."""
+    """Test ToBatchProcessor integration with DataProcessorPipeline."""
     to_batch_processor = ToBatchProcessor()
-    pipeline = RobotProcessor([to_batch_processor])
+    pipeline = DataProcessorPipeline([to_batch_processor])
 
     # Create unbatched observation
     observation = {
@@ -283,9 +283,9 @@ def test_serialization_methods():
 
 
 def test_save_and_load_pretrained():
-    """Test saving and loading ToBatchProcessor with RobotProcessor."""
+    """Test saving and loading ToBatchProcessor with DataProcessorPipeline."""
     processor = ToBatchProcessor()
-    pipeline = RobotProcessor([processor], name="BatchPipeline")
+    pipeline = DataProcessorPipeline([processor], name="BatchPipeline")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save pipeline
@@ -296,7 +296,7 @@ def test_save_and_load_pretrained():
         assert config_path.exists()
 
         # Load pipeline
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir)
 
         assert loaded_pipeline.name == "BatchPipeline"
         assert len(loaded_pipeline) == 1
@@ -323,11 +323,11 @@ def test_registry_functionality():
 def test_registry_based_save_load():
     """Test saving and loading using registry name."""
     processor = ToBatchProcessor()
-    pipeline = RobotProcessor([processor])
+    pipeline = DataProcessorPipeline([processor])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir)
 
         # Verify the loaded processor works
         observation = {

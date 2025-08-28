@@ -24,7 +24,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import OBS_IMAGE, OBS_STATE
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
-from lerobot.processor import DeviceProcessor, IdentityProcessor, NormalizerProcessor, RobotProcessor
+from lerobot.processor import DataProcessorPipeline, DeviceProcessor, IdentityProcessor, NormalizerProcessor
 from lerobot.processor.pipeline import TransitionKey
 
 
@@ -237,7 +237,7 @@ def test_classifier_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(tmpdir)
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(tmpdir)
 
         # Test that loaded processor works
         observation = {
