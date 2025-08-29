@@ -50,6 +50,7 @@ import logging
 import os
 import time
 from functools import lru_cache
+from pprint import pformat
 from queue import Empty
 
 import grpc
@@ -60,11 +61,13 @@ from torch.multiprocessing import Event, Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
+
+# from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
 from lerobot.policies.factory import make_policy
-from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.robots import so100_follower  # noqa: F401
 from lerobot.scripts.rl.gym_manipulator import make_robot_env
-from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
+from lerobot.teleoperators import gamepad, keyboard, so100_leader, so101_leader  # noqa: F401
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import (
     bytes_to_state_dict,
@@ -234,6 +237,8 @@ def act_with_policy(
         init_logging(log_file=log_file, display_pid=True)
         logging.info("Actor policy process logging initialized")
 
+    logging.info(pformat(cfg.to_dict()))
+
     logging.info("make_env online")
 
     online_env = make_robot_env(cfg=cfg.env)
@@ -249,12 +254,19 @@ def act_with_policy(
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
-    policy: SACPolicy = make_policy(
+    policy: ACFQLPolicy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
+
+    # get the initial policy parameters from the learner
+    if cfg.policy.pretrain_steps > 0:
+        logging.info("[ACTOR] Waiting for initial policy parameters from learner")
+        update_policy_parameters(
+            policy=policy, parameters_queue=parameters_queue, device=device, wait_for_update=True
+        )
 
     obs, info = online_env.reset()
 
@@ -274,7 +286,7 @@ def act_with_policy(
             logging.info("[ACTOR] Shutting down act_with_policy")
             return
 
-        if interaction_step >= cfg.policy.online_step_before_learning:
+        if interaction_step >= cfg.policy.online_step_before_learning_with_env:
             # Time policy inference and check if it meets FPS requirement
             with policy_timer:
                 action = policy.select_action(batch=obs)
@@ -284,8 +296,11 @@ def act_with_policy(
 
         else:
             action = online_env.action_space.sample()
+            # action = action.unsqueeze(0) # TODO: Handle batch chunking/batching
 
         next_obs, reward, done, truncated, info = online_env.step(action)
+
+        # next_obs["observation.state"] = next_obs["observation.state"].unsqueeze(1)  # Add a batch dimension
 
         sum_reward_episode += float(reward)
         # Increment total steps counter for intervention rate
@@ -299,6 +314,8 @@ def act_with_policy(
             episode_intervention = True
             # Increment intervention steps counter
             episode_intervention_steps += 1
+            # TODO: The policy state should be reset when an intervention occurs when chunking is enabled, to clear the action queue
+            policy.reset()  # Reset policy state if needed
 
         list_transition_to_send_to_learner.append(
             Transition(
@@ -316,6 +333,7 @@ def act_with_policy(
 
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
+            print(done, truncated)
 
             update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
@@ -352,6 +370,7 @@ def act_with_policy(
             episode_intervention = False
             episode_intervention_steps = 0
             episode_total_steps = 0
+            policy.reset()  # Reset policy state if needed
             obs, info = online_env.reset()
 
         if cfg.env.fps is not None:
@@ -611,8 +630,16 @@ def interactions_stream(
 #################################################
 
 
-def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
+def update_policy_parameters(
+    policy: ACFQLPolicy, parameters_queue: Queue, device, wait_for_update: bool = False
+):
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
+
+    while bytes_state_dict is None and wait_for_update:
+        # logging.info("[ACTOR] Waiting for updated policy parameters from Learner...")
+        bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
+        time.sleep(2)
+
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
         state_dicts = bytes_to_state_dict(bytes_state_dict)
@@ -629,7 +656,7 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
 
         # Load actor state dict
         actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        policy.actor.load_state_dict(actor_state_dict)
+        policy.actor_onestep_flow.load_state_dict(actor_state_dict, strict=False)
 
         # Load discrete critic if present
         if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
@@ -638,6 +665,20 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
             )
             policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
             logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
+
+        # Load discrete actor if present
+        if hasattr(policy, "discrete_actor") and "discrete_actor" in state_dicts:
+            discrete_actor_state_dict = move_state_dict_to_device(
+                state_dicts["discrete_actor"], device=device
+            )
+            policy.discrete_actor.load_state_dict(discrete_actor_state_dict)
+            logging.info("[ACTOR] Loaded discrete actor parameters from Learner.")
+
+        # Load actor_bc_flow if present
+        if hasattr(policy, "actor_bc_flow") and "actor_bc_flow" in state_dicts:
+            actor_bc_flow_state_dict = move_state_dict_to_device(state_dicts["actor_bc_flow"], device=device)
+            policy.actor_bc_flow.load_state_dict(actor_bc_flow_state_dict, strict=False)
+            logging.info("[ACTOR] Loaded actor_bc_flow parameters from Learner.")
 
 
 #################################################

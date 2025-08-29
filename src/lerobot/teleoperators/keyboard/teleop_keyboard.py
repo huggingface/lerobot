@@ -201,22 +201,22 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         # Generate action based on current key states
         for key, val in self.current_pressed.items():
             if key == keyboard.Key.up:
-                delta_y = -int(val)
-            elif key == keyboard.Key.down:
-                delta_y = int(val)
-            elif key == keyboard.Key.left:
                 delta_x = int(val)
-            elif key == keyboard.Key.right:
+            elif key == keyboard.Key.down:
                 delta_x = -int(val)
-            elif key == keyboard.Key.shift:
+            elif key == keyboard.Key.left:
+                delta_y = int(val)
+            elif key == keyboard.Key.right:
+                delta_y = -int(val)
+            elif key == "n":
                 delta_z = -int(val)
-            elif key == keyboard.Key.shift_r:
+            elif key == "m":
                 delta_z = int(val)
-            elif key == keyboard.Key.ctrl_r:
+            elif key == "h":
                 # Gripper actions are expected to be between 0 (close), 1 (stay), 2 (open)
-                gripper_action = int(val) + 1
-            elif key == keyboard.Key.ctrl_l:
-                gripper_action = int(val) - 1
+                gripper_action = int(val) * 0.1 + 1
+            elif key == "j":
+                gripper_action = 1 - int(val) * 0.1
             elif val:
                 # If the key is pressed, add it to the misc_keys_queue
                 # this will record key presses that are not part of the delta_x, delta_y, delta_z
