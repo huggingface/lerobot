@@ -29,10 +29,11 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     AddTeleopActionAsComplimentaryData,
     AddTeleopEventsAsInfo,
     DataProcessorPipeline,
-    DeviceProcessor,
+    DeviceProcessorStep,
     GripperPenaltyProcessor,
     ImageCropResizeProcessor,
     InterventionActionProcessor,
@@ -43,7 +44,6 @@ from lerobot.processor import (
     Numpy2TorchActionProcessor,
     RewardClassifierProcessor,
     TimeLimitProcessor,
-    ToBatchProcessor,
     Torch2NumpyActionProcessor,
     VanillaObservationProcessor,
 )
@@ -383,8 +383,8 @@ def make_processors(
         env_pipeline_steps = [
             Numpy2TorchActionProcessor(),
             VanillaObservationProcessor(),
-            ToBatchProcessor(),
-            DeviceProcessor(device=device),
+            AddBatchDimensionProcessorStep(),
+            DeviceProcessorStep(device=device),
         ]
 
         return DataProcessorPipeline(steps=env_pipeline_steps), DataProcessorPipeline(
@@ -457,8 +457,8 @@ def make_processors(
             )
         )
 
-    env_pipeline_steps.append(ToBatchProcessor())
-    env_pipeline_steps.append(DeviceProcessor(device=device))
+    env_pipeline_steps.append(AddBatchDimensionProcessorStep())
+    env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryData(teleop_device=teleop_device),

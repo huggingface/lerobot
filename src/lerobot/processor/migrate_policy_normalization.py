@@ -46,8 +46,8 @@ from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file as load_safetensors
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.processor.batch_processor import ToBatchProcessor
-from lerobot.processor.device_processor import DeviceProcessor
+from lerobot.processor.batch_processor import AddBatchDimensionProcessorStep
+from lerobot.processor.device_processor import DeviceProcessorStep
 from lerobot.processor.normalize_processor import NormalizerProcessor, UnnormalizerProcessor
 from lerobot.processor.pipeline import DataProcessorPipeline
 from lerobot.processor.rename_processor import RenameProcessor
@@ -418,14 +418,14 @@ def main():
             norm_map=norm_map,
             stats=stats,
         ),
-        ToBatchProcessor(),
-        DeviceProcessor(device=policy_config.device),
+        AddBatchDimensionProcessorStep(),
+        DeviceProcessorStep(device=policy_config.device),
     ]
     preprocessor = DataProcessorPipeline(steps=preprocessor_steps, name="robot_preprocessor")
 
     # Create postprocessor with unnormalizer for outputs only
     postprocessor_steps = [
-        DeviceProcessor(device="cpu"),
+        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessor(features=output_features, norm_map=norm_map, stats=stats),
     ]
     postprocessor = DataProcessorPipeline(steps=postprocessor_steps, name="robot_postprocessor")
