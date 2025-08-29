@@ -131,7 +131,7 @@ conda install ffmpeg=7.1.1 -c conda-forge
 5.安装带有 fashionstar 电机依赖的 LeRobot：
 
 ```bash
-cd ~/lerobot && pip install -e ".[fetech]"
+cd ~/lerobot && pip install -e ".[dynamixel]"
 pip install fashionstar-uart-sdk==1.3.1
 ```
 6.检查 Pytorch 和 Torchvision
@@ -340,7 +340,7 @@ lerobot-record \
     --robot.type=starai_viola \
     --robot.port=/dev/ttyUSB1 \
     --robot.id=my_awesome_staraiviola_arm \
-    --robot.cameras="{ front: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}" \
+    --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video2, width: 640, height: 480, fps: 30},front: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}" \
     --teleop.type=starai_violin \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=my_awesome_staraiviolin_arm \
@@ -348,7 +348,7 @@ lerobot-record \
     --dataset.repo_id=starai/record-test \
     --dataset.episode_time_s=30 \
     --dataset.reset_time_s=30 \
-    --dataset.num_episodes=10 \
+    --dataset.num_episodes=2 \
     --dataset.push_to_hub=False \
     --dataset.single_task="Grab the black cube"
 ```
