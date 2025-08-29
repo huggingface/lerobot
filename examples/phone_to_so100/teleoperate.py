@@ -28,8 +28,8 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
 )
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
-from lerobot.teleoperators.phone.phone import Phone
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
+from lerobot.teleoperators.phone.teleop_phone import Phone
 
 # Initialize the robot and teleoperator
 robot_config = SO100FollowerConfig(
@@ -81,11 +81,6 @@ teleop_device.connect()
 
 print("Starting teleop loop. Move your phone to teleoperate the robot.")
 while True:
-    phone_obs = teleop_device.get_action()
-    if not phone_obs:
-        time.sleep(0.01)
-        continue
-
     # Get teleop observation
     phone_obs = teleop_device.get_action()
 

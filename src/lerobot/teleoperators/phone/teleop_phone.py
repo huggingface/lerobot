@@ -70,6 +70,8 @@ class BasePhone:
 
 
 class IOSPhone(BasePhone, Teleoperator):
+    name = "ios_phone"
+
     def __init__(self, config: PhoneConfig):
         super().__init__(config)
         self.config = config
@@ -186,6 +188,8 @@ class IOSPhone(BasePhone, Teleoperator):
 
 
 class AndroidPhone(BasePhone, Teleoperator):
+    name = "android_phone"
+
     def __init__(self, config: PhoneConfig):
         super().__init__(config)
         self.config = config
