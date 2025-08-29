@@ -53,7 +53,7 @@ def _is_image(arr: Any) -> bool:
 def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     state, images = {}, {}
     for k, v in obs.items():
-        if _is_image(v):
+        if "image" in k.lower() or _is_image(v):
             images[k] = v
         else:
             state[k] = v
