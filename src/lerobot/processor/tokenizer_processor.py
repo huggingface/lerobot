@@ -72,7 +72,7 @@ class TokenizerProcessor(ObservationProcessorStep):
     truncation: bool = True
 
     # Internal tokenizer instance (not serialized)
-    _tokenizer: Any = field(default=None, init=False, repr=False)
+    input_tokenizer: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         """Initialize the tokenizer from the provided tokenizer or tokenizer name."""
@@ -84,11 +84,11 @@ class TokenizerProcessor(ObservationProcessorStep):
 
         if self.tokenizer is not None:
             # Use provided tokenizer object directly
-            self._tokenizer = self.tokenizer
+            self.input_tokenizer = self.tokenizer
         elif self.tokenizer_name is not None:
             if AutoTokenizer is None:
                 raise ImportError("AutoTokenizer is not available")
-            self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+            self.input_tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         else:
             raise ValueError(
                 "Either 'tokenizer' or 'tokenizer_name' must be provided. "
@@ -198,7 +198,7 @@ class TokenizerProcessor(ObservationProcessorStep):
         Returns:
             Dictionary containing tokenized output with keys like 'input_ids', 'attention_mask'.
         """
-        return self._tokenizer(
+        return self.input_tokenizer(
             text,
             max_length=self.max_length,
             truncation=self.truncation,
@@ -222,7 +222,7 @@ class TokenizerProcessor(ObservationProcessorStep):
         }
 
         # Only include tokenizer_name if it was used (not when tokenizer object was provided)
-        # TODO(steven): Consider saving the name of the _tokenizer if it was loaded
+        # TODO(steven): Consider saving the name of the input_tokenizer if it was loaded
         if self.tokenizer_name is not None and self.tokenizer is None:
             config["tokenizer_name"] = self.tokenizer_name
 
