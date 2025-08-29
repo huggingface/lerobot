@@ -28,7 +28,7 @@ from lerobot.processor import (
     UnnormalizerProcessor,
 )
 from lerobot.processor.pipeline import (
-    ComplementaryDataProcessor,
+    ComplementaryDataProcessorStep,
     ProcessorStepRegistry,
 )
 
@@ -65,7 +65,7 @@ def make_smolvla_pre_post_processors(
 
 
 @ProcessorStepRegistry.register(name="smolvla_new_line_processor")
-class SmolVLANewLineProcessor(ComplementaryDataProcessor):
+class SmolVLANewLineProcessor(ComplementaryDataProcessorStep):
     """Add a new line to the end of the task if it doesn't have one."""
 
     def complementary_data(self, complementary_data):

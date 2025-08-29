@@ -356,7 +356,7 @@ def test_empty_observation():
 
 
 def test_equivalent_to_original_function():
-    """Test that ObservationProcessor produces equivalent results to preprocess_observation."""
+    """Test that ObservationProcessorStep produces equivalent results to preprocess_observation."""
     # Import the original function for comparison
     from lerobot.envs.utils import preprocess_observation
 

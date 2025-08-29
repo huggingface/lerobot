@@ -49,7 +49,7 @@ from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import to_output_robot_action, to_transition_teleop_action
-from lerobot.processor.pipeline import IdentityProcessor
+from lerobot.processor.pipeline import IdentityProcessorStep
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -96,7 +96,7 @@ def replay(cfg: ReplayConfig):
 
     # Initialize robot action processor with default if not provided
     robot_action_processor = cfg.robot_action_processor or RobotProcessorPipeline(
-        steps=[IdentityProcessor()],
+        steps=[IdentityProcessorStep()],
         to_transition=to_transition_teleop_action,
         to_output=to_output_robot_action,  # type: ignore[arg-type]
     )

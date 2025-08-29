@@ -28,7 +28,7 @@ from lerobot.processor import (
     UnnormalizerProcessor,
 )
 from lerobot.processor.pipeline import (
-    ComplementaryDataProcessor,
+    ComplementaryDataProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
 )
@@ -36,7 +36,7 @@ from lerobot.processor.rename_processor import RenameProcessor
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")
-class Pi0NewLineProcessor(ComplementaryDataProcessor):
+class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
     """Add a new line to the end of the task if it doesn't have one.
     This is required for the PaliGemma tokenizer.
     """

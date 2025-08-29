@@ -19,12 +19,12 @@ from dataclasses import dataclass
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
+from lerobot.processor.pipeline import ActionProcessorStep, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("map_tensor_to_delta_action_dict")
 @dataclass
-class MapTensorToDeltaActionDict(ActionProcessor):
+class MapTensorToDeltaActionDict(ActionProcessorStep):
     """
     Map a tensor to a delta action dictionary.
     """
@@ -48,7 +48,7 @@ class MapTensorToDeltaActionDict(ActionProcessor):
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
 @dataclass
-class MapDeltaActionToRobotAction(ActionProcessor):
+class MapDeltaActionToRobotAction(ActionProcessorStep):
     """
     Map delta actions from teleoperators (gamepad, keyboard) to robot target actions
     for use with inverse kinematics processors.

@@ -16,12 +16,12 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
+from lerobot.processor.pipeline import ActionProcessorStep, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("torch2numpy_action_processor")
 @dataclass
-class Torch2NumpyActionProcessor(ActionProcessor):
+class Torch2NumpyActionProcessor(ActionProcessorStep):
     """Convert PyTorch tensor actions to NumPy arrays."""
 
     squeeze_batch_dim: bool = True
@@ -50,7 +50,7 @@ class Torch2NumpyActionProcessor(ActionProcessor):
 
 @ProcessorStepRegistry.register("numpy2torch_action_processor")
 @dataclass
-class Numpy2TorchActionProcessor(ActionProcessor):
+class Numpy2TorchActionProcessor(ActionProcessorStep):
     """Convert NumPy array action to PyTorch tensor."""
 
     def action(self, action: np.ndarray) -> torch.Tensor:
