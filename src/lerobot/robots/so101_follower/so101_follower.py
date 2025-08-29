@@ -162,6 +162,7 @@ class SO101Follower(Robot):
                         "Max_Torque_Limit", motor, 500
                     )  # 50% of the max torque limit to avoid burnout
                     self.bus.write("Protection_Current", motor, 250)  # 50% of max current to avoid burnout
+                    self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
