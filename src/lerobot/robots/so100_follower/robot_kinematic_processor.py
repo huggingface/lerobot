@@ -138,6 +138,23 @@ class EEReferenceAndDelta(ActionProcessor):
         self.reference_ee_pose = None
         self._command_when_disabled = None
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        features.pop("action.enabled", None)
+        features.pop("action.target_x", None)
+        features.pop("action.target_y", None)
+        features.pop("action.target_z", None)
+        features.pop("action.target_wx", None)
+        features.pop("action.target_wy", None)
+        features.pop("action.target_wz", None)
+
+        features["action.ee.x"] = float
+        features["action.ee.y"] = float
+        features["action.ee.z"] = float
+        features["action.ee.wx"] = float
+        features["action.ee.wy"] = float
+        features["action.ee.wz"] = float
+        return features
+
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
 @dataclass
@@ -201,16 +218,6 @@ class EEBoundsAndSafety(ActionProcessor):
     def reset(self):
         self._last_pos = None
         self._last_twist = None
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # Because this is last step we specify the dataset features of this step that we want to be stored in the dataset
-        features["action.ee.x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        return features
 
 
 @ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
@@ -287,16 +294,11 @@ class InverseKinematicsEEToJoints(ProcessorStep):
         return transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We specify the dataset features of this step that we want to be stored in the dataset
-        features["action.ee.x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.ee.wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-
         features["observation.state.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         features["action.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        for name in self.motor_names:
+            features[f"action.{name}.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+
         return features
 
     def reset(self):
@@ -368,8 +370,7 @@ class GripperVelocityToJoint(ProcessorStep):
         return transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We specify the dataset features of this step that we want to be stored in the dataset
-        features["observation.state.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features.pop("action.gripper", None)
         features["action.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         return features
 
