@@ -21,18 +21,30 @@ Usage:
 """
 
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from threading import Event, Lock, Thread
 
+import numpy as np
+import torch
 from torch import Tensor
 
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
+from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.policies.factory import get_policy_class
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
-from lerobot.robots.robot import Robot
+from lerobot.robots import (  # noqa: F401
+    Robot,
+    RobotConfig,
+    koch_follower,
+    so100_follower,
+    so101_follower,
+)
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.process import ProcessSignalHandler
@@ -74,11 +86,15 @@ class ActionQueue:
 
     def qsize(self) -> int:
         with self.lock:
-            return self.queue.qsize()
+            if self.queue is None:
+                return 0
+            return len(self.queue)
 
     def empty(self) -> bool:
         with self.lock:
-            return self.queue.empty()
+            if self.queue is None:
+                return True
+            return len(self.queue) == 0
 
     def get_action_index(self) -> int:
         with self.lock:
@@ -86,6 +102,8 @@ class ActionQueue:
 
     def get_left_over(self) -> Tensor:
         with self.lock:
+            if self.queue is None:
+                return None
             return self.queue[: self.last_index]
 
     def merge(
@@ -108,22 +126,6 @@ class ActionQueue:
             # First real_delay actions are already executed
             self.queue = self.queue[real_delay:]
             self.last_index = 0
-
-
-@dataclass
-class RobotConfig:
-    """Configuration for robot setup."""
-
-    type: str = "so100"  # Robot type (so100, so101, koch, etc.)
-    # Add any robot-specific config here if needed
-
-
-@dataclass
-class RTC:
-    """Configuration for policy setup."""
-
-    type: str = "smolvla"  # Policy type (smolvla, pi0, etc.)
-    # Add any policy-specific config here if needed
 
 
 @dataclass
@@ -156,6 +158,21 @@ class RTCDemoConfig(HubMixin):
     # It should be higher than inference delay + execution horizon.
     action_queue_size_to_get_new_actions: int = 20
 
+    def __post_init__(self):
+        # HACK: We parse again the cli args here to get the pretrained path if there was one.
+        policy_path = parser.get_path_arg("policy")
+        if policy_path:
+            cli_overrides = parser.get_cli_overrides("policy")
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy.pretrained_path = policy_path
+        else:
+            raise ValueError("Policy path is required")
+
+    @classmethod
+    def __get_path_fields__(cls) -> list[str]:
+        """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
+        return ["policy"]
+
 
 def get_actions(
     policy,
@@ -179,6 +196,9 @@ def get_actions(
     latency_tracker = LatencyTracker()  # Track latency of action chunks
     fps = cfg.fps
 
+    dataset_features = hw_to_dataset_features(robot.observation_features, "observation")
+    policy_device = policy.config.device
+
     while not shutdown_event.is_set():
         if action_queue.qsize() < cfg.action_queue_size_to_get_new_actions:
             current_time = time.perf_counter()
@@ -187,10 +207,17 @@ def get_actions(
 
             time_per_chunk = 1.0 / fps
             inference_latency = latency_tracker.max()
-            inference_delay = (inference_latency / time_per_chunk).ceil()
+            inference_delay = math.ceil(inference_latency / time_per_chunk)
+
+            obs = robot.get_observation()
+            obs_with_policy_features = build_dataset_frame(dataset_features, obs, prefix="observation")
+
+            for k, v in obs_with_policy_features.items():
+                if isinstance(v, np.ndarray):
+                    obs_with_policy_features[k] = torch.from_numpy(v).to(policy_device)
 
             actions = policy.predict_action_chunk(
-                robot.get_observation(),
+                obs_with_policy_features,
                 {"inference_delay": inference_delay, "prev_chunk_left_over": prev_actions},
             )
 
@@ -266,8 +293,6 @@ def demo_cli(cfg: RTCDemoConfig):
 
     logger.info(f"Using device: {cfg.device}")
 
-    cfg.validate()
-
     # Setup signal handler for graceful shutdown
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
@@ -277,17 +302,13 @@ def demo_cli(cfg: RTCDemoConfig):
     get_actions_thread = None
     actor_thread = None
 
-    logger.info(f"Loading policy from {cfg.policy.path}")
-    # Use the factory to load the policy based on its config
-    from lerobot.policies.pretrained import PreTrainedPolicy
-
-    policy = PreTrainedPolicy.from_pretrained(cfg.policy.path)
-
-    assert policy.name in ["smolvla", "pi0"], "Only smolvla and pi0 are supported for RTC"
+    policy_class = get_policy_class(cfg.policy.type)
+    policy = policy_class.from_pretrained(cfg.policy.pretrained_path)
 
     # Turn on RTC
     policy.rtc_config = cfg.rtc
-    policy.rtc.enabled = True
+
+    assert policy.name in ["smolvla", "pi0"], "Only smolvla and pi0 are supported for RTC"
 
     policy = policy.to(cfg.device)
     policy.eval()

@@ -27,7 +27,6 @@ import torch
 from torch import Tensor
 
 from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.policies.rtc.action_storage import ActionStorage
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 
@@ -55,7 +54,6 @@ class RTCProcessor:
             device (str | torch.device): Device for storing action chunks.
         """
         self.rtc_config = rtc_config
-        self.action_storage = ActionStorage(device=device)
 
     def denoise_step(
         self,
