@@ -65,6 +65,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
+    elif config.type == "ned2":
+        from .ned2 import Ned2
+        
+        return Ned2(config)
     else:
         raise ValueError(config.type)
 
