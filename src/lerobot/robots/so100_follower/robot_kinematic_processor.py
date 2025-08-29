@@ -41,7 +41,8 @@ class EEReferenceAndDelta(ActionProcessorStep):
 
     Input ACTION keys:
     {
-        "action.ee.{x,y,z,wx,wy,wz}" : float
+        "action.enabled": bool,
+        "action.displacement_{x,y,z,wx,wy,wz}" : float
         "complementary_data.raw_joint_positions": dict,
     }
 
@@ -82,12 +83,12 @@ class EEReferenceAndDelta(ActionProcessorStep):
         t_curr = self.kinematics.forward_kinematics(q)
 
         enabled = bool(new_action.pop("action.enabled", 0))
-        tx = float(new_action.pop("action.target_x", 0.0))
-        ty = float(new_action.pop("action.target_y", 0.0))
-        tz = float(new_action.pop("action.target_z", 0.0))
-        wx = float(new_action.pop("action.target_wx", 0.0))
-        wy = float(new_action.pop("action.target_wy", 0.0))
-        wz = float(new_action.pop("action.target_wz", 0.0))
+        tx = float(new_action.pop("action.displacement_x", 0.0))
+        ty = float(new_action.pop("action.displacement_y", 0.0))
+        tz = float(new_action.pop("action.displacement_z", 0.0))
+        wx = float(new_action.pop("action.displacement_wx", 0.0))
+        wy = float(new_action.pop("action.displacement_wy", 0.0))
+        wz = float(new_action.pop("action.displacement_wz", 0.0))
 
         desired = None
 
@@ -140,12 +141,12 @@ class EEReferenceAndDelta(ActionProcessorStep):
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features.pop("action.enabled", None)
-        features.pop("action.target_x", None)
-        features.pop("action.target_y", None)
-        features.pop("action.target_z", None)
-        features.pop("action.target_wx", None)
-        features.pop("action.target_wy", None)
-        features.pop("action.target_wz", None)
+        features.pop("action.displacement_x", None)
+        features.pop("action.displacement_y", None)
+        features.pop("action.displacement_z", None)
+        features.pop("action.displacement_wx", None)
+        features.pop("action.displacement_wy", None)
+        features.pop("action.displacement_wz", None)
 
         features["action.ee.x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         features["action.ee.y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
