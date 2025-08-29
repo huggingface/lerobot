@@ -26,7 +26,7 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.processor import (
     DataProcessorPipeline,
-    DeviceProcessor,
+    DeviceProcessorStep,
     NormalizerProcessor,
     RenameProcessor,
     ToBatchProcessor,
@@ -89,11 +89,11 @@ def test_make_act_processor_basic():
     assert isinstance(preprocessor.steps[0], RenameProcessor)
     assert isinstance(preprocessor.steps[1], NormalizerProcessor)
     assert isinstance(preprocessor.steps[2], ToBatchProcessor)
-    assert isinstance(preprocessor.steps[3], DeviceProcessor)
+    assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
-    assert isinstance(postprocessor.steps[0], DeviceProcessor)
+    assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
     assert isinstance(postprocessor.steps[1], UnnormalizerProcessor)
 
 
@@ -271,10 +271,10 @@ def test_act_processor_mixed_precision():
     # Modify the device processor to use float16
     preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
-    # Replace DeviceProcessor with one that uses float16
+    # Replace DeviceProcessorStep with one that uses float16
     for i, step in enumerate(preprocessor.steps):
-        if isinstance(step, DeviceProcessor):
-            preprocessor.steps[i] = DeviceProcessor(device=config.device, float_dtype="float16")
+        if isinstance(step, DeviceProcessorStep):
+            preprocessor.steps[i] = DeviceProcessorStep(device=config.device, float_dtype="float16")
 
     # Create test data
     observation = {OBS_STATE: torch.randn(7, dtype=torch.float32)}
