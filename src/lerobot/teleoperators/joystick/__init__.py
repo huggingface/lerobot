@@ -14,7 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config import TeleoperatorConfig
-from .joystick import JoystickTeleop, JoystickTeleopConfig
-from .teleoperator import Teleoperator
-from .utils import make_teleoperator_from_config
+from .config_joystick import JoystickTeleopConfig
+from .joystick import JoystickTeleop
+
+__all__ = [
+    "JoystickTeleopConfig",
+    "JoystickTeleop",
+]
