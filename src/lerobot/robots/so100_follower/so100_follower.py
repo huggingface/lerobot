@@ -162,7 +162,7 @@ class SO100Follower(Robot):
                 self.bus.write("D_Coefficient", motor, 32)
 
                 if motor == "gripper":
-                    self.bus.write("Max_Torque_Limit", motor, 500)  # 50% of max current to avoid burnout
+                    self.bus.write("Max_Torque_Limit", motor, 500)  # 50% of max torque to avoid burnout
                     self.bus.write("Protection_Current", motor, 250)  # 50% of max current to avoid burnout
                     self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
 
