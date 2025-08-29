@@ -332,8 +332,8 @@ class StaraiMotorsBus(MotorsBus):
     def read_calibration(self) -> dict[str, MotorCalibration]:
         offsets, mins, maxes = {}, {}, {}
         for motor in self.motors:
-            mins[motor] = self.port_handler.read["Min_Position_Limit"](self.motors[motor].id)
-            maxes[motor] = self.port_handler.read["Max_Position_Limit"]( self.motors[motor].id )
+            mins[motor] = -1024*360.0
+            maxes[motor] = 1024*360.0
             offsets[motor] = (
                 0
             )
