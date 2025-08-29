@@ -161,6 +161,12 @@ class SO100Follower(Robot):
                 self.bus.write("I_Coefficient", motor, 0)
                 self.bus.write("D_Coefficient", motor, 32)
 
+                if motor == "gripper":
+                    self.bus.write(
+                        "Max_Torque_Limit", motor, 500
+                    )  # Set to 50% of the max torque limit for gripper
+                    self.bus.write("Protection_Current", motor, 250)  # Set to 50% of max current for gripper
+
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
