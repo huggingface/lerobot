@@ -301,14 +301,14 @@ class Classifier(PreTrainedPolicy):
         """Return optimizer parameters for the policy."""
         return self.parameters()
 
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """
         This method is required by PreTrainedPolicy but not used for reward classifiers.
         The reward classifier is not an actor and does not select actions.
         """
         raise NotImplementedError("Reward classifiers do not select actions")
 
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """
         This method is required by PreTrainedPolicy but not used for reward classifiers.
         The reward classifier is not an actor and does not produce action chunks.
