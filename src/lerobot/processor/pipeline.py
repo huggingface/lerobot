@@ -24,7 +24,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Generic, TypedDict, TypeVar, cast
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
@@ -32,6 +32,9 @@ from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file, save_file
 
 from lerobot.configs.types import PolicyFeature
+
+# Type variable for generic processor output type
+TOutput = TypeVar("TOutput")
 
 
 class TransitionKey(str, Enum):
@@ -216,6 +219,10 @@ def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noq
     metadata without breaking the processor.
     """
 
+    # Validate input type
+    if not isinstance(batch, dict):
+        raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
+
     # Extract observation keys
     observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
     observation = observation_keys if observation_keys else None
@@ -280,7 +287,7 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
 
 
 @dataclass
-class RobotProcessor(ModelHubMixin):
+class RobotProcessor(ModelHubMixin, Generic[TOutput]):
     """
     Composable, debuggable post-processing processor for robot transitions.
 
@@ -288,19 +295,42 @@ class RobotProcessor(ModelHubMixin):
     left-to-right on each incoming `EnvTransition`. It can process both `EnvTransition` dicts
     and batch dictionaries, automatically converting between formats as needed.
 
+    The processor is generic over its output type TOutput, which provides better type safety
+    and clarity about what the processor returns.
+
     Args:
         steps: Ordered list of processing steps executed on every call. Defaults to empty list.
         name: Human-readable identifier that is persisted inside the JSON config.
             Defaults to "RobotProcessor".
         to_transition: Function to convert batch dict to EnvTransition dict.
             Defaults to _default_batch_to_transition.
-        to_output: Function to convert EnvTransition dict to the desired output format.
-            Usually it is a batch dict or EnvTransition dict.
-            Defaults to _default_transition_to_batch.
+        to_output: Function to convert EnvTransition dict to the desired output format of type TOutput.
+            Defaults to _default_transition_to_batch (returns batch dict).
+            Use identity function (lambda x: x) for EnvTransition output.
         before_step_hooks: List of hooks called before each step. Each hook receives the step
             index and transition, and can optionally return a modified transition.
         after_step_hooks: List of hooks called after each step. Each hook receives the step
             index and transition, and can optionally return a modified transition.
+
+    Type Safety Examples:
+        ```python
+        # Default behavior - returns batch dict
+        processor: RobotProcessor[dict[str, Any]] = RobotProcessor(steps=[some_step1, some_step2])
+        result: dict[str, Any] = processor(batch_data)  # Type checker knows this is a dict
+
+        # For EnvTransition output, explicitly specify identity function
+        transition_processor: RobotProcessor[EnvTransition] = RobotProcessor(
+            steps=[some_step1, some_step2],
+            to_output=lambda x: x,  # Identity function
+        )
+        result: EnvTransition = transition_processor(batch_data)  # Type checker knows this is EnvTransition
+
+        # For custom output types
+        processor: RobotProcessor[str] = RobotProcessor(
+            steps=[custom_step], to_output=lambda t: f"Processed {len(t)} keys"
+        )
+        result: str = processor(batch_data)  # Type checker knows this is str
+        ```
 
     Hook Semantics:
         - Hooks are executed sequentially in the order they were registered. There is no way to
@@ -323,8 +353,13 @@ class RobotProcessor(ModelHubMixin):
     to_transition: Callable[[dict[str, Any]], EnvTransition] = field(
         default_factory=lambda: _default_batch_to_transition, repr=False
     )
-    to_output: Callable[[EnvTransition], dict[str, Any] | EnvTransition] = field(
-        default_factory=lambda: _default_transition_to_batch, repr=False
+    to_output: Callable[[EnvTransition], TOutput] = field(
+        # Cast is necessary here: Working around Python type-checker limitation.
+        # _default_transition_to_batch returns dict[str, Any], but we need it to be TOutput
+        # for the generic to work. When no explicit type is given, TOutput defaults to dict[str, Any],
+        # making this cast safe.
+        default_factory=lambda: cast(Callable[[EnvTransition], TOutput], _default_transition_to_batch),
+        repr=False,
     )
 
     # Processor-level hooks for observation/monitoring
@@ -332,98 +367,57 @@ class RobotProcessor(ModelHubMixin):
     before_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
     after_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
 
-    def __call__(self, data: EnvTransition | dict[str, Any]):
+    def __call__(self, data: dict[str, Any]) -> TOutput:
         """Process data through all steps.
 
-        The method accepts either the classic EnvTransition dict or a batch dictionary
-        (like the ones returned by ReplayBuffer or LeRobotDataset). If a dict is supplied
-        it is first converted to the internal dict format using to_transition; after all
-        steps are executed the dict is transformed back into a batch dict with to_batch and the
-        result is returned – thereby preserving the caller's original data type.
+        The method accepts a batch dictionary (like the ones returned by ReplayBuffer or
+        LeRobotDataset). It is first converted to EnvTransition format using to_transition,
+        then processed through all steps, and finally converted to the output format using to_output.
 
         Args:
-            data: Either an EnvTransition dict or a batch dictionary to process.
+            data: A batch dictionary to process.
 
         Returns:
-            The processed data in the same format as the input (EnvTransition or batch dict).
-
-        Raises:
-            ValueError: If the transition is not a valid EnvTransition format.
+            The processed data in the format specified by to_output.
         """
-        # Check if we need to convert back to batch format at the end
-        _, called_with_batch = self._prepare_transition(data)
+        # Always convert input through to_transition
+        transition = self.to_transition(data)
 
-        # Use step_through to get the iterator
-        step_iterator = self.step_through(data)
-
-        # Get initial state (before any steps)
-        current_transition = next(step_iterator)
-
-        # Process each step with hooks
-        for idx, next_transition in enumerate(step_iterator):
-            # Apply before hooks with current state (before step execution)
+        # Process through all steps
+        for idx, processor_step in enumerate(self.steps):
+            # Apply before hooks
             for hook in self.before_step_hooks:
-                hook(idx, current_transition)
+                hook(idx, transition)
 
-            # Move to next state (after step execution)
-            current_transition = next_transition
+            # Execute step
+            transition = processor_step(transition)
 
-            # Apply after hooks with updated state
+            # Apply after hooks
             for hook in self.after_step_hooks:
-                hook(idx, current_transition)
+                hook(idx, transition)
 
-        # Convert back to original format if needed
-        if called_with_batch or self.to_output is not _default_transition_to_batch:
-            return self.to_output(current_transition)
-        else:
-            return current_transition
+        # Always use to_output for consistent typing
+        return self.to_output(transition)
 
-    def _prepare_transition(self, data: EnvTransition | dict[str, Any]) -> tuple[EnvTransition, bool]:
-        """Prepare and validate transition data for processing.
-
-        Args:
-            data: Either an EnvTransition dict or a batch dictionary to process.
-
-        Returns:
-            A tuple of (prepared_transition, called_with_batch_flag)
-
-        Raises:
-            ValueError: If the transition is not a valid EnvTransition format.
-        """
-        # Check if data is already an EnvTransition or needs conversion
-        if isinstance(data, dict) and not all(isinstance(k, TransitionKey) for k in data.keys()):
-            # It's a batch dict, convert it
-            called_with_batch = True
-            transition = self.to_transition(data)
-        else:
-            # It's already an EnvTransition
-            called_with_batch = False
-            transition = data
-
-        # Basic validation
-        if not isinstance(transition, dict):
-            raise ValueError(f"EnvTransition must be a dictionary. Got {type(transition).__name__}")
-
-        return transition, called_with_batch
-
-    def step_through(self, data: EnvTransition | dict[str, Any]) -> Iterable[EnvTransition]:
+    def step_through(self, data: dict[str, Any]) -> Iterable[EnvTransition]:
         """Yield the intermediate results after each processor step.
 
         This is a low-level method that does NOT apply hooks. It simply executes each step
         and yields the intermediate results. This allows users to debug the pipeline or
         apply custom logic between steps if needed.
 
-        Note: This method always yields EnvTransition objects regardless of input format.
-        If you need the results in the original input format, you'll need to convert them
+        Note: This method always yields EnvTransition objects regardless of output format.
+        If you need the results in the output format, you'll need to convert them
         using `to_output()`.
 
         Args:
-            data: Either an EnvTransition dict or a batch dictionary to process.
+            data: A batch dictionary to process.
 
         Yields:
             The intermediate EnvTransition results after each step.
         """
-        transition, _ = self._prepare_transition(data)
+        # Always convert input through to_transition
+        transition = self.to_transition(data)
 
         # Yield initial state
         yield transition
@@ -525,8 +519,10 @@ class RobotProcessor(ModelHubMixin):
         revision: str | None = None,
         config_filename: str | None = None,
         overrides: dict[str, Any] | None = None,
+        to_transition: Callable[[dict[str, Any]], EnvTransition] | None = None,
+        to_output: Callable[[EnvTransition], TOutput] | None = None,
         **kwargs,
-    ) -> RobotProcessor:
+    ) -> RobotProcessor[TOutput]:
         """Load a serialized processor from source (local path or Hugging Face Hub identifier).
 
         Args:
@@ -540,9 +536,14 @@ class RobotProcessor(ModelHubMixin):
                 (for registered steps). Values are dictionaries containing parameter overrides
                 that will be merged with the saved configuration. This is useful for providing
                 non-serializable objects like environment instances.
+            to_transition: Function to convert batch dict to EnvTransition dict.
+                Defaults to _default_batch_to_transition.
+            to_output: Function to convert EnvTransition dict to the desired output format of type T.
+                Defaults to _default_transition_to_batch (returns batch dict).
+                Use identity function (lambda x: x) for EnvTransition output.
 
         Returns:
-            A RobotProcessor instance loaded from the saved configuration.
+            A RobotProcessor[TOutput] instance loaded from the saved configuration.
 
         Raises:
             ImportError: If a processor step class cannot be loaded or imported.
@@ -756,19 +757,34 @@ class RobotProcessor(ModelHubMixin):
                 f"Make sure override keys match exact step class names or registry names."
             )
 
-        return cls(steps, loaded_config.get("name", "RobotProcessor"))
+        return cls(
+            steps=steps,
+            name=loaded_config.get("name", "RobotProcessor"),
+            to_transition=to_transition or _default_batch_to_transition,
+            # Cast is necessary here: Same type-checker limitation as above.
+            # When to_output is None, we use the default which returns dict[str, Any].
+            # The cast ensures type consistency with the generic TOutput parameter.
+            to_output=to_output or cast(Callable[[EnvTransition], TOutput], _default_transition_to_batch),
+        )
 
     def __len__(self) -> int:
         """Return the number of steps in the processor."""
         return len(self.steps)
 
-    def __getitem__(self, idx: int | slice) -> ProcessorStep | RobotProcessor:
+    def __getitem__(self, idx: int | slice) -> ProcessorStep | RobotProcessor[TOutput]:
         """Indexing helper exposing underlying steps.
         * ``int`` – returns the idx-th ProcessorStep.
         * ``slice`` – returns a new RobotProcessor with the sliced steps.
         """
         if isinstance(idx, slice):
-            return RobotProcessor(self.steps[idx], self.name)
+            return RobotProcessor(
+                steps=self.steps[idx],
+                name=self.name,
+                to_transition=self.to_transition,
+                to_output=self.to_output,
+                before_step_hooks=self.before_step_hooks.copy(),
+                after_step_hooks=self.after_step_hooks.copy(),
+            )
         return self.steps[idx]
 
     def register_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):

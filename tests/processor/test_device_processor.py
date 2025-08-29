@@ -311,7 +311,12 @@ def test_integration_with_robot_processor():
     device_processor = DeviceProcessor(device="cpu")
     batch_processor = ToBatchProcessor()
 
-    processor = RobotProcessor(steps=[batch_processor, device_processor], name="test_pipeline")
+    processor = RobotProcessor(
+        steps=[batch_processor, device_processor],
+        name="test_pipeline",
+        to_transition=lambda x: x,
+        to_output=lambda x: x,
+    )
 
     # Create test data
     observation = {OBS_STATE: torch.randn(10)}
@@ -985,6 +990,8 @@ def test_policy_processor_integration():
             DeviceProcessor(device="cuda"),
         ],
         name="test_preprocessor",
+        to_transition=lambda x: x,
+        to_output=lambda x: x,
     )
 
     # Create output processor (postprocessor) that moves to CPU
@@ -994,6 +1001,8 @@ def test_policy_processor_integration():
             UnnormalizerProcessor(features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
         ],
         name="test_postprocessor",
+        to_transition=lambda x: x,
+        to_output=lambda x: x,
     )
 
     # Test data on CPU

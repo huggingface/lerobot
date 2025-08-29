@@ -188,7 +188,7 @@ def test_integration_with_robot_processor():
     }
     rename_processor = RenameProcessor(rename_map=rename_map)
 
-    pipeline = RobotProcessor([rename_processor])
+    pipeline = RobotProcessor([rename_processor], to_transition=lambda x: x, to_output=lambda x: x)
 
     observation = {
         "agent_pos": np.array([1.0, 2.0, 3.0]),
@@ -236,7 +236,9 @@ def test_save_and_load_pretrained():
         assert len(state_files) == 0
 
         # Load pipeline
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = RobotProcessor.from_pretrained(
+            tmp_dir, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         assert loaded_pipeline.name == "TestRenameProcessor"
         assert len(loaded_pipeline) == 1
@@ -277,7 +279,7 @@ def test_registry_functionality():
 def test_registry_based_save_load():
     """Test save/load using registry name instead of module path."""
     processor = RenameProcessor(rename_map={"key1": "renamed_key1"})
-    pipeline = RobotProcessor([processor])
+    pipeline = RobotProcessor([processor], to_transition=lambda x: x, to_output=lambda x: x)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save and load
@@ -318,7 +320,7 @@ def test_chained_rename_processors():
         }
     )
 
-    pipeline = RobotProcessor([processor1, processor2])
+    pipeline = RobotProcessor([processor1, processor2], to_transition=lambda x: x, to_output=lambda x: x)
 
     observation = {
         "pos": np.array([1.0, 2.0]),

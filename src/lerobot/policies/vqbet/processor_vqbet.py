@@ -16,8 +16,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import torch
+from typing_extensions import Unpack
 
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
+from lerobot.policies.processor_types import ProcessorFactoryKwargs
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.processor import (
     DeviceProcessor,
@@ -30,7 +32,9 @@ from lerobot.processor import (
 
 
 def make_vqbet_pre_post_processors(
-    config: VQBeTConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
+    config: VQBeTConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    **kwargs: Unpack[ProcessorFactoryKwargs],
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [
         RenameProcessor(rename_map={}),  # Let the possibility to the user to rename the keys
@@ -48,6 +52,19 @@ def make_vqbet_pre_post_processors(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
-    return RobotProcessor(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), RobotProcessor(
-        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
+    # Extract processor kwargs
+    preprocessor_kwargs = kwargs.get("preprocessor_kwargs") or {}
+    postprocessor_kwargs = kwargs.get("postprocessor_kwargs") or {}
+
+    return (
+        RobotProcessor(
+            steps=input_steps,
+            name=PREPROCESSOR_DEFAULT_NAME,
+            **preprocessor_kwargs,
+        ),
+        RobotProcessor(
+            steps=output_steps,
+            name=POSTPROCESSOR_DEFAULT_NAME,
+            **postprocessor_kwargs,
+        ),
     )

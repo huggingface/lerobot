@@ -105,7 +105,12 @@ def test_diffusion_processor_with_images():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Create test data with images
     observation = {
@@ -131,7 +136,12 @@ def test_diffusion_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Create CPU data
     observation = {
@@ -164,7 +174,12 @@ def test_diffusion_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Simulate Accelerate: data already on GPU
     device = torch.device("cuda:0")
@@ -238,14 +253,22 @@ def test_diffusion_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+    # Get the steps from the factory function
+    factory_preprocessor, factory_postprocessor = make_diffusion_pre_post_processors(config, stats)
+
+    # Create new processors with EnvTransition input/output
+    preprocessor = RobotProcessor(
+        factory_preprocessor.steps, to_transition=lambda x: x, to_output=lambda x: x
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(tmpdir)
+        loaded_preprocessor = RobotProcessor.from_pretrained(
+            tmpdir, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         # Test that loaded processor works
         observation = {
@@ -268,13 +291,19 @@ def test_diffusion_processor_mixed_precision():
     config.device = "cuda"
     stats = create_default_stats()
 
-    # Create processor
-    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+    # Get the steps from the factory function
+    factory_preprocessor, factory_postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Replace DeviceProcessor with one that uses float16
-    for i, step in enumerate(preprocessor.steps):
+    modified_steps = []
+    for step in factory_preprocessor.steps:
         if isinstance(step, DeviceProcessor):
-            preprocessor.steps[i] = DeviceProcessor(device=config.device, float_dtype="float16")
+            modified_steps.append(DeviceProcessor(device=config.device, float_dtype="float16"))
+        else:
+            modified_steps.append(step)
+
+    # Create new processors with EnvTransition input/output
+    preprocessor = RobotProcessor(modified_steps, to_transition=lambda x: x, to_output=lambda x: x)
 
     # Create test data
     observation = {
@@ -298,7 +327,12 @@ def test_diffusion_processor_identity_normalization():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Create test data
     image_value = torch.rand(3, 224, 224) * 255  # Large values
@@ -322,7 +356,12 @@ def test_diffusion_processor_batch_consistency():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Test with different batch sizes
     for batch_size in [1, 8, 32]:

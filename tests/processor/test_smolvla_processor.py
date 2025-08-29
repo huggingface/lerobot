@@ -89,7 +89,12 @@ def test_make_smolvla_processor_basic():
     stats = create_default_stats()
 
     with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor"):
-        preprocessor, postprocessor = make_smolvla_pre_post_processors(config, stats)
+        preprocessor, postprocessor = make_smolvla_pre_post_processors(
+            config,
+            stats,
+            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        )
 
     # Check processor names
     assert preprocessor.name == "robot_preprocessor"
@@ -188,7 +193,12 @@ def test_smolvla_processor_cuda():
             return features
 
     with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor", MockTokenizerProcessor):
-        preprocessor, postprocessor = make_smolvla_pre_post_processors(config, stats)
+        preprocessor, postprocessor = make_smolvla_pre_post_processors(
+            config,
+            stats,
+            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        )
 
     # Create CPU data
     observation = {
@@ -238,7 +248,12 @@ def test_smolvla_processor_accelerate_scenario():
             return features
 
     with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor", MockTokenizerProcessor):
-        preprocessor, postprocessor = make_smolvla_pre_post_processors(config, stats)
+        preprocessor, postprocessor = make_smolvla_pre_post_processors(
+            config,
+            stats,
+            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        )
 
     # Simulate Accelerate: data already on GPU and batched
     device = torch.device("cuda:0")
@@ -289,7 +304,12 @@ def test_smolvla_processor_multi_gpu():
             return features
 
     with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor", MockTokenizerProcessor):
-        preprocessor, postprocessor = make_smolvla_pre_post_processors(config, stats)
+        preprocessor, postprocessor = make_smolvla_pre_post_processors(
+            config,
+            stats,
+            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        )
 
     # Simulate data on different GPU
     device = torch.device("cuda:1")
@@ -315,7 +335,12 @@ def test_smolvla_processor_without_stats():
 
     # Mock the tokenizer processor
     with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor"):
-        preprocessor, postprocessor = make_smolvla_pre_post_processors(config, dataset_stats=None)
+        preprocessor, postprocessor = make_smolvla_pre_post_processors(
+            config,
+            dataset_stats=None,
+            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        )
 
     # Should still create processors
     assert preprocessor is not None

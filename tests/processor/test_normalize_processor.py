@@ -506,7 +506,7 @@ def test_get_config(full_stats):
 
 def test_integration_with_robot_processor(normalizer_processor):
     """Test integration with RobotProcessor pipeline"""
-    robot_processor = RobotProcessor([normalizer_processor])
+    robot_processor = RobotProcessor([normalizer_processor], to_transition=lambda x: x, to_output=lambda x: x)
 
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]),
@@ -1317,7 +1317,7 @@ def test_hotswap_stats_functional_test():
 
     # Create original processor
     normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
-    original_processor = RobotProcessor(steps=[normalizer])
+    original_processor = RobotProcessor(steps=[normalizer], to_transition=lambda x: x, to_output=lambda x: x)
 
     # Process with original stats
     original_result = original_processor(transition)

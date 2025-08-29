@@ -33,6 +33,7 @@ from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.processor_types import ProcessorKwargs
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
@@ -114,6 +115,8 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+    preprocessor_kwargs: ProcessorKwargs | None
+    postprocessor_kwargs: ProcessorKwargs | None
 
 
 def make_pre_post_processors(
@@ -139,16 +142,24 @@ def make_pre_post_processors(
         NotImplementedError: If the policy type doesn't have a processor implemented.
     """
     if pretrained_path:
+        # Extract preprocessor and postprocessor kwargs
+        preprocessor_kwargs = kwargs.get("preprocessor_kwargs", {})
+        postprocessor_kwargs = kwargs.get("postprocessor_kwargs", {})
+
         return (
             RobotProcessor.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
                 config_filename=kwargs.get("preprocessor_config_filename", "robot_preprocessor.json"),
                 overrides=kwargs.get("preprocessor_overrides", {}),
+                to_transition=preprocessor_kwargs.get("to_transition"),
+                to_output=preprocessor_kwargs.get("to_output"),
             ),
             RobotProcessor.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
                 config_filename=kwargs.get("postprocessor_config_filename", "robot_postprocessor.json"),
                 overrides=kwargs.get("postprocessor_overrides", {}),
+                to_transition=postprocessor_kwargs.get("to_transition"),
+                to_output=postprocessor_kwargs.get("to_output"),
             ),
         )
 
@@ -157,61 +168,90 @@ def make_pre_post_processors(
         from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
 
         processors = make_tdmpc_pre_post_processors(
-            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
+            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, DiffusionConfig):
         from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
 
         processors = make_diffusion_pre_post_processors(
-            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
+            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, ACTConfig):
         from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
         processors = make_act_pre_post_processors(
-            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
+            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, VQBeTConfig):
         from lerobot.policies.vqbet.processor_vqbet import make_vqbet_pre_post_processors
 
         processors = make_vqbet_pre_post_processors(
-            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
+            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, PI0Config):
         from lerobot.policies.pi0.processor_pi0 import make_pi0_pre_post_processors
 
         processors = make_pi0_pre_post_processors(
-            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
+            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
-    elif isinstance(policy_cfg, PI0Config):
+    elif isinstance(policy_cfg, PI0FASTConfig):
         from lerobot.policies.pi0fast.processor_pi0fast import make_pi0fast_pre_post_processors
 
         processors = make_pi0fast_pre_post_processors(
-            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
+            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, SACConfig):
         from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 
         processors = make_sac_pre_post_processors(
-            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
+            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, RewardClassifierConfig):
         from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
 
-        processors = make_classifier_processor(config=policy_cfg, dataset_stats=kwargs.get("dataset_stats"))
+        processors = make_classifier_processor(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
+            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
+        )
 
     elif isinstance(policy_cfg, SmolVLAConfig):
         from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 
         processors = make_smolvla_pre_post_processors(
-            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
+            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     else:

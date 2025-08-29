@@ -15,8 +15,10 @@
 # limitations under the License.
 
 import torch
+from typing_extensions import Unpack
 
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
+from lerobot.policies.processor_types import ProcessorFactoryKwargs
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
     DeviceProcessor,
@@ -34,7 +36,9 @@ from lerobot.processor.pipeline import (
 
 
 def make_smolvla_pre_post_processors(
-    config: SmolVLAConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
+    config: SmolVLAConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    **kwargs: Unpack[ProcessorFactoryKwargs],
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [
         RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
@@ -59,8 +63,21 @@ def make_smolvla_pre_post_processors(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
-    return RobotProcessor(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), RobotProcessor(
-        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
+    # Extract processor kwargs
+    preprocessor_kwargs = kwargs.get("preprocessor_kwargs") or {}
+    postprocessor_kwargs = kwargs.get("postprocessor_kwargs") or {}
+
+    return (
+        RobotProcessor(
+            steps=input_steps,
+            name=PREPROCESSOR_DEFAULT_NAME,
+            **preprocessor_kwargs,
+        ),
+        RobotProcessor(
+            steps=output_steps,
+            name=POSTPROCESSOR_DEFAULT_NAME,
+            **postprocessor_kwargs,
+        ),
     )
 
 

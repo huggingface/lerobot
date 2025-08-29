@@ -176,7 +176,7 @@ class MockStepWithTensorState:
 
 def test_empty_pipeline():
     """Test pipeline with no steps."""
-    pipeline = RobotProcessor()
+    pipeline = RobotProcessor([], to_transition=lambda x: x, to_output=lambda x: x)
 
     transition = create_transition()
     result = pipeline(transition)
@@ -188,7 +188,7 @@ def test_empty_pipeline():
 def test_single_step_pipeline():
     """Test pipeline with a single step."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step])
+    pipeline = RobotProcessor([step], to_transition=lambda x: x, to_output=lambda x: x)
 
     transition = create_transition()
     result = pipeline(transition)
@@ -205,7 +205,7 @@ def test_multiple_steps_pipeline():
     """Test pipeline with multiple steps."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = RobotProcessor([step1, step2])
+    pipeline = RobotProcessor([step1, step2], to_transition=lambda x: x, to_output=lambda x: x)
 
     transition = create_transition()
     result = pipeline(transition)
@@ -557,7 +557,9 @@ def test_save_and_load_pretrained():
 def test_step_without_optional_methods():
     """Test pipeline with steps that don't implement optional methods."""
     step = MockStepWithoutOptionalMethods(multiplier=3.0)
-    pipeline = RobotProcessor([step])
+    pipeline = RobotProcessor(
+        [step], to_transition=lambda x: x, to_output=lambda x: x
+    )  # Identity for EnvTransition input/output
 
     transition = create_transition(reward=2.0)
     result = pipeline(transition)
@@ -878,7 +880,9 @@ def test_from_pretrained_with_overrides():
             "registered_mock_step": {"device": "cuda", "value": 200},
         }
 
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = RobotProcessor.from_pretrained(
+            tmp_dir, overrides=overrides, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         # Verify the pipeline was loaded correctly
         assert len(loaded_pipeline) == 2
@@ -914,7 +918,9 @@ def test_from_pretrained_with_partial_overrides():
 
         # The current implementation applies overrides to ALL steps with the same class name
         # Both steps will get the override
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = RobotProcessor.from_pretrained(
+            tmp_dir, overrides=overrides, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         transition = create_transition(reward=1.0)
         result = loaded_pipeline(transition)
@@ -971,7 +977,9 @@ def test_from_pretrained_registered_step_override():
         # Override using registry name
         overrides = {"registered_mock_step": {"value": 999, "device": "cuda"}}
 
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = RobotProcessor.from_pretrained(
+            tmp_dir, overrides=overrides, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         # Test that overrides were applied
         transition = create_transition()
@@ -999,7 +1007,9 @@ def test_from_pretrained_mixed_registered_and_unregistered():
             "registered_mock_step": {"value": 777},
         }
 
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = RobotProcessor.from_pretrained(
+            tmp_dir, overrides=overrides, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         # Test both steps
         transition = create_transition(reward=2.0)
@@ -1020,7 +1030,9 @@ def test_from_pretrained_no_overrides():
         pipeline.save_pretrained(tmp_dir)
 
         # Load without overrides
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = RobotProcessor.from_pretrained(
+            tmp_dir, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         assert len(loaded_pipeline) == 1
 
@@ -1040,7 +1052,9 @@ def test_from_pretrained_empty_overrides():
         pipeline.save_pretrained(tmp_dir)
 
         # Load with empty overrides
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides={})
+        loaded_pipeline = RobotProcessor.from_pretrained(
+            tmp_dir, overrides={}, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         assert len(loaded_pipeline) == 1
 
@@ -1455,6 +1469,8 @@ def test_override_with_nested_config():
             loaded = RobotProcessor.from_pretrained(
                 tmp_dir,
                 overrides={"complex_config_step": {"nested_config": {"level1": {"level2": "overridden"}}}},
+                to_transition=lambda x: x,
+                to_output=lambda x: x,
             )
 
             # Test that override worked
@@ -1553,7 +1569,10 @@ def test_override_with_callables():
 
             # Load with callable override
             loaded = RobotProcessor.from_pretrained(
-                tmp_dir, overrides={"callable_step": {"transform_fn": double_values}}
+                tmp_dir,
+                overrides={"callable_step": {"transform_fn": double_values}},
+                to_transition=lambda x: x,
+                to_output=lambda x: x,
             )
 
             # Test it works
@@ -1857,7 +1876,8 @@ def test_save_load_with_custom_converter_functions():
 
         # Should work with standard format (wouldn't work with custom converter)
         result = loaded(batch)
-        assert "observation.image" in result  # Standard format preserved
+        # With new behavior, default to_output is _default_transition_to_batch, so result is batch dict
+        assert "observation.image" in result
 
 
 class NonCompliantStep:

@@ -102,7 +102,12 @@ def test_act_processor_normalization():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Create test data
     observation = {OBS_STATE: torch.randn(7)}
@@ -131,7 +136,12 @@ def test_act_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Create CPU data
     observation = {OBS_STATE: torch.randn(7)}
@@ -160,7 +170,12 @@ def test_act_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Simulate Accelerate: data already on GPU
     device = torch.device("cuda:0")
@@ -223,14 +238,21 @@ def test_act_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(tmpdir)
+        loaded_preprocessor = RobotProcessor.from_pretrained(
+            tmpdir, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         # Test that loaded processor works
         observation = {OBS_STATE: torch.randn(7)}
@@ -249,7 +271,12 @@ def test_act_processor_device_placement_preservation():
 
     # Test with CPU config
     config.device = "cpu"
-    preprocessor, _ = make_act_pre_post_processors(config, stats)
+    preprocessor, _ = make_act_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Process CPU data
     observation = {OBS_STATE: torch.randn(7)}
@@ -269,12 +296,21 @@ def test_act_processor_mixed_precision():
     stats = create_default_stats()
 
     # Modify the device processor to use float16
-    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Replace DeviceProcessor with one that uses float16
-    for i, step in enumerate(preprocessor.steps):
+    modified_steps = []
+    for step in preprocessor.steps:
         if isinstance(step, DeviceProcessor):
-            preprocessor.steps[i] = DeviceProcessor(device=config.device, float_dtype="float16")
+            modified_steps.append(DeviceProcessor(device=config.device, float_dtype="float16"))
+        else:
+            modified_steps.append(step)
+    preprocessor.steps = modified_steps
 
     # Create test data
     observation = {OBS_STATE: torch.randn(7, dtype=torch.float32)}
@@ -294,7 +330,12 @@ def test_act_processor_batch_consistency():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Test single sample (unbatched)
     observation = {OBS_STATE: torch.randn(7)}
