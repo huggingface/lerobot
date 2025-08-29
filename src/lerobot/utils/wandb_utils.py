@@ -24,6 +24,7 @@ from termcolor import colored
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.constants import PRETRAINED_MODEL_DIR
+from lerobot.utils.experiment_logger import ExperimentLogger
 
 
 def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
@@ -56,7 +57,7 @@ def get_safe_wandb_artifact_name(name: str):
     return name.replace(":", "_").replace("/", "_")
 
 
-class WandBLogger:
+class WandBLogger(ExperimentLogger):
     """A helper class to log object using wandb."""
 
     def __init__(self, cfg: TrainPipelineConfig):
@@ -161,3 +162,8 @@ class WandBLogger:
 
         wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
         self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+
+    def finish(self) -> None:
+        """Clean up and finish the wandb session."""
+        if hasattr(self, "_wandb") and self._wandb is not None:
+            self._wandb.finish()

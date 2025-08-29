@@ -124,6 +124,7 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.9", "lerobot[grpcio-dep]",
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
+mlflow = ["mlflow>=3.0.0"]
 
 # Development
 dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
@@ -152,7 +153,8 @@ all = [
     "lerobot[video_benchmark]",
     "lerobot[aloha]",
     "lerobot[pusht]",
-    "lerobot[xarm]"
+    "lerobot[xarm]",
+    "lerobot[mlflow]"
 ]
 
 [project.scripts]
