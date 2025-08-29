@@ -147,12 +147,12 @@ class EEReferenceAndDelta(ActionProcessor):
         features.pop("action.target_wy", None)
         features.pop("action.target_wz", None)
 
-        features["action.ee.x"] = float
-        features["action.ee.y"] = float
-        features["action.ee.z"] = float
-        features["action.ee.wx"] = float
-        features["action.ee.wy"] = float
-        features["action.ee.wz"] = float
+        features["action.ee.x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         return features
 
 

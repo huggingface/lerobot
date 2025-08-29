@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
@@ -85,12 +85,12 @@ class MapPhoneActionToRobotAction(ActionProcessor):
         features.pop("action.phone.rot", None)
         features.pop("action.phone.raw_inputs", None)
 
-        features["action.enabled"] = bool
-        features["action.target_x"] = float
-        features["action.target_y"] = float
-        features["action.target_z"] = float
-        features["action.target_wx"] = float
-        features["action.target_wy"] = float
-        features["action.target_wz"] = float
-        features["action.gripper"] = float
+        features["action.enabled"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.target_x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.target_y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.target_z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.target_wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.target_wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.target_wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.gripper"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         return features
