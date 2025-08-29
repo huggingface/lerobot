@@ -53,7 +53,7 @@ def _is_image(arr: Any) -> bool:
 def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     state, images = {}, {}
     for k, v in obs.items():
-        if _is_image(v):
+        if "image" in k.lower() or _is_image(v):
             images[k] = v
         else:
             state[k] = v
@@ -115,6 +115,9 @@ def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
     """
     out: dict[str, Any] = {}
     action_dict = transition.get(TransitionKey.ACTION) or {}
+
+    if action_dict is None:
+        return out
 
     for k, v in action_dict.items():
         if isinstance(k, str) and k.startswith("action.") and k.endswith((".pos", ".vel")):
