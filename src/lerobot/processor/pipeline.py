@@ -860,7 +860,7 @@ RobotProcessorPipeline: TypeAlias = DataProcessorPipeline
 PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline
 
 
-class ObservationProcessor(ProcessorStep, ABC):
+class ObservationProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the observation component of a transition.
 
     Subclasses should override the `observation` method to implement custom observation processing.
@@ -869,7 +869,7 @@ class ObservationProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class MyObservationScaler(ObservationProcessor):
+        class MyObservationScaler(ObservationProcessorStep):
             def __init__(self, scale_factor):
                 self.scale_factor = scale_factor
 
@@ -906,7 +906,7 @@ class ObservationProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class ActionProcessor(ProcessorStep, ABC):
+class ActionProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the action component of a transition.
 
     Subclasses should override the `action` method to implement custom action processing.
@@ -915,7 +915,7 @@ class ActionProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class ActionClipping(ActionProcessor):
+        class ActionClipping(ActionProcessorStep):
             def __init__(self, min_val, max_val):
                 self.min_val = min_val
                 self.max_val = max_val
@@ -953,7 +953,7 @@ class ActionProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class RewardProcessor(ProcessorStep, ABC):
+class RewardProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the reward component of a transition.
 
     Subclasses should override the `reward` method to implement custom reward processing.
@@ -962,7 +962,7 @@ class RewardProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class RewardScaler(RewardProcessor):
+        class RewardScaler(RewardProcessorStep):
             def __init__(self, scale_factor):
                 self.scale_factor = scale_factor
 
@@ -999,7 +999,7 @@ class RewardProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class DoneProcessor(ProcessorStep, ABC):
+class DoneProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the done flag of a transition.
 
     Subclasses should override the `done` method to implement custom done flag processing.
@@ -1008,7 +1008,7 @@ class DoneProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class TimeoutDone(DoneProcessor):
+        class TimeoutDone(DoneProcessorStep):
             def __init__(self, max_steps):
                 self.steps = 0
                 self.max_steps = max_steps
@@ -1050,7 +1050,7 @@ class DoneProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class TruncatedProcessor(ProcessorStep, ABC):
+class TruncatedProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the truncated flag of a transition.
 
     Subclasses should override the `truncated` method to implement custom truncated flag processing.
@@ -1059,7 +1059,7 @@ class TruncatedProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class EarlyTruncation(TruncatedProcessor):
+        class EarlyTruncation(TruncatedProcessorStep):
             def __init__(self, threshold):
                 self.threshold = threshold
 
@@ -1097,7 +1097,7 @@ class TruncatedProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class InfoProcessor(ProcessorStep, ABC):
+class InfoProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the info dictionary of a transition.
 
     Subclasses should override the `info` method to implement custom info processing.
@@ -1106,7 +1106,7 @@ class InfoProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class InfoAugmenter(InfoProcessor):
+        class InfoAugmenter(InfoProcessorStep):
             def __init__(self):
                 self.step_count = 0
 
@@ -1149,7 +1149,7 @@ class InfoProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class ComplementaryDataProcessor(ProcessorStep, ABC):
+class ComplementaryDataProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the complementary data of a transition.
 
     Subclasses should override the `complementary_data` method to implement custom complementary data processing.
@@ -1182,7 +1182,7 @@ class ComplementaryDataProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class IdentityProcessor(ProcessorStep):
+class IdentityProcessorStep(ProcessorStep):
     """Identity processor that does nothing."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

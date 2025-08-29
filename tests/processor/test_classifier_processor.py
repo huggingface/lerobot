@@ -24,7 +24,12 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import OBS_IMAGE, OBS_STATE
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
-from lerobot.processor import DataProcessorPipeline, DeviceProcessor, IdentityProcessor, NormalizerProcessor
+from lerobot.processor import (
+    DataProcessorPipeline,
+    DeviceProcessor,
+    IdentityProcessorStep,
+    NormalizerProcessor,
+)
 from lerobot.processor.pipeline import TransitionKey
 
 
@@ -89,7 +94,7 @@ def test_make_classifier_processor_basic():
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
     assert isinstance(postprocessor.steps[0], DeviceProcessor)
-    assert isinstance(postprocessor.steps[1], IdentityProcessor)
+    assert isinstance(postprocessor.steps[1], IdentityProcessorStep)
 
 
 def test_classifier_processor_normalization():
@@ -311,7 +316,7 @@ def test_classifier_processor_batch_data():
 
 
 def test_classifier_processor_postprocessor_identity():
-    """Test that Classifier postprocessor uses IdentityProcessor correctly."""
+    """Test that Classifier postprocessor uses IdentityProcessorStep correctly."""
     config = create_default_config()
     stats = create_default_stats()
 
@@ -324,6 +329,6 @@ def test_classifier_processor_postprocessor_identity():
     # Process through postprocessor
     processed = postprocessor(transition)
 
-    # IdentityProcessor should leave values unchanged (except device)
+    # IdentityProcessorStep should leave values unchanged (except device)
     assert torch.allclose(processed[TransitionKey.ACTION].cpu(), reward.cpu())
     assert processed[TransitionKey.ACTION].device.type == "cpu"
