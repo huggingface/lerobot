@@ -77,6 +77,7 @@ _ HOWTO100M: https://www.di.ens.fr/willow/research/howto100m/
   - Only rewind loss [x]
   - Exactly similar to: https://github.com/lucidrains/rewind-reward-pytorch/blob/main/rewind_reward_pytorch/rewind_reward.py#L11 [x]
   - Try DINO v2 as encoder Base 86 M: with https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2 [x]
+  - benchmark lucidrains vs this implementation forward pass []
   - Test rewind (evaluate) []
   - Cleanup code? []
   - Convert python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=IPEC-COMMUNITY/bc_z_lerobot and train on 1 percent
@@ -88,5 +89,5 @@ _ HOWTO100M: https://www.di.ens.fr/willow/research/howto100m/
   - Multiple captions per video, creat method to generate as much data as possible etc [] https://arxiv.org/abs/2508.13446, https://arxiv.org/pdf/2412.04453
 - How can we improve spatial aware learning? solve issue of Contrastive learning and position
 - Extend evaluation []
-- Add other datasets mentioned above []
+- Add other datasets from OXE metioned in rewind []
 - Ablation for size vision encoder, language encoder, temporal head
