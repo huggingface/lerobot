@@ -9,14 +9,14 @@ import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import (
-    ComplementaryDataProcessor,
+    ComplementaryDataProcessorStep,
     EnvTransition,
-    InfoProcessor,
-    ObservationProcessor,
+    InfoProcessorStep,
+    ObservationProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
     TransitionKey,
-    TruncatedProcessor,
+    TruncatedProcessorStep,
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
@@ -26,7 +26,7 @@ GRIPPER_KEY = "gripper"
 
 @ProcessorStepRegistry.register("add_teleop_action_as_complementary_data")
 @dataclass
-class AddTeleopActionAsComplimentaryData(ComplementaryDataProcessor):
+class AddTeleopActionAsComplimentaryData(ComplementaryDataProcessorStep):
     """Add teleoperator action to transition complementary data."""
 
     teleop_device: Teleoperator
@@ -39,7 +39,7 @@ class AddTeleopActionAsComplimentaryData(ComplementaryDataProcessor):
 
 @ProcessorStepRegistry.register("add_teleop_action_as_info")
 @dataclass
-class AddTeleopEventsAsInfo(InfoProcessor):
+class AddTeleopEventsAsInfo(InfoProcessorStep):
     """Add teleoperator control events to transition info."""
 
     teleop_device: Teleoperator
@@ -53,7 +53,7 @@ class AddTeleopEventsAsInfo(InfoProcessor):
 
 @ProcessorStepRegistry.register("image_crop_resize_processor")
 @dataclass
-class ImageCropResizeProcessor(ObservationProcessor):
+class ImageCropResizeProcessor(ObservationProcessorStep):
     """Crop and resize image observations."""
 
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
@@ -103,7 +103,7 @@ class ImageCropResizeProcessor(ObservationProcessor):
 
 @dataclass
 @ProcessorStepRegistry.register("time_limit_processor")
-class TimeLimitProcessor(TruncatedProcessor):
+class TimeLimitProcessor(TruncatedProcessorStep):
     """Track episode steps and enforce time limits."""
 
     max_episode_steps: int
@@ -127,7 +127,7 @@ class TimeLimitProcessor(TruncatedProcessor):
 
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
-class GripperPenaltyProcessor(ComplementaryDataProcessor):
+class GripperPenaltyProcessor(ComplementaryDataProcessorStep):
     """Apply penalty for inappropriate gripper usage."""
 
     penalty: float = -0.01

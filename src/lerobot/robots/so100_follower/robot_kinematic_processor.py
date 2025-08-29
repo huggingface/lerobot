@@ -22,10 +22,10 @@ from scipy.spatial.transform import Rotation
 from lerobot.configs.types import PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.pipeline import (
-    ActionProcessor,
-    ComplementaryDataProcessor,
+    ActionProcessorStep,
+    ComplementaryDataProcessorStep,
     EnvTransition,
-    ObservationProcessor,
+    ObservationProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
     TransitionKey,
@@ -35,7 +35,7 @@ from lerobot.robots.robot import Robot
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
 @dataclass
-class EEReferenceAndDelta(ActionProcessor):
+class EEReferenceAndDelta(ActionProcessorStep):
     """
     Compute the desired end-effector pose from the target pose and the current pose.
 
@@ -145,7 +145,7 @@ class EEReferenceAndDelta(ActionProcessor):
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
 @dataclass
-class EEBoundsAndSafety(ActionProcessor):
+class EEBoundsAndSafety(ActionProcessorStep):
     """
     Clip the end-effector pose to the bounds and check for jumps.
 
@@ -396,7 +396,7 @@ class GripperVelocityToJoint(ProcessorStep):
 
 @ProcessorStepRegistry.register("forward_kinematics_joints_to_ee")
 @dataclass
-class ForwardKinematicsJointsToEE(ObservationProcessor):
+class ForwardKinematicsJointsToEE(ObservationProcessorStep):
     """
     Compute the end-effector pose from the joint positions.
 
@@ -444,7 +444,7 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
 
 @ProcessorStepRegistry.register("add_robot_observation")
 @dataclass
-class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessor):
+class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessorStep):
     """
     Read the robot's current observation and insert it into the transition as complementary data.
 

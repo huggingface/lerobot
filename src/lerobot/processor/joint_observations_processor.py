@@ -5,7 +5,7 @@ import torch
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import (
-    ObservationProcessor,
+    ObservationProcessorStep,
     ProcessorStepRegistry,
 )
 from lerobot.robots import Robot
@@ -13,7 +13,7 @@ from lerobot.robots import Robot
 
 @dataclass
 @ProcessorStepRegistry.register("joint_velocity_processor")
-class JointVelocityProcessor(ObservationProcessor):
+class JointVelocityProcessor(ObservationProcessorStep):
     """Add joint velocity information to observations."""
 
     dt: float = 0.1
@@ -66,7 +66,7 @@ class JointVelocityProcessor(ObservationProcessor):
 
 @dataclass
 @ProcessorStepRegistry.register("current_processor")
-class MotorCurrentProcessor(ObservationProcessor):
+class MotorCurrentProcessor(ObservationProcessorStep):
     """Add motor current information to observations."""
 
     robot: Robot | None = None
