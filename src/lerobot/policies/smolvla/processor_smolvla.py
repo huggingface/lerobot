@@ -19,9 +19,9 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
-    DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
+    PolicyProcessorPipeline,
     RenameProcessor,
     ToBatchProcessor,
     TokenizerProcessor,
@@ -35,7 +35,7 @@ from lerobot.processor.pipeline import (
 
 def make_smolvla_pre_post_processors(
     config: SmolVLAConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
-) -> tuple[DataProcessorPipeline, DataProcessorPipeline]:
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
         RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
         NormalizerProcessor(
@@ -59,9 +59,9 @@ def make_smolvla_pre_post_processors(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
-    return DataProcessorPipeline(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), DataProcessorPipeline(
-        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
-    )
+    return PolicyProcessorPipeline(
+        steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME
+    ), PolicyProcessorPipeline(steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME)
 
 
 @ProcessorStepRegistry.register(name="smolvla_new_line_processor")
