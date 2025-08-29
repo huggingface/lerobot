@@ -17,7 +17,7 @@ import torch
 
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.processor import (
-    DeviceProcessor,
+    DeviceProcessorStep,
     IdentityProcessorStep,
     NormalizerProcessor,
     PolicyProcessorPipeline,
@@ -34,9 +34,9 @@ def make_classifier_processor(
         NormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        DeviceProcessor(device=config.device),
+        DeviceProcessorStep(device=config.device),
     ]
-    output_steps = [DeviceProcessor(device="cpu"), IdentityProcessorStep()]
+    output_steps = [DeviceProcessorStep(device="cpu"), IdentityProcessorStep()]
     return PolicyProcessorPipeline(
         steps=input_steps, name="classifier_preprocessor"
     ), PolicyProcessorPipeline(steps=output_steps, name="classifier_postprocessor")

@@ -20,7 +20,7 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.processor import (
-    DeviceProcessor,
+    DeviceProcessorStep,
     NormalizerProcessor,
     PolicyProcessorPipeline,
     RenameProcessor,
@@ -40,10 +40,10 @@ def make_vqbet_pre_post_processors(
             stats=dataset_stats,
         ),
         ToBatchProcessor(),
-        DeviceProcessor(device=config.device),
+        DeviceProcessorStep(device=config.device),
     ]
     output_steps = [
-        DeviceProcessor(device="cpu"),
+        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),

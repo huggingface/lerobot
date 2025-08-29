@@ -20,7 +20,7 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
-    DeviceProcessor,
+    DeviceProcessorStep,
     NormalizerProcessor,
     PolicyProcessorPipeline,
     ToBatchProcessor,
@@ -83,11 +83,11 @@ def make_pi0_pre_post_processors(
             padding_side="right",
             padding="max_length",
         ),
-        DeviceProcessor(device=config.device),
+        DeviceProcessorStep(device=config.device),
     ]
 
     output_steps: list[ProcessorStep] = [
-        DeviceProcessor(device="cpu"),
+        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
