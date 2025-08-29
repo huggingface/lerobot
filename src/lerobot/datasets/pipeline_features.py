@@ -15,6 +15,7 @@
 from collections.abc import Sequence
 from typing import Any
 
+from lerobot.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.processor.pipeline import RobotProcessor
 
@@ -59,26 +60,26 @@ def aggregate_pipeline_dataset_features(
 
     # Go over every feature from the pipeline and merge:
     for full_key, ty in all_features.items():
-        if full_key.startswith("action."):
+        if full_key.startswith(f"{ACTION}."):
             # action.<feat>
             if not keep(full_key):
                 continue
-            name = full_key[len("action.") :]
-            hw.setdefault("action", {})[name] = ty
+            name = full_key[len(f"{ACTION}.") :]
+            hw.setdefault(ACTION, {})[name] = ty
 
-        elif full_key.startswith("observation.state."):
+        elif full_key.startswith(f"{OBS_STATE}."):
             # observation.state.<feat>
             if not keep(full_key):
                 continue
-            name = full_key[len("observation.state.") :]
+            name = full_key[len(f"{OBS_STATE}.") :]
             hw.setdefault("observation", {})[name] = ty
 
-        elif full_key.startswith("observation.images."):
+        elif full_key.startswith(f"{OBS_IMAGES}."):
             # observation.images.<cam>
             # images obey ONLY the use_videos flag, not patterns
             if not use_videos:
                 continue
-            name = full_key[len("observation.images.") :]
+            name = full_key[len(f"{OBS_IMAGES}.") :]
             hw.setdefault("observation", {})[name] = ty
 
         else:
@@ -86,8 +87,8 @@ def aggregate_pipeline_dataset_features(
             continue
 
     out: dict[str, dict] = {}
-    if "action" in hw:
-        out.update(hw_to_dataset_features(hw["action"], "action", use_videos))
+    if ACTION in hw:
+        out.update(hw_to_dataset_features(hw[ACTION], ACTION, use_videos))
     if "observation" in hw:
         out.update(hw_to_dataset_features(hw["observation"], "observation", use_videos))
 
