@@ -25,11 +25,11 @@ from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessor,
     RenameProcessor,
-    ToBatchProcessor,
     UnnormalizerProcessor,
 )
 from lerobot.processor.pipeline import TransitionKey
@@ -88,7 +88,7 @@ def test_make_sac_processor_basic():
     assert len(preprocessor.steps) == 4
     assert isinstance(preprocessor.steps[0], RenameProcessor)
     assert isinstance(preprocessor.steps[1], NormalizerProcessor)
-    assert isinstance(preprocessor.steps[2], ToBatchProcessor)
+    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
 
     # Check steps in postprocessor

@@ -92,7 +92,7 @@ class ToBatchProcessorComplementaryData(ComplementaryDataProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor")
-class ToBatchProcessor(ProcessorStep):
+class AddBatchDimensionProcessorStep(ProcessorStep):
     """Processor that adds batch dimensions to observations and actions when needed.
 
     This processor ensures that observations and actions have proper batch dimensions for model processing:
