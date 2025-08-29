@@ -345,7 +345,7 @@ lerobot-record \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=my_awesome_staraiviolin_arm \
     --display_data=true \
-    --dataset.repo_id=starai/record-test \
+    --dataset.repo_id=starai/record-test222 \
     --dataset.episode_time_s=30 \
     --dataset.reset_time_s=30 \
     --dataset.num_episodes=2 \
@@ -427,8 +427,8 @@ lerobot-replay \
     --robot.type=starai_viola \
     --robot.port=/dev/ttyUSB1 \
     --robot.id=my_awesome_staraiviola_arm \
-    --dataset.repo_id=starai/record-test \
-    --dataset.episode=3 # choose the episode you want to replay
+    --dataset.repo_id=starai/record-test222 \
+    --dataset.episode=1 # choose the episode you want to replay
 ```
 
 

@@ -259,6 +259,7 @@ class StaraiMotorsBus(MotorsBus):
         # models = [self._id_to_model(id_) for id_ in ids_values]
 
         write_data = {} 
+        values_ ={}
         if data_name == "Goal_Position":
 
             if normalize and data_name in self.normalized_data:
@@ -270,31 +271,26 @@ class StaraiMotorsBus(MotorsBus):
                         raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
 
                     if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
-                        values[motor] = -values[motor] if drive_mode else values[motor]
-                        bounded_val = min(100.0, max(-100.0, values[motor]))
-                        values[motor] = int(((bounded_val + 100) / 200) * (max_ - min_) + min_)
+                        values_[motor] = -values[motor] if drive_mode else values[motor]
+                        bounded_val = min(100.0, max(-100.0, values_[motor]))
+                        values_[motor] = int(((bounded_val + 100) / 200) * (max_ - min_) + min_)
                     elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
-                        values[motor] = 100 - values[motor] if drive_mode else values[motor]
-                        bounded_val = min(100.0, max(0.0, values[motor]))
-                        values[motor] = int((bounded_val / 100) * (max_ - min_) + min_)
+                        values_[motor] = 100 - values[motor] if drive_mode else values[motor]
+                        bounded_val = min(100.0, max(0.0, values_[motor]))
+                        values_[motor] = int((bounded_val / 100) * (max_ - min_) + min_)
                     elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
                         raise NotImplementedError
-                        mid = (min_ + max_) / 2
-                        max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
-                        values[motor] = int((values[motor] * max_res / 360) + mid)
                     else:
                         raise NotImplementedError
-                    values[motor] = int(((values[motor]/4096*360)-180)*10)
 
-            for motor in values:
+            for motor in values_:
                 data=SyncPositionControlOptions(self.motors[motor].id,
-                                                values[motor],
+                                                int(((values_[motor]/4096*360)-180)*10),
                                                 DEFAULT_MOTION_TIME,
                                                 0,
                                                 DEFAULT_ACC_TIME,
                                                 DEFAULT_DEC_TIME)
                 write_data[motor] = data
-
 
 
 
