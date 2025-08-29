@@ -140,21 +140,24 @@ class EEReferenceAndDelta(ActionProcessor):
         self._command_when_disabled = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features.pop(f"{ACTION}.enabled", None)
-        features.pop(f"{ACTION}.target_x", None)
-        features.pop(f"{ACTION}.target_y", None)
-        features.pop(f"{ACTION}.target_z", None)
-        features.pop(f"{ACTION}.target_wx", None)
-        features.pop(f"{ACTION}.target_wy", None)
-        features.pop(f"{ACTION}.target_wz", None)
+        # Create a copy to avoid modifying the input dictionary
+        new_features = features.copy()
 
-        features[f"{ACTION}.ee.x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        return features
+        new_features.pop(f"{ACTION}.enabled", None)
+        new_features.pop(f"{ACTION}.target_x", None)
+        new_features.pop(f"{ACTION}.target_y", None)
+        new_features.pop(f"{ACTION}.target_z", None)
+        new_features.pop(f"{ACTION}.target_wx", None)
+        new_features.pop(f"{ACTION}.target_wy", None)
+        new_features.pop(f"{ACTION}.target_wz", None)
+
+        new_features["action.ee.x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        new_features["action.ee.y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        new_features["action.ee.z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        new_features["action.ee.wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        new_features["action.ee.wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        new_features["action.ee.wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        return new_features
 
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
@@ -191,6 +194,9 @@ class EEBoundsAndSafety(ActionProcessor):
         if None in (x, y, z, wx, wy, wz):
             return act
 
+        # Create a copy to avoid modifying the input dictionary
+        new_act = act.copy()
+
         pos = np.array([x, y, z], dtype=float)
         twist = np.array([wx, wy, wz], dtype=float)
 
@@ -208,13 +214,13 @@ class EEBoundsAndSafety(ActionProcessor):
         self._last_pos = pos
         self._last_twist = twist
 
-        act[f"{ACTION}.ee.x"] = float(pos[0])
-        act[f"{ACTION}.ee.y"] = float(pos[1])
-        act[f"{ACTION}.ee.z"] = float(pos[2])
-        act[f"{ACTION}.ee.wx"] = float(twist[0])
-        act[f"{ACTION}.ee.wy"] = float(twist[1])
-        act[f"{ACTION}.ee.wz"] = float(twist[2])
-        return act
+        new_act[f"{ACTION}.ee.x"] = float(pos[0])
+        new_act[f"{ACTION}.ee.y"] = float(pos[1])
+        new_act[f"{ACTION}.ee.z"] = float(pos[2])
+        new_act[f"{ACTION}.ee.wx"] = float(twist[0])
+        new_act[f"{ACTION}.ee.wy"] = float(twist[1])
+        new_act[f"{ACTION}.ee.wz"] = float(twist[2])
+        return new_act
 
     def reset(self):
         self._last_pos = None
@@ -283,24 +289,34 @@ class InverseKinematicsEEToJoints(ProcessorStep):
         q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
         self.q_curr = q_target
 
+        # Create a copy of the transition to avoid modifying the input
+        new_transition = transition.copy()
+
         new_act = dict(act)
         for i, name in enumerate(self.motor_names):
             if name == "gripper":
                 new_act[f"{OBS_STATE}.gripper.pos"] = float(raw["gripper"])
             else:
                 new_act[f"{ACTION}.{name}.pos"] = float(q_target[i])
-        transition[TransitionKey.ACTION] = new_act
+        new_transition[TransitionKey.ACTION] = new_act
+
         if not self.initial_guess_current_joints:
-            transition[TransitionKey.COMPLEMENTARY_DATA]["reference_joint_positions"] = q_target
-        return transition
+            new_comp = comp.copy()
+            new_comp["reference_joint_positions"] = q_target
+            new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_comp
+
+        return new_transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features[f"{OBS_STATE}.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        for name in self.motor_names:
-            features[f"{ACTION}.{name}.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        # Create a copy to avoid modifying the input dictionary
+        new_features = features.copy()
 
-        return features
+        new_features[f"{OBS_STATE}.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        new_features[f"{ACTION}.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        for name in self.motor_names:
+            new_features[f"{ACTION}.{name}.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+
+        return new_features
 
     def reset(self):
         self.q_curr = None
@@ -338,42 +354,50 @@ class GripperVelocityToJoint(ProcessorStep):
             return transition
 
         if "gripper" not in self.motor_names:
+            new_transition = transition.copy()
             new_act = dict(act)
             new_act.pop(f"{ACTION}.gripper", None)
-            transition[TransitionKey.ACTION] = new_act
-            return transition
+            new_transition[TransitionKey.ACTION] = new_act
+            return new_transition
+
+        # Create a copy of the transition to avoid modifying the input
+        new_transition = transition.copy()
+        new_act = dict(act)
 
         if self.discrete_gripper:
             # Discrete gripper actions are in [0, 1, 2]
             # 0: open, 1: close, 2: stay
             # We need to shift them to [-1, 0, 1] and then scale them to clip_max
-            gripper_action = act.get(f"{ACTION}.gripper", 1.0)
+            gripper_action = new_act.get(f"{ACTION}.gripper", 1.0)
             gripper_action = gripper_action - 1.0
             gripper_action *= self.clip_max
-            act[f"{ACTION}.gripper"] = gripper_action
+            new_act[f"{ACTION}.gripper"] = gripper_action
 
         # Get current gripper position from complementary data
         raw = comp.get("raw_joint_positions") or {}
         curr_pos = float(raw.get("gripper"))
 
         # Compute desired gripper velocity
-        u = float(act.get(f"{ACTION}.gripper", 0.0))
+        u = float(new_act.get(f"{ACTION}.gripper", 0.0))
         delta = u * float(self.speed_factor)
         gripper_pos = float(np.clip(curr_pos + delta, self.clip_min, self.clip_max))
 
-        new_act = dict(act)
         new_act[f"{ACTION}.gripper.pos"] = gripper_pos
         new_act.pop(f"{ACTION}.gripper", None)
-        transition[TransitionKey.ACTION] = new_act
+        new_transition[TransitionKey.ACTION] = new_act
 
-        obs[f"{OBS_STATE}.gripper.pos"] = curr_pos
-        transition[TransitionKey.OBSERVATION] = obs
-        return transition
+        new_obs = obs.copy()
+        new_obs[f"{OBS_STATE}.gripper.pos"] = curr_pos
+        new_transition[TransitionKey.OBSERVATION] = new_obs
+        return new_transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features.pop(f"{ACTION}.gripper", None)
-        features[f"{ACTION}.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        return features
+        # Create a copy to avoid modifying the input dictionary
+        new_features = features.copy()
+
+        new_features.pop(f"{ACTION}.gripper", None)
+        new_features[f"{ACTION}.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        return new_features
 
 
 @ProcessorStepRegistry.register("forward_kinematics_joints_to_ee")
@@ -400,24 +424,30 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
         if not all(f"{OBS_STATE}.{n}.pos" in obs for n in self.motor_names):
             return obs
 
+        # Create a copy to avoid modifying the input dictionary
+        new_obs = obs.copy()
+
         q = np.array([obs[f"{OBS_STATE}.{n}.pos"] for n in self.motor_names], dtype=float)
         t = self.kinematics.forward_kinematics(q)
         pos = t[:3, 3]
         tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
 
-        obs[f"{OBS_STATE}.ee.x"] = float(pos[0])
-        obs[f"{OBS_STATE}.ee.y"] = float(pos[1])
-        obs[f"{OBS_STATE}.ee.z"] = float(pos[2])
-        obs[f"{OBS_STATE}.ee.wx"] = float(tw[0])
-        obs[f"{OBS_STATE}.ee.wy"] = float(tw[1])
-        obs[f"{OBS_STATE}.ee.wz"] = float(tw[2])
-        return obs
+        new_obs[f"{OBS_STATE}.ee.x"] = float(pos[0])
+        new_obs[f"{OBS_STATE}.ee.y"] = float(pos[1])
+        new_obs[f"{OBS_STATE}.ee.z"] = float(pos[2])
+        new_obs[f"{OBS_STATE}.ee.wx"] = float(tw[0])
+        new_obs[f"{OBS_STATE}.ee.wy"] = float(tw[1])
+        new_obs[f"{OBS_STATE}.ee.wz"] = float(tw[2])
+        return new_obs
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # Create a copy to avoid modifying the input dictionary
+        new_features = features.copy()
+
         # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
-            features[f"{OBS_STATE}.ee.{k}"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        return features
+            new_features[f"{OBS_STATE}.ee.{k}"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        return new_features
 
 
 @ProcessorStepRegistry.register("add_robot_observation")
@@ -433,7 +463,8 @@ class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessor):
     robot: Robot
 
     def complementary_data(self, comp: dict | None) -> dict:
-        new_comp = dict(comp)
+        # Handle None case properly - create copy or empty dict
+        new_comp = comp.copy() if comp is not None else {}
         obs = (
             self.robot.get_observation()
         )  # todo(steven): why not self.trtansition.get(TransitionKey.OBSERVATION)?
