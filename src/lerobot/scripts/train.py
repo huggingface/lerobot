@@ -301,8 +301,8 @@ def train(cfg: TrainPipelineConfig):
     if eval_env:
         # added by jade, close all env in multi eval setup
         if cfg.env.multitask_eval:
-            for task_group, envs_dict in eval_env.items():
-                for idx, env in envs_dict.items():
+            for _task_group, envs_dict in eval_env.items():
+                for _idx, env in envs_dict.items():
                     env.close()
         else:
             eval_env.close()
