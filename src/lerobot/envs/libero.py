@@ -12,10 +12,6 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-from lerobot.constants import (
-    OBS_IMAGE,
-)
-
 
 def create_libero_envs(
     task: str,
