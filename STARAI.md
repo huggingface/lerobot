@@ -216,24 +216,25 @@ lerobot-find-port
 > 最后，赋予权限
 >
 > ```sh
-> sudo chmod 666 /dev/ttyUSB0
+> sudo chmod 777 /dev/ttyUSB*
 > ```
 >
 > 
 
 ## 校准
+
+如果是第一次校准，直接对每个关节左右转动到极限位置，由于roll轴没有机械限位，对关节左右各转动180度最合适，如果需要重新校准执行命令提示输入字母c后按Enter键。
+
 ### leader
 
 ```bash
-lerobot-calibrate     --teleop.type=starai_violin     --teleop.port=/dev/ttyUSB1     --teleop.id=my_awesome_staraiviolin_arm
+lerobot-calibrate     --teleop.type=starai_violin     --teleop.port=/dev/ttyUSB0     --teleop.id=my_awesome_staraiviolin_arm
 ```
-如果是第一次校准，直接对每个关节移动到两边的限位位置，需要重新校准执行命令后输入字母c后按Enter键。
 
 ### follower
 ```bash
-lerobot-calibrate --robot.type=starai_viola --robot.port=/dev/ttyUSB0 --robot.id=my_awesome_staraiviola_arm
+lerobot-calibrate     --robot.type=starai_viola --robot.port=/dev/ttyUSB1 --robot.id=my_awesome_staraiviola_arm
 ```
-如果是第一次校准，直接对每个关节移动到两边的限位位置，需要重新校准执行命令后输入字母c后按Enter键。
 
 
 ## 遥操作
@@ -345,7 +346,7 @@ lerobot-record \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=my_awesome_staraiviolin_arm \
     --display_data=true \
-    --dataset.repo_id=starai/record-test222 \
+    --dataset.repo_id=starai/record-test \
     --dataset.episode_time_s=30 \
     --dataset.reset_time_s=30 \
     --dataset.num_episodes=2 \
@@ -427,7 +428,7 @@ lerobot-replay \
     --robot.type=starai_viola \
     --robot.port=/dev/ttyUSB1 \
     --robot.id=my_awesome_staraiviola_arm \
-    --dataset.repo_id=starai/record-test222 \
+    --dataset.repo_id=starai/record-test \
     --dataset.episode=1 # choose the episode you want to replay
 ```
 
