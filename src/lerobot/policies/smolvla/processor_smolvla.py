@@ -24,7 +24,7 @@ from lerobot.processor import (
     NormalizerProcessor,
     PolicyProcessorPipeline,
     RenameProcessor,
-    TokenizerProcessor,
+    TokenizerProcessorStep,
     UnnormalizerProcessor,
 )
 from lerobot.processor.pipeline import (
@@ -45,7 +45,7 @@ def make_smolvla_pre_post_processors(
         ),
         AddBatchDimensionProcessorStep(),
         SmolVLANewLineProcessor(),
-        TokenizerProcessor(
+        TokenizerProcessorStep(
             tokenizer_name=config.vlm_model_name,
             padding=config.pad_language_to,
             padding_side="right",

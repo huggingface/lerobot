@@ -27,7 +27,7 @@ else:
 
 @dataclass
 @ProcessorStepRegistry.register(name="tokenizer_processor")
-class TokenizerProcessor(ObservationProcessorStep):
+class TokenizerProcessorStep(ObservationProcessorStep):
     """Tokenizes text tasks in complementary data using a huggingface tokenizer.
 
     This processor handles tokenization of task strings found in the complementary_data
@@ -51,7 +51,7 @@ class TokenizerProcessor(ObservationProcessorStep):
     Examples:
         Using tokenizer name (auto-loaded):
         ```python
-        processor = TokenizerProcessor(tokenizer_name="bert-base-uncased", max_length=128)
+        processor = TokenizerProcessorStep(tokenizer_name="bert-base-uncased", max_length=128)
         ```
 
         Using custom tokenizer object:
@@ -59,7 +59,7 @@ class TokenizerProcessor(ObservationProcessorStep):
         from transformers import AutoTokenizer
 
         custom_tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        processor = TokenizerProcessor(tokenizer=custom_tokenizer, max_length=128)
+        processor = TokenizerProcessorStep(tokenizer=custom_tokenizer, max_length=128)
         ```
     """
 
@@ -72,23 +72,23 @@ class TokenizerProcessor(ObservationProcessorStep):
     truncation: bool = True
 
     # Internal tokenizer instance (not serialized)
-    _tokenizer: Any = field(default=None, init=False, repr=False)
+    input_tokenizer: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         """Initialize the tokenizer from the provided tokenizer or tokenizer name."""
         if not _transformers_available:
             raise ImportError(
                 "The 'transformers' library is not installed. "
-                "Please install it with `pip install 'lerobot[transformers-dep]'` to use TokenizerProcessor."
+                "Please install it with `pip install 'lerobot[transformers-dep]'` to use TokenizerProcessorStep."
             )
 
         if self.tokenizer is not None:
             # Use provided tokenizer object directly
-            self._tokenizer = self.tokenizer
+            self.input_tokenizer = self.tokenizer
         elif self.tokenizer_name is not None:
             if AutoTokenizer is None:
                 raise ImportError("AutoTokenizer is not available")
-            self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+            self.input_tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         else:
             raise ValueError(
                 "Either 'tokenizer' or 'tokenizer_name' must be provided. "
@@ -198,7 +198,7 @@ class TokenizerProcessor(ObservationProcessorStep):
         Returns:
             Dictionary containing tokenized output with keys like 'input_ids', 'attention_mask'.
         """
-        return self._tokenizer(
+        return self.input_tokenizer(
             text,
             max_length=self.max_length,
             truncation=self.truncation,
@@ -222,7 +222,7 @@ class TokenizerProcessor(ObservationProcessorStep):
         }
 
         # Only include tokenizer_name if it was used (not when tokenizer object was provided)
-        # TODO(steven): Consider saving the name of the _tokenizer if it was loaded
+        # TODO(steven): Consider saving the name of the input_tokenizer if it was loaded
         if self.tokenizer_name is not None and self.tokenizer is None:
             config["tokenizer_name"] = self.tokenizer_name
 
