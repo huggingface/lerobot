@@ -19,12 +19,12 @@ from dataclasses import dataclass
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
+from lerobot.processor.pipeline import ActionProcessorStep, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("map_tensor_to_delta_action_dict")
 @dataclass
-class MapTensorToDeltaActionDict(ActionProcessor):
+class MapTensorToDeltaActionDict(ActionProcessorStep):
     """
     Map a tensor to a delta action dictionary.
     """
@@ -48,7 +48,7 @@ class MapTensorToDeltaActionDict(ActionProcessor):
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
 @dataclass
-class MapDeltaActionToRobotAction(ActionProcessor):
+class MapDeltaActionToRobotAction(ActionProcessorStep):
     """
     Map delta actions from teleoperators (gamepad, keyboard) to robot target actions
     for use with inverse kinematics processors.
@@ -64,12 +64,12 @@ class MapDeltaActionToRobotAction(ActionProcessor):
     Output ACTION keys:
     {
         "action.enabled": bool,
-        "action.target_x": float,
-        "action.target_y": float,
-        "action.target_z": float,
-        "action.target_wx": float,
-        "action.target_wy": float,
-        "action.target_wz": float,
+        "action.displacement_x": float,
+        "action.displacement_y": float,
+        "action.displacement_z": float,
+        "action.displacement_wx": float,
+        "action.displacement_wy": float,
+        "action.displacement_wz": float,
         "action.gripper": float,
     }
     """
@@ -99,19 +99,19 @@ class MapDeltaActionToRobotAction(ActionProcessor):
 
         # For gamepad/keyboard, we don't have rotation input, so set to 0
         # These could be extended in the future for more sophisticated teleoperators
-        target_wx = 0.0
-        target_wy = 0.0
-        target_wz = 0.0
+        displacement_wx = 0.0
+        displacement_wy = 0.0
+        displacement_wz = 0.0
 
-        # Update action with robot target format
+        # Update action with robot displacement format
         action = {
             "action.enabled": enabled,
-            "action.target_x": scaled_delta_x,
-            "action.target_y": scaled_delta_y,
-            "action.target_z": scaled_delta_z,
-            "action.target_wx": target_wx,
-            "action.target_wy": target_wy,
-            "action.target_wz": target_wz,
+            "action.displacement_x": scaled_delta_x,
+            "action.displacement_y": scaled_delta_y,
+            "action.displacement_z": scaled_delta_z,
+            "action.displacement_wx": displacement_wx,
+            "action.displacement_wy": displacement_wy,
+            "action.displacement_wz": displacement_wz,
             "action.gripper": float(gripper),
         }
 
@@ -123,12 +123,12 @@ class MapDeltaActionToRobotAction(ActionProcessor):
         features.update(
             {
                 "action.enabled": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_x": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_y": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_z": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_wx": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_wy": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_wz": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.displacement_x": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.displacement_y": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.displacement_z": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.displacement_wx": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.displacement_wy": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+                "action.displacement_wz": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
                 "action.gripper": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
             }
         )

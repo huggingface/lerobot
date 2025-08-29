@@ -17,13 +17,13 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
+from lerobot.processor.pipeline import ActionProcessorStep, ProcessorStepRegistry
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
 
 @ProcessorStepRegistry.register("map_phone_action_to_robot_action")
 @dataclass
-class MapPhoneActionToRobotAction(ActionProcessor):
+class MapPhoneActionToRobotAction(ActionProcessorStep):
     """
     Map calibrated phone pose (actions) to the inputs for robot actions
 
@@ -38,7 +38,7 @@ class MapPhoneActionToRobotAction(ActionProcessor):
     Output ACTION keys:
     {
         "action.enabled": bool,
-        "action.ee.{x,y,z,wx,wy,wz}" : float
+        "action.displacement_{x,y,z,wx,wy,wz}" : float
         "action.gripper": float,
     }
     """
@@ -70,12 +70,12 @@ class MapPhoneActionToRobotAction(ActionProcessor):
 
         # For some actions we need to invert the axis
         act["action.enabled"] = enabled
-        act["action.target_x"] = -pos[1] if enabled else 0.0
-        act["action.target_y"] = pos[0] if enabled else 0.0
-        act["action.target_z"] = pos[2] if enabled else 0.0
-        act["action.target_wx"] = rotvec[1] if enabled else 0.0
-        act["action.target_wy"] = rotvec[0] if enabled else 0.0
-        act["action.target_wz"] = -rotvec[2] if enabled else 0.0
+        act["action.displacement_x"] = -pos[1] if enabled else 0.0
+        act["action.displacement_y"] = pos[0] if enabled else 0.0
+        act["action.displacement_z"] = pos[2] if enabled else 0.0
+        act["action.displacement_wx"] = rotvec[1] if enabled else 0.0
+        act["action.displacement_wy"] = rotvec[0] if enabled else 0.0
+        act["action.displacement_wz"] = -rotvec[2] if enabled else 0.0
         act["action.gripper"] = gripper  # Still send gripper action when disabled
         return act
 
@@ -86,11 +86,11 @@ class MapPhoneActionToRobotAction(ActionProcessor):
         features.pop("action.phone.raw_inputs", None)
 
         features["action.enabled"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.target_x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.target_y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.target_z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.target_wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.target_wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features["action.target_wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.displacement_x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.displacement_y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.displacement_z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.displacement_wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.displacement_wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.displacement_wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         features["action.gripper"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         return features

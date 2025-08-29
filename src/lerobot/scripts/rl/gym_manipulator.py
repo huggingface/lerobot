@@ -29,9 +29,11 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     AddTeleopActionAsComplimentaryData,
     AddTeleopEventsAsInfo,
-    DeviceProcessor,
+    DataProcessorPipeline,
+    DeviceProcessorStep,
     GripperPenaltyProcessor,
     ImageCropResizeProcessor,
     InterventionActionProcessor,
@@ -41,9 +43,7 @@ from lerobot.processor import (
     MotorCurrentProcessor,
     Numpy2TorchActionProcessor,
     RewardClassifierProcessor,
-    RobotProcessor,
     TimeLimitProcessor,
-    ToBatchProcessor,
     Torch2NumpyActionProcessor,
     VanillaObservationProcessor,
 )
@@ -383,11 +383,13 @@ def make_processors(
         env_pipeline_steps = [
             Numpy2TorchActionProcessor(),
             VanillaObservationProcessor(),
-            ToBatchProcessor(),
-            DeviceProcessor(device=device),
+            AddBatchDimensionProcessorStep(),
+            DeviceProcessorStep(device=device),
         ]
 
-        return RobotProcessor(steps=env_pipeline_steps), RobotProcessor(steps=action_pipeline_steps)
+        return DataProcessorPipeline(steps=env_pipeline_steps), DataProcessorPipeline(
+            steps=action_pipeline_steps
+        )
 
     # Full processor pipeline for real robot environment
     # Get robot and motor information for kinematics
@@ -455,8 +457,8 @@ def make_processors(
             )
         )
 
-    env_pipeline_steps.append(ToBatchProcessor())
-    env_pipeline_steps.append(DeviceProcessor(device=device))
+    env_pipeline_steps.append(AddBatchDimensionProcessorStep())
+    env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryData(teleop_device=teleop_device),
@@ -497,15 +499,15 @@ def make_processors(
         ]
         action_pipeline_steps.extend(inverse_kinematics_steps)
 
-    return RobotProcessor(steps=env_pipeline_steps), RobotProcessor(steps=action_pipeline_steps)
+    return DataProcessorPipeline(steps=env_pipeline_steps), DataProcessorPipeline(steps=action_pipeline_steps)
 
 
 def step_env_and_process_transition(
     env: gym.Env,
     transition: EnvTransition,
     action: torch.Tensor,
-    env_processor: RobotProcessor,
-    action_processor: RobotProcessor,
+    env_processor: DataProcessorPipeline,
+    action_processor: DataProcessorPipeline,
 ):
     """
     Execute one step with processor pipeline.
@@ -554,8 +556,8 @@ def step_env_and_process_transition(
 
 def control_loop(
     env: gym.Env,
-    env_processor: RobotProcessor,
-    action_processor: RobotProcessor,
+    env_processor: DataProcessorPipeline,
+    action_processor: DataProcessorPipeline,
     teleop_device: Teleoperator,
     cfg: GymManipulatorConfig,
 ) -> None:
@@ -709,7 +711,9 @@ def control_loop(
         dataset.push_to_hub()
 
 
-def replay_trajectory(env: gym.Env, action_processor: RobotProcessor, cfg: GymManipulatorConfig) -> None:
+def replay_trajectory(
+    env: gym.Env, action_processor: DataProcessorPipeline, cfg: GymManipulatorConfig
+) -> None:
     """Replay recorded trajectory on robot environment."""
     assert cfg.dataset.replay_episode is not None, "Replay episode must be provided for replay"
 

@@ -22,10 +22,10 @@ from scipy.spatial.transform import Rotation
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.pipeline import (
-    ActionProcessor,
-    ComplementaryDataProcessor,
+    ActionProcessorStep,
+    ComplementaryDataProcessorStep,
     EnvTransition,
-    ObservationProcessor,
+    ObservationProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
     TransitionKey,
@@ -35,13 +35,14 @@ from lerobot.robots.robot import Robot
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
 @dataclass
-class EEReferenceAndDelta(ActionProcessor):
+class EEReferenceAndDelta(ActionProcessorStep):
     """
     Compute the desired end-effector pose from the target pose and the current pose.
 
     Input ACTION keys:
     {
-        "action.ee.{x,y,z,wx,wy,wz}" : float
+        "action.enabled": bool,
+        "action.displacement_{x,y,z,wx,wy,wz}" : float
         "complementary_data.raw_joint_positions": dict,
     }
 
@@ -82,12 +83,12 @@ class EEReferenceAndDelta(ActionProcessor):
         t_curr = self.kinematics.forward_kinematics(q)
 
         enabled = bool(new_action.pop("action.enabled", 0))
-        tx = float(new_action.pop("action.target_x", 0.0))
-        ty = float(new_action.pop("action.target_y", 0.0))
-        tz = float(new_action.pop("action.target_z", 0.0))
-        wx = float(new_action.pop("action.target_wx", 0.0))
-        wy = float(new_action.pop("action.target_wy", 0.0))
-        wz = float(new_action.pop("action.target_wz", 0.0))
+        tx = float(new_action.pop("action.displacement_x", 0.0))
+        ty = float(new_action.pop("action.displacement_y", 0.0))
+        tz = float(new_action.pop("action.displacement_z", 0.0))
+        wx = float(new_action.pop("action.displacement_wx", 0.0))
+        wy = float(new_action.pop("action.displacement_wy", 0.0))
+        wz = float(new_action.pop("action.displacement_wz", 0.0))
 
         desired = None
 
@@ -140,12 +141,12 @@ class EEReferenceAndDelta(ActionProcessor):
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         features.pop("action.enabled", None)
-        features.pop("action.target_x", None)
-        features.pop("action.target_y", None)
-        features.pop("action.target_z", None)
-        features.pop("action.target_wx", None)
-        features.pop("action.target_wy", None)
-        features.pop("action.target_wz", None)
+        features.pop("action.displacement_x", None)
+        features.pop("action.displacement_y", None)
+        features.pop("action.displacement_z", None)
+        features.pop("action.displacement_wx", None)
+        features.pop("action.displacement_wy", None)
+        features.pop("action.displacement_wz", None)
 
         features["action.ee.x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         features["action.ee.y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
@@ -158,7 +159,7 @@ class EEReferenceAndDelta(ActionProcessor):
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
 @dataclass
-class EEBoundsAndSafety(ActionProcessor):
+class EEBoundsAndSafety(ActionProcessorStep):
     """
     Clip the end-effector pose to the bounds and check for jumps.
 
@@ -377,7 +378,7 @@ class GripperVelocityToJoint(ProcessorStep):
 
 @ProcessorStepRegistry.register("forward_kinematics_joints_to_ee")
 @dataclass
-class ForwardKinematicsJointsToEE(ObservationProcessor):
+class ForwardKinematicsJointsToEE(ObservationProcessorStep):
     """
     Compute the end-effector pose from the joint positions.
 
@@ -421,7 +422,7 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
 
 @ProcessorStepRegistry.register("add_robot_observation")
 @dataclass
-class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessor):
+class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessorStep):
     """
     Read the robot's current observation and insert it into the transition as complementary data.
 

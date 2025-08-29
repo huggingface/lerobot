@@ -24,7 +24,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypeAlias, TypedDict
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
@@ -139,7 +139,7 @@ class ProcessorStep(ABC):
     A step is any callable accepting a full `EnvTransition` dict and
     returning a (possibly modified) dict of the same structure. Implementers
     are encouraged—but not required—to expose the optional helper methods
-    listed below. When present, these hooks let `RobotProcessor`
+    listed below. When present, these hooks let `DataProcessorPipeline`
     automatically serialise the step's configuration and learnable state using
     a safe-to-share JSON + SafeTensors format.
 
@@ -280,7 +280,7 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
 
 
 @dataclass
-class RobotProcessor(ModelHubMixin):
+class DataProcessorPipeline(ModelHubMixin):
     """
     Composable, debuggable post-processing processor for robot transitions.
 
@@ -291,7 +291,7 @@ class RobotProcessor(ModelHubMixin):
     Args:
         steps: Ordered list of processing steps executed on every call. Defaults to empty list.
         name: Human-readable identifier that is persisted inside the JSON config.
-            Defaults to "RobotProcessor".
+            Defaults to "DataProcessorPipeline".
         to_transition: Function to convert batch dict to EnvTransition dict.
             Defaults to _default_batch_to_transition.
         to_output: Function to convert EnvTransition dict to the desired output format.
@@ -318,7 +318,7 @@ class RobotProcessor(ModelHubMixin):
     """
 
     steps: Sequence[ProcessorStep] = field(default_factory=list)
-    name: str = "RobotProcessor"
+    name: str = "DataProcessorPipeline"
 
     to_transition: Callable[[dict[str, Any]], EnvTransition] = field(
         default_factory=lambda: _default_batch_to_transition, repr=False
@@ -526,7 +526,7 @@ class RobotProcessor(ModelHubMixin):
         config_filename: str | None = None,
         overrides: dict[str, Any] | None = None,
         **kwargs,
-    ) -> RobotProcessor:
+    ) -> DataProcessorPipeline:
         """Load a serialized processor from source (local path or Hugging Face Hub identifier).
 
         Args:
@@ -542,7 +542,7 @@ class RobotProcessor(ModelHubMixin):
                 non-serializable objects like environment instances.
 
         Returns:
-            A RobotProcessor instance loaded from the saved configuration.
+            A DataProcessorPipeline instance loaded from the saved configuration.
 
         Raises:
             ImportError: If a processor step class cannot be loaded or imported.
@@ -552,12 +552,12 @@ class RobotProcessor(ModelHubMixin):
         Examples:
             Basic loading:
             ```python
-            processor = RobotProcessor.from_pretrained("path/to/processor")
+            processor = DataProcessorPipeline.from_pretrained("path/to/processor")
             ```
 
             Loading specific config file:
             ```python
-            processor = RobotProcessor.from_pretrained(
+            processor = DataProcessorPipeline.from_pretrained(
                 "username/multi-processor-repo", config_filename="preprocessor.json"
             )
             ```
@@ -567,14 +567,14 @@ class RobotProcessor(ModelHubMixin):
             import gym
 
             env = gym.make("CartPole-v1")
-            processor = RobotProcessor.from_pretrained(
+            processor = DataProcessorPipeline.from_pretrained(
                 "username/cartpole-processor", overrides={"ActionRepeatStep": {"env": env}}
             )
             ```
 
             Multiple overrides:
             ```python
-            processor = RobotProcessor.from_pretrained(
+            processor = DataProcessorPipeline.from_pretrained(
                 "path/to/processor",
                 overrides={
                     "CustomStep": {"param1": "new_value"},
@@ -609,9 +609,9 @@ class RobotProcessor(ModelHubMixin):
             if config_filename is None:
                 # Try common config names
                 common_names = [
-                    "robot_processor.json",
-                    "robot_preprocessor.json",
-                    "robot_postprocessor.json",
+                    "data_processor.json",
+                    "data_preprocessor.json",
+                    "data_postprocessor.json",
                 ]
                 config_path = None
                 for name in common_names:
@@ -756,19 +756,19 @@ class RobotProcessor(ModelHubMixin):
                 f"Make sure override keys match exact step class names or registry names."
             )
 
-        return cls(steps, loaded_config.get("name", "RobotProcessor"))
+        return cls(steps, loaded_config.get("name", "DataProcessorPipeline"))
 
     def __len__(self) -> int:
         """Return the number of steps in the processor."""
         return len(self.steps)
 
-    def __getitem__(self, idx: int | slice) -> ProcessorStep | RobotProcessor:
+    def __getitem__(self, idx: int | slice) -> ProcessorStep | DataProcessorPipeline:
         """Indexing helper exposing underlying steps.
         * ``int`` – returns the idx-th ProcessorStep.
-        * ``slice`` – returns a new RobotProcessor with the sliced steps.
+        * ``slice`` – returns a new DataProcessorPipeline with the sliced steps.
         """
         if isinstance(idx, slice):
-            return RobotProcessor(self.steps[idx], self.name)
+            return DataProcessorPipeline(self.steps[idx], self.name)
         return self.steps[idx]
 
     def register_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):
@@ -832,7 +832,7 @@ class RobotProcessor(ModelHubMixin):
 
         parts = [f"name='{self.name}'", steps_repr]
 
-        return f"RobotProcessor({', '.join(parts)})"
+        return f"DataProcessorPipeline({', '.join(parts)})"
 
     def __post_init__(self):
         for i, step in enumerate(self.steps):
@@ -855,7 +855,12 @@ class RobotProcessor(ModelHubMixin):
         return features
 
 
-class ObservationProcessor(ProcessorStep, ABC):
+# TODO(Adil): when we upgrade to python 3.12, we can use TypeAlias instead of this
+RobotProcessorPipeline: TypeAlias = DataProcessorPipeline
+PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline
+
+
+class ObservationProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the observation component of a transition.
 
     Subclasses should override the `observation` method to implement custom observation processing.
@@ -864,7 +869,7 @@ class ObservationProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class MyObservationScaler(ObservationProcessor):
+        class MyObservationScaler(ObservationProcessorStep):
             def __init__(self, scale_factor):
                 self.scale_factor = scale_factor
 
@@ -901,7 +906,7 @@ class ObservationProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class ActionProcessor(ProcessorStep, ABC):
+class ActionProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the action component of a transition.
 
     Subclasses should override the `action` method to implement custom action processing.
@@ -910,7 +915,7 @@ class ActionProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class ActionClipping(ActionProcessor):
+        class ActionClipping(ActionProcessorStep):
             def __init__(self, min_val, max_val):
                 self.min_val = min_val
                 self.max_val = max_val
@@ -948,7 +953,7 @@ class ActionProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class RewardProcessor(ProcessorStep, ABC):
+class RewardProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the reward component of a transition.
 
     Subclasses should override the `reward` method to implement custom reward processing.
@@ -957,7 +962,7 @@ class RewardProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class RewardScaler(RewardProcessor):
+        class RewardScaler(RewardProcessorStep):
             def __init__(self, scale_factor):
                 self.scale_factor = scale_factor
 
@@ -994,7 +999,7 @@ class RewardProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class DoneProcessor(ProcessorStep, ABC):
+class DoneProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the done flag of a transition.
 
     Subclasses should override the `done` method to implement custom done flag processing.
@@ -1003,7 +1008,7 @@ class DoneProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class TimeoutDone(DoneProcessor):
+        class TimeoutDone(DoneProcessorStep):
             def __init__(self, max_steps):
                 self.steps = 0
                 self.max_steps = max_steps
@@ -1045,7 +1050,7 @@ class DoneProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class TruncatedProcessor(ProcessorStep, ABC):
+class TruncatedProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the truncated flag of a transition.
 
     Subclasses should override the `truncated` method to implement custom truncated flag processing.
@@ -1054,7 +1059,7 @@ class TruncatedProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class EarlyTruncation(TruncatedProcessor):
+        class EarlyTruncation(TruncatedProcessorStep):
             def __init__(self, threshold):
                 self.threshold = threshold
 
@@ -1092,7 +1097,7 @@ class TruncatedProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class InfoProcessor(ProcessorStep, ABC):
+class InfoProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the info dictionary of a transition.
 
     Subclasses should override the `info` method to implement custom info processing.
@@ -1101,7 +1106,7 @@ class InfoProcessor(ProcessorStep, ABC):
 
     Example:
         ```python
-        class InfoAugmenter(InfoProcessor):
+        class InfoAugmenter(InfoProcessorStep):
             def __init__(self):
                 self.step_count = 0
 
@@ -1144,7 +1149,7 @@ class InfoProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class ComplementaryDataProcessor(ProcessorStep, ABC):
+class ComplementaryDataProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the complementary data of a transition.
 
     Subclasses should override the `complementary_data` method to implement custom complementary data processing.
@@ -1177,7 +1182,7 @@ class ComplementaryDataProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class IdentityProcessor(ProcessorStep):
+class IdentityProcessorStep(ProcessorStep):
     """Identity processor that does nothing."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

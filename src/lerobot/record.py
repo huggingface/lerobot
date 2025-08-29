@@ -76,14 +76,14 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import RobotProcessor
+from lerobot.processor import PolicyProcessorPipeline, RobotProcessorPipeline
 from lerobot.processor.converters import (
     to_dataset_frame,
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
 )
-from lerobot.processor.pipeline import IdentityProcessor, TransitionKey
+from lerobot.processor.pipeline import IdentityProcessorStep, TransitionKey
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -236,23 +236,25 @@ def record_loop(
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
-    preprocessor: RobotProcessor | None = None,
-    postprocessor: RobotProcessor | None = None,
+    preprocessor: PolicyProcessorPipeline | None = None,
+    postprocessor: PolicyProcessorPipeline | None = None,
     control_time_s: int | None = None,
-    teleop_action_processor: RobotProcessor | None = None,  # runs after teleop
-    robot_action_processor: RobotProcessor | None = None,  # runs before robot
-    robot_observation_processor: RobotProcessor | None = None,  # runs after robot
+    teleop_action_processor: RobotProcessorPipeline | None = None,  # runs after teleop
+    robot_action_processor: RobotProcessorPipeline | None = None,  # runs before robot
+    robot_observation_processor: RobotProcessorPipeline | None = None,  # runs after robot
     single_task: str | None = None,
     display_data: bool = False,
 ):
-    teleop_action_processor = teleop_action_processor or RobotProcessor(
-        steps=[IdentityProcessor()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
+    teleop_action_processor = teleop_action_processor or RobotProcessorPipeline(
+        steps=[IdentityProcessorStep()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
     )
-    robot_action_processor = robot_action_processor or RobotProcessor(
-        steps=[IdentityProcessor()], to_transition=lambda tr: tr, to_output=to_output_robot_action
+    robot_action_processor = robot_action_processor or RobotProcessorPipeline(
+        steps=[IdentityProcessorStep()], to_transition=lambda tr: tr, to_output=to_output_robot_action
     )
-    robot_observation_processor = robot_observation_processor or RobotProcessor(
-        steps=[IdentityProcessor()], to_transition=to_transition_robot_observation, to_output=lambda tr: tr
+    robot_observation_processor = robot_observation_processor or RobotProcessorPipeline(
+        steps=[IdentityProcessorStep()],
+        to_transition=to_transition_robot_observation,
+        to_output=lambda tr: tr,
     )
 
     if dataset is not None and dataset.fps != fps:
@@ -302,7 +304,7 @@ def record_loop(
         # Get robot observation
         obs = robot.get_observation()
 
-        # Applies a pipeline to the raw robot observation, default is IdentityProcessor
+        # Applies a pipeline to the raw robot observation, default is IdentityProcessorStep
         obs_transition = robot_observation_processor(obs)
 
         # Get action from either policy or teleop
@@ -333,7 +335,7 @@ def record_loop(
         elif isinstance(teleop, Teleoperator):
             act = teleop.get_action()
 
-            # Applies a pipeline to the raw teleop action, default is IdentityProcessor
+            # Applies a pipeline to the raw teleop action, default is IdentityProcessorStep
             teleop_transition = teleop_action_processor(act)
 
         elif isinstance(teleop, list):
@@ -351,7 +353,7 @@ def record_loop(
             )
             continue
 
-        # Applies a pipeline to the action, default is IdentityProcessor
+        # Applies a pipeline to the action, default is IdentityProcessorStep
         # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
         if policy is not None and policy_transition is not None:
             robot_action_to_send = robot_action_processor(policy_transition)

@@ -19,23 +19,23 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
-    DeviceProcessor,
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
     NormalizerProcessor,
+    PolicyProcessorPipeline,
     RenameProcessor,
-    RobotProcessor,
-    ToBatchProcessor,
-    TokenizerProcessor,
+    TokenizerProcessorStep,
     UnnormalizerProcessor,
 )
 from lerobot.processor.pipeline import (
-    ComplementaryDataProcessor,
+    ComplementaryDataProcessorStep,
     ProcessorStepRegistry,
 )
 
 
 def make_smolvla_pre_post_processors(
     config: SmolVLAConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
-) -> tuple[RobotProcessor, RobotProcessor]:
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
         RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
         NormalizerProcessor(
@@ -43,29 +43,29 @@ def make_smolvla_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        ToBatchProcessor(),
+        AddBatchDimensionProcessorStep(),
         SmolVLANewLineProcessor(),
-        TokenizerProcessor(
+        TokenizerProcessorStep(
             tokenizer_name=config.vlm_model_name,
             padding=config.pad_language_to,
             padding_side="right",
             max_length=config.tokenizer_max_length,
         ),
-        DeviceProcessor(device=config.device),
+        DeviceProcessorStep(device=config.device),
     ]
     output_steps = [
-        DeviceProcessor(device="cpu"),
+        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
-    return RobotProcessor(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), RobotProcessor(
-        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
-    )
+    return PolicyProcessorPipeline(
+        steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME
+    ), PolicyProcessorPipeline(steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME)
 
 
 @ProcessorStepRegistry.register(name="smolvla_new_line_processor")
-class SmolVLANewLineProcessor(ComplementaryDataProcessor):
+class SmolVLANewLineProcessor(ComplementaryDataProcessorStep):
     """Add a new line to the end of the task if it doesn't have one."""
 
     def complementary_data(self, complementary_data):

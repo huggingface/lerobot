@@ -24,7 +24,12 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import OBS_IMAGE, OBS_STATE
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
-from lerobot.processor import DeviceProcessor, IdentityProcessor, NormalizerProcessor, RobotProcessor
+from lerobot.processor import (
+    DataProcessorPipeline,
+    DeviceProcessorStep,
+    IdentityProcessorStep,
+    NormalizerProcessor,
+)
 from lerobot.processor.pipeline import TransitionKey
 
 
@@ -84,12 +89,12 @@ def test_make_classifier_processor_basic():
     assert len(preprocessor.steps) == 3
     assert isinstance(preprocessor.steps[0], NormalizerProcessor)  # For input features
     assert isinstance(preprocessor.steps[1], NormalizerProcessor)  # For output features
-    assert isinstance(preprocessor.steps[2], DeviceProcessor)
+    assert isinstance(preprocessor.steps[2], DeviceProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
-    assert isinstance(postprocessor.steps[0], DeviceProcessor)
-    assert isinstance(postprocessor.steps[1], IdentityProcessor)
+    assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
+    assert isinstance(postprocessor.steps[1], IdentityProcessorStep)
 
 
 def test_classifier_processor_normalization():
@@ -237,7 +242,7 @@ def test_classifier_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(tmpdir)
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(tmpdir)
 
         # Test that loaded processor works
         observation = {
@@ -263,10 +268,10 @@ def test_classifier_processor_mixed_precision():
     # Create processor
     preprocessor, postprocessor = make_classifier_processor(config, stats)
 
-    # Replace DeviceProcessor with one that uses float16
+    # Replace DeviceProcessorStep with one that uses float16
     for i, step in enumerate(preprocessor.steps):
-        if isinstance(step, DeviceProcessor):
-            preprocessor.steps[i] = DeviceProcessor(device=config.device, float_dtype="float16")
+        if isinstance(step, DeviceProcessorStep):
+            preprocessor.steps[i] = DeviceProcessorStep(device=config.device, float_dtype="float16")
 
     # Create test data
     observation = {
@@ -311,7 +316,7 @@ def test_classifier_processor_batch_data():
 
 
 def test_classifier_processor_postprocessor_identity():
-    """Test that Classifier postprocessor uses IdentityProcessor correctly."""
+    """Test that Classifier postprocessor uses IdentityProcessorStep correctly."""
     config = create_default_config()
     stats = create_default_stats()
 
@@ -324,6 +329,6 @@ def test_classifier_processor_postprocessor_identity():
     # Process through postprocessor
     processed = postprocessor(transition)
 
-    # IdentityProcessor should leave values unchanged (except device)
+    # IdentityProcessorStep should leave values unchanged (except device)
     assert torch.allclose(processed[TransitionKey.ACTION].cpu(), reward.cpu())
     assert processed[TransitionKey.ACTION].device.type == "cpu"

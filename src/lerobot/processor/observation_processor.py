@@ -22,12 +22,12 @@ from torch import Tensor
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
-from lerobot.processor.pipeline import ObservationProcessor, ProcessorStepRegistry
+from lerobot.processor.pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="observation_processor")
-class VanillaObservationProcessor(ObservationProcessor):
+class VanillaObservationProcessor(ObservationProcessorStep):
     """
     Processes environment observations into the LeRobot format by handling both images and states.
 

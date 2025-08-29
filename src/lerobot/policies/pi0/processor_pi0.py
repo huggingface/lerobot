@@ -20,15 +20,15 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
-    DeviceProcessor,
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
     NormalizerProcessor,
-    RobotProcessor,
-    ToBatchProcessor,
-    TokenizerProcessor,
+    PolicyProcessorPipeline,
+    TokenizerProcessorStep,
     UnnormalizerProcessor,
 )
 from lerobot.processor.pipeline import (
-    ComplementaryDataProcessor,
+    ComplementaryDataProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
 )
@@ -36,7 +36,7 @@ from lerobot.processor.rename_processor import RenameProcessor
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")
-class Pi0NewLineProcessor(ComplementaryDataProcessor):
+class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
     """Add a new line to the end of the task if it doesn't have one.
     This is required for the PaliGemma tokenizer.
     """
@@ -66,7 +66,7 @@ class Pi0NewLineProcessor(ComplementaryDataProcessor):
 
 def make_pi0_pre_post_processors(
     config: PI0Config, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
-) -> tuple[RobotProcessor, RobotProcessor]:
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
         RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
@@ -75,24 +75,24 @@ def make_pi0_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        ToBatchProcessor(),
+        AddBatchDimensionProcessorStep(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
-        TokenizerProcessor(
+        TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",
         ),
-        DeviceProcessor(device=config.device),
+        DeviceProcessorStep(device=config.device),
     ]
 
     output_steps: list[ProcessorStep] = [
-        DeviceProcessor(device="cpu"),
+        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
 
-    return RobotProcessor(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), RobotProcessor(
-        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
-    )
+    return PolicyProcessorPipeline(
+        steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME
+    ), PolicyProcessorPipeline(steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME)

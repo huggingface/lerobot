@@ -19,18 +19,18 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.processor import (
-    DeviceProcessor,
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
     NormalizerProcessor,
+    PolicyProcessorPipeline,
     RenameProcessor,
-    RobotProcessor,
-    ToBatchProcessor,
     UnnormalizerProcessor,
 )
 
 
 def make_tdmpc_pre_post_processors(
     config: TDMPCConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
-) -> tuple[RobotProcessor, RobotProcessor]:
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
         RenameProcessor(rename_map={}),
         NormalizerProcessor(
@@ -38,15 +38,15 @@ def make_tdmpc_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        ToBatchProcessor(),
-        DeviceProcessor(device=config.device),
+        AddBatchDimensionProcessorStep(),
+        DeviceProcessorStep(device=config.device),
     ]
     output_steps = [
-        DeviceProcessor(device="cpu"),
+        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
-    return RobotProcessor(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), RobotProcessor(
-        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
-    )
+    return PolicyProcessorPipeline(
+        steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME
+    ), PolicyProcessorPipeline(steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME)
