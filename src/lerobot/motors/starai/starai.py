@@ -86,6 +86,7 @@ class StaraiMotorsBus(MotorsBus):
     default_baudrate = DEFAULT_BAUDRATE
     default_timeout = DEFAULT_TIMEOUT_MS
     model_number_table = deepcopy(MODEL_NUMBER_TABLE)
+    normalized_data = deepcopy(NORMALIZED_DATA)
 
     def __init__(
         self,
@@ -99,7 +100,6 @@ class StaraiMotorsBus(MotorsBus):
         self.protocol_version = protocol_version
         self.apply_drive_mode = True
         self.port_handler = PortHandler(port,1000000)
-
 
     @property
     def is_connected(self) -> bool:
@@ -206,6 +206,8 @@ class StaraiMotorsBus(MotorsBus):
         self,
         data_name: str,
         values: Value | dict[str, Value],
+        *,
+        normalize: bool = True,
     ) -> None:
         """Write the same register on multiple motors.
 
@@ -231,33 +233,34 @@ class StaraiMotorsBus(MotorsBus):
         write_data = {} 
         if data_name == "Goal_Position":
 
-            for motor, data in values.items():
-                min_ = self.calibration[motor].range_min
-                max_ = self.calibration[motor].range_max
-                drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
-                if max_ == min_:
-                    raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
+            if normalize and data_name in self.normalized_data:
+                for motor, data in values.items():
+                    min_ = self.calibration[motor].range_min
+                    max_ = self.calibration[motor].range_max
+                    drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
+                    if max_ == min_:
+                        raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
 
-                if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
-                    values[motor] = -values[motor] if drive_mode else values[motor]
-                    bounded_val = min(100.0, max(-100.0, values[motor]))
-                    values[motor] = int(((bounded_val + 100) / 200) * (max_ - min_) + min_)
-                elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
-                    values[motor] = 100 - values[motor] if drive_mode else values[motor]
-                    bounded_val = min(100.0, max(0.0, values[motor]))
-                    values[motor] = int((bounded_val / 100) * (max_ - min_) + min_)
-                elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
-                    raise NotImplementedError
-                    mid = (min_ + max_) / 2
-                    max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
-                    values[motor] = int((values[motor] * max_res / 360) + mid)
-                else:
-                    raise NotImplementedError
-
+                    if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
+                        values[motor] = -values[motor] if drive_mode else values[motor]
+                        bounded_val = min(100.0, max(-100.0, values[motor]))
+                        values[motor] = int(((bounded_val + 100) / 200) * (max_ - min_) + min_)
+                    elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
+                        values[motor] = 100 - values[motor] if drive_mode else values[motor]
+                        bounded_val = min(100.0, max(0.0, values[motor]))
+                        values[motor] = int((bounded_val / 100) * (max_ - min_) + min_)
+                    elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
+                        raise NotImplementedError
+                        mid = (min_ + max_) / 2
+                        max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
+                        values[motor] = int((values[motor] * max_res / 360) + mid)
+                    else:
+                        raise NotImplementedError
+                    values[motor] = int(((values[motor]/4096*360)-180)*10)
 
             for motor in values:
                 data=SyncPositionControlOptions(self.motors[motor].id,
-                                                int(((values[motor]/4096*360)-180)*10),
+                                                values[motor],
                                                 DEFAULT_MOTION_TIME,
                                                 0,
                                                 DEFAULT_ACC_TIME,
