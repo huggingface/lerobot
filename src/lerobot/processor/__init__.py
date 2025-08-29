@@ -16,7 +16,7 @@
 
 from .batch_processor import ToBatchProcessor
 from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
-from .device_processor import DeviceProcessor
+from .device_processor import DeviceProcessorStep
 from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
 from .hil_processor import (
     AddTeleopActionAsComplimentaryData,
@@ -53,7 +53,7 @@ __all__ = [
     "ActionProcessorStep",
     "AddTeleopActionAsComplimentaryData",
     "AddTeleopEventsAsInfo",
-    "DeviceProcessor",
+    "DeviceProcessorStep",
     "RewardProcessorStep",
     "MapDeltaActionToRobotAction",
     "MapTensorToDeltaActionDict",

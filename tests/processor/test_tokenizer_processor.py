@@ -943,15 +943,15 @@ def test_device_detection_preserves_dtype():
 @require_package("transformers")
 @patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
 def test_integration_with_device_processor(mock_auto_tokenizer):
-    """Test that TokenizerProcessor works correctly with DeviceProcessor in pipeline."""
-    from lerobot.processor import DeviceProcessor
+    """Test that TokenizerProcessor works correctly with DeviceProcessorStep in pipeline."""
+    from lerobot.processor import DeviceProcessorStep
 
     mock_tokenizer = MockTokenizer(vocab_size=100)
     mock_auto_tokenizer.from_pretrained.return_value = mock_tokenizer
 
-    # Create pipeline with TokenizerProcessor then DeviceProcessor
+    # Create pipeline with TokenizerProcessor then DeviceProcessorStep
     tokenizer_processor = TokenizerProcessor(tokenizer_name="test-tokenizer", max_length=6)
-    device_processor = DeviceProcessor(device="cuda:0")
+    device_processor = DeviceProcessorStep(device="cuda:0")
     robot_processor = DataProcessorPipeline([tokenizer_processor, device_processor])
 
     # Start with CPU tensors
@@ -963,7 +963,7 @@ def test_integration_with_device_processor(mock_auto_tokenizer):
 
     result = robot_processor(transition)
 
-    # All tensors should end up on CUDA (moved by DeviceProcessor)
+    # All tensors should end up on CUDA (moved by DeviceProcessorStep)
     assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
     assert result[TransitionKey.ACTION].device.type == "cuda"
 

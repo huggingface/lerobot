@@ -24,7 +24,7 @@ from lerobot.utils.utils import get_safe_torch_device
 
 @ProcessorStepRegistry.register("device_processor")
 @dataclass
-class DeviceProcessor(ProcessorStep):
+class DeviceProcessorStep(ProcessorStep):
     """Processes transitions by moving tensors to the specified device and optionally converting float dtypes.
 
     This processor ensures that all tensors in the transition are moved to the
