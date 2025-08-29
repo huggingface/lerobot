@@ -23,6 +23,7 @@ import torch
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
+from tqdm import tqdm
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
@@ -200,7 +201,19 @@ def train(cfg: TrainPipelineConfig):
     )
 
     logging.info("Start offline training on a fixed dataset")
-    for _ in range(step, cfg.steps):
+
+    # Create progress bar
+    progress_bar = tqdm(
+        range(step, cfg.steps),
+        desc="Training",
+        initial=step,
+        total=cfg.steps,
+        unit="step",
+        dynamic_ncols=True,
+        leave=True,
+    )
+
+    for current_step in progress_bar:
         start_time = time.perf_counter()
         batch = next(dl_iter)
         train_tracker.dataloading_s = time.perf_counter() - start_time
@@ -228,8 +241,13 @@ def train(cfg: TrainPipelineConfig):
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
+        # Update progress bar with current metrics
+        progress_bar.set_postfix(
+            {"loss": f"{train_tracker.loss.avg:.4f}", "grad_norm": f"{train_tracker.grad_norm.avg:.3f}"}
+        )
+
         if is_log_step:
-            logging.info(train_tracker)
+            # Only log to wandb, skip console logging to keep output clean
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
@@ -238,7 +256,7 @@ def train(cfg: TrainPipelineConfig):
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
-            logging.info(f"Checkpoint policy after step {step}")
+            tqdm.write(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
@@ -247,7 +265,7 @@ def train(cfg: TrainPipelineConfig):
 
         if cfg.env and is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
-            logging.info(f"Eval policy at step {step}")
+            tqdm.write(f"Eval policy at step {step}")
             with (
                 torch.no_grad(),
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
@@ -272,11 +290,13 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
             eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
             eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
-            logging.info(eval_tracker)
+            tqdm.write(f"Eval results: {eval_tracker}")
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+
+    progress_bar.close()
 
     if eval_env:
         eval_env.close()
