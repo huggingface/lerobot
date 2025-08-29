@@ -25,11 +25,11 @@ from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessor,
     RenameProcessor,
-    ToBatchProcessor,
     UnnormalizerProcessor,
 )
 from lerobot.processor.pipeline import TransitionKey
@@ -91,7 +91,7 @@ def test_make_tdmpc_processor_basic():
     assert len(preprocessor.steps) == 4
     assert isinstance(preprocessor.steps[0], RenameProcessor)
     assert isinstance(preprocessor.steps[1], NormalizerProcessor)
-    assert isinstance(preprocessor.steps[2], ToBatchProcessor)
+    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
 
     # Check steps in postprocessor

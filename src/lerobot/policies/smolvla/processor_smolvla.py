@@ -19,11 +19,11 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessor,
     PolicyProcessorPipeline,
     RenameProcessor,
-    ToBatchProcessor,
     TokenizerProcessor,
     UnnormalizerProcessor,
 )
@@ -43,7 +43,7 @@ def make_smolvla_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        ToBatchProcessor(),
+        AddBatchDimensionProcessorStep(),
         SmolVLANewLineProcessor(),
         TokenizerProcessor(
             tokenizer_name=config.vlm_model_name,

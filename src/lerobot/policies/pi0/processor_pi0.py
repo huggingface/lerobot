@@ -20,10 +20,10 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessor,
     PolicyProcessorPipeline,
-    ToBatchProcessor,
     TokenizerProcessor,
     UnnormalizerProcessor,
 )
@@ -75,7 +75,7 @@ def make_pi0_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        ToBatchProcessor(),
+        AddBatchDimensionProcessorStep(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
         TokenizerProcessor(
             tokenizer_name="google/paligemma-3b-pt-224",

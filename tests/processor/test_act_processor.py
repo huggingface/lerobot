@@ -25,11 +25,11 @@ from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessor,
     RenameProcessor,
-    ToBatchProcessor,
     UnnormalizerProcessor,
 )
 from lerobot.processor.pipeline import TransitionKey
@@ -88,7 +88,7 @@ def test_make_act_processor_basic():
     assert len(preprocessor.steps) == 4
     assert isinstance(preprocessor.steps[0], RenameProcessor)
     assert isinstance(preprocessor.steps[1], NormalizerProcessor)
-    assert isinstance(preprocessor.steps[2], ToBatchProcessor)
+    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
 
     # Check steps in postprocessor

@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .batch_processor import ToBatchProcessor
+from .batch_processor import AddBatchDimensionProcessorStep
 from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
 from .device_processor import DeviceProcessorStep
 from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
@@ -78,7 +78,7 @@ __all__ = [
     "DataProcessorPipeline",
     "RobotProcessorPipeline",
     "PolicyProcessorPipeline",
-    "ToBatchProcessor",
+    "AddBatchDimensionProcessorStep",
     "TokenizerProcessor",
     "TimeLimitProcessor",
     "Numpy2TorchActionProcessor",
