@@ -24,6 +24,11 @@ OBS_IMAGES = "observation.images"
 OBS_LANGUAGE = "observation.language"
 ACTION = "action"
 REWARD = "next.reward"
+TRUNCATED = "next.truncated"
+DONE = "next.done"
+
+OBS_LANGUAGE_TOKENS = "observation.language.tokens"
+OBS_LANGUAGE_ATTENTION_MASK = "observation.language.attention_mask"
 
 ROBOTS = "robots"
 ROBOT_TYPE = "robot_type"

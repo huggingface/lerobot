@@ -24,6 +24,8 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 
+from lerobot.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
+
 from .pipeline import EnvTransition, TransitionKey
 
 
@@ -82,11 +84,11 @@ def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
     for k, v in action.items():
         # Check if the value is a type that should not be converted to a tensor.
         if isinstance(v, (Rotation, dict)):
-            act_dict[f"action.{k}"] = v
+            act_dict[f"{ACTION}.{k}"] = v
             continue
 
         arr = np.array(v) if np.isscalar(v) else v
-        act_dict[f"action.{k}"] = _to_tensor(arr)
+        act_dict[f"{ACTION}.{k}"] = _to_tensor(arr)
 
     return make_obs_act_transition(act=act_dict)
 
@@ -101,10 +103,10 @@ def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransitio
     obs_dict: dict[str, Any] = {}
     for k, v in state.items():
         arr = np.array(v) if np.isscalar(v) else v
-        obs_dict[f"observation.state.{k}"] = _to_tensor(arr)
+        obs_dict[f"{OBS_STATE}.{k}"] = _to_tensor(arr)
 
     for cam, img in images.items():
-        obs_dict[f"observation.images.{cam}"] = img
+        obs_dict[f"{OBS_IMAGES}.{cam}"] = img
 
     return make_obs_act_transition(obs=obs_dict)
 
@@ -120,8 +122,8 @@ def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
         return out
 
     for k, v in action_dict.items():
-        if isinstance(k, str) and k.startswith("action.") and k.endswith((".pos", ".vel")):
-            out_key = k[len("action.") :]  # Strip the 'action.' prefix.
+        if isinstance(k, str) and k.startswith(f"{ACTION}.") and k.endswith((".pos", ".vel")):
+            out_key = k[len(f"{ACTION}.") :]  # Strip the 'action.' prefix.
             out[out_key] = float(v)
 
     return out
@@ -152,9 +154,9 @@ def to_dataset_frame(
           - info dict
           - *_is_pad flags and task from complementary_data
     """
-    action_names = features.get("action", {}).get("names", [])
-    obs_state_names = features.get("observation.state", {}).get("names", [])
-    image_keys = [k for k in features if k.startswith("observation.images.")]
+    action_names = features.get(ACTION, {}).get("names", [])
+    obs_state_names = features.get(OBS_STATE, {}).get("names", [])
+    image_keys = [k for k in features if k.startswith(OBS_IMAGES)]
 
     def _merge(base: EnvTransition, other: EnvTransition) -> EnvTransition:
         out = deepcopy(base)
@@ -198,21 +200,20 @@ def to_dataset_frame(
 
     # Observation.state vector
     if obs_state_names:
-        vals = [_from_tensor(obs.get(f"observation.state.{n}", 0.0)) for n in obs_state_names]
-        batch["observation.state"] = np.asarray(vals, dtype=np.float32)
+        vals = [_from_tensor(obs.get(f"{OBS_STATE}.{n}", 0.0)) for n in obs_state_names]
+        batch[OBS_STATE] = np.asarray(vals, dtype=np.float32)
 
     # Action vector
     if action_names:
-        vals = [_from_tensor(act.get(f"action.{n}", 0.0)) for n in action_names]
-        batch["action"] = np.asarray(vals, dtype=np.float32)
+        vals = [_from_tensor(act.get(f"{ACTION}.{n}", 0.0)) for n in action_names]
+        batch[ACTION] = np.asarray(vals, dtype=np.float32)
 
-    # Next.* fields
     if tr.get(TransitionKey.REWARD) is not None:
-        batch["next.reward"] = _from_tensor(tr[TransitionKey.REWARD])
+        batch[REWARD] = _from_tensor(tr[TransitionKey.REWARD])
     if tr.get(TransitionKey.DONE) is not None:
-        batch["next.done"] = _from_tensor(tr[TransitionKey.DONE])
+        batch[DONE] = _from_tensor(tr[TransitionKey.DONE])
     if tr.get(TransitionKey.TRUNCATED) is not None:
-        batch["next.truncated"] = _from_tensor(tr[TransitionKey.TRUNCATED])
+        batch[TRUNCATED] = _from_tensor(tr[TransitionKey.TRUNCATED])
 
     # Complementary data flags and task
     comp = tr.get(TransitionKey.COMPLEMENTARY_DATA) or {}
