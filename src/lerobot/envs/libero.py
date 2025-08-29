@@ -233,11 +233,6 @@ class LiberoEnv(gym.Env):
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(7,), dtype=np.float32)
 
-    def render1(self):
-        raw_obs = self._env.env._get_observations()
-        image = self._format_raw_obs(raw_obs)["pixels"][OBS_IMAGE]
-        return image
-
     def render(self):
         raw_obs = self._env.env._get_observations()
         formatted = self._format_raw_obs(raw_obs)
