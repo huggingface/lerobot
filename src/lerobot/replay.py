@@ -47,7 +47,7 @@ from pprint import pformat
 
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor import DataProcessorPipeline
+from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import to_output_robot_action, to_transition_teleop_action
 from lerobot.processor.pipeline import IdentityProcessor
 from lerobot.robots import (  # noqa: F401
@@ -86,7 +86,7 @@ class ReplayConfig:
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Optional processor for actions before sending to robot
-    robot_action_processor: DataProcessorPipeline | None = None
+    robot_action_processor: RobotProcessorPipeline | None = None
 
 
 @parser.wrap()
@@ -95,7 +95,7 @@ def replay(cfg: ReplayConfig):
     logging.info(pformat(asdict(cfg)))
 
     # Initialize robot action processor with default if not provided
-    robot_action_processor = cfg.robot_action_processor or DataProcessorPipeline(
+    robot_action_processor = cfg.robot_action_processor or RobotProcessorPipeline(
         steps=[IdentityProcessor()],
         to_transition=to_transition_teleop_action,
         to_output=to_output_robot_action,  # type: ignore[arg-type]

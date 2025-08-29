@@ -38,7 +38,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.processor.pipeline import DataProcessorPipeline
+from lerobot.processor.pipeline import PolicyProcessorPipeline
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -120,7 +120,7 @@ def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
     **kwargs: Unpack[ProcessorConfigKwargs],
-) -> tuple[DataProcessorPipeline, DataProcessorPipeline]:
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     """Make a processor instance for a given policy type.
 
     This function creates the appropriate processor configuration based on the policy type.
@@ -140,12 +140,12 @@ def make_pre_post_processors(
     """
     if pretrained_path:
         return (
-            DataProcessorPipeline.from_pretrained(
+            PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
                 config_filename=kwargs.get("preprocessor_config_filename", "robot_preprocessor.json"),
                 overrides=kwargs.get("preprocessor_overrides", {}),
             ),
-            DataProcessorPipeline.from_pretrained(
+            PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
                 config_filename=kwargs.get("postprocessor_config_filename", "robot_postprocessor.json"),
                 overrides=kwargs.get("postprocessor_overrides", {}),

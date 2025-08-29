@@ -24,7 +24,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypeAlias, TypedDict
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
@@ -853,6 +853,11 @@ class DataProcessorPipeline(ModelHubMixin):
             out = step.transform_features(features)
             features = out
         return features
+
+
+# TODO(Adil): when we upgrade to python 3.12, we can use TypeAlias instead of this
+RobotProcessorPipeline: TypeAlias = DataProcessorPipeline
+PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline
 
 
 class ObservationProcessor(ProcessorStep, ABC):

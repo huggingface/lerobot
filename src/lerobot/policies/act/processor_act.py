@@ -18,9 +18,9 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.processor import (
-    DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
+    PolicyProcessorPipeline,
     RenameProcessor,
     ToBatchProcessor,
     UnnormalizerProcessor,
@@ -29,7 +29,7 @@ from lerobot.processor import (
 
 def make_act_pre_post_processors(
     config: ACTConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
-) -> tuple[DataProcessorPipeline, DataProcessorPipeline]:
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
         RenameProcessor(rename_map={}),
         NormalizerProcessor(
@@ -46,6 +46,6 @@ def make_act_pre_post_processors(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
-    return DataProcessorPipeline(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), DataProcessorPipeline(
-        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
-    )
+    return PolicyProcessorPipeline(
+        steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME
+    ), PolicyProcessorPipeline(steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME)
