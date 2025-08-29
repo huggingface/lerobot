@@ -116,6 +116,9 @@ def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
     out: dict[str, Any] = {}
     action_dict = transition.get(TransitionKey.ACTION) or {}
 
+    if action_dict is None:
+        return out
+
     for k, v in action_dict.items():
         if isinstance(k, str) and k.startswith("action.") and k.endswith((".pos", ".vel")):
             out_key = k[len("action.") :]  # Strip the 'action.' prefix.

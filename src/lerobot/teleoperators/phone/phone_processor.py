@@ -68,16 +68,12 @@ class MapPhoneActionToRobotAction(ActionProcessor):
             )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
 
         # For some actions we need to invert the axis
-        act.update(
-            {
-                "action.enabled": enabled,
-                "action.target_x": -pos[1] if enabled else 0.0,
-                "action.target_y": pos[0] if enabled else 0.0,
-                "action.target_z": pos[2] if enabled else 0.0,
-                "action.target_wx": rotvec[1] if enabled else 0.0,
-                "action.target_wy": rotvec[0] if enabled else 0.0,
-                "action.target_wz": -rotvec[2] if enabled else 0.0,
-                "action.gripper": gripper,  # Still send gripper action when disabled
-            }
-        )
+        act["action.enabled"] = enabled
+        act["action.target_x"] = -pos[1] if enabled else 0.0
+        act["action.target_y"] = pos[0] if enabled else 0.0
+        act["action.target_z"] = pos[2] if enabled else 0.0
+        act["action.target_wx"] = rotvec[1] if enabled else 0.0
+        act["action.target_wy"] = rotvec[0] if enabled else 0.0
+        act["action.target_wz"] = -rotvec[2] if enabled else 0.0
+        act["action.gripper"] = gripper  # Still send gripper action when disabled
         return act
