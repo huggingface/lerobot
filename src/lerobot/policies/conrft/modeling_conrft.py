@@ -72,178 +72,6 @@ def get_scalings_for_boundary_condition(sigma, sigma_data, sigma_min):
     return c_skip, c_out, c_in
 
 
-def compute_critic_loss(policy, batch):
-    """Compute standard TD loss for critic (online stage)"""
-    observations = batch["state"]
-    actions = batch["action"]
-    rewards = batch["reward"]
-    dones = batch["done"]
-    next_observations = batch["next_state"]
-    obs_feat = batch.get("observation_feature")
-    nxt_feat = batch.get("next_observation_feature")
-
-    # Handle discrete actions (gripper) like SAC does
-    if policy.config.num_discrete_actions is not None:
-        # Strip discrete action dimension for critic (same as SAC)
-        actions = actions[:, :DISCRETE_DIMENSION_INDEX]
-
-    # Compute target Q-values
-    with torch.no_grad():
-        next_action, _ = policy.consistency_policy(next_observations, training=False)
-        target_q_values = policy.critic_target(next_observations, next_action, nxt_feat)
-        target_q = torch.min(target_q_values, dim=0)[0]
-        target_value = rewards + policy.config.discount * (1 - dones) * target_q
-
-    # Current Q-values
-    current_q_values = policy.critic_ensemble(observations, actions, obs_feat)
-    current_q1, current_q2 = current_q_values[0], current_q_values[1]
-
-    # TD loss
-    loss_critic = F.mse_loss(current_q1, target_value) + F.mse_loss(current_q2, target_value)
-
-    return {
-        "loss_critic": loss_critic,
-        "q1_mean": current_q1.mean(),
-        "q2_mean": current_q2.mean(),
-        "target_q_mean": target_value.mean(),
-    }
-
-
-def compute_cal_ql_loss(policy, batch):
-    """Compute Calibrated Q-Learning loss (offline stage)"""
-    observations = batch["state"]
-    actions = batch["action"]
-    rewards = batch["reward"]
-    dones = batch["done"]
-    mc_returns = batch.get("mc_returns", rewards)  # Use MC returns if available
-    next_observations = batch["next_state"]
-    obs_feat = batch.get("observation_feature")
-    nxt_feat = batch.get("next_observation_feature")
-
-    batch_size = actions.shape[0]
-    
-    # Handle discrete actions (gripper) like SAC does
-    if policy.config.num_discrete_actions is not None:
-        # Strip discrete action dimension for critic (same as SAC)
-        actions = actions[:, :DISCRETE_DIMENSION_INDEX]
-
-    # Get action dimension after potential stripping
-    action_dim = actions.shape[1]
-
-    # Standard TD loss
-    with torch.no_grad():
-        next_action, _ = policy.consistency_policy(next_observations, training=False)
-        # next_action from consistency_policy is already the correct dimension (continuous only)
-
-        target_q_values = policy.critic_target(next_observations, next_action, nxt_feat)
-
-        # Subsample critics
-        if policy.config.critic_subsample_size is not None:
-            indices = torch.randperm(policy.config.critic_ensemble_size)[:policy.config.critic_subsample_size]
-            target_q_values = target_q_values[indices]
-
-        target_q = torch.min(target_q_values, dim=0)[0]
-        target_value = rewards + policy.config.discount * (1 - dones) * target_q
-
-    # Current Q-values
-    current_q_values = policy.critic_ensemble(observations, actions, obs_feat)
-
-    if policy.config.critic_subsample_size is not None:
-        indices = torch.randperm(policy.config.critic_ensemble_size)[:policy.config.critic_subsample_size]
-        current_q_values = current_q_values[indices]
-        critic_size = policy.config.critic_subsample_size
-    else:
-        critic_size = policy.config.critic_ensemble_size
-
-    # Expand target values to match critic ensemble size
-    target_values_expanded = target_value.unsqueeze(0).expand(critic_size, -1)
-
-    # TD loss
-    td_loss = F.mse_loss(current_q_values, target_values_expanded)
-
-    # CQL penalty for OOD actions
-    num_random = policy.config.cql_n_actions
-
-    # Sample random actions
-    if policy.config.cql_action_sample_method == "uniform":
-        random_actions = torch.rand(batch_size, num_random, action_dim, device=actions.device) * 2 - 1
-    elif policy.config.cql_action_sample_method == "normal":
-        random_actions = torch.randn(batch_size, num_random, action_dim, device=actions.device)
-    else:
-        raise NotImplementedError
-
-    # Sample actions from current policy
-    policy_actions = []
-    for _ in range(num_random):
-        policy_action, _ = policy.consistency_policy(observations, training=False)
-        # policy_action is already the correct dimension (continuous only)
-        policy_actions.append(policy_action.unsqueeze(1))
-    policy_actions = torch.cat(policy_actions, dim=1)
-
-    # Sample next actions
-    next_actions_cql = []
-    for _ in range(num_random):
-        next_action_cql, _ = policy.consistency_policy(next_observations, training=False)
-        # next_action_cql is already the correct dimension (continuous only)
-        next_actions_cql.append(next_action_cql.unsqueeze(1))
-    next_actions_cql = torch.cat(next_actions_cql, dim=1)
-
-    # Combine all sampled actions [random, current, next]
-    all_sampled_actions = torch.cat([random_actions, policy_actions, next_actions_cql], dim=1)
-
-    # Compute Q-values for all sampled actions
-    cql_q_samples = []
-    for i in range(all_sampled_actions.shape[1]):
-        q_vals = policy.critic_ensemble(observations, all_sampled_actions[:, i], obs_feat)
-        if policy.config.critic_subsample_size is not None:
-            q_vals = q_vals[indices]
-        cql_q_samples.append(q_vals.unsqueeze(-1))
-    cql_q_samples = torch.cat(cql_q_samples, dim=-1)  # Shape: [critic_size, batch_size, n_actions*3]
-
-    # Cal-QL: Apply lower bound using MC returns
-    n_actions_for_calql = num_random * 3
-    mc_lower_bound = mc_returns.unsqueeze(0).unsqueeze(-1).expand(critic_size, -1, n_actions_for_calql)
-
-    # Count bound violations for logging
-    num_vals = cql_q_samples.numel()
-    calql_bound_rate = (cql_q_samples < mc_lower_bound).float().sum() / num_vals
-
-    # Apply the bound
-    cql_q_samples = torch.maximum(cql_q_samples, mc_lower_bound)
-
-    # Add current Q-values and apply temperature scaling
-    current_q_expanded = current_q_values.unsqueeze(-1)  # [critic_size, batch_size, 1]
-    cql_q_samples = torch.cat([cql_q_samples, current_q_expanded], dim=-1)
-
-    # Subtract log(num_samples) * temperature
-    cql_q_samples = cql_q_samples - torch.log(torch.tensor(cql_q_samples.shape[-1])) * policy.config.cql_temp
-
-    # Compute logsumexp of OOD actions
-    cql_ood_values = torch.logsumexp(cql_q_samples / policy.config.cql_temp, dim=-1) * policy.config.cql_temp
-
-    # CQL difference
-    cql_q_diff = cql_ood_values - current_q_values
-    cql_q_diff = torch.clamp(cql_q_diff, policy.config.cql_clip_diff_min, policy.config.cql_clip_diff_max)
-
-    # CQL loss
-    cql_loss = cql_q_diff.mean()
-    
-    # Total loss
-    loss_critic = td_loss + policy.config.cql_alpha * cql_loss
-
-    return {
-        "loss_critic": loss_critic,
-        "td_loss": td_loss,
-        "cql_loss": cql_loss,
-        "cql_alpha": policy.config.cql_alpha,
-        "cql_diff": cql_q_diff.mean(),
-        "calql_bound_rate": calql_bound_rate,
-        "cql_ood_values": cql_ood_values.mean(),
-        "predicted_qs": current_q_values.mean(),
-        "target_qs": target_values_expanded.mean(),
-    }
-
-
 def get_snr(sigmas):
     """Compute signal-to-noise ratio"""
     return sigmas**-2
@@ -270,78 +98,6 @@ def mean_flat(tensor):
     return tensor.mean(dim=list(range(1, tensor.ndim)))
 
 
-def compute_bc_loss(policy, batch):
-    """Compute consistency-based BC loss"""
-    observations = batch["state"]
-    actions = batch["action"]
-    batch_size = actions.shape[0]
-    device = actions.device
-
-    # Sample random diffusion step (matching JAX: indices from 0 to num_scales-1)
-    indices = torch.randint(0, policy.config.num_scales - 1, (batch_size,), device=device)
-
-    # Compute sigma values using the same formula as JAX
-    t = (policy.config.sigma_max**(1 / policy.config.rho) + indices / (policy.config.num_scales - 1) * (policy.config.sigma_min**(1 / policy.config.rho) - policy.config.sigma_max**(1 / policy.config.rho)))
-    t = t**policy.config.rho
-
-    # Add noise to actions
-    noise = torch.randn_like(actions)
-    dims = actions.ndim
-    x_t = actions + noise * append_dims(t, dims)
-
-    # Forward pass through consistency policy
-    denoised_action, _ = policy.consistency_policy(
-        observations, noisy_action=x_t, sigma=t, training=True
-    )
-
-    # Compute SNR and weightings
-    snrs = get_snr(t)
-    weights = get_weightings("karras", snrs, policy.config.sigma_data)
-
-    # Compute weighted reconstruction loss
-    recon_diffs = (denoised_action - actions) ** 2
-    recon_loss = (mean_flat(recon_diffs) * weights).mean()
-
-    return {
-        "loss_bc": recon_loss,
-        "action_mse": F.mse_loss(denoised_action, actions),
-        "recon_loss": recon_loss,
-    }
-
-
-def compute_actor_loss(policy, batch):
-    """Compute actor loss combining BC and Q losses"""
-    # Get BC loss
-    bc_output = compute_bc_loss(policy, batch)
-    bc_loss = bc_output["loss_bc"]
-
-    # Get Q loss
-    observations = batch["state"]
-    obs_feat = batch.get("observation_feature")
-    policy_action, _ = policy.consistency_policy(observations, training=False)
-
-    q_values = policy.critic_ensemble(observations, policy_action, obs_feat)
-    if policy.config.critic_subsample_size is not None:
-        indices = torch.randperm(policy.config.critic_ensemble_size)[
-            : policy.config.critic_subsample_size
-        ]
-        q_values = q_values[indices]
-    q_value = torch.min(q_values, dim=0)[0]
-    q_loss = -q_value.mean()  # Negative for gradient ascent
-
-    # Combined loss
-    loss_actor = policy.bc_weight * bc_loss + policy.q_weight * q_loss
-
-    return {
-        "loss_actor": loss_actor,
-        "bc_loss": bc_loss,
-        "q_loss": q_loss,
-        "bc_weight": policy.bc_weight,
-        "q_weight": policy.q_weight,
-        "q_mean": q_value.mean(),
-    }
-
-
 class ConRFTPolicy(PreTrainedPolicy):
     """ConRFT Policy for VLA model fine-tuning
 
@@ -364,7 +120,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         super().__init__(config)
         self.config = config
 
-        # Initialize normalization - follow SAC's pattern exactly
+        # Initialize normalization
         self.normalize_inputs = nn.Identity()
         self.normalize_targets = nn.Identity()
         self.unnormalize_outputs = nn.Identity()
@@ -528,13 +284,13 @@ class ConRFTPolicy(PreTrainedPolicy):
             Dictionary containing the computed loss and metrics
         """
         if model == "critic":
-            return compute_critic_loss(self, batch)
+            return self.compute_critic_loss(self, batch)
         elif model == "actor":
-            return compute_actor_loss(self, batch)
+            return self.compute_actor_loss(self, batch)
         elif model == "cal_ql":
-            return compute_cal_ql_loss(self, batch)
+            return self.compute_cal_ql_loss(self, batch)
         elif model == "bc":
-            return compute_bc_loss(self, batch)
+            return self.compute_bc_loss(self, batch)
         else:
             raise ValueError(f"Unknown model type: {model}")
 
@@ -562,6 +318,239 @@ class ConRFTPolicy(PreTrainedPolicy):
             self.bc_weight = self.config.bc_weight_online
             self.q_weight = self.config.q_weight_online
 
+    def compute_critic_loss(self, batch):
+        """Compute standard TD loss for critic (online stage)"""
+        observations = batch["state"]
+        actions = batch["action"]
+        rewards = batch["reward"]
+        dones = batch["done"]
+        next_observations = batch["next_state"]
+        obs_feat = batch.get("observation_feature")
+        nxt_feat = batch.get("next_observation_feature")
+
+        if self.config.num_discrete_actions is not None:
+            actions = actions[:, :DISCRETE_DIMENSION_INDEX]
+
+        # Compute target Q-values
+        with torch.no_grad():
+            next_action, _ = self.consistency_policy(next_observations, training=False)
+            target_q_values = self.critic_target(next_observations, next_action, nxt_feat)
+            target_q = torch.min(target_q_values, dim=0)[0]
+            target_value = rewards + self.config.discount * (1 - dones) * target_q
+
+        # Current Q-values
+        current_q_values = self.critic_ensemble(observations, actions, obs_feat)
+        current_q1, current_q2 = current_q_values[0], current_q_values[1]
+
+        # TD loss
+        loss_critic = F.mse_loss(current_q1, target_value) + F.mse_loss(current_q2, target_value)
+
+        return {
+            "loss_critic": loss_critic,
+            "q1_mean": current_q1.mean(),
+            "q2_mean": current_q2.mean(),
+            "target_q_mean": target_value.mean(),
+        }
+
+    def compute_cal_ql_loss(self, batch):
+        """Compute Calibrated Q-Learning loss (offline stage)"""
+        observations = batch["state"]
+        actions = batch["action"]
+        rewards = batch["reward"]
+        dones = batch["done"]
+        mc_returns = batch.get("mc_returns", rewards)  # Use MC returns if available
+        next_observations = batch["next_state"]
+        obs_feat = batch.get("observation_feature")
+        nxt_feat = batch.get("next_observation_feature")
+
+        batch_size = actions.shape[0]
+
+        if self.config.num_discrete_actions is not None:
+            actions = actions[:, :DISCRETE_DIMENSION_INDEX]
+
+        # Get action dimension after potential stripping
+        action_dim = actions.shape[1]
+
+        # Standard TD loss
+        with torch.no_grad():
+            next_action, _ = self.consistency_policy(next_observations, training=False)
+            # next_action from consistency_policy is already the correct dimension (continuous only)
+
+            target_q_values = self.critic_target(next_observations, next_action, nxt_feat)
+
+            # Subsample critics
+            if self.config.critic_subsample_size is not None:
+                indices = torch.randperm(self.config.critic_ensemble_size)[:self.config.critic_subsample_size]
+                target_q_values = target_q_values[indices]
+
+            target_q = torch.min(target_q_values, dim=0)[0]
+            target_value = rewards + self.config.discount * (1 - dones) * target_q
+
+        # Current Q-values
+        current_q_values = self.critic_ensemble(observations, actions, obs_feat)
+
+        if self.config.critic_subsample_size is not None:
+            indices = torch.randperm(self.config.critic_ensemble_size)[:self.config.critic_subsample_size]
+            current_q_values = current_q_values[indices]
+            critic_size = self.config.critic_subsample_size
+        else:
+            critic_size = self.config.critic_ensemble_size
+
+        # Expand target values to match critic ensemble size
+        target_values_expanded = target_value.unsqueeze(0).expand(critic_size, -1)
+
+        # TD loss
+        td_loss = F.mse_loss(current_q_values, target_values_expanded)
+
+        # CQL penalty for OOD actions
+        num_random = self.config.cql_n_actions
+
+        # Sample random actions
+        if self.config.cql_action_sample_method == "uniform":
+            random_actions = torch.rand(batch_size, num_random, action_dim, device=actions.device) * 2 - 1
+        elif self.config.cql_action_sample_method == "normal":
+            random_actions = torch.randn(batch_size, num_random, action_dim, device=actions.device)
+        else:
+            raise NotImplementedError
+
+        # Sample actions from current policy
+        policy_actions = []
+        for _ in range(num_random):
+            policy_action, _ = self.consistency_policy(observations, training=False)
+            # policy_action is already the correct dimension (continuous only)
+            policy_actions.append(policy_action.unsqueeze(1))
+        policy_actions = torch.cat(policy_actions, dim=1)
+
+        # Sample next actions
+        next_actions_cql = []
+        for _ in range(num_random):
+            next_action_cql, _ = self.consistency_policy(next_observations, training=False)
+            # next_action_cql is already the correct dimension (continuous only)
+            next_actions_cql.append(next_action_cql.unsqueeze(1))
+        next_actions_cql = torch.cat(next_actions_cql, dim=1)
+
+        # Combine all sampled actions [random, current, next]
+        all_sampled_actions = torch.cat([random_actions, policy_actions, next_actions_cql], dim=1)
+
+        # Compute Q-values for all sampled actions
+        cql_q_samples = []
+        for i in range(all_sampled_actions.shape[1]):
+            q_vals = self.critic_ensemble(observations, all_sampled_actions[:, i], obs_feat)
+            if self.config.critic_subsample_size is not None:
+                q_vals = q_vals[indices]
+            cql_q_samples.append(q_vals.unsqueeze(-1))
+        cql_q_samples = torch.cat(cql_q_samples, dim=-1)  # Shape: [critic_size, batch_size, n_actions*3]
+
+        # Cal-QL: Apply lower bound using MC returns
+        n_actions_for_calql = num_random * 3
+        mc_lower_bound = mc_returns.unsqueeze(0).unsqueeze(-1).expand(critic_size, -1, n_actions_for_calql)
+
+        # Count bound violations for logging
+        num_vals = cql_q_samples.numel()
+        calql_bound_rate = (cql_q_samples < mc_lower_bound).float().sum() / num_vals
+
+        # Apply the bound
+        cql_q_samples = torch.maximum(cql_q_samples, mc_lower_bound)
+
+        # Add current Q-values and apply temperature scaling
+        current_q_expanded = current_q_values.unsqueeze(-1)  # [critic_size, batch_size, 1]
+        cql_q_samples = torch.cat([cql_q_samples, current_q_expanded], dim=-1)
+
+        # Subtract log(num_samples) * temperature
+        cql_q_samples = cql_q_samples - torch.log(torch.tensor(cql_q_samples.shape[-1])) * self.config.cql_temp
+
+        # Compute logsumexp of OOD actions
+        cql_ood_values = torch.logsumexp(cql_q_samples / self.config.cql_temp, dim=-1) * self.config.cql_temp
+
+        # CQL difference
+        cql_q_diff = cql_ood_values - current_q_values
+        cql_q_diff = torch.clamp(cql_q_diff, self.config.cql_clip_diff_min, self.config.cql_clip_diff_max)
+
+        # CQL loss
+        cql_loss = cql_q_diff.mean()
+
+        # Total loss
+        loss_critic = td_loss + self.config.cql_alpha * cql_loss
+
+        return {
+            "loss_critic": loss_critic,
+            "td_loss": td_loss,
+            "cql_loss": cql_loss,
+            "cql_alpha": self.config.cql_alpha,
+            "cql_diff": cql_q_diff.mean(),
+            "calql_bound_rate": calql_bound_rate,
+            "cql_ood_values": cql_ood_values.mean(),
+            "predicted_qs": current_q_values.mean(),
+            "target_qs": target_values_expanded.mean(),
+        }
+
+    def compute_bc_loss(self, batch):
+        """Compute consistency-based BC loss"""
+        observations = batch["state"]
+        actions = batch["action"]
+        batch_size = actions.shape[0]
+        device = actions.device
+
+        # Sample random diffusion step (matching JAX: indices from 0 to num_scales-1)
+        indices = torch.randint(0, self.config.num_scales - 1, (batch_size,), device=device)
+
+        # Compute sigma values using the same formula as JAX
+        t = (self.config.sigma_max**(1 / self.config.rho) + indices / (self.config.num_scales - 1) * (self.config.sigma_min**(1 / self.config.rho) - self.config.sigma_max**(1 / self.config.rho)))
+        t = t**self.config.rho
+
+        # Add noise to actions
+        noise = torch.randn_like(actions)
+        dims = actions.ndim
+        x_t = actions + noise * append_dims(t, dims)
+
+        # Forward pass through consistency policy
+        denoised_action, _ = self.consistency_policy(
+            observations, noisy_action=x_t, sigma=t, training=True
+        )
+
+        # Compute SNR and weightings
+        snrs = get_snr(t)
+        weights = get_weightings("karras", snrs, self.config.sigma_data)
+
+        # Compute weighted reconstruction loss
+        recon_diffs = (denoised_action - actions) ** 2
+        recon_loss = (mean_flat(recon_diffs) * weights).mean()
+
+        return {
+            "loss_bc": recon_loss,
+            "action_mse": F.mse_loss(denoised_action, actions),
+            "recon_loss": recon_loss,
+        }
+
+    def compute_actor_loss(self, batch):
+        """Compute actor loss combining BC and Q losses"""
+        # Get BC loss
+        bc_output = self.compute_bc_loss(batch)
+        bc_loss = bc_output["loss_bc"]
+
+        # Get Q loss
+        observations = batch["state"]
+        obs_feat = batch.get("observation_feature")
+        policy_action, _ = self.consistency_policy(observations, training=False)
+
+        q_values = self.critic_ensemble(observations, policy_action, obs_feat)
+        if self.config.critic_subsample_size is not None:
+            indices = torch.randperm(self.config.critic_ensemble_size)[:self.config.critic_subsample_size]
+            q_values = q_values[indices]
+        q_value = torch.min(q_values, dim=0)[0]
+        q_loss = -q_value.mean()  # Negative for gradient ascent
+
+        # Combined loss
+        loss_actor = self.bc_weight * bc_loss + self.q_weight * q_loss
+
+        return {
+            "loss_actor": loss_actor,
+            "bc_loss": bc_loss,
+            "q_loss": q_loss,
+            "bc_weight": self.bc_weight,
+            "q_weight": self.q_weight,
+            "q_mean": q_value.mean(),
+        }
 
 class SinusoidalPosEmb(nn.Module):
 
