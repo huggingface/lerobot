@@ -16,6 +16,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
@@ -229,15 +230,16 @@ class SACConfig(PreTrainedConfig):
             raise ValueError("You must provide 'action' in the output features")
 
     @property
-    def image_features(self) -> list[str]:
-        return [key for key in self.input_features if is_image_feature(key)]
+    def image_features(self) -> dict[str, Any]:
+        # Keep type aligned with PreTrainedConfig.image_features: dict[str, PolicyFeature]
+        return {key: ft for key, ft in self.input_features.items() if is_image_feature(key)}
 
     @property
-    def observation_delta_indices(self) -> list:
+    def observation_delta_indices(self) -> None:
         return None
 
     @property
-    def action_delta_indices(self) -> list:
+    def action_delta_indices(self) -> None:
         return None  # SAC typically predicts one action at a time
 
     @property

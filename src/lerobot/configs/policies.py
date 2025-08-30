@@ -19,7 +19,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -30,14 +30,13 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
-from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 
 T = TypeVar("T", bound="PreTrainedConfig")
 
 
 @dataclass
-class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
+class PreTrainedConfig(draccus.ChoiceRegistry, abc.ABC):
     """
     Base configuration class for policy models.
 
@@ -75,6 +74,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     def __post_init__(self):
         self.pretrained_path = None
+        # Honor test/device override via environment for consistency in CI and local runs
+        if not self.device:
+            env_device = os.environ.get("LEROBOT_TEST_DEVICE")
+            if env_device:
+                self.device = env_device
+
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
@@ -89,7 +94,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def type(self) -> str:
-        return self.get_choice_name(self.__class__)
+        return cast(str, self.get_choice_name(self.__class__))
 
     @property
     @abc.abstractmethod
@@ -153,7 +158,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
-        resume_download: bool = None,
+        resume_download: bool | None = None,
         proxies: dict | None = None,
         token: str | bool | None = None,
         cache_dir: str | Path | None = None,
@@ -193,6 +198,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         with draccus.config_type("json"):
             orig_config = draccus.parse(cls, config_file, args=[])
 
+        assert config_file is not None
         with open(config_file) as f:
             config = json.load(f)
 
@@ -204,4 +210,4 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
             cli_overrides = policy_kwargs.pop("cli_overrides", [])
             with draccus.config_type("json"):
-                return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+                return cast(T, draccus.parse(orig_config.__class__, config_file, args=cli_overrides))

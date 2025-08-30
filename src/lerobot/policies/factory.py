@@ -28,7 +28,6 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
@@ -36,7 +35,7 @@ from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 
 
-def get_policy_class(name: str) -> PreTrainedPolicy:
+def get_policy_class(name: str):
     """Get the policy's class and config class given a name (matching the policy class' `name` attribute)."""
     if name == "tdmpc":
         from lerobot.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
@@ -78,7 +77,7 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
 
-def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
+def make_policy_config(policy_type: str, **kwargs):
     if policy_type == "tdmpc":
         return TDMPCConfig(**kwargs)
     elif policy_type == "diffusion":
@@ -105,7 +104,7 @@ def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
     env_cfg: EnvConfig | None = None,
-) -> PreTrainedPolicy:
+) -> nn.Module:
     """Make an instance of a policy class.
 
     This function exists because (for now) we need to parse features from either a dataset or an environment
@@ -144,7 +143,7 @@ def make_policy(
 
     policy_cls = get_policy_class(cfg.type)
 
-    kwargs = {}
+    kwargs: dict = {}
     if ds_meta is not None:
         features = dataset_to_policy_features(ds_meta.features)
         kwargs["dataset_stats"] = ds_meta.stats

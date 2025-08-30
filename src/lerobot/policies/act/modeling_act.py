@@ -23,6 +23,7 @@ import math
 from collections import deque
 from collections.abc import Callable
 from itertools import chain
+from typing import Any, cast
 
 import einops
 import numpy as np
@@ -37,6 +38,7 @@ from lerobot.constants import ACTION, OBS_IMAGES
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import get_device_from_parameters
 
 
 class ACTPolicy(PreTrainedPolicy):
@@ -79,7 +81,7 @@ class ACTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> object:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
         # Should we remove this and just `return self.parameters()`?
         return [
@@ -136,7 +138,9 @@ class ACTPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
-
+        # Ensure batch tensors are on the same device as the module
+        device = get_device_from_parameters(self)
+        batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
@@ -146,8 +150,11 @@ class ACTPolicy(PreTrainedPolicy):
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+    def forward(self, batch: dict[str, Tensor], **kwargs: object) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
+        # Ensure batch tensors are on the same device as the module
+        device = get_device_from_parameters(self)
+        batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
@@ -313,21 +320,19 @@ class ACT(nn.Module):
             self.vae_encoder = ACTEncoder(config, is_vae_encoder=True)
             self.vae_encoder_cls_embed = nn.Embedding(1, config.dim_model)
             # Projection layer for joint-space configuration to hidden dimension.
-            if self.config.robot_state_feature:
-                self.vae_encoder_robot_state_input_proj = nn.Linear(
-                    self.config.robot_state_feature.shape[0], config.dim_model
-                )
+            _robot_ft = self.config.robot_state_feature
+            if _robot_ft is not None:
+                self.vae_encoder_robot_state_input_proj = nn.Linear(_robot_ft.shape[0], config.dim_model)
             # Projection layer for action (joint-space target) to hidden dimension.
-            self.vae_encoder_action_input_proj = nn.Linear(
-                self.config.action_feature.shape[0],
-                config.dim_model,
-            )
+            _action_ft = self.config.action_feature
+            assert _action_ft is not None
+            self.vae_encoder_action_input_proj = nn.Linear(_action_ft.shape[0], config.dim_model)
             # Projection layer from the VAE encoder's output to the latent distribution's parameter space.
             self.vae_encoder_latent_output_proj = nn.Linear(config.dim_model, config.latent_dim * 2)
             # Fixed sinusoidal positional embedding for the input to the VAE encoder. Unsqueeze for batch
             # dimension.
             num_input_token_encoder = 1 + config.chunk_size
-            if self.config.robot_state_feature:
+            if _robot_ft is not None:
                 num_input_token_encoder += 1
             self.register_buffer(
                 "vae_encoder_pos_enc",
@@ -352,14 +357,12 @@ class ACT(nn.Module):
 
         # Transformer encoder input projections. The tokens will be structured like
         # [latent, (robot_state), (env_state), (image_feature_map_pixels)].
-        if self.config.robot_state_feature:
-            self.encoder_robot_state_input_proj = nn.Linear(
-                self.config.robot_state_feature.shape[0], config.dim_model
-            )
-        if self.config.env_state_feature:
-            self.encoder_env_state_input_proj = nn.Linear(
-                self.config.env_state_feature.shape[0], config.dim_model
-            )
+        _robot_ft = self.config.robot_state_feature
+        if _robot_ft is not None:
+            self.encoder_robot_state_input_proj = nn.Linear(_robot_ft.shape[0], config.dim_model)
+        _env_ft = self.config.env_state_feature
+        if _env_ft is not None:
+            self.encoder_env_state_input_proj = nn.Linear(_env_ft.shape[0], config.dim_model)
         self.encoder_latent_input_proj = nn.Linear(config.latent_dim, config.dim_model)
         if self.config.image_features:
             self.encoder_img_feat_input_proj = nn.Conv2d(
@@ -380,7 +383,9 @@ class ACT(nn.Module):
         self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.dim_model)
 
         # Final action regression head on the output of the transformer's decoder.
-        self.action_head = nn.Linear(config.dim_model, self.config.action_feature.shape[0])
+        _action_ft = self.config.action_feature
+        assert _action_ft is not None
+        self.action_head = nn.Linear(config.dim_model, _action_ft.shape[0])
 
         self._reset_parameters()
 
@@ -755,12 +760,12 @@ class ACTSinusoidalPositionEmbedding2d(nn.Module):
         return pos_embed
 
 
-def get_activation_fn(activation: str) -> Callable:
+def get_activation_fn(activation: str) -> Callable[..., Any]:
     """Return an activation function given a string."""
     if activation == "relu":
-        return F.relu
+        return cast(Callable[..., Any], F.relu)
     if activation == "gelu":
-        return F.gelu
+        return cast(Callable[..., Any], F.gelu)
     if activation == "glu":
-        return F.glu
+        return cast(Callable[..., Any], F.glu)
     raise RuntimeError(f"activation should be relu/gelu/glu, not {activation}.")

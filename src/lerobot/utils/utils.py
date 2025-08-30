@@ -30,13 +30,13 @@ import numpy as np
 import torch
 
 
-def none_or_int(value):
+def none_or_int(value: str | int | None) -> int | None:
     if value == "None":
         return None
     return int(value)
 
 
-def inside_slurm():
+def inside_slurm() -> bool:
     """Check whether the python process was launched through slurm"""
     # TODO(rcadene): return False for interactive mode `--pty bash`
     return "SLURM_JOB_ID" in os.environ
@@ -78,7 +78,7 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     return device
 
 
-def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
+def get_safe_dtype(dtype: torch.dtype, device: str | torch.device) -> torch.dtype:
     """
     mps is currently not compatible with float64
     """
@@ -102,7 +102,7 @@ def is_torch_device_available(try_device: str) -> bool:
         raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps or cpu.")
 
 
-def is_amp_available(device: str):
+def is_amp_available(device: str) -> bool:
     if device in ["cuda", "cpu"]:
         return True
     elif device == "mps":
@@ -117,20 +117,24 @@ def init_logging(
     console_level: str = "INFO",
     file_level: str = "DEBUG",
 ):
-    def custom_format(record: logging.LogRecord) -> str:
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        fnameline = f"{record.pathname}:{record.lineno}"
+    class _PIDFormatter(logging.Formatter):
+        def __init__(self, display_pid: bool) -> None:
+            super().__init__()
+            self._display_pid = display_pid
 
-        # NOTE: Display PID is useful for multi-process logging.
-        if display_pid:
-            pid_str = f"[PID: {os.getpid()}]"
-            message = f"{record.levelname} {pid_str} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
-        else:
-            message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
-        return message
+        def format(self, record: logging.LogRecord) -> str:
+            dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            fnameline = f"{record.pathname}:{record.lineno}"
 
-    formatter = logging.Formatter()
-    formatter.format = custom_format
+            # NOTE: Display PID is useful for multi-process logging.
+            if self._display_pid:
+                pid_str = f"[PID: {os.getpid()}]"
+                message = f"{record.levelname} {pid_str} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
+            else:
+                message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
+            return message
+
+    formatter: logging.Formatter = _PIDFormatter(display_pid)
 
     logger = logging.getLogger()
     logger.setLevel(logging.NOTSET)  # Set the logger to the lowest level to capture all messages
@@ -153,7 +157,7 @@ def init_logging(
         logger.addHandler(file_handler)
 
 
-def format_big_number(num, precision=0):
+def format_big_number(num: float, precision: int = 0) -> str | float:
     suffixes = ["", "K", "M", "B", "T", "Q"]
     divisor = 1000.0
 
@@ -191,11 +195,11 @@ def print_cuda_memory_usage():
     print(f"Maximum GPU Memory Reserved: {torch.cuda.max_memory_reserved(0) / 1024**2:.2f} MB")
 
 
-def capture_timestamp_utc():
+def capture_timestamp_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def say(text: str, blocking: bool = False):
+def say(text: str, blocking: bool = False) -> None:
     system = platform.system()
 
     if system == "Darwin":
@@ -220,17 +224,18 @@ def say(text: str, blocking: bool = False):
     if blocking:
         subprocess.run(cmd, check=True)
     else:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if system == "Windows" else 0
+        subprocess.Popen(cmd, creationflags=creation_flags)
 
 
-def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
+def log_say(text: str, play_sounds: bool = True, blocking: bool = False) -> None:
     logging.info(text)
 
     if play_sounds:
         say(text, blocking)
 
 
-def get_channel_first_image_shape(image_shape: tuple) -> tuple:
+def get_channel_first_image_shape(image_shape: tuple[int, int, int]) -> tuple[int, int, int]:
     shape = copy(image_shape)
     if shape[2] < shape[0] and shape[2] < shape[1]:  # (h, w, c) -> (c, h, w)
         shape = (shape[2], shape[0], shape[1])
@@ -259,17 +264,20 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
 
 def enter_pressed() -> bool:
     if platform.system() == "Windows":
-        import msvcrt
+        import msvcrt as _msvcrt
+        from typing import Any, cast
+
+        msvcrt = cast(Any, _msvcrt)
 
         if msvcrt.kbhit():
             key = msvcrt.getch()
             return key in (b"\r", b"\n")  # enter key
         return False
     else:
-        return select.select([sys.stdin], [], [], 0)[0] and sys.stdin.readline().strip() == ""
+        return bool(select.select([sys.stdin], [], [], 0)[0]) and (sys.stdin.readline().strip() == "")
 
 
-def move_cursor_up(lines):
+def move_cursor_up(lines: int) -> None:
     """Move the cursor up by a specified number of lines."""
     print(f"\033[{lines}A", end="")
 

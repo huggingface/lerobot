@@ -173,7 +173,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
         )
         return super().from_pretrained(*args, **kwargs)
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> object:
         return self.parameters()
 
     def _pi_aloha_decode_state(self, state):
@@ -230,6 +230,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
 
             actions = actions[:, : self.config.n_action_steps]
 
+            assert self.config.action_feature is not None
             original_action_dim = self.config.action_feature.shape[
                 0
             ]  # self.config.max_action_dim  # self.config.action_feature.shape[0]
@@ -245,7 +246,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
-    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+    def forward(self, batch: dict[str, Tensor], **kwargs: object) -> tuple[Tensor, dict[str, Tensor]]:
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
@@ -424,6 +425,7 @@ class PI0FAST(nn.Module):
         self.fast_skip_tokens = self.config.fast_skip_tokens
         self.max_input_seq_len = self.config.max_input_seq_len
         self.action_horizon = self.config.chunk_size
+        assert self.config.action_feature is not None
         self.action_dim = self.config.action_feature.shape[
             0
         ]  # self.config.max_action_dim  # self.config.action_feature.shape[0]
@@ -667,7 +669,7 @@ class PI0FAST(nn.Module):
         targets: torch.Tensor,
         token_type_ids: torch.Tensor,
         padding_side: str = "right",
-    ) -> tuple[torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if padding_side not in ["right", "left"]:
             return tokens, ar_mask, padding_mask, loss_mask, targets, token_type_ids
 
@@ -768,7 +770,7 @@ class PI0FAST(nn.Module):
         time_horizon: int | None = None,
         action_dim: int | None = None,
         relaxed_decoding: bool = True,
-    ) -> np.array:
+    ) -> np.ndarray:
         """
         Adapt original decoding in FAST to always return actions instead of zeros.
         """
@@ -817,7 +819,9 @@ class PI0FAST(nn.Module):
                 print(f"Tokens: {token}")
                 decoded_dct_coeff = np.zeros((self.time_horizon, self.action_dim))
             decoded_actions.append(idct(decoded_dct_coeff / self.fast_tokenizer.scale, axis=0, norm="ortho"))
-        return np.stack(decoded_actions)
+        from typing import cast
+
+        return cast(np.ndarray, np.stack(decoded_actions))
 
     def extract_actions(self, tokens: torch.Tensor, action_horizon: int, action_dim: int) -> torch.Tensor:
         """

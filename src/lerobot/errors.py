@@ -16,7 +16,7 @@
 class DeviceNotConnectedError(ConnectionError):
     """Exception raised when the device is not connected."""
 
-    def __init__(self, message="This device is not connected. Try calling `connect()` first."):
+    def __init__(self, message: str = "This device is not connected. Try calling `connect()` first.") -> None:
         self.message = message
         super().__init__(self.message)
 
@@ -26,8 +26,8 @@ class DeviceAlreadyConnectedError(ConnectionError):
 
     def __init__(
         self,
-        message="This device is already connected. Try not calling `connect()` twice.",
-    ):
+        message: str = "This device is already connected. Try not calling `connect()` twice.",
+    ) -> None:
         self.message = message
         super().__init__(self.message)
 
@@ -37,7 +37,7 @@ class InvalidActionError(ValueError):
 
     def __init__(
         self,
-        message="The action is invalid. Check the value follows what it is expected from the action space.",
-    ):
+        message: str = "The action is invalid. Check the value follows what it is expected from the action space.",
+    ) -> None:
         self.message = message
         super().__init__(self.message)

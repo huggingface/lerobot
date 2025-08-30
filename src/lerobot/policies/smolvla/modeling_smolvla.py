@@ -57,9 +57,9 @@ import os
 import re
 from collections import deque
 
-import safetensors
 import torch
 import torch.nn.functional as F  # noqa: N812
+from safetensors.torch import load_file as st_load_file, load_model as st_load_model
 from torch import Tensor, nn
 from transformers import AutoProcessor
 
@@ -97,7 +97,9 @@ def standardise_state_dict(
       first one and log the collision.
     • Returns the new dict + a list of entries that could not be matched.
     """
-    out, collisions, unmatched = {}, {}, []
+    out: dict[str, torch.Tensor] = {}
+    collisions: dict[str, list[str]] = {}
+    unmatched: list[str] = []
 
     for k, v in checkpoint.items():
         canon = canonicalise(k)
@@ -149,7 +151,7 @@ def load_smolvla(
     device: str = "cpu",
     checkpoint_keys_mapping: str = "",
 ) -> torch.nn.Module:
-    state_dict = safetensors.torch.load_file(filename, device=device)
+    state_dict = st_load_file(filename, device=device)
 
     # Optional user-supplied renames (e.g. "model._orig_mod.//model.")
     if checkpoint_keys_mapping and "//" in checkpoint_keys_mapping:
@@ -174,7 +176,7 @@ def load_smolvla(
 
 
 def create_sinusoidal_pos_embedding(
-    time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu"
+    time: Tensor, dimension: int, min_period: float, max_period: float, device: str = "cpu"
 ) -> Tensor:
     """Computes sine-cosine positional embedding vectors for scalar positions."""
     if dimension % 2 != 0:
@@ -183,7 +185,7 @@ def create_sinusoidal_pos_embedding(
     if time.ndim != 1:
         raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
 
-    dtype = get_safe_dtype(torch.float64, device.type)
+    dtype = get_safe_dtype(torch.float64, device)
     fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
     period = min_period * (max_period / min_period) ** fraction
 
@@ -366,7 +368,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         map_location: str,
         strict: bool,
     ):
-        safetensors.torch.load_model(model, model_file, strict=strict, device=map_location)
+        st_load_model(model, model_file, strict=strict, device=map_location)
         return load_smolvla(
             model,
             model_file,
@@ -374,7 +376,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
             checkpoint_keys_mapping="model._orig_mod.//model.",
         )
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> object:
         return self.parameters()
 
     def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
@@ -394,7 +396,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
 
         # Unpad actions
-        original_action_dim = self.config.action_feature.shape[0]
+        _action_ft = self.config.action_feature
+        assert _action_ft is not None
+        original_action_dim = _action_ft.shape[0]
         actions = actions[:, :, :original_action_dim]
 
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
@@ -445,7 +449,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         return self._queues[ACTION].popleft()
 
-    def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> dict[str, Tensor]:
+    def forward(
+        self, batch: dict[str, Tensor], noise=None, time=None, **kwargs: object
+    ) -> tuple[Tensor, dict[str, object]]:
         """Do a full training forward pass to compute the loss"""
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])

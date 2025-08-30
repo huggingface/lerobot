@@ -19,6 +19,7 @@
 import warnings
 from collections import deque
 from collections.abc import Callable
+from typing import Any
 
 import einops
 import numpy as np
@@ -47,7 +48,7 @@ class VQBeTPolicy(PreTrainedPolicy):
 
     def __init__(
         self,
-        config: VQBeTConfig | None = None,
+        config: VQBeTConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -73,7 +74,7 @@ class VQBeTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> object:
         vqvae_params = (
             list(self.vqbet.action_head.vqvae_model.encoder.parameters())
             + list(self.vqbet.action_head.vqvae_model.decoder.parameters())
@@ -163,7 +164,7 @@ class VQBeTPolicy(PreTrainedPolicy):
         action = self._queues[ACTION].popleft()
         return action
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+    def forward(self, batch: dict[str, Tensor], **kwargs: object) -> tuple[Tensor, dict[str, Any]]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
@@ -322,6 +323,13 @@ class VQBeTModel(nn.Module):
     def __init__(self, config: VQBeTConfig):
         super().__init__()
         self.config = config
+        # Cache frequently used dims with explicit non-None assertions for typing
+        _robot_ft = config.robot_state_feature
+        assert _robot_ft is not None
+        self.robot_state_dim = _robot_ft.shape[0]
+        _action_ft = config.action_feature
+        assert _action_ft is not None
+        self.action_dim = _action_ft.shape[0]
 
         self.rgb_encoder = VQBeTRgbEncoder(config)
         self.num_images = len(self.config.image_features)
@@ -330,9 +338,7 @@ class VQBeTModel(nn.Module):
         self.action_token = nn.Parameter(torch.randn(1, 1, self.config.gpt_input_dim))
 
         # To input state and observation features into GPT layers, we first project the features to fit the shape of input size of GPT.
-        self.state_projector = MLP(
-            config.robot_state_feature.shape[0], hidden_channels=[self.config.gpt_input_dim]
-        )
+        self.state_projector = MLP(self.robot_state_dim, hidden_channels=[self.config.gpt_input_dim])
         self.rgb_feature_projector = MLP(
             self.rgb_encoder.feature_dim, hidden_channels=[self.config.gpt_input_dim]
         )
@@ -349,7 +355,7 @@ class VQBeTModel(nn.Module):
             torch.row_stack([torch.arange(i, i + self.config.action_chunk_size) for i in range(num_tokens)]),
         )
 
-    def forward(self, batch: dict[str, Tensor], rollout: bool) -> tuple[dict, dict]:
+    def forward(self, batch: dict[str, Tensor], rollout: bool) -> Tensor | tuple[dict, Tensor]:
         # Input validation.
         assert set(batch).issuperset({"observation.state", "observation.images"})
         batch_size, n_obs_steps = batch["observation.state"].shape[:2]
@@ -388,9 +394,9 @@ class VQBeTModel(nn.Module):
         features = self.policy(input_tokens)
         # len(self.config.input_features) is the number of different observation modes.
         # this line gets the index of action prompt tokens.
-        historical_act_pred_index = np.arange(0, n_obs_steps) * (len(self.config.input_features) + 1) + len(
-            self.config.input_features
-        )
+        historical_act_pred_index: np.ndarray = np.arange(0, n_obs_steps) * (
+            len(self.config.input_features) + 1
+        ) + len(self.config.input_features)
 
         # only extract the output tokens at the position of action query:
         # Behavior Transformer (BeT), and VQ-BeT are both sequence-to-sequence prediction models,
@@ -449,13 +455,15 @@ class VQBeTHead(nn.Module):
                 in_channels=config.gpt_output_dim,
                 hidden_channels=[self.vqvae_model.vqvae_num_layers * self.config.vqvae_n_embed],
             )
+        _action_ft = config.action_feature
+        assert _action_ft is not None
         self.map_to_cbet_preds_offset = MLP(
             in_channels=config.gpt_output_dim,
             hidden_channels=[
                 self.vqvae_model.vqvae_num_layers
                 * self.config.vqvae_n_embed
                 * config.action_chunk_size
-                * config.action_feature.shape[0],
+                * _action_ft.shape[0],
             ],
         )
         # loss
@@ -785,6 +793,9 @@ class VqVae(nn.Module):
 
         super().__init__()
         self.config = config
+        _action_ft = config.action_feature
+        assert _action_ft is not None
+        self.action_dim = _action_ft.shape[0]
         # 'discretized' indicates whether the Residual VQ part is trained or not. (After finishing the training, we set discretized=True)
         self.register_buffer("discretized", torch.tensor(False))
         self.optimized_steps = 0
@@ -798,7 +809,7 @@ class VqVae(nn.Module):
         )
 
         self.encoder = MLP(
-            in_channels=self.config.action_feature.shape[0] * self.config.action_chunk_size,
+            in_channels=self.action_dim * self.config.action_chunk_size,
             hidden_channels=[
                 config.vqvae_enc_hidden_dim,
                 config.vqvae_enc_hidden_dim,
@@ -810,7 +821,7 @@ class VqVae(nn.Module):
             hidden_channels=[
                 config.vqvae_enc_hidden_dim,
                 config.vqvae_enc_hidden_dim,
-                self.config.action_feature.shape[0] * self.config.action_chunk_size,
+                self.action_dim * self.config.action_chunk_size,
             ],
         )
 
@@ -826,9 +837,9 @@ class VqVae(nn.Module):
         # given latent vector, this function outputs the decoded action.
         output = self.decoder(latent)
         if self.config.action_chunk_size == 1:
-            return einops.rearrange(output, "N (T A) -> N T A", A=self.config.action_feature.shape[0])
+            return einops.rearrange(output, "N (T A) -> N T A", A=self.action_dim)
         else:
-            return einops.rearrange(output, "N (T A) -> N T A", A=self.config.action_feature.shape[0])
+            return einops.rearrange(output, "N (T A) -> N T A", A=self.action_dim)
 
     def get_code(self, state):
         # in phase 2 of VQ-BeT training, we need a `ground truth labels of action data` to calculate the Focal loss for code prediction head. (please refer to section 3.3 in the paper https://huggingface.co/papers/2403.03181)

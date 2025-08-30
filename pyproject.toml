@@ -257,8 +257,58 @@ default.extend-ignore-identifiers-re = [
 # color = true
 # paths = ["src/lerobot"]
 
-# [tool.mypy]
-# python_version = "3.10"
-# warn_return_any = true
-# warn_unused_configs = true
-# ignore_missing_imports = false
+[tool.mypy]
+# Minimum viable mypy config. We start with a
+# narrow scope and will expand module-by-module.
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = false
+follow_imports = "skip"
+
+# Ensure package discovery from the src layout
+mypy_path = ["src"]
+namespace_packages = true
+explicit_package_bases = true
+
+# Start small to land CI enablement; extend gradually.
+# See issue #1719 and module-specific tasks #1720–#1732.
+files = [
+    "src/lerobot/__init__.py",
+    "src/lerobot/constants.py",
+    "src/lerobot/errors.py",
+    # Start policies with a leaf utility module to keep scope small
+    "src/lerobot/policies/utils.py",
+    "src/lerobot/policies/factory.py",
+    "src/lerobot/policies/pretrained.py",
+    "src/lerobot/configs/policies.py",
+    "src/lerobot/policies/tdmpc/configuration_tdmpc.py",
+    "src/lerobot/policies/act/configuration_act.py",
+    "src/lerobot/policies/diffusion/configuration_diffusion.py",
+    "src/lerobot/policies/sac/configuration_sac.py",
+    "src/lerobot/policies/pi0/configuration_pi0.py",
+    "src/lerobot/policies/pi0fast/configuration_pi0fast.py",
+    "src/lerobot/policies/smolvla/configuration_smolvla.py",
+    "src/lerobot/policies/vqbet/configuration_vqbet.py",
+    # Modeling files will be added progressively as they are cleaned up
+    "src/lerobot/policies/sac/modeling_sac.py",
+    "src/lerobot/policies/pi0fast/modeling_pi0fast.py",
+    "src/lerobot/policies/act/modeling_act.py",
+    "src/lerobot/policies/diffusion/modeling_diffusion.py",
+    "src/lerobot/policies/tdmpc/modeling_tdmpc.py",
+    "src/lerobot/policies/vqbet/modeling_vqbet.py",
+    "src/lerobot/policies/smolvla/modeling_smolvla.py",
+]
+
+[[tool.mypy.overrides]]
+module = [
+  "draccus",
+  "datasets",
+  "datasets.*",
+  "jsonlines",
+  "torchvision",
+  "torchvision.*",
+  "scipy",
+  "scipy.*",
+]
+ignore_missing_imports = true

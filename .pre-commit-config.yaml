@@ -84,13 +84,21 @@ repos:
       args: ["-c", "pyproject.toml"]
       additional_dependencies: ["bandit[toml]"]
 
-  # TODO(Steven): Uncomment when ready to use
   ##### Static Analysis & Typing #####
-  # - repo: https://github.com/pre-commit/mirrors-mypy
-  #   rev: v1.16.0
-  #   hooks:
-  #     - id: mypy
-  #       args: [--python-version=3.10]
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.16.0
+    hooks:
+      - id: mypy
+        # Run MyPy in phases: limit to the explicitly-configured files in pyproject.toml
+        # and ignore missing imports in the hook venv (heavy libs like torch aren’t installed here).
+        pass_filenames: false
+        always_run: true
+        args:
+          - --python-version=3.10
+          - --config-file=pyproject.toml
+          - --install-types
+          - --non-interactive
+          - --ignore-missing-imports
 
   ##### Docstring Checks #####
   # - repo: https://github.com/akaihola/darglint2
