@@ -295,13 +295,7 @@ def train(cfg: TrainPipelineConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     logging.info("Creating dataset")
-    # Pass video backend to dataset for RLearN optimization
-    dataset_kwargs = {}
-    if getattr(cfg.policy, "type", None) == "rlearn" and hasattr(cfg.policy, "video_backend"):
-        dataset_kwargs["video_backend"] = cfg.policy.video_backend
-        logging.info(f"Using video backend: {cfg.policy.video_backend}")
-    
-    dataset = make_dataset(cfg, **dataset_kwargs)
+    dataset = make_dataset(cfg)
     
     # Add video decoding timing for RLearN debugging
     if getattr(cfg.policy, "type", None) == "rlearn":
