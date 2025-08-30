@@ -92,11 +92,7 @@ class RLearNConfig(PreTrainedConfig):
     num_register_tokens: int = 4  # register / memory tokens, can't hurt
     mlp_predictor_depth: int = 3  # depth of the per-frame MLP head
 
-    # HLGauss loss parameters
-    use_hl_gauss_loss: bool = True
-    reward_min_value: float = 0.0
-    reward_max_value: float = 1.0
-    reward_hl_gauss_loss_num_bins: int = 20
+    # Simple MSE regression loss (no binning)
     
     # Evaluation visualization parameters
     enable_eval_visualizations: bool = False  # Enable reward evaluation visualizations during training
