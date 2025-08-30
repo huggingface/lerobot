@@ -556,6 +556,20 @@ class RLearNPolicy(PreTrainedPolicy):
         total_loss = loss + L_mismatch
         loss_time = time.perf_counter() - loss_start
         
+        # DEBUG: Print targets and predictions occasionally during training
+        if self.training and torch.rand(1).item() < 0.02:  # ~2% chance to debug print
+            with torch.no_grad():
+                preds = self.hl_gauss_layer(video_frame_embeds).squeeze(-1)
+                print(f"\n=== DEBUG TRAINING ===")
+                print(f"Target range: [{target.min():.3f}, {target.max():.3f}]")
+                print(f"Target mean: {target.mean():.3f}")
+                print(f"Pred range: [{preds.min():.3f}, {preds.max():.3f}]") 
+                print(f"Pred mean: {preds.mean():.3f}")
+                print(f"Loss: {loss:.4f}")
+                print("First sample targets:", target[0, :5].cpu().numpy())
+                print("First sample preds:", preds[0, :5].cpu().numpy())
+                print("="*25)
+        
         total_forward_time = time.perf_counter() - forward_start
 
         # Log individual loss components

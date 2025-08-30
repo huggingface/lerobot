@@ -61,7 +61,7 @@ class RLearNConfig(PreTrainedConfig):
     use_tanh_head: bool = False  # when True, bound outputs in [-1, 1]
 
     # Training
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-3
     weight_decay: float = 0.01
     
     # Performance optimizations
@@ -98,6 +98,12 @@ class RLearNConfig(PreTrainedConfig):
     reward_max_value: float = 1.0
     reward_hl_gauss_loss_num_bins: int = 20
     
+    # Evaluation visualization parameters
+    enable_eval_visualizations: bool = False  # Enable reward evaluation visualizations during training
+    eval_visualization_freq: int = 1000  # Steps between evaluation visualizations
+    eval_holdout_episodes: int = 9  # Number of episodes to hold out for evaluation
+    eval_max_frames: int = 128  # Maximum frames per episode for evaluation
+    eval_visualization_seed: int = 42  # Seed for reproducible episode selection
 
     # Optional: path to episodes.jsonl to build full-episode indices automatically
     # Default to common dataset layout: <dataset_root>/meta/episodes.jsonl
