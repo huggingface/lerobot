@@ -589,6 +589,31 @@ class RLearNPolicy(PreTrainedPolicy):
             ep = comp.get("episode_index", ep)
             fr = comp.get("frame_index", fr)
 
+        # Fallback: derive from global dataset index using episode_data_index
+        if (ep is None or fr is None) and self.episode_data_index is not None:
+            glob_idx = batch.get("index")
+            if glob_idx is None and isinstance(batch.get("complementary_data"), dict):
+                glob_idx = batch["complementary_data"].get("index")
+
+            if glob_idx is not None:
+                if torch.is_tensor(glob_idx):
+                    if glob_idx.dim() == 2 and glob_idx.shape[1] == 1:
+                        glob_idx = glob_idx.squeeze(1)
+                    glob_idx = glob_idx.to(device=device, dtype=torch.long)
+                else:
+                    glob_idx = torch.as_tensor(glob_idx, device=device, dtype=torch.long)
+
+                # Compute episode_index by bucketizing absolute indices into episode 'to' boundaries
+                ep_to = self.episode_data_index["to"].to(device=device)
+                ep_from = self.episode_data_index["from"].to(device=device)
+                # torch.bucketize returns positions in [0, num_episodes]
+                ep_idx = torch.bucketize(glob_idx, ep_to, right=False)
+                # Clamp to valid range just in case
+                ep_idx = ep_idx.clamp(min=0, max=ep_from.numel() - 1)
+                fr_idx = glob_idx - ep_from[ep_idx]
+
+                return ep_idx, fr_idx
+
         if ep is None or fr is None:
             return None, None
 
