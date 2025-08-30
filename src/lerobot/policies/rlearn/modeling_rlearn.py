@@ -573,15 +573,55 @@ class RLearNPolicy(PreTrainedPolicy):
             "timing_total_forward_ms": float(total_forward_time * 1000),
         })
         
-        # Print detailed timing breakdown during training
+        # Collect timing statistics for averaged reporting every minute
         if self.training:
-            print(f"RLearN Forward Pass Timing (B={B}, T_eff={T_eff}):")
-            print(f"  Vision encoding:    {vision_time*1000:.2f} ms")
-            print(f"  Language encoding:  {lang_time*1000:.2f} ms")
-            print(f"  Transformer:        {transformer_time*1000:.2f} ms")
-            print(f"  Loss computation:   {loss_time*1000:.2f} ms")
-            print(f"  Total forward pass: {total_forward_time*1000:.2f} ms")
-            print(f"  Throughput:         {B*T_eff/(total_forward_time):.1f} frames/sec")
+            # Initialize timing accumulator if not exists
+            if not hasattr(self, '_timing_stats'):
+                self._timing_stats = {
+                    'vision_times': [],
+                    'language_times': [],
+                    'transformer_times': [],
+                    'loss_times': [],
+                    'total_forward_times': [],
+                    'throughputs': [],
+                    'batch_sizes': [],
+                    't_effs': [],
+                    'last_print_time': time.perf_counter()
+                }
+            
+            # Accumulate current step's timings
+            stats = self._timing_stats
+            stats['vision_times'].append(vision_time * 1000)
+            stats['language_times'].append(lang_time * 1000)
+            stats['transformer_times'].append(transformer_time * 1000)
+            stats['loss_times'].append(loss_time * 1000)
+            stats['total_forward_times'].append(total_forward_time * 1000)
+            stats['throughputs'].append(B * T_eff / total_forward_time)
+            stats['batch_sizes'].append(B)
+            stats['t_effs'].append(T_eff)
+            
+            # Print averaged stats every minute (60 seconds)
+            current_time = time.perf_counter()
+            if current_time - stats['last_print_time'] >= 60.0:
+                n_samples = len(stats['vision_times'])
+                if n_samples > 0:
+                    avg_b = sum(stats['batch_sizes']) / n_samples
+                    avg_t_eff = sum(stats['t_effs']) / n_samples
+                    
+                    print(f"\nRLearN Average Timing (last {n_samples} steps, avg B={avg_b:.1f}, avg T_eff={avg_t_eff:.1f}):")
+                    print(f"  Vision encoding:    {sum(stats['vision_times'])/n_samples:.2f} ms")
+                    print(f"  Language encoding:  {sum(stats['language_times'])/n_samples:.2f} ms")
+                    print(f"  Transformer:        {sum(stats['transformer_times'])/n_samples:.2f} ms")
+                    print(f"  Loss computation:   {sum(stats['loss_times'])/n_samples:.2f} ms")
+                    print(f"  Total forward pass: {sum(stats['total_forward_times'])/n_samples:.2f} ms")
+                    print(f"  Avg throughput:     {sum(stats['throughputs'])/n_samples:.1f} frames/sec")
+                    print("-" * 60)
+                
+                # Reset stats for next minute
+                for key in stats:
+                    if key != 'last_print_time':
+                        stats[key] = []
+                stats['last_print_time'] = current_time
 
         return total_loss, loss_dict
 
