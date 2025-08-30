@@ -97,7 +97,6 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
 
         policy_key = env_cfg.features_map[key]
         policy_features[policy_key] = feature
-
     return policy_features
 
 
