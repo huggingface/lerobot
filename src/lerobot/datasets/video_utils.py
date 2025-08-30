@@ -17,6 +17,8 @@ import glob
 import importlib
 import logging
 import shutil
+import subprocess
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +30,8 @@ import torch
 import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
+
+from lerobot.datasets.utils import DEFAULT_VIDEO_PATH
 
 
 def get_safe_default_codec():
@@ -263,7 +267,7 @@ def encode_video_frames(
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
 
-    video_path.parent.mkdir(parents=True, exist_ok=overwrite)
+    video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Encoders/pixel formats incompatibility check
     if (vcodec == "libsvtav1" or vcodec == "hevc") and pix_fmt == "yuv444p":
@@ -273,9 +277,9 @@ def encode_video_frames(
         pix_fmt = "yuv420p"
 
     # Get input frames
-    template = "frame_" + ("[0-9]" * 6) + ".png"
+    template = "frame-" + ("[0-9]" * 6) + ".png"
     input_list = sorted(
-        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("_")[-1].split(".")[0])
+        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
     )
 
     # Define video output frame size (assuming all input frames are the same size)
@@ -300,7 +304,7 @@ def encode_video_frames(
 
     # Set logging level
     if log_level is not None:
-        # "While less efficient, it is generally preferable to modify logging with Python’s logging"
+        # "While less efficient, it is generally preferable to modify logging with Python's logging"
         logging.getLogger("libav").setLevel(log_level)
 
     # Create and open output file (overwrite by default)
@@ -329,6 +333,62 @@ def encode_video_frames(
 
     if not video_path.exists():
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")
+
+
+def concat_video_files(paths_to_cat: list[Path], root: Path, video_key: str, chunk_idx: int, file_idx: int):
+    """
+    Concatenate multiple video files into a single video file using ffmpeg.
+
+    This function takes a list of video file paths and concatenates them into a single
+    output video file. It uses ffmpeg's concat demuxer with stream copy mode for fast
+    concatenation without re-encoding.
+
+    Args:
+        paths_to_cat: List of video file paths to concatenate, in order.
+        root: Root directory where temporary files and output will be created.
+        video_key: Video key identifier (e.g., camera name) used in output path.
+        chunk_idx: Chunk index for organizing output files.
+        file_idx: File index within the chunk.
+
+    Note:
+        - Creates a temporary directory for intermediate files that is cleaned up after use.
+        - Uses ffmpeg's concat demuxer which requires all input videos to have the same
+          codec, resolution, and frame rate for proper concatenation.
+        - Output path follows the DEFAULT_VIDEO_PATH pattern with video_key, chunk_idx,
+          and file_idx parameters.
+        - This function uses subprocess to call ffmpeg directly because PyAV doesn't have
+          built-in support for video concatenation. The concat demuxer in ffmpeg handles
+          all the complex timestamp adjustments automatically.
+    """
+
+    tmp_dir = Path(tempfile.mkdtemp(dir=root))
+    path_concat_video_files = tmp_dir / "concat_video_files.txt"
+    with open(path_concat_video_files, "w") as f:
+        for ep_path in paths_to_cat:
+            f.write(f"file '{str(ep_path)}'\n")
+
+    path_tmp_output = tmp_dir / "tmp_output.mp4"
+    command = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(path_concat_video_files),
+        "-c",
+        "copy",
+        str(path_tmp_output),
+    ]
+    subprocess.run(command, check=True)
+
+    output_path = root / DEFAULT_VIDEO_PATH.format(
+        video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path_tmp_output), str(output_path))
+    shutil.rmtree(str(tmp_dir))
 
 
 @dataclass
@@ -454,64 +514,23 @@ def get_image_pixel_channels(image: Image):
         raise ValueError("Unknown format")
 
 
-class VideoEncodingManager:
+def get_video_duration_in_s(video_path: Path | str) -> float:
     """
-    Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
-
-    This manager handles:
-    - Batch encoding for any remaining episodes when recording interrupted
-    - Cleaning up temporary image files from interrupted episodes
-    - Removing empty image directories
+    Get the duration of a video file in seconds using PyAV.
 
     Args:
-        dataset: The LeRobotDataset instance
+        video_path: Path to the video file.
+
+    Returns:
+        Duration of the video in seconds.
     """
-
-    def __init__(self, dataset):
-        self.dataset = dataset
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # Handle any remaining episodes that haven't been batch encoded
-        if self.dataset.episodes_since_last_encoding > 0:
-            if exc_type is not None:
-                logging.info("Exception occurred. Encoding remaining episodes before exit...")
-            else:
-                logging.info("Recording stopped. Encoding remaining episodes...")
-
-            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
-            end_ep = self.dataset.num_episodes
-            logging.info(
-                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}"
-            )
-            self.dataset.batch_encode_videos(start_ep, end_ep)
-
-        # Clean up episode images if recording was interrupted
-        if exc_type is not None:
-            interrupted_episode_index = self.dataset.num_episodes
-            for key in self.dataset.meta.video_keys:
-                img_dir = self.dataset._get_image_file_path(
-                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
-                ).parent
-                if img_dir.exists():
-                    logging.debug(
-                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
-                    )
-                    shutil.rmtree(img_dir)
-
-        # Clean up any remaining images directory if it's empty
-        img_dir = self.dataset.root / "images"
-        # Check for any remaining PNG files
-        png_files = list(img_dir.rglob("*.png"))
-        if len(png_files) == 0:
-            # Only remove the images directory if no PNG files remain
-            if img_dir.exists():
-                shutil.rmtree(img_dir)
-                logging.debug("Cleaned up empty images directory")
+    with av.open(str(video_path)) as container:
+        # Get the first video stream
+        video_stream = container.streams.video[0]
+        # Calculate duration: stream.duration * stream.time_base gives duration in seconds
+        if video_stream.duration is not None:
+            duration = float(video_stream.duration * video_stream.time_base)
         else:
-            logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
-
-        return False  # Don't suppress the original exception
+            # Fallback to container duration if stream duration is not available
+            duration = float(container.duration / av.time_base)
+    return duration

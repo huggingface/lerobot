@@ -274,6 +274,16 @@ def move_cursor_up(lines):
     print(f"\033[{lines}A", end="")
 
 
+def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
+    days = int(elapsed_time_s // (24 * 3600))
+    elapsed_time_s %= 24 * 3600
+    hours = int(elapsed_time_s // 3600)
+    elapsed_time_s %= 3600
+    minutes = int(elapsed_time_s // 60)
+    seconds = elapsed_time_s % 60
+    return days, hours, minutes, seconds
+
+
 class TimerManager:
     """
     Lightweight utility to measure elapsed time.
