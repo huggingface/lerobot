@@ -28,7 +28,6 @@ ConRFT consists of two stages:
 Paper: https://arxiv.org/abs/2502.05450
 """
 
-from collections import deque
 from typing import Literal, Optional
 
 import torch
@@ -38,7 +37,7 @@ from torch import Tensor
 
 from lerobot.constants import ACTION
 from lerobot.policies.conrft.configuration_conrft import ConRFTConfig
-from lerobot.policies.normalize import Normalize, Unnormalize
+from lerobot.policies.normalize import NormalizeBuffer, UnnormalizeBuffer
 from lerobot.policies.octo.modeling_octo import OctoPolicy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.modeling_sac import (
@@ -47,7 +46,11 @@ from lerobot.policies.sac.modeling_sac import (
     DiscreteCritic as GraspCritic,
     MLP,
     SACObservationEncoder,
+    _convert_normalization_params_to_tensor,
 )
+from lerobot.policies.utils import get_device_from_parameters
+
+DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 
 
 def get_sigmas_karras(num_scales, sigma_min, sigma_max, rho):
@@ -79,6 +82,11 @@ def compute_critic_loss(policy, batch):
     obs_feat = batch.get("observation_feature")
     nxt_feat = batch.get("next_observation_feature")
 
+    # Handle discrete actions (gripper) like SAC does
+    if policy.config.num_discrete_actions is not None:
+        # Strip discrete action dimension for critic (same as SAC)
+        actions = actions[:, :DISCRETE_DIMENSION_INDEX]
+
     # Compute target Q-values
     with torch.no_grad():
         next_action, _ = policy.consistency_policy(next_observations, training=False)
@@ -87,7 +95,7 @@ def compute_critic_loss(policy, batch):
         target_value = rewards + policy.config.discount * (1 - dones) * target_q
 
     # Current Q-values
-    current_q_values = policy.critic(observations, actions, obs_feat)
+    current_q_values = policy.critic_ensemble(observations, actions, obs_feat)
     current_q1, current_q2 = current_q_values[0], current_q_values[1]
 
     # TD loss
@@ -113,33 +121,54 @@ def compute_cal_ql_loss(policy, batch):
     nxt_feat = batch.get("next_observation_feature")
 
     batch_size = actions.shape[0]
+    
+    # Handle discrete actions (gripper) like SAC does
+    if policy.config.num_discrete_actions is not None:
+        # Strip discrete action dimension for critic (same as SAC)
+        actions = actions[:, :DISCRETE_DIMENSION_INDEX]
+
+    # Get action dimension after potential stripping
+    action_dim = actions.shape[1]
 
     # Standard TD loss
     with torch.no_grad():
         next_action, _ = policy.consistency_policy(next_observations, training=False)
+        # next_action from consistency_policy is already the correct dimension (continuous only)
+
         target_q_values = policy.critic_target(next_observations, next_action, nxt_feat)
+
+        # Subsample critics
+        if policy.config.critic_subsample_size is not None:
+            indices = torch.randperm(policy.config.critic_ensemble_size)[:policy.config.critic_subsample_size]
+            target_q_values = target_q_values[indices]
+
         target_q = torch.min(target_q_values, dim=0)[0]
         target_value = rewards + policy.config.discount * (1 - dones) * target_q
-        if "mc_returns" in batch:
-            target_value = torch.maximum(target_value, mc_returns)
 
-    current_q_values = policy.critic(observations, actions, obs_feat)
-    current_q1, current_q2 = current_q_values[0], current_q_values[1]
+    # Current Q-values
+    current_q_values = policy.critic_ensemble(observations, actions, obs_feat)
 
-    td_loss = F.mse_loss(current_q1, target_value) + F.mse_loss(current_q2, target_value)
+    if policy.config.critic_subsample_size is not None:
+        indices = torch.randperm(policy.config.critic_ensemble_size)[:policy.config.critic_subsample_size]
+        current_q_values = current_q_values[indices]
+        critic_size = policy.config.critic_subsample_size
+    else:
+        critic_size = policy.config.critic_ensemble_size
+
+    # Expand target values to match critic ensemble size
+    target_values_expanded = target_value.unsqueeze(0).expand(critic_size, -1)
+
+    # TD loss
+    td_loss = F.mse_loss(current_q_values, target_values_expanded)
 
     # CQL penalty for OOD actions
     num_random = policy.config.cql_n_actions
 
     # Sample random actions
     if policy.config.cql_action_sample_method == "uniform":
-        random_actions = (
-            torch.rand(batch_size, num_random, actions.shape[1], device=actions.device) * 2 - 1
-        )
+        random_actions = torch.rand(batch_size, num_random, action_dim, device=actions.device) * 2 - 1
     elif policy.config.cql_action_sample_method == "normal":
-        random_actions = torch.randn(
-            batch_size, num_random, actions.shape[1], device=actions.device
-        )
+        random_actions = torch.randn(batch_size, num_random, action_dim, device=actions.device)
     else:
         raise NotImplementedError
 
@@ -147,6 +176,7 @@ def compute_cal_ql_loss(policy, batch):
     policy_actions = []
     for _ in range(num_random):
         policy_action, _ = policy.consistency_policy(observations, training=False)
+        # policy_action is already the correct dimension (continuous only)
         policy_actions.append(policy_action.unsqueeze(1))
     policy_actions = torch.cat(policy_actions, dim=1)
 
@@ -154,47 +184,90 @@ def compute_cal_ql_loss(policy, batch):
     next_actions_cql = []
     for _ in range(num_random):
         next_action_cql, _ = policy.consistency_policy(next_observations, training=False)
+        # next_action_cql is already the correct dimension (continuous only)
         next_actions_cql.append(next_action_cql.unsqueeze(1))
     next_actions_cql = torch.cat(next_actions_cql, dim=1)
 
-    # Combine all sampled actions
-    all_actions = torch.cat([random_actions, policy_actions, next_actions_cql], dim=1)
+    # Combine all sampled actions [random, current, next]
+    all_sampled_actions = torch.cat([random_actions, policy_actions, next_actions_cql], dim=1)
 
     # Compute Q-values for all sampled actions
-    cql_q_values = []
-    for i in range(all_actions.shape[1]):
-        q_values = policy.critic(observations, all_actions[:, i], obs_feat)
-        cql_q_values.append(torch.min(q_values, dim=0)[0].unsqueeze(-1))
-    cql_q_values = torch.cat(cql_q_values, dim=1)
+    cql_q_samples = []
+    for i in range(all_sampled_actions.shape[1]):
+        q_vals = policy.critic_ensemble(observations, all_sampled_actions[:, i], obs_feat)
+        if policy.config.critic_subsample_size is not None:
+            q_vals = q_vals[indices]
+        cql_q_samples.append(q_vals.unsqueeze(-1))
+    cql_q_samples = torch.cat(cql_q_samples, dim=-1)  # Shape: [critic_size, batch_size, n_actions*3]
 
-    # Apply Cal-QL bound using MC returns
-    mc_lower_bound = mc_returns.unsqueeze(1).expand(-1, cql_q_values.shape[1])
-    cql_q_values = torch.maximum(cql_q_values, mc_lower_bound)
+    # Cal-QL: Apply lower bound using MC returns
+    n_actions_for_calql = num_random * 3
+    mc_lower_bound = mc_returns.unsqueeze(0).unsqueeze(-1).expand(critic_size, -1, n_actions_for_calql)
 
-    # Add current Q-values
-    current_q = torch.min(torch.stack([current_q1, current_q2]), dim=0)[0].unsqueeze(1)
-    all_q_values = torch.cat([cql_q_values, current_q], dim=1)
+    # Count bound violations for logging
+    num_vals = cql_q_samples.numel()
+    calql_bound_rate = (cql_q_samples < mc_lower_bound).float().sum() / num_vals
 
-    # CQL loss (logsumexp)
-    cql_q_diff = (
-        torch.logsumexp(all_q_values / policy.config.cql_temp, dim=1).mean() * policy.config.cql_temp -
-        current_q.squeeze(1).mean()
-    )
-    cql_q_diff = torch.clamp(
-        cql_q_diff, policy.config.cql_clip_diff_min, policy.config.cql_clip_diff_max
-    )
-    cql_loss = policy.config.cql_alpha * cql_q_diff
+    # Apply the bound
+    cql_q_samples = torch.maximum(cql_q_samples, mc_lower_bound)
 
+    # Add current Q-values and apply temperature scaling
+    current_q_expanded = current_q_values.unsqueeze(-1)  # [critic_size, batch_size, 1]
+    cql_q_samples = torch.cat([cql_q_samples, current_q_expanded], dim=-1)
+
+    # Subtract log(num_samples) * temperature
+    cql_q_samples = cql_q_samples - torch.log(torch.tensor(cql_q_samples.shape[-1])) * policy.config.cql_temp
+
+    # Compute logsumexp of OOD actions
+    cql_ood_values = torch.logsumexp(cql_q_samples / policy.config.cql_temp, dim=-1) * policy.config.cql_temp
+
+    # CQL difference
+    cql_q_diff = cql_ood_values - current_q_values
+    cql_q_diff = torch.clamp(cql_q_diff, policy.config.cql_clip_diff_min, policy.config.cql_clip_diff_max)
+
+    # CQL loss
+    cql_loss = cql_q_diff.mean()
+    
     # Total loss
-    loss_critic = td_loss + cql_loss
+    loss_critic = td_loss + policy.config.cql_alpha * cql_loss
 
     return {
         "loss_critic": loss_critic,
         "td_loss": td_loss,
         "cql_loss": cql_loss,
-        "q1_mean": current_q1.mean(),
-        "q2_mean": current_q2.mean(),
+        "cql_alpha": policy.config.cql_alpha,
+        "cql_diff": cql_q_diff.mean(),
+        "calql_bound_rate": calql_bound_rate,
+        "cql_ood_values": cql_ood_values.mean(),
+        "predicted_qs": current_q_values.mean(),
+        "target_qs": target_values_expanded.mean(),
     }
+
+
+def get_snr(sigmas):
+    """Compute signal-to-noise ratio"""
+    return sigmas**-2
+
+
+def get_weightings(weighting, snrs, sigma_data):
+    """Get loss weightings based on SNR"""
+    if weighting == "karras":
+        return snrs + 1.0 / sigma_data**2
+    else:
+        raise NotImplementedError(f"Weighting {weighting} not implemented")
+
+
+def append_dims(x, target_dims):
+    """Append dimensions to tensor"""
+    dims_to_append = target_dims - x.ndim
+    if dims_to_append < 0:
+        raise ValueError(f"Cannot append {dims_to_append} dimensions")
+    return x.view(*x.shape, *((1,) * dims_to_append))
+
+
+def mean_flat(tensor):
+    """Take mean over all dimensions except batch"""
+    return tensor.mean(dim=list(range(1, tensor.ndim)))
 
 
 def compute_bc_loss(policy, batch):
@@ -202,28 +275,37 @@ def compute_bc_loss(policy, batch):
     observations = batch["state"]
     actions = batch["action"]
     batch_size = actions.shape[0]
+    device = actions.device
 
-    # Sample random diffusion step
-    m = torch.randint(1, policy.config.num_scales, (batch_size, ), device=actions.device)
+    # Sample random diffusion step (matching JAX: indices from 0 to num_scales-1)
+    indices = torch.randint(0, policy.config.num_scales - 1, (batch_size,), device=device)
 
-    # Get noise levels for sampled steps
-    sigma_m = policy.consistency_policy.sigmas[m].to(actions.device)
+    # Compute sigma values using the same formula as JAX
+    t = (policy.config.sigma_max**(1 / policy.config.rho) + indices / (policy.config.num_scales - 1) * (policy.config.sigma_min**(1 / policy.config.rho) - policy.config.sigma_max**(1 / policy.config.rho)))
+    t = t**policy.config.rho
 
     # Add noise to actions
     noise = torch.randn_like(actions)
-    noisy_action = actions + sigma_m.view(-1, 1) * noise
+    dims = actions.ndim
+    x_t = actions + noise * append_dims(t, dims)
 
     # Forward pass through consistency policy
     denoised_action, _ = policy.consistency_policy(
-        observations, noisy_action=noisy_action, sigma=sigma_m, training=True
+        observations, noisy_action=x_t, sigma=t, training=True
     )
 
-    # Compute L2 loss
-    bc_loss = F.mse_loss(denoised_action, actions)
+    # Compute SNR and weightings
+    snrs = get_snr(t)
+    weights = get_weightings("karras", snrs, policy.config.sigma_data)
+
+    # Compute weighted reconstruction loss
+    recon_diffs = (denoised_action - actions) ** 2
+    recon_loss = (mean_flat(recon_diffs) * weights).mean()
 
     return {
-        "loss_bc": bc_loss,
+        "loss_bc": recon_loss,
         "action_mse": F.mse_loss(denoised_action, actions),
+        "recon_loss": recon_loss,
     }
 
 
@@ -238,7 +320,7 @@ def compute_actor_loss(policy, batch):
     obs_feat = batch.get("observation_feature")
     policy_action, _ = policy.consistency_policy(observations, training=False)
 
-    q_values = policy.critic(observations, policy_action, obs_feat)
+    q_values = policy.critic_ensemble(observations, policy_action, obs_feat)
     if policy.config.critic_subsample_size is not None:
         indices = torch.randperm(policy.config.critic_ensemble_size)[
             : policy.config.critic_subsample_size
@@ -282,41 +364,53 @@ class ConRFTPolicy(PreTrainedPolicy):
         super().__init__(config)
         self.config = config
 
-        # Initialize normalization
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
+        # Initialize normalization - follow SAC's pattern exactly
+        self.normalize_inputs = nn.Identity()
+        self.normalize_targets = nn.Identity()
+        self.unnormalize_outputs = nn.Identity()
+        if config.dataset_stats is not None:
+            params = _convert_normalization_params_to_tensor(config.dataset_stats)
+            self.normalize_inputs = NormalizeBuffer(
+                config.input_features, config.normalization_mapping, params
+            )
+            stats = dataset_stats or params
+            self.normalize_targets = NormalizeBuffer(
+                config.output_features, config.normalization_mapping, stats
+            )
+            self.unnormalize_outputs = UnnormalizeBuffer(
+                config.output_features, config.normalization_mapping, stats
+            )
 
         # Initialize encoders
         self.encoder_critic = SACObservationEncoder(config, self.normalize_inputs)
-        self.encoder_actor = None
-        if config.base_vla_model_path:
-            octo_policy = OctoPolicy.from_pretrained(config.base_vla_model_path)
-            if config.freeze_base_vla:
-                for param in octo_policy.parameters():
-                    param.requires_grad = False
-            self.encoder_actor = OctoEncodingWrapper(octo_policy)
+
+        # ConRFT always requires an Octo model
+        octo_policy = OctoPolicy.from_pretrained(config.base_vla_model_path)
+        if config.freeze_base_vla:
+            for param in octo_policy.parameters():
+                param.requires_grad = False
+        self.encoder_actor = OctoEncodingWrapper(
+            octo_policy,
+            use_proprio=config.use_proprio,
+            proprio_latent_dim=config.proprio_latent_dim
+        )
 
         # Get dimensions
         action_dim = config.output_features["action"].shape[0]
 
         # Initialize consistency policy
-        actor_input_dim = (
-            self.encoder_actor.encoder.config.token_embedding_size
-            if self.encoder_actor
-            else self.encoder_critic.output_dim
-        )
+        # Calculate input dimension: Octo embeddings + proprioception (if enabled) + time + action
+        actor_input_dim = octo_policy.config.token_embedding_size  # Octo embedding size
+        if config.use_proprio:
+            actor_input_dim += config.proprio_latent_dim  # Add proprioception dimension
+
         self.consistency_policy = ConsistencyPolicy(
             encoder=self.encoder_actor,
             network=MLP(
-                input_dim=actor_input_dim + config.consistency_hidden_dim + action_dim,
+                input_dim=actor_input_dim + config.time_dim + action_dim,
                 hidden_dims=[config.consistency_hidden_dim, config.consistency_hidden_dim],
             ),
-            t_network=TimeMLP(t_dim=config.consistency_hidden_dim),
+            t_network=TimeMLP(t_dim=config.time_dim),
             action_dim=action_dim,
             sigma_data=config.sigma_data,
             sigma_min=config.sigma_min,
@@ -328,40 +422,47 @@ class ConRFTPolicy(PreTrainedPolicy):
 
         # Initialize critic networks (twin Q-functions)
         critic_input_dim = self.encoder_critic.output_dim + action_dim
-        hidden_dims = [config.critic_hidden_dim, config.critic_hidden_dim]
-        critics = [CriticHead(input_dim=critic_input_dim, hidden_dims=hidden_dims) for _ in range(2)]
-        self.critic = CriticEnsemble(self.encoder_critic, critics, self.normalize_targets)
+        critic_hidden_dims = [config.critic_hidden_dim, config.critic_hidden_dim] # [256, 256]
+        critics = [CriticHead(input_dim=critic_input_dim, hidden_dims=critic_hidden_dims) for _ in range(2)]
+        self.critic_ensemble = CriticEnsemble(self.encoder_critic, critics, self.normalize_targets)
 
         target_encoder = SACObservationEncoder(config, self.normalize_inputs)
         target_critics = [
-            CriticHead(input_dim=critic_input_dim, hidden_dims=hidden_dims) for _ in range(2)
+            CriticHead(input_dim=critic_input_dim, hidden_dims=critic_hidden_dims) for _ in range(2)
         ]
-        self.critic_target = CriticEnsemble(target_encoder, target_critics, self.normalize_targets)
+        # Create a separate NormalizeBuffer for the target critic to avoid sharing state
+        if config.dataset_stats is not None:
+            target_normalize_buffer = NormalizeBuffer(
+                config.output_features, config.normalization_mapping, stats
+            )
+        else:
+            target_normalize_buffer = nn.Identity()
+        self.critic_target = CriticEnsemble(target_encoder, target_critics, target_normalize_buffer)
 
-        # Initialize grasp critic
-        self.grasp_critic = GraspCritic(
-            encoder=self.encoder_critic,
-            input_dim=self.encoder_critic.output_dim,
-            hidden_dims=[config.critic_hidden_dim, config.critic_hidden_dim],
-            output_dim=3,
-        )
-        self.grasp_critic_target = GraspCritic(
-            encoder=target_encoder,
-            input_dim=target_encoder.output_dim,
-            hidden_dims=[config.critic_hidden_dim, config.critic_hidden_dim],
-            output_dim=3,
-        )
+        # Initialize discrete critic (grasp critic) only if needed
+        if config.num_discrete_actions is not None:
+            self.grasp_critic = GraspCritic(
+                encoder=self.encoder_critic,
+                input_dim=self.encoder_critic.output_dim,
+                hidden_dims=critic_hidden_dims, # [256, 256]
+                output_dim=config.num_discrete_actions,
+            )
+            self.grasp_critic_target = GraspCritic(
+                encoder=target_encoder,
+                input_dim=target_encoder.output_dim,
+                hidden_dims=critic_hidden_dims,
+                output_dim=config.num_discrete_actions,
+            )
+            # Copy weights to target
+            self.grasp_critic_target.load_state_dict(self.grasp_critic.state_dict())
 
         # Copy weights to target
-        self.critic_target.load_state_dict(self.critic.state_dict())
-        self.grasp_critic_target.load_state_dict(self.grasp_critic.state_dict())
+        self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
 
         # Training stage and loss weights
         self.training_stage = "offline"
         self.bc_weight = config.bc_weight_offline
         self.q_weight = config.q_weight_offline
-
-        self.reset()
 
     def _encode_state(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
         """Encode observations into state representation using VLA"""
@@ -375,9 +476,11 @@ class ConRFTPolicy(PreTrainedPolicy):
         """Return parameters for optimization"""
         params = {
             "consistency_policy": self.consistency_policy.parameters(),
-            "critic": self.critic.parameters(),
-            "grasp_critic": self.grasp_critic.parameters(),
+            "critic": self.critic_ensemble.parameters(),
         }
+
+        if self.config.num_discrete_actions is not None:
+            params["grasp_critic"] = self.grasp_critic.parameters()
 
         if self.encoder_actor is not None and not self.config.freeze_base_vla:
             params["encoder_actor"] = self.encoder_actor.parameters()
@@ -385,10 +488,8 @@ class ConRFTPolicy(PreTrainedPolicy):
         return params
 
     def reset(self):
-        """Reset the policy state"""
-        self._queues = {
-            ACTION: deque(maxlen=1),  # ConRFT doesn't use action chunking
-        }
+        """Reset the policy"""
+        pass
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
@@ -440,12 +541,14 @@ class ConRFTPolicy(PreTrainedPolicy):
     def update_target_networks(self):
         """Update target networks with soft updates"""
         tau = self.config.soft_target_update_rate
-        for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters(), strict=False):
+        for target_param, param in zip(self.critic_target.parameters(), self.critic_ensemble.parameters(), strict=False):
             target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-        for target_param, param in zip(
-            self.grasp_critic_target.parameters(), self.grasp_critic.parameters(), strict=False
-        ):
-            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+        if self.config.num_discrete_actions is not None:
+            for target_param, param in zip(
+                self.grasp_critic_target.parameters(), self.grasp_critic.parameters(), strict=False
+            ):
+                target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
     def set_training_stage(self, stage: str):
         """Switch between offline and online training stages"""
@@ -459,50 +562,6 @@ class ConRFTPolicy(PreTrainedPolicy):
             self.bc_weight = self.config.bc_weight_online
             self.q_weight = self.config.q_weight_online
 
-    def update_offline(self, batch, optimizers):
-        """Perform one offline update step."""
-        # Update critic with Cal-QL loss
-        critic_info = self.forward(batch, model="cal_ql")
-        critic_loss = critic_info["loss_critic"]
-
-        optimizers["critic"].zero_grad()
-        critic_loss.backward()
-        optimizers["critic"].step()
-
-        # Update policy with combined BC and Q loss
-        actor_info = self.forward(batch, model="actor")
-        actor_loss = actor_info["loss_actor"]
-
-        optimizers["consistency_policy"].zero_grad()
-        actor_loss.backward()
-        optimizers["consistency_policy"].step()
-
-        self.update_target_networks()
-
-        return {**critic_info, **actor_info}
-
-    def update_online(self, batch, optimizers):
-        """Perform one online update step."""
-        # Update critic with standard TD loss
-        critic_info = self.forward(batch, model="critic")
-        critic_loss = critic_info["loss_critic"]
-
-        optimizers["critic"].zero_grad()
-        critic_loss.backward()
-        optimizers["critic"].step()
-
-        # Update policy with combined BC and Q loss
-        actor_info = self.forward(batch, model="actor")
-        actor_loss = actor_info["loss_actor"]
-
-        optimizers["consistency_policy"].zero_grad()
-        actor_loss.backward()
-        optimizers["consistency_policy"].step()
-
-        self.update_target_networks()
-
-        return {**critic_info, **actor_info}
-
 
 class SinusoidalPosEmb(nn.Module):
 
@@ -512,8 +571,8 @@ class SinusoidalPosEmb(nn.Module):
 
     def forward(self, time):
         half_dim = self.dim // 2
-        embeddings = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim) * -embeddings)
+        embeddings = torch.log(torch.tensor(10000.0, device=time.device)) / (half_dim - 1)
+        embeddings = torch.exp(torch.arange(half_dim, device=time.device) * -embeddings)
         embeddings = time[:, None] * embeddings
         return torch.cat([torch.sin(embeddings), torch.cos(embeddings)], dim=-1)
 
@@ -536,18 +595,87 @@ class TimeMLP(nn.Module):
 
 
 class OctoEncodingWrapper(nn.Module):
+    """Wrapper around Octo transformer to extract action embeddings for ConRFT."""
 
-    def __init__(self, encoder: OctoPolicy):
+    def __init__(self, octo_policy: OctoPolicy, use_proprio: bool = True, proprio_latent_dim: int = 64):
         super().__init__()
-        self.encoder = encoder
+        self.octo_policy = octo_policy
+        self.octo_transformer = octo_policy.model.octo_transformer
+        self.text_processor = octo_policy.text_processor
+        self.use_proprio = use_proprio
+        self.proprio_latent_dim = proprio_latent_dim
+
+        # Proprioception encoder will be created dynamically
+        self.proprio_encoder = None
 
     def forward(
         self,
         observations: dict[str, Tensor],
         tasks: Optional[dict[str, Tensor]] = None,
         action_embeddings: Optional[Tensor] = None,
-    ):
-        return self.encoder.get_action_embeddings(observations, tasks, action_embeddings)
+        stop_gradient: bool = True,
+    ) -> tuple[Tensor, Optional[Tensor]]:
+        """Extract action embeddings from Octo transformer and concatenate with proprioception"""
+        if action_embeddings is None:
+            # Get batch size from observations
+            batch_size = next(iter(observations.values())).shape[0]
+
+            # Prepare batch in Octo format with proper batch size
+            if tasks and "language_instruction" in tasks:
+                raw_tasks = tasks["language_instruction"]
+            else:
+                # Create empty tasks for the entire batch
+                raw_tasks = [""] * batch_size
+
+            prepared_batch = self.octo_policy._prepare_batch(observations, raw_tasks=raw_tasks)
+            obs, task_dict, _, _, timestep_pad_mask = prepared_batch
+
+            # Get transformer outputs
+            if stop_gradient:
+                with torch.no_grad():
+                    transformer_outputs = self.octo_transformer(obs, task_dict, timestep_pad_mask)
+            else:
+                transformer_outputs = self.octo_transformer(obs, task_dict, timestep_pad_mask)
+
+            # Extract action embeddings (readout_action tokens)
+            action_embeddings = transformer_outputs["readout_action"]  # TimestepGroup object
+
+            # Extract the actual tensor from TimestepGroup
+            # TimestepGroup has .tokens attribute containing the tensor
+            if hasattr(action_embeddings, 'tokens'):
+                action_embeddings = action_embeddings.tokens
+
+            # Flatten to [batch_size, embedding_dim] for consistency policy
+            # action_embeddings shape: [batch_size, horizon, n_tokens, embedding_dim]
+            # We want [batch_size, embedding_dim], so take first timestep and first token
+            if action_embeddings.dim() == 4:
+                action_embeddings = action_embeddings[:, 0, 0, :]  # Take first timestep, first token
+            elif action_embeddings.dim() == 3:
+                action_embeddings = action_embeddings.squeeze(1)  # Remove window dimension
+
+        encoded = action_embeddings
+
+        # Add proprioception
+        if self.use_proprio and "observation.state" in observations:
+            state = observations["observation.state"]
+
+            # Create proprioception encoder dynamically if not exists
+            if self.proprio_encoder is None:
+                state_dim = state.shape[-1]
+                self.proprio_encoder = nn.Sequential(
+                    nn.Linear(state_dim, self.proprio_latent_dim),
+                    nn.LayerNorm(self.proprio_latent_dim),
+                    nn.Tanh()
+                ).to(state.device)
+
+            if stop_gradient:
+                with torch.no_grad():
+                    state_encoded = self.proprio_encoder(state)
+            else:
+                state_encoded = self.proprio_encoder(state)
+            encoded = torch.cat([encoded, state_encoded], dim=-1)
+
+        return encoded, action_embeddings
 
 
 class ConsistencyPolicy(nn.Module):
@@ -583,6 +711,10 @@ class ConsistencyPolicy(nn.Module):
 
         # Generate Karras noise schedule
         self.register_buffer("sigmas", get_sigmas_karras(num_scales, sigma_min, sigma_max, rho))
+
+        # Action head for final output
+        # Use the last hidden dimension from the network configuration
+        self.action_head = nn.Linear(256, action_dim)  # consistency_hidden_dim from config
 
     def forward(
         self,
@@ -623,12 +755,26 @@ class ConsistencyPolicy(nn.Module):
         rescaled_t = 1000 * 0.25 * torch.log(sigma + 1e-44)
         t_embed = self.t_network(rescaled_t.view(-1, 1))
 
+        # Ensure all tensors are 2D for concatenation
+        c_in_x_t = c_in * x_t  # [batch_size, action_dim]
+
+        # Flatten state_encoding if it has extra dimensions
+        if state_encoding.dim() > 2:
+            state_encoding = state_encoding.view(batch_size, -1)
+
+        # Ensure t_embed is also 2D
+        if t_embed.dim() > 2:
+            t_embed = t_embed.view(batch_size, -1)
+
         # Network forward pass
-        network_input = torch.cat([c_in * x_t, t_embed, state_encoding], dim=1)
+        network_input = torch.cat([c_in_x_t, t_embed, state_encoding], dim=1)
         network_output = self.network(network_input)
 
+        # Final dense layer for action output
+        action_output = self.action_head(network_output)
+
         # Apply boundary condition
-        denoised = c_out * network_output + c_skip * x_t
+        denoised = c_out * action_output + c_skip * x_t
 
         if self.clip_denoised and not training:
             denoised = torch.clamp(denoised, -1, 1)
