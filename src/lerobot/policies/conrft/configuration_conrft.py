@@ -23,141 +23,31 @@ import numpy as np
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import (
-    CosineDecayWithWarmupSchedulerConfig,
-)
+from lerobot.optim.optimizers import MultiAdamConfig
+
 from lerobot.policies.sac.configuration_sac import (
     ActorLearnerConfig,
-    ActorNetworkConfig,
     ConcurrencyConfig,
     CriticNetworkConfig,
-    PolicyConfig,
 )
+
+
+def is_image_feature(key: str) -> bool:
+    """Check if a feature key represents an image feature.
+
+    Args:
+        key: The feature key to check
+
+    Returns:
+        True if the key represents an image feature, False otherwise
+    """
+    return key.startswith(OBS_IMAGE)
 
 
 @PreTrainedConfig.register_subclass("conrft")
 @dataclass
 class ConRFTConfig(PreTrainedConfig):
-    # Octo backbone
-    model_name: str = "octo-base"
-    token_embedding_size: int = 768
-    num_layers: int = 12
-    num_heads: int = 12
-    mlp_dim: int = 3072
-    chunk_size: int = 10  # max horizon
-
-    # IO structure
-    n_obs_steps: int = 1
-    n_action_steps: int = 4
-
-    # Action space
-    action_dim: int = 8  # override at runtime from dataset meta
-    max_action: float = 1.0
-    fix_gripper: bool = False
-
-    # Consistency Policy (CP)
-    sigma_data: float = 0.5
-    sigma_min: float = 0.002
-    sigma_max: float = 80.0
-    rho: float = 7.0
-    num_scales: int = 40
-    time_dim: int = 16
-    hidden_dim: int = 1024
-    num_blocks: int = 3
-    use_layer_norm: bool = True
-    clip_denoised: bool = True
-
-    consistency_hidden_dim: int = 256
-    offline_steps: int = 2000  # Number of offline pretraining steps
-
-    # Loss weights
-    bc_weight: float = 1.0
-    q_weight: float = 1.0
-    recon_weight: float = 1.0  # CP reconstruction
-    snr_clip: float = 5.0
-
-    # Critic (ensemble + CQL/CalQL)
-    critic_hidden_dim: int = 256
-    critic_ensemble_size: int = 2
-    critic_subsample_size: Optional[int] = None
-    discount: float = 0.99
-
-    cql_alpha: float = 1.0
-    cql_n_actions: int = 10
-    cql_action_sample_method: str = "uniform"
-    cql_clip_diff_min: float = -np.inf
-    cql_clip_diff_max: float = np.inf
-
-    # stage weights
-    bc_weight_offline: float = 1.0
-    q_weight_offline: float = 1.0
-    bc_weight_online: float = 0.5
-    q_weight_online: float = 1.0
-
-    # target update
-    soft_target_update_rate: float = 0.005  # OR delete and use target_tau consistently
-
-    # Cal-QL temperature
-    cql_temp: float = 1.0
-
-    # Required VLA model (ConRFT always uses Octo)
-    base_vla_model_path: str = "lerobot/octo_base"
-    freeze_base_vla: bool = True
-
-    # Proprioception settings
-    use_proprio: bool = True
-    proprio_latent_dim: int = 64
-
-    vision_encoder_name: str | None = "helper2424/resnet10"
-    freeze_vision_encoder: bool = True
-    image_encoder_hidden_dim: int = 32
-    shared_encoder: bool = True
-    image_embedding_pooling_dim: int = 8
-    latent_dim: int = 64
-
-    online_steps: int = 1000000
-    online_env_seed: int = 10000
-    online_buffer_capacity: int = 100000
-    offline_buffer_capacity: int = 100000
-    async_prefetch: bool = False
-    online_step_before_learning: int = 100
-    policy_update_freq: int = 1
-    utd_ratio: int = 2
-    state_encoder_hidden_dim: int = 256
-    target_entropy: float | None = None
-    use_backup_entropy: bool = True
-    grad_clip_norm: float = 10.0
-
-    num_discrete_actions: int | None = None
-
-    actor_lr: float = 3e-4
-    critic_lr: float = 3e-4
-    temperature_lr: float = 3e-4
-
-    # Network configurations
-    critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
-
-    actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
-
-    policy_kwargs: PolicyConfig = field(default_factory=PolicyConfig)
-
-    discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
-
-    actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
-
-    concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
-
-    # Storage device
-    storage_device: str = "cpu"
-    use_amp: bool = False
-    use_torch_compile: bool = True
-
-    # Optimization
-    optim: AdamWConfig = field(
-        default_factory=lambda: AdamWConfig(lr=3e-4, betas=(0.9, 0.999), weight_decay=0.0)
-    )
-    scheduler: CosineDecayWithWarmupSchedulerConfig | None = None
+    # TODO(lilkm): add docstring
 
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -199,34 +89,143 @@ class ConRFTConfig(PreTrainedConfig):
         default_factory=lambda: {"action": PolicyFeature(type=FeatureType.ACTION, shape=(8,))}
     )
 
-    def get_optimizer_preset(self):
-        """Get optimizer configuration for ConRFT"""
-        from lerobot.optim.optimizers import MultiAdamConfig
+    # Octo backbone
+    model_name: str = "octo-base"
+    token_embedding_size: int = 768
+    num_layers: int = 12
+    num_heads: int = 12
+    mlp_dim: int = 3072
+    chunk_size: int = 10  # max horizon
+
+    # IO structure
+    n_obs_steps: int = 1
+    n_action_steps: int = 4
+
+    # Consistency Policy (CP)
+    sigma_data: float = 0.5
+    sigma_min: float = 0.002
+    sigma_max: float = 80.0
+    rho: float = 7.0
+    num_scales: int = 40
+    time_dim: int = 16
+    hidden_dim: int = 1024
+    num_blocks: int = 3
+    use_layer_norm: bool = True
+    clip_denoised: bool = True
+
+    consistency_hidden_dim: int = 256
+    offline_steps: int = 2000  # Number of offline pretraining steps
+
+    # Loss weights
+    bc_weight: float = 1.0
+    q_weight: float = 1.0
+    recon_weight: float = 1.0  # CP reconstruction
+    snr_clip: float = 5.0
+
+    # Critic (ensemble + CQL/CalQL)
+    critic_hidden_dim: int = 256
+    critic_ensemble_size: int = 2
+    critic_subsample_size: Optional[int] = None
+    discount: float = 0.99
+
+    cql_alpha: float = 1.0
+    cql_n_actions: int = 10
+    cql_action_sample_method: str = "uniform"
+    cql_clip_diff_min: float = -np.inf
+    cql_clip_diff_max: float = np.inf
+
+    # stage weights
+    bc_weight_offline: float = 1.0
+    q_weight_offline: float = 1.0
+    bc_weight_online: float = 0.5
+    q_weight_online: float = 1.0
+
+    # target update
+    soft_target_update_rate: float = 0.005
+
+    # Cal-QL temperature
+    cql_temp: float = 1.0
+
+    # Required VLA model (ConRFT always uses Octo)
+    base_vla_model_path: str = "lerobot/octo_base"
+    freeze_base_vla: bool = True
+
+    # Proprioception settings
+    use_proprio: bool = True
+    proprio_latent_dim: int = 64
+
+    vision_encoder_name: str | None = "helper2424/resnet10"
+    freeze_vision_encoder: bool = True
+    image_encoder_hidden_dim: int = 32
+    shared_encoder: bool = True
+    image_embedding_pooling_dim: int = 8
+    latent_dim: int = 64
+
+    # Storage device
+    storage_device: str = "cpu"
+    use_amp: bool = False
+
+    online_steps: int = 1000000
+    online_env_seed: int = 10000
+    online_buffer_capacity: int = 100000
+    offline_buffer_capacity: int = 100000
+    async_prefetch: bool = False
+    online_step_before_learning: int = 100
+    policy_update_freq: int = 1
+    utd_ratio: int = 2
+    state_encoder_hidden_dim: int = 256
+    grad_clip_norm: float = 10.0
+
+    num_discrete_actions: int | None = None
+
+    actor_lr: float = 3e-4
+    critic_lr: float = 3e-4
+
+    # Network configurations
+    critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
+
+    # TODO(lilkm): add config for consistency policy
+
+    discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
+
+    actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
+
+    concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
+
+    # Optimizations
+    use_torch_compile: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Any validation specific to ConRFT configuration
+
+    def get_optimizer_preset(self) -> MultiAdamConfig:
         return MultiAdamConfig(
             weight_decay=0.0,
             optimizer_groups={
-                "consistency_policy": {"lr": 3e-4},
+                "actor": {"lr": 3e-4},
                 "critic": {"lr": 3e-4},
-                "grasp_critic": {"lr": 3e-4},
             },
         )
 
     def get_scheduler_preset(self):
-        """Get scheduler configuration for ConRFT"""
         return None
 
     def validate_features(self):
-        """Validate input and output features"""
-        # Check that we have action in output features
+        has_image = any(is_image_feature(key) for key in self.input_features)
+        has_state = OBS_STATE in self.input_features
+
+        if not (has_state or has_image):
+            raise ValueError(
+                "You must provide either 'observation.state' or an image observation (key starting with 'observation.image') in the input features"
+            )
+
         if "action" not in self.output_features:
-            raise ValueError("ConRFT requires 'action' in output_features")
+            raise ValueError("You must provide 'action' in the output features")
 
-        # Check that we have at least one observation type
-        has_image = any(key.startswith("observation.image") for key in self.input_features)
-        has_state = "observation.state" in self.input_features
-
-        if not (has_image or has_state):
-            raise ValueError("ConRFT requires at least one observation type (image or state)")
+    @property
+    def image_features(self) -> list[str]:
+        return [key for key in self.input_features if is_image_feature(key)]
 
     @property
     def observation_delta_indices(self):

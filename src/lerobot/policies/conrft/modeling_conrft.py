@@ -197,20 +197,20 @@ class ConRFTPolicy(PreTrainedPolicy):
 
         # Initialize discrete critic (grasp critic) only if needed
         if config.num_discrete_actions is not None:
-            self.grasp_critic = GraspCritic(
+            self.discrete_critic = GraspCritic(
                 encoder=self.encoder_critic,
                 input_dim=self.encoder_critic.output_dim,
                 hidden_dims=critic_hidden_dims, # [256, 256]
                 output_dim=config.num_discrete_actions,
             )
-            self.grasp_critic_target = GraspCritic(
+            self.discrete_critic_target = GraspCritic(
                 encoder=target_encoder,
                 input_dim=target_encoder.output_dim,
                 hidden_dims=critic_hidden_dims,
                 output_dim=config.num_discrete_actions,
             )
             # Copy weights to target
-            self.grasp_critic_target.load_state_dict(self.grasp_critic.state_dict())
+            self.discrete_critic_target.load_state_dict(self.discrete_critic.state_dict())
 
         # Copy weights to target
         self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
@@ -232,7 +232,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         }
 
         if self.config.num_discrete_actions is not None:
-            params["grasp_critic"] = self.grasp_critic.parameters()
+            params["discrete_critic"] = self.discrete_critic.parameters()
 
         if self.encoder_actor is not None and not self.config.freeze_base_vla:
             params["encoder_actor"] = self.encoder_actor.parameters()
@@ -280,13 +280,13 @@ class ConRFTPolicy(PreTrainedPolicy):
             Dictionary containing the computed loss and metrics
         """
         if model == "critic":
-            return self.compute_critic_loss(self, batch)
+            return self.compute_critic_loss(batch)
         elif model == "actor":
-            return self.compute_actor_loss(self, batch)
+            return self.compute_actor_loss(batch)
         elif model == "cal_ql":
-            return self.compute_cal_ql_loss(self, batch)
+            return self.compute_cal_ql_loss(batch)
         elif model == "bc":
-            return self.compute_bc_loss(self, batch)
+            return self.compute_bc_loss(batch)
         else:
             raise ValueError(f"Unknown model type: {model}")
 
@@ -298,7 +298,7 @@ class ConRFTPolicy(PreTrainedPolicy):
 
         if self.config.num_discrete_actions is not None:
             for target_param, param in zip(
-                self.grasp_critic_target.parameters(), self.grasp_critic.parameters(), strict=False
+                self.discrete_critic_target.parameters(), self.discrete_critic.parameters(), strict=False
             ):
                 target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
