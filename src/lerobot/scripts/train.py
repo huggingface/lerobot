@@ -257,8 +257,9 @@ def train(cfg: TrainPipelineConfig):
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
-        persistent_workers=cfg.num_workers > 0,  # Keep workers alive
-        prefetch_factor=2 if cfg.num_workers > 0 else None,  # Prefetch batches
+        persistent_workers=cfg.num_workers > 0,  # Keep workers alive between epochs
+        prefetch_factor=6,  # More aggressive prefetching for video
+        timeout=30,  # Prevent hanging on video decode errors
     )
     dl_iter = cycle(dataloader)
 
