@@ -53,11 +53,7 @@ def make_rlearn_processor(
     input_steps = [
         # No renaming by default, but keep for future extensibility
         RenameProcessor(rename_map={}),
-        NormalizerProcessor(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
+        # Move heavy normalization to GPU after transfer for better parallelism
         ToBatchProcessor(),
         RLearnLanguageFromTaskProcessor(),
         # Use SigLIP2 for tokenizer to keep vocab aligned with text tower
@@ -69,6 +65,12 @@ def make_rlearn_processor(
             padding_side="right",
         ),
         DeviceProcessor(device=config.device),
+        # Move normalization after GPU transfer to use GPU acceleration
+        NormalizerProcessor(
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+        ),
     ]
 
     output_steps = [
