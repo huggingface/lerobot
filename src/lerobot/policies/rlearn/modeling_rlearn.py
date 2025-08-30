@@ -162,10 +162,15 @@ class RLearNPolicy(PreTrainedPolicy):
         self.to_lang_tokens = nn.Linear(self.text_hidden, config.dim_model)
         self.to_video_tokens = nn.Linear(self.vision_hidden, config.dim_model)
 
-        # Temporal positional encoding for window-relative positions only
-        # This helps understand temporal order within 16-frame windows without enabling 
-        # episode-level progress cheating (since episodes are 100-300 frames)
-        self.temporal_pos_embedding = nn.Parameter(torch.randn(config.max_seq_len, config.dim_model) * 0.01)
+        # Stronger temporal positional encoding to distinguish between frames
+        # This helps the model learn distinct representations for each frame in the sequence
+        self.temporal_pos_embedding = nn.Parameter(torch.randn(config.max_seq_len, config.dim_model) * 0.1)
+        
+        # Add frame-specific processing to prevent over-smoothing
+        self.frame_specific_mlp = nn.ModuleList([
+            nn.Linear(config.dim_model, config.dim_model) 
+            for _ in range(config.max_seq_len)
+        ])
         
         # Register / memory / attention sink tokens
         self.num_register_tokens = config.num_register_tokens
@@ -291,8 +296,17 @@ class RLearNPolicy(PreTrainedPolicy):
         # Unpack and get video token features
         _, _, attended_video_tokens = unpack(attended, lang_video_packed_shape, 'b * d')
         
+        # Apply frame-specific processing to prevent over-smoothing
+        frame_specific_embeds = []
+        T_video = attended_video_tokens.shape[1]
+        for t in range(T_video):
+            # Apply frame-specific MLP to each temporal position
+            frame_embed = self.frame_specific_mlp[t](attended_video_tokens[:, t])
+            frame_specific_embeds.append(frame_embed)
+        frame_specific_tokens = torch.stack(frame_specific_embeds, dim=1)  # (B, T, D)
+        
         # MLP predictor
-        video_frame_embeds = self.mlp_predictor(attended_video_tokens)
+        video_frame_embeds = self.mlp_predictor(frame_specific_tokens)
         
         # Get rewards via linear head with sigmoid activation 
         normalized_embeds = self.pre_reward_norm(video_frame_embeds)
@@ -437,8 +451,17 @@ class RLearNPolicy(PreTrainedPolicy):
         # Unpack and get video token features
         _, _, attended_video_tokens = unpack(attended, lang_video_packed_shape, 'b * d')
         
+        # Apply frame-specific processing to prevent over-smoothing
+        frame_specific_embeds = []
+        T_video = attended_video_tokens.shape[1]
+        for t in range(T_video):
+            # Apply frame-specific MLP to each temporal position
+            frame_embed = self.frame_specific_mlp[t](attended_video_tokens[:, t])
+            frame_specific_embeds.append(frame_embed)
+        frame_specific_tokens = torch.stack(frame_specific_embeds, dim=1)  # (B, T, D)
+        
         # MLP predictor
-        video_frame_embeds = self.mlp_predictor(attended_video_tokens)
+        video_frame_embeds = self.mlp_predictor(frame_specific_tokens)
         transformer_time = time.perf_counter() - transformer_start
 
         # Generate progress labels on-the-fly (ReWiND approach)
@@ -554,7 +577,16 @@ class RLearNPolicy(PreTrainedPolicy):
                 mask_mm = F.pad(mask_mm, (0, register_tokens.shape[1] + video_tokens.shape[1]), value=True)
                 attended_mm = self.decoder(tokens_mm, mask=mask_mm)
                 _, _, attended_video_mm = unpack(attended_mm, lang_video_packed_shape_mm, 'b * d')
-                mismatch_embeds = self.mlp_predictor(attended_video_mm)
+                
+                # Apply frame-specific processing to mismatch embeddings
+                mismatch_specific_embeds = []
+                T_video_mm = attended_video_mm.shape[1]
+                for t in range(T_video_mm):
+                    frame_embed = self.frame_specific_mlp[t](attended_video_mm[:, t])
+                    mismatch_specific_embeds.append(frame_embed)
+                mismatch_specific_tokens = torch.stack(mismatch_specific_embeds, dim=1)
+                
+                mismatch_embeds = self.mlp_predictor(mismatch_specific_tokens)
                 
                 # Mismatched pairs should predict zero progress
                 normalized_mismatch_embeds = self.pre_reward_norm(mismatch_embeds)
