@@ -80,14 +80,18 @@ def create_stats_buffers(
 
         # TODO(aliberts, rcadene): harmonize this to only use one framework (np or torch)
         if stats:
-            if isinstance(stats[key]["mean"], np.ndarray):
+            if ("mean" in stats[key] and isinstance(stats[key]["mean"], np.ndarray)) or (
+                "min" in stats[key] and isinstance(stats[key]["min"], np.ndarray)
+            ):
                 if norm_mode is NormalizationMode.MEAN_STD:
                     buffer["mean"].data = torch.from_numpy(stats[key]["mean"]).to(dtype=torch.float32)
                     buffer["std"].data = torch.from_numpy(stats[key]["std"]).to(dtype=torch.float32)
                 elif norm_mode is NormalizationMode.MIN_MAX:
                     buffer["min"].data = torch.from_numpy(stats[key]["min"]).to(dtype=torch.float32)
                     buffer["max"].data = torch.from_numpy(stats[key]["max"]).to(dtype=torch.float32)
-            elif isinstance(stats[key]["mean"], torch.Tensor):
+            elif ("mean" in stats[key] and isinstance(stats[key]["mean"], torch.Tensor)) or (
+                "min" in stats[key] and isinstance(stats[key]["min"], torch.Tensor)
+            ):
                 # Note: The clone is needed to make sure that the logic in save_pretrained doesn't see duplicated
                 # tensors anywhere (for example, when we use the same stats for normalization and
                 # unnormalization). See the logic here

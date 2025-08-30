@@ -24,6 +24,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
+from lerobot.policies.acfql.configuration_acfql import ACFQLConfig
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
@@ -66,6 +67,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.policies.sac.modeling_sac import SACPolicy
 
         return SACPolicy
+    elif name == "acfql":
+        from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
+
+        return ACFQLPolicy
     elif name == "reward_classifier":
         from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
 
@@ -93,6 +98,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0FASTConfig(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
+    elif policy_type == "acfql":
+        return ACFQLConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
     elif policy_type == "reward_classifier":

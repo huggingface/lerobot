@@ -18,7 +18,6 @@ import logging
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
@@ -34,17 +33,23 @@ from lerobot.teleoperators import (
 logging.basicConfig(level=logging.INFO)
 
 
-def eval_policy(env, policy, n_episodes):
+def eval_policy(env, policy, n_episodes, fps=None):
     sum_reward_episode = []
     for _ in range(n_episodes):
         obs, _ = env.reset()
         episode_reward = 0.0
         while True:
+            # start_time = time.perf_counter()
             action = policy.select_action(obs)
             obs, reward, terminated, truncated, _ = env.step(action)
             episode_reward += reward
             if terminated or truncated:
                 break
+
+            # if fps is not None:
+            #     dt_time = time.perf_counter() - start_time
+            #     busy_wait(1 / fps - dt_time)
+
         sum_reward_episode.append(episode_reward)
 
     logging.info(f"Success after 20 steps {sum_reward_episode}")
@@ -55,19 +60,22 @@ def eval_policy(env, policy, n_episodes):
 def main(cfg: TrainRLServerPipelineConfig):
     env_cfg = cfg.env
     env = make_robot_env(env_cfg)
-    dataset_cfg = cfg.dataset
-    dataset = LeRobotDataset(repo_id=dataset_cfg.repo_id)
-    dataset_meta = dataset.meta
+    # dataset_cfg = cfg.dataset
+    # dataset = LeRobotDataset(repo_id=dataset_cfg.repo_id)
+    # dataset_meta = dataset.meta
+
+    cfg.policy.pretrained_path = env_cfg.pretrained_policy_name_or_path
 
     policy = make_policy(
         cfg=cfg.policy,
-        # env_cfg=cfg.env,
-        ds_meta=dataset_meta,
+        env_cfg=cfg.env,
+        # ds_meta=dataset_meta,
     )
-    policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
+    # import pdb; pdb.set_trace()
+    # policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
     policy.eval()
 
-    eval_policy(env, policy=policy, n_episodes=10)
+    eval_policy(env, policy=policy, n_episodes=10, fps=env_cfg.fps)
 
 
 if __name__ == "__main__":
