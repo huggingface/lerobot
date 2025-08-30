@@ -1,2 +1,0 @@
-git+https://github.com/jadechoghari/egl_probe.git#egg=egl_probe
-git+https://github.com/jadechoghari/LIBERO.git@main#egg=libero
