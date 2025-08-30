@@ -79,8 +79,9 @@ _ Open X-Embodiment (OXE)
   - Exactly similar to: https://github.com/lucidrains/rewind-reward-pytorch/blob/main/rewind_reward_pytorch/rewind_reward.py#L11 [x]
   - Try DINO v2 as encoder Base 86 M: with https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2 [x]
   - Test rewind (evaluate) [x]
+- Overfit on one episode []
 - Cleanup code? []
-- benchmark lucidrains vs this implementation forward pass, debug speed []
+- benchmark siglip 2 vs this implementation forward pass, debug speed []
 - Convert python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=IPEC-COMMUNITY/bc_z_lerobot and train on 1 percent
 - Then on 10 percent
 - Ablation dino v2 vs dino v3 base 86 M
