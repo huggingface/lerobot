@@ -33,13 +33,56 @@ def test_video_backend(video_path, backend_name, num_frames=10):
         return float('inf'), 0
 
 def main():
-    # Find your video files
-    video_dir = Path.home() / ".cache/huggingface/lerobot/kenmacken/record-test-2/videos"
-    video_files = list(video_dir.rglob("*.mp4"))
+    print("📦 Downloading dataset to get video file locations...")
     
-    if not video_files:
-        print("❌ No video files found! Check the path.")
-        return
+    try:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        
+        # Download the dataset - this will tell us exactly where it's stored
+        dataset = LeRobotDataset("kenmacken/record-test-2", download_videos=True)
+        
+        print(f"✅ Dataset downloaded to: {dataset.root}")
+        print(f"   Video keys: {dataset.meta.video_keys}")
+        print(f"   Total episodes: {dataset.meta.total_episodes}")
+        
+        # Get actual video file paths from the dataset
+        video_files = []
+        for ep_idx in range(min(2, dataset.meta.total_episodes)):  # Test first 2 episodes max
+            for vid_key in dataset.meta.video_keys:
+                video_path = dataset.root / dataset.meta.get_video_file_path(ep_idx, vid_key)
+                if video_path.exists():
+                    video_files.append(video_path)
+                    break  # Just need one video file for testing
+            if video_files:
+                break
+        
+        if not video_files:
+            print("❌ No video files found after download!")
+            return
+            
+    except Exception as e:
+        print(f"❌ Error downloading dataset: {e}")
+        # Fallback to manual search
+        possible_paths = [
+            Path.home() / ".cache/huggingface/lerobot/kenmacken/record-test-2",
+            Path("/tmp/huggingface/lerobot/kenmacken/record-test-2"),
+            Path("./datasets/record-test-2"),
+        ]
+        
+        video_files = []
+        print("Trying fallback search...")
+        for path in possible_paths:
+            print(f"  Checking: {path}")
+            if path.exists():
+                files = list(path.rglob("*.mp4"))
+                if files:
+                    video_files = files
+                    print(f"  ✅ Found {len(files)} video files!")
+                    break
+        
+        if not video_files:
+            print("❌ No video files found!")
+            return
         
     test_video = video_files[0]
     print(f"Testing video: {test_video.name}")
