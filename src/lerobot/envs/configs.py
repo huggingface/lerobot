@@ -161,33 +161,71 @@ class XarmEnv(EnvConfig):
 
 
 @dataclass
-class VideoRecordConfig:
-    """Configuration for video recording in ManiSkill environments."""
-
-    enabled: bool = False
-    record_dir: str = "videos"
-    trajectory_name: str = "trajectory"
+class ImagePreprocessingConfig:
+    crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
+    resize_size: tuple[int, int] | None = None
 
 
 @dataclass
-class EnvTransformConfig:
-    """Configuration for environment wrappers."""
+class RewardClassifierConfig:
+    """Configuration for reward classification."""
 
-    # ee_action_space_params: EEActionSpaceConfig = field(default_factory=EEActionSpaceConfig)
-    control_mode: str = "gamepad"
-    display_cameras: bool = False
+    pretrained_path: str | None = None
+    success_threshold: float = 0.5
+    success_reward: float = 1.0
+
+
+@dataclass
+class InverseKinematicsConfig:
+    """Configuration for inverse kinematics processing."""
+
+    urdf_path: str | None = None
+    target_frame_name: str | None = None
+    end_effector_bounds: dict[str, list[float]] | None = None
+    end_effector_step_sizes: dict[str, float] | None = None
+
+
+@dataclass
+class ObservationConfig:
+    """Configuration for observation processing."""
+
     add_joint_velocity_to_observation: bool = False
     add_current_to_observation: bool = False
     add_ee_pose_to_observation: bool = False
-    crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
-    resize_size: tuple[int, int] | None = None
-    control_time_s: float = 20.0
-    fixed_reset_joint_positions: Any | None = None
-    reset_time_s: float = 5.0
+    display_cameras: bool = False
+
+
+@dataclass
+class GripperConfig:
+    """Configuration for gripper control and penalties."""
+
     use_gripper: bool = True
-    gripper_quantization_threshold: float | None = 0.8
     gripper_penalty: float = 0.0
     gripper_penalty_in_reward: bool = False
+
+
+@dataclass
+class ResetConfig:
+    """Configuration for environment reset behavior."""
+
+    fixed_reset_joint_positions: Any | None = None
+    reset_time_s: float = 5.0
+    control_time_s: float = 20.0
+    terminate_on_success: bool = True
+
+
+@dataclass
+class HILSerlProcessorConfig:
+    """Configuration for environment processing pipeline."""
+
+    control_mode: str = "gamepad"
+    observation: ObservationConfig | None = None
+    image_preprocessing: ImagePreprocessingConfig | None = None
+    gripper: GripperConfig | None = None
+    reset: ResetConfig | None = None
+    inverse_kinematics: InverseKinematicsConfig | None = None
+    reward_classifier: RewardClassifierConfig | None = None
+    max_gripper_pos: float | None = 100.0
 
 
 @EnvConfig.register_subclass(name="gym_manipulator")
@@ -197,77 +235,10 @@ class HILSerlRobotEnvConfig(EnvConfig):
 
     robot: RobotConfig | None = None
     teleop: TeleoperatorConfig | None = None
-    wrapper: EnvTransformConfig | None = None
-    fps: int = 10
+    processor: HILSerlProcessorConfig = field(default_factory=HILSerlProcessorConfig)
+
     name: str = "real_robot"
-    mode: str | None = None  # Either "record", "replay", None
-    repo_id: str | None = None
-    dataset_root: str | None = None
-    task: str | None = ""
-    num_episodes: int = 10  # only for record mode
-    episode: int = 0
-    device: str = "cuda"
-    push_to_hub: bool = True
-    pretrained_policy_name_or_path: str | None = None
-    reward_classifier_pretrained_path: str | None = None
-    # For the reward classifier, to record more positive examples after a success
-    number_of_steps_after_success: int = 0
 
     @property
     def gym_kwargs(self) -> dict:
         return {}
-
-
-@EnvConfig.register_subclass("hil")
-@dataclass
-class HILEnvConfig(EnvConfig):
-    """Configuration for the HIL environment."""
-
-    name: str = "PandaPickCube"
-    task: str | None = "PandaPickCubeKeyboard-v0"
-    use_viewer: bool = True
-    gripper_penalty: float = 0.0
-    use_gamepad: bool = True
-    state_dim: int = 18
-    action_dim: int = 4
-    fps: int = 100
-    episode_length: int = 100
-    video_record: VideoRecordConfig = field(default_factory=VideoRecordConfig)
-    features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
-            "observation.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
-            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(18,)),
-        }
-    )
-    features_map: dict[str, str] = field(
-        default_factory=lambda: {
-            "action": ACTION,
-            "observation.image": OBS_IMAGE,
-            "observation.state": OBS_STATE,
-        }
-    )
-    ################# args from hilserlrobotenv
-    reward_classifier_pretrained_path: str | None = None
-    robot_config: RobotConfig | None = None
-    teleop_config: TeleoperatorConfig | None = None
-    wrapper: EnvTransformConfig | None = None
-    mode: str | None = None  # Either "record", "replay", None
-    repo_id: str | None = None
-    dataset_root: str | None = None
-    num_episodes: int = 10  # only for record mode
-    episode: int = 0
-    device: str = "cuda"
-    push_to_hub: bool = True
-    pretrained_policy_name_or_path: str | None = None
-    # For the reward classifier, to record more positive examples after a success
-    number_of_steps_after_success: int = 0
-    ############################
-
-    @property
-    def gym_kwargs(self) -> dict:
-        return {
-            "use_viewer": self.use_viewer,
-            "use_gamepad": self.use_gamepad,
-            "gripper_penalty": self.gripper_penalty,
-        }

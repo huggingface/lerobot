@@ -38,7 +38,7 @@ while True:
     keyboard_keys = keyboard.get_action()
     base_action = robot._from_keyboard_to_base_action(keyboard_keys)
 
-    log_rerun_data(observation, {**arm_action, **base_action})
+    log_rerun_data(observation=observation, action={**arm_action, **base_action})
 
     action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 

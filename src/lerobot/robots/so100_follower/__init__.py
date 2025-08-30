@@ -14,6 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_so100_follower import SO100FollowerConfig, SO100FollowerEndEffectorConfig
+from .config_so100_follower import SO100FollowerConfig
 from .so100_follower import SO100Follower
-from .so100_follower_end_effector import SO100FollowerEndEffector
