@@ -179,8 +179,9 @@ class RLearNPolicy(PreTrainedPolicy):
             depth=config.mlp_predictor_depth
         )
         
-        # Simple MSE regression head
+        # MSE regression head with sigmoid activation to bound outputs to [0,1]
         self.reward_head = nn.Linear(config.dim_model, 1)
+        self.sigmoid = nn.Sigmoid()
         
         # Simple frame dropout probability
         self.frame_dropout_p = config.frame_dropout_p
@@ -283,8 +284,8 @@ class RLearNPolicy(PreTrainedPolicy):
         # MLP predictor
         video_frame_embeds = self.mlp_predictor(attended_video_tokens)
         
-        # Get rewards via simple linear head
-        return self.reward_head(video_frame_embeds).squeeze(-1)  # (B, T)
+        # Get rewards via linear head with sigmoid activation 
+        return self.sigmoid(self.reward_head(video_frame_embeds)).squeeze(-1)  # (B, T)
 
     def normalize_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         # Initial version: no-op; rely on upstream processors if any
@@ -510,15 +511,15 @@ class RLearNPolicy(PreTrainedPolicy):
         # During inference, we might not want to compute loss
         if not self.training and target is None:
             # Return predictions without loss
-            rewards = self.reward_head(video_frame_embeds).squeeze(-1)
+            rewards = self.sigmoid(self.reward_head(video_frame_embeds)).squeeze(-1)
             return rewards.mean() * 0.0, {"rewards_mean": rewards.mean().item()}
 
         # Calculate loss using MSE
         loss_start = time.perf_counter()
         assert target.dtype == torch.float, "Continuous rewards require float targets"
         
-        # Get reward predictions
-        predicted_rewards = self.reward_head(video_frame_embeds).squeeze(-1)  # (B, T_eff)
+        # Get reward predictions with sigmoid activation
+        predicted_rewards = self.sigmoid(self.reward_head(video_frame_embeds)).squeeze(-1)  # (B, T_eff)
         
         # MSE loss with masking for variable length sequences
         loss = F.mse_loss(predicted_rewards, target[:, :T_eff], reduction='mean')
@@ -543,7 +544,7 @@ class RLearNPolicy(PreTrainedPolicy):
                 mismatch_embeds = self.mlp_predictor(attended_video_mm)
                 
                 # Mismatched pairs should predict zero progress
-                mismatch_predictions = self.reward_head(mismatch_embeds).squeeze(-1)
+                mismatch_predictions = self.sigmoid(self.reward_head(mismatch_embeds)).squeeze(-1)
                 zeros_target = torch.zeros_like(target[:, :T_eff])
                 L_mismatch = F.mse_loss(mismatch_predictions, zeros_target, reduction='mean')
 
@@ -554,15 +555,22 @@ class RLearNPolicy(PreTrainedPolicy):
         # DEBUG: Print targets and predictions occasionally during training
         if self.training and torch.rand(1).item() < 0.02:  # ~2% chance to debug print
             with torch.no_grad():
-                # Get raw MLP outputs before reward head
+                # Get raw MLP outputs before reward head and sigmoid predictions
                 raw_outputs = video_frame_embeds
-                preds = self.reward_head(video_frame_embeds).squeeze(-1)
+                raw_logits = self.reward_head(video_frame_embeds).squeeze(-1)
+                preds = self.sigmoid(raw_logits)
+                
                 print(f"\n=== DEBUG TRAINING ===")
+                # Target statistics
+                print(f"Target min: {target.min():.6f}")
+                print(f"Target max: {target.max():.6f}")
+                print(f"Target mean: {target.mean():.6f}")
                 print(f"Target range: [{target.min():.3f}, {target.max():.3f}]")
-                print(f"Target mean: {target.mean():.3f}")
+                # Model output statistics  
                 print(f"Raw MLP range: [{raw_outputs.min():.3f}, {raw_outputs.max():.3f}]")
-                print(f"Pred range: [{preds.min():.3f}, {preds.max():.3f}]") 
-                print(f"Pred mean: {preds.mean():.3f}")
+                print(f"Raw logits range: [{raw_logits.min():.3f}, {raw_logits.max():.3f}]")
+                print(f"Sigmoid pred range: [{preds.min():.3f}, {preds.max():.3f}]") 
+                print(f"Sigmoid pred mean: {preds.mean():.3f}")
                 print(f"Loss: {loss:.4f}")
                 print("First sample targets:", target[0, :5].cpu().numpy())
                 print("First sample preds:", preds[0, :5].cpu().numpy())
@@ -577,6 +585,12 @@ class RLearNPolicy(PreTrainedPolicy):
             "loss_mismatch": float(L_mismatch.detach().item()),
             "t_eff": float(T_eff),
             "lang_len_mean": float(mask.sum().float().mean().item()), # Use mask to get actual lengths
+            # Target statistics for monitoring
+            "target_min": float(target.min().item()),
+            "target_max": float(target.max().item()),
+            "target_mean": float(target.mean().item()),
+            # Prediction statistics
+            "pred_mean": float(predicted_rewards.mean().item()),
             # Timing information
             "timing_vision_ms": float(vision_time * 1000),
             "timing_language_ms": float(lang_time * 1000),
