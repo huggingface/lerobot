@@ -260,24 +260,18 @@ class ReplayBuffer:
 
         # Apply image augmentation in a batched way if needed
         if self.use_drq and image_keys:
-            # Concatenate all images from state and next_state
-            all_images = []
+            # TODO(lilkm): check if i can optimize data augmentation here
+            # Apply augmentation to each image key separately to handle different image sizes
             for key in image_keys:
-                all_images.append(batch_state[key])
-                all_images.append(batch_next_state[key])
+                # Concatenate state and next_state images for this specific key
+                key_images = torch.cat([batch_state[key], batch_next_state[key]], dim=0)
 
-            # Optimization: Batch all images and apply augmentation once
-            all_images_tensor = torch.cat(all_images, dim=0)
-            augmented_images = self.image_augmentation_function(all_images_tensor)
+                # Apply augmentation to this key's images
+                augmented_key_images = self.image_augmentation_function(key_images)
 
-            # Split the augmented images back to their sources
-            for i, key in enumerate(image_keys):
-                # Calculate offsets for the current image key:
-                # For each key, we have 2*batch_size images (batch_size for states, batch_size for next_states)
-                # States start at index i*2*batch_size and take up batch_size slots
-                batch_state[key] = augmented_images[i * 2 * batch_size : (i * 2 + 1) * batch_size]
-                # Next states start after the states at index (i*2+1)*batch_size and also take up batch_size slots
-                batch_next_state[key] = augmented_images[(i * 2 + 1) * batch_size : (i + 1) * 2 * batch_size]
+                # Split back to state and next_state
+                batch_state[key] = augmented_key_images[:batch_size]
+                batch_next_state[key] = augmented_key_images[batch_size:]
 
         # Sample other tensors
         batch_actions = self.actions[idx].to(self.device)

@@ -512,15 +512,18 @@ class SACObservationEncoder(nn.Module):
         if self.config.freeze_vision_encoder:
             freeze_image_encoder(self.image_encoder)
 
-        dummy = torch.zeros(1, *self.config.input_features[self.image_keys[0]].shape)
-        with torch.no_grad():
-            _, channels, height, width = self.image_encoder(dummy).shape
-
         self.spatial_embeddings = nn.ModuleDict()
         self.post_encoders = nn.ModuleDict()
 
+        # Initialize spatial embeddings for each image key separately to handle different sizes
         for key in self.image_keys:
             name = key.replace(".", "_")
+            # Create dummy input with the specific shape for this image key
+            dummy = torch.zeros(1, *self.config.input_features[key].shape)
+            with torch.no_grad():
+                encoded_dummy = self.image_encoder(dummy)
+                _, channels, height, width = encoded_dummy.shape
+
             self.spatial_embeddings[name] = SpatialLearnedEmbeddings(
                 height=height,
                 width=width,
@@ -617,10 +620,15 @@ class SACObservationEncoder(nn.Module):
         """
         if normalize:
             obs = self.input_normalization(obs)
-        batched = torch.cat([obs[k] for k in self.image_keys], dim=0)
-        out = self.image_encoder(batched)
-        chunks = torch.chunk(out, len(self.image_keys), dim=0)
-        return dict(zip(self.image_keys, chunks, strict=False))
+
+        # Process each image separately to handle different sizes
+        cached_features = {}
+        for key in self.image_keys:
+            image_tensor = obs[key]
+            encoded_features = self.image_encoder(image_tensor)
+            cached_features[key] = encoded_features
+
+        return cached_features
 
     def _encode_images(self, cache: dict[str, Tensor], detach: bool) -> Tensor:
         """Encode image features from cached observations.
