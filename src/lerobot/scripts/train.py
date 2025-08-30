@@ -200,6 +200,12 @@ def train(cfg: TrainPipelineConfig):
         "update_s": AverageMeter("updt_s", ":.3f"),
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
+    # RLearN-only: pixels per second throughput
+    try:
+        if getattr(policy, "name", None) == "rlearn":
+            train_metrics["pix_s"] = AverageMeter("pix/s", ":.1f")
+    except Exception:
+        pass
 
     train_tracker = MetricsTracker(
         cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
@@ -226,6 +232,36 @@ def train(cfg: TrainPipelineConfig):
             lr_scheduler=lr_scheduler,
             use_amp=cfg.policy.use_amp,
         )
+
+        # RLearN-only: compute pixel throughput (pixels per second)
+        if getattr(policy, "name", None) == "rlearn":
+            def _count_pixels(x: torch.Tensor) -> int:
+                # Expect shapes: (B,T,C,H,W) or (B,C,H,W)
+                if x.dim() == 5:
+                    b, t, _, h, w = x.shape
+                    return int(b * t * h * w)
+                if x.dim() == 4:
+                    b, _, h, w = x.shape
+                    return int(b * h * w)
+                return 0
+
+            total_pixels = 0
+            for k, v in batch.items():
+                if "image" not in k.lower():
+                    continue
+                if isinstance(v, torch.Tensor):
+                    total_pixels += _count_pixels(v)
+                elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], torch.Tensor):
+                    # list of T tensors shaped (B,C,H,W)
+                    total_pixels += sum(_count_pixels(t) for t in v)
+
+            # Avoid div-by-zero
+            upd_s = max(train_tracker.update_s, 1e-8)
+            pix_per_s = float(total_pixels) / upd_s
+            try:
+                train_tracker.pix_s = pix_per_s
+            except Exception:
+                pass
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
