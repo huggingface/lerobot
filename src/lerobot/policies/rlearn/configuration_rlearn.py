@@ -61,7 +61,7 @@ class RLearNConfig(PreTrainedConfig):
     use_tanh_head: bool = False  # when True, bound outputs in [-1, 1]
 
     # Training
-    learning_rate: float = 3e-5
+    learning_rate: float = 1e-4
     weight_decay: float = 0.01
     
     # Performance optimizations
