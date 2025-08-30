@@ -69,7 +69,7 @@ class RLearNConfig(PreTrainedConfig):
     compile_model: bool = True  # torch.compile for additional speedup
 
     # ReWiND-specific parameters
-    use_video_rewind: bool = False  # Enable video rewinding augmentation
+    use_video_rewind: bool = True  # Enable video rewinding augmentation
     rewind_prob: float = 0.8  # Probability of applying rewind to each sample (paper: ~80%)
     rewind_last3_prob: float = 0.1  # Of the rewinds, 10% only rewind the last 3 frames
     use_mismatch_loss: bool = False  # Enable mismatched language-video loss
