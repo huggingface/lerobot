@@ -67,7 +67,6 @@ class RLearNConfig(PreTrainedConfig):
     # Performance optimizations
     use_amp: bool = True  # Mixed precision training for speed boost
     compile_model: bool = True  # torch.compile for additional speedup
-    video_backend: str = "pyav"  # Use PyAV for faster video decoding (vs torchcodec)
 
     # ReWiND-specific parameters
     use_video_rewind: bool = True  # Enable video rewinding augmentation
