@@ -50,7 +50,6 @@ class RLearNConfig(PreTrainedConfig):
     dim_feedforward: int = 2048
     dropout: float = 0.1
     pre_norm: bool = True
-    use_first_frame_positional_bias: bool = True
     frame_dropout_p: float = 0.0
     stride: int = 1
 
