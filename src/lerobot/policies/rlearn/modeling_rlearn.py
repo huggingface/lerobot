@@ -33,7 +33,7 @@ High-level Architecture
         |  per-frame encode
         v
   +------------------------------+
-  |  Vision Encoder (frozen)     |  e.g. DINOv2 (base)
+  |  Vision Encoder (frozen)     |  e.g. SigLIP2 (base)
   +------------------------------+
         |s
         |  pooled per-frame embeddings (BT, H_v)
@@ -46,7 +46,7 @@ High-level Architecture
                                     |                 |
                                     |                 v
                                     |      +------------------------------+
-                                    |      |  Text Encoder (frozen)       |  e.g. sentence-transformers
+                                    |      |  Text Encoder (frozen)       |  e.g. SigLIP2
                                     |      +------------------------------+
                                     |                 |
                                     |                 |  pooled text embedding (B, H_t)
@@ -68,7 +68,7 @@ High-level Architecture
     - reward_logits: (B, T', 1)  with T' ≤ T (affected by stride and frame dropout)
 
 Notes
-  - Uses DINOv2 (base, ~ViT-B) for vision and sentence-transformers (all-MiniLM-L12-v2) for text encoding.
+  - Uses SigLIP2 for both vision and text encoding.
   - Backbones (vision/text) are frozen by default; only projections, temporal module, and head are trainable.
   - Stride/frame dropout applied during training can subsample timesteps.
 """
@@ -77,6 +77,7 @@ from __future__ import annotations
 
 import math
 from itertools import chain
+from operator import truediv
 
 import torch
 import torch.nn.functional as F
@@ -103,10 +104,10 @@ from lerobot.policies.rlearn.configuration_rlearn import RLearNConfig
 class RLearNPolicy(PreTrainedPolicy):
     """Video-language conditioned reward model following ReWiND architecture exactly: https://github.com/lucidrains/rewind-reward-pytorch/blob/main/rewind_reward_pytorch/rewind_reward.py#L11.
 
-    - Visual encoder: frozen DINOv2 (base), returns per-frame embeddings.
-    - Text encoder: frozen sentence-transformers (all-MiniLM-L12-v2), returns a language embedding.
+    - Visual encoder: frozen SigLIP2, returns per-frame embeddings.
+    - Text encoder: frozen SigLIP2, returns a language embedding.
     - Temporal module: x_transformers Decoder with packed tokens [lang | register | video].
-    - Output: per-timestep rewards via HLGauss layer or categorical bins.
+    - Output: per-timestep rewards via HLGauss layer (continuous only).
     """
 
     config_class = RLearNConfig
@@ -116,31 +117,34 @@ class RLearNPolicy(PreTrainedPolicy):
         super().__init__(config)
         self.config = config
         self.episode_data_index = episode_data_index  # Store episode boundaries for progress calculation
-        self.categorical_rewards = config.categorical_rewards
 
-        # Encoders - ReWiND paper setup: DINOv2 for vision, sentence-transformers for text
-        from transformers import AutoImageProcessor, AutoModel
-        from sentence_transformers import SentenceTransformer
+        # Encoders - SigLIP2 for both vision and text
+        from transformers import AutoProcessor, AutoModel
         
-        # Load DINOv2 (base) vision encoder with its processor
-        self.vision_processor = AutoImageProcessor.from_pretrained(config.vision_model_name, use_fast=True)
-        self.vision_encoder = AutoModel.from_pretrained(config.vision_model_name)
+        # Load SigLIP2 processors and models
+        self.vision_processor = AutoProcessor.from_pretrained(config.vision_model_name, use_fast=True)
+        self.vision_model = AutoModel.from_pretrained(config.vision_model_name)
         
-        # Load sentence-transformers text encoder
-        self.text_encoder = SentenceTransformer(config.text_model_name)
+        self.text_processor = AutoProcessor.from_pretrained(config.text_model_name, use_fast=True)
+        self.text_model = AutoModel.from_pretrained(config.text_model_name)
         
-        # Move text encoder to same device as vision encoder (GPU if available)
+        # Move encoders to GPU if available
         if torch.cuda.is_available():
-            self.text_encoder = self.text_encoder.to('cuda')
+            self.vision_model = self.vision_model.to('cuda')
+            self.text_model = self.text_model.to('cuda')
         
-        # DINOv2-base has 768 hidden size, all-MiniLM-L12-v2 has 384
-        self.vision_hidden = 768  # DINOv2-base
-        self.text_hidden = 384  # all-MiniLM-L12-v2
+        # Get hidden sizes from SigLIP2 config
+        vh = getattr(getattr(self.vision_model, 'config', None), 'vision_config', None)
+        self.vision_hidden = getattr(vh, 'hidden_size', 768)
+        
+        th = getattr(getattr(self.text_model, 'config', None), 'text_config', None)
+        self.text_hidden = getattr(th, 'hidden_size', 512)
 
+        # Freeze encoders if requested
         if config.freeze_backbones:
-            for p in self.vision_encoder.parameters():
+            for p in self.vision_model.parameters():
                 p.requires_grad = False
-            for p in self.text_encoder.parameters():
+            for p in self.text_model.parameters():
                 p.requires_grad = False
 
         # x_transformers Decoder (matching ReWiND exactly)
@@ -170,7 +174,7 @@ class RLearNPolicy(PreTrainedPolicy):
         from x_mlps_pytorch import Feedforwards
         self.mlp_predictor = Feedforwards(
             dim=config.dim_model,
-            dim_out=config.reward_bins if config.categorical_rewards else None,
+            dim_out=None,
             depth=config.mlp_predictor_depth
         )
         
@@ -196,6 +200,17 @@ class RLearNPolicy(PreTrainedPolicy):
             except Exception:
                 # Defer to runtime error with guidance if loading fails
                 self.episode_data_index = None
+        
+        # Apply torch.compile for additional speedup if enabled
+        if getattr(config, "compile_model", False):
+            try:
+                self.vision_model = torch.compile(self.vision_model, mode="reduce-overhead")
+                self.text_model = torch.compile(self.text_model, mode="reduce-overhead")
+                self.decoder = torch.compile(self.decoder, mode="reduce-overhead")
+                print("✅ Applied torch.compile to encoders and transformer")
+            except Exception as e:
+                print(f"⚠️ torch.compile failed: {e}")
+                # Continue without compilation
 
     def get_optim_params(self) -> dict:
         # Train only projections, temporal module and head by default if backbones are frozen
@@ -247,15 +262,8 @@ class RLearNPolicy(PreTrainedPolicy):
         # Process video frames
         video_embeds = self._encode_video_frames(frames).to(device)  # (B, T, D_vision)
         
-        # Language embeddings (get lengths BEFORE padding)
-        lang_embeds_list = self.text_encoder.encode(
-            commands,
-            output_value='token_embeddings',
-            convert_to_tensor=False,
-        )
-        lens = torch.tensor([le.shape[0] for le in lang_embeds_list], device=device)
-        lang_embeds = pad_sequence([torch.as_tensor(le, device=device) for le in lang_embeds_list], batch_first=True)
-        mask = self._mask_from_lens(lens)
+        # Language embeddings + mask
+        lang_embeds, mask = self._encode_language_tokens(commands, device)
         
         # Register tokens
         register_tokens = repeat(self.register_tokens, 'n d -> b n d', b=B)
@@ -284,11 +292,8 @@ class RLearNPolicy(PreTrainedPolicy):
         # MLP predictor
         video_frame_embeds = self.mlp_predictor(attended_video_tokens)
         
-        # Get rewards via HLGauss layer
-        if self.categorical_rewards:
-            return video_frame_embeds  # Return logits directly
-        else:
-            return self.hl_gauss_layer(video_frame_embeds).squeeze(-1)  # (B, T)
+        # Get rewards via HLGauss layer (continuous rewards only)
+        return self.hl_gauss_layer(video_frame_embeds).squeeze(-1)  # (B, T)
 
     def normalize_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         # Initial version: no-op; rely on upstream processors if any
@@ -299,7 +304,7 @@ class RLearNPolicy(PreTrainedPolicy):
         return batch
 
     def _encode_video_frames(self, frames: Tensor) -> Tensor:
-        """Encode video frames through DINOv2 to get per-frame embeddings.
+        """Encode video frames through SigLIP2 to get per-frame embeddings.
         
         Args:
             frames: (B, T, C, H, W)
@@ -310,22 +315,34 @@ class RLearNPolicy(PreTrainedPolicy):
         B, T, C, H, W = frames.shape
         flat = rearrange(frames, 'b t c h w -> (b t) c h w')
         
-        # Process with DINOv2
-        images_list = []
-        for i in range(B * T):
-            img = flat[i].permute(1, 2, 0)  # CHW -> HWC
-            if img.dtype == torch.uint8:
-                img = img.cpu().numpy()
-            else:
-                img = (img.clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
-            images_list.append(img)
+        # Optimized: Process tensor directly without numpy conversion
+        device = next(self.vision_model.parameters()).device
         
-        processed = self.vision_processor(images=images_list, return_tensors="pt")
-        pixel_values = processed["pixel_values"].to(next(self.vision_encoder.parameters()).device)
-        vision_outputs = self.vision_encoder(pixel_values)
+        # Normalize to [0, 1] if needed and ensure correct format for SigLIP2
+        if flat.dtype != torch.float32:
+            flat = flat.float()
+        if flat.max() > 1.0:
+            flat = flat / 255.0
+            
+        # SigLIP2 expects images in [0, 1] range, RGB format
+        # Resize and normalize in batch - much faster than individual processing
+        try:
+            # Try direct tensor processing (faster path)
+            processed = self.vision_processor(images=flat, return_tensors="pt")
+            pixel_values = processed["pixel_values"].to(device)
+        except:
+            # Fallback to individual processing if needed, but optimized
+            # Convert entire batch to numpy at once (much faster)
+            flat_numpy = flat.permute(0, 2, 3, 1).cpu().numpy()  # (BT, H, W, C)
+            images_list = [flat_numpy[i] for i in range(B * T)]
+            
+            processed = self.vision_processor(images=images_list, return_tensors="pt") 
+            pixel_values = processed["pixel_values"].to(device)
         
-        # Extract CLS tokens
-        cls_tokens = vision_outputs.last_hidden_state[:, 0]  # (BT, D_vision)
+        # Process in batch through vision model
+        vision_outputs = self.vision_model.vision_model(pixel_values=pixel_values)
+        cls_tokens = vision_outputs.last_hidden_state[:, 0]
+        
         return rearrange(cls_tokens, '(b t) d -> b t d', b=B, t=T)
     
     def _mask_from_lens(self, lens: Tensor) -> Tensor:
@@ -343,6 +360,9 @@ class RLearNPolicy(PreTrainedPolicy):
         Note: Progress labels (0 to 1) are generated automatically for each episode.
               No REWARD key is needed in the batch.
         """
+        import time
+        forward_start = time.perf_counter()
+        
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
 
@@ -378,18 +398,15 @@ class RLearNPolicy(PreTrainedPolicy):
         elif not isinstance(commands, list):
             commands = [str(commands)] * B
 
-        # Process video frames through DINOv2
+        # Process video frames through SigLIP2
+        vision_start = time.perf_counter()
         video_embeds = self._encode_video_frames(frames).to(device)  # (B, T_eff, D_vision)
+        vision_time = time.perf_counter() - vision_start
         
-        # Language embeddings (get lengths BEFORE padding)
-        lang_embeds_list = self.text_encoder.encode(
-            commands,
-            output_value='token_embeddings',
-            convert_to_tensor=False,
-        )
-        lens = torch.tensor([le.shape[0] for le in lang_embeds_list], device=device)
-        lang_embeds = pad_sequence([torch.as_tensor(le, device=device) for le in lang_embeds_list], batch_first=True)
-        mask = self._mask_from_lens(lens)
+        # Language embeddings + mask
+        lang_start = time.perf_counter()
+        lang_embeds, mask = self._encode_language_tokens(commands, device)
+        lang_time = time.perf_counter() - lang_start
         
         # Token preparation
         # Register tokens
@@ -411,6 +428,7 @@ class RLearNPolicy(PreTrainedPolicy):
         mask = F.pad(mask, (0, register_tokens.shape[1] + video_tokens.shape[1]), value=True)
         
         # Forward through x_transformers Decoder
+        transformer_start = time.perf_counter()
         attended = self.decoder(tokens, mask=mask)
         
         # Unpack and get video token features
@@ -418,6 +436,7 @@ class RLearNPolicy(PreTrainedPolicy):
         
         # MLP predictor
         video_frame_embeds = self.mlp_predictor(attended_video_tokens)
+        transformer_time = time.perf_counter() - transformer_start
 
         # Generate progress labels on-the-fly (ReWiND approach)
         # IMPORTANT: Progress should be 0-1 across the ENTIRE EPISODE, not just the temporal window
@@ -500,27 +519,15 @@ class RLearNPolicy(PreTrainedPolicy):
         # During inference, we might not want to compute loss
         if not self.training and target is None:
             # Return predictions without loss
-            if self.categorical_rewards:
-                return video_frame_embeds.mean() * 0.0, {"has_labels": 0.0}
-            else:
-                rewards = self.hl_gauss_layer(video_frame_embeds)
-                return rewards.mean() * 0.0, {"rewards_mean": rewards.mean().item()}
+            rewards = self.hl_gauss_layer(video_frame_embeds)
+            return rewards.mean() * 0.0, {"rewards_mean": rewards.mean().item()}
 
-        # Calculate loss using HLGauss or categorical
-        if self.categorical_rewards:
-            # Categorical cross-entropy loss
-            assert target.dtype in (torch.long, torch.int), "Categorical rewards require integer targets"
-            loss = F.cross_entropy(
-                rearrange(video_frame_embeds, 'b t l -> b l t'),
-                target.long(),
-                ignore_index=-1
-            )
-        else:
-            # HLGauss loss or MSE regression
-            assert target.dtype == torch.float, "Continuous rewards require float targets"
-            # Create video mask for variable length support
-            video_mask = torch.ones(B, T_eff, dtype=torch.bool, device=device)
-            loss = self.hl_gauss_layer(video_frame_embeds, target[:, :T_eff], mask=video_mask)
+        # Calculate loss using HLGauss (continuous rewards only)
+        loss_start = time.perf_counter()
+        assert target.dtype == torch.float, "Continuous rewards require float targets"
+        # Create video mask for variable length support
+        video_mask = torch.ones(B, T_eff, dtype=torch.bool, device=device)
+        loss = self.hl_gauss_layer(video_frame_embeds, target[:, :T_eff], mask=video_mask)
 
         # Optional: Mismatched video-language pairs loss
         L_mismatch = torch.zeros((), device=device)
@@ -530,19 +537,12 @@ class RLearNPolicy(PreTrainedPolicy):
                 shuffled_indices = torch.randperm(B, device=device)
                 shuffled_commands = [commands[i] for i in shuffled_indices]
                 
-                # Re-encode with mismatched language (compute lengths before padding)
-                lang_embeds_mm_list = self.text_encoder.encode(
-                    shuffled_commands,
-                    output_value='token_embeddings',
-                    convert_to_tensor=False,
-                )
-                lens_mm = torch.tensor([le.shape[0] for le in lang_embeds_mm_list], device=device)
-                lang_embeds_mm = pad_sequence([torch.as_tensor(le, device=device) for le in lang_embeds_mm_list], batch_first=True)
+                # Re-encode with mismatched language
+                lang_embeds_mm, mask_mm = self._encode_language_tokens(shuffled_commands, device)
                 lang_tokens_mm = self.to_lang_tokens(lang_embeds_mm)
                 
                 # Pack and forward
                 tokens_mm, lang_video_packed_shape_mm = pack((lang_tokens_mm, register_tokens, video_tokens), 'b * d')
-                mask_mm = self._mask_from_lens(lens_mm)
                 mask_mm = F.pad(mask_mm, (0, register_tokens.shape[1] + video_tokens.shape[1]), value=True)
                 attended_mm = self.decoder(tokens_mm, mask=mask_mm)
                 _, _, attended_video_mm = unpack(attended_mm, lang_video_packed_shape_mm, 'b * d')
@@ -550,17 +550,13 @@ class RLearNPolicy(PreTrainedPolicy):
                 
                 # Mismatched pairs should predict zero progress
                 zeros_target = torch.zeros_like(target[:, :T_eff])
-                if self.categorical_rewards:
-                    L_mismatch = F.cross_entropy(
-                        rearrange(mismatch_embeds, 'b t l -> b l t'),
-                        zeros_target.long(),
-                        ignore_index=-1
-                    )
-                else:
-                    L_mismatch = self.hl_gauss_layer(mismatch_embeds, zeros_target, mask=video_mask)
+                L_mismatch = self.hl_gauss_layer(mismatch_embeds, zeros_target, mask=video_mask)
 
         # Total loss
         total_loss = loss + L_mismatch
+        loss_time = time.perf_counter() - loss_start
+        
+        total_forward_time = time.perf_counter() - forward_start
 
         # Log individual loss components
         loss_dict.update({
@@ -568,10 +564,64 @@ class RLearNPolicy(PreTrainedPolicy):
             "loss_main": float(loss.detach().item()),
             "loss_mismatch": float(L_mismatch.detach().item()),
             "t_eff": float(T_eff),
-            "lang_len_mean": float(lens.float().mean().item()),
+            "lang_len_mean": float(mask.sum().float().mean().item()), # Use mask to get actual lengths
+            # Timing information
+            "timing_vision_ms": float(vision_time * 1000),
+            "timing_language_ms": float(lang_time * 1000),
+            "timing_transformer_ms": float(transformer_time * 1000),
+            "timing_loss_ms": float(loss_time * 1000),
+            "timing_total_forward_ms": float(total_forward_time * 1000),
         })
+        
+        # Print detailed timing breakdown during training
+        if self.training:
+            print(f"RLearN Forward Pass Timing (B={B}, T_eff={T_eff}):")
+            print(f"  Vision encoding:    {vision_time*1000:.2f} ms")
+            print(f"  Language encoding:  {lang_time*1000:.2f} ms")
+            print(f"  Transformer:        {transformer_time*1000:.2f} ms")
+            print(f"  Loss computation:   {loss_time*1000:.2f} ms")
+            print(f"  Total forward pass: {total_forward_time*1000:.2f} ms")
+            print(f"  Throughput:         {B*T_eff/(total_forward_time):.1f} frames/sec")
 
         return total_loss, loss_dict
+
+    def _encode_language_tokens(self, commands: list[str], device: torch.device) -> tuple[Tensor, Tensor]:
+        """Return (embeddings, mask) for language tokens using SigLIP2.
+        embeddings: (B, L, D); mask: (B, L) True for valid tokens.
+        """
+        # Optimized: Process all commands in batch (much faster than individual processing)
+        proc = self.text_processor(
+            text=commands, 
+            return_tensors='pt', 
+            padding='max_length', 
+            max_length=64,
+            truncation=True  # Ensure we don't exceed max length
+        )
+        
+        # Simplified access - SigLIP2 processor should return these directly
+        input_ids = proc.get('input_ids')
+        attention_mask = proc.get('attention_mask')
+        
+        if input_ids is None:
+            # Fallback for different processor structures
+            if hasattr(proc, 'input_ids'):
+                input_ids = proc.input_ids
+                attention_mask = getattr(proc, 'attention_mask', None)
+            else:
+                raise ValueError(f"Could not find input_ids in SigLIP processor output. Keys: {list(proc.keys())}")
+        
+        # Move to device efficiently
+        input_ids = input_ids.to(device, non_blocking=True)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device, non_blocking=True) 
+        else:
+            attention_mask = torch.ones_like(input_ids, device=device)
+        
+        # Batch encode through text model
+        outputs = self.text_model.text_model(input_ids=input_ids, attention_mask=attention_mask)
+        last_hidden = outputs.last_hidden_state
+        mask = attention_mask.bool()
+        return last_hidden, mask
 
     def _extract_episode_and_frame_indices(self, batch: dict[str, Tensor]) -> tuple[Tensor | None, Tensor | None]:
         """Try to extract (episode_index, frame_index) tensors from batch or complementary data.
@@ -755,7 +805,8 @@ def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5, last3_prob: flo
     B, T, C, H, W = frames.shape
     device = frames.device
 
-    # Create default progress labels (linearly increasing from 0 to 1)
+    # Create default progress labels (linearly increasing from 0 to 1 with denominator T-1)
+    # torch.linspace(0, 1, T) already yields j/(T-1) at step j
     default_progress = torch.linspace(0, 1, T, device=device).unsqueeze(0).expand(B, -1)
 
     # Apply rewind augmentation to each sample in batch independently
@@ -773,14 +824,15 @@ def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5, last3_prob: flo
             continue
 
         # Apply rewinding to this video
-        # Split point i: between frame 2 and T-1
+        # Split point i: between frame 2 and T-1 (upper bound exclusive in torch.randint)
         i = torch.randint(2, T, (1,)).item()
 
-        # Rewind length k: between 1 and i-1 frames, with option to force last-3 frames occasionally
+        # Rewind length k: between 1 and i-1 frames
         if last3_prob is not None and torch.rand(1).item() < last3_prob and i >= 3:
             k = min(3, i - 1)
         else:
-            k = torch.randint(1, min(i, T - i + 1), (1,)).item()
+            k = torch.randint(1, i, (1,)).item()
+            k = min(k, i - 1)
 
         # Create rewound sequence: o1...oi, oi-1, ..., oi-k
         forward_frames = frames[b, :i]  # Frames up to split point
@@ -789,25 +841,28 @@ def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5, last3_prob: flo
         # Concatenate forward and reverse parts
         rewound_seq = torch.cat([forward_frames, reverse_frames], dim=0)
 
-        # Pad with zeros if needed to maintain shape
+        # Pad by repeating the last real frame if needed to maintain fixed length T
         if rewound_seq.shape[0] < T:
-            padding = torch.zeros(T - rewound_seq.shape[0], C, H, W, device=device)
-            rewound_seq = torch.cat([rewound_seq, padding], dim=0)
+            last_frame = rewound_seq[-1:]
+            pad_frames = last_frame.expand(T - rewound_seq.shape[0], C, H, W)
+            rewound_seq = torch.cat([rewound_seq, pad_frames], dim=0)
         elif rewound_seq.shape[0] > T:
             rewound_seq = rewound_seq[:T]
 
         # Create corresponding progress labels
-        # Forward part: increasing progress
-        forward_progress = torch.linspace(0, i / T, i, device=device)
-        # Reverse part: decreasing progress
-        reverse_progress = torch.linspace(i / T, max(0, (i - k) / T), k, device=device)
+        denom = max(T - 1, 1)
+        # Forward part: increasing progress using denominator T-1
+        forward_progress = torch.linspace(0, (i - 1) / denom, i, device=device)
+        # Reverse part: decreasing progress starting from (i-1)/(T-1)
+        reverse_progress = torch.linspace((i - 1) / denom, max(0.0, (i - k) / denom), k, device=device)
 
         rewound_progress = torch.cat([forward_progress, reverse_progress])
 
-        # Pad progress if needed
+        # Pad progress by repeating the last real progress if needed
         if rewound_progress.shape[0] < T:
-            padding = torch.zeros(T - rewound_progress.shape[0], device=device)
-            rewound_progress = torch.cat([rewound_progress, padding])
+            last_val = rewound_progress[-1]
+            pad_vals = last_val.expand(T - rewound_progress.shape[0])
+            rewound_progress = torch.cat([rewound_progress, pad_vals])
         elif rewound_progress.shape[0] > T:
             rewound_progress = rewound_progress[:T]
 

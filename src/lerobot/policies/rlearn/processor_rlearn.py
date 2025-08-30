@@ -60,10 +60,10 @@ def make_rlearn_processor(
         ),
         ToBatchProcessor(),
         RLearnLanguageFromTaskProcessor(),
-        # Use the text model name for tokenizer to keep vocab aligned with text tower
+        # Use SigLIP2 for tokenizer to keep vocab aligned with text tower
         TokenizerProcessor(
             tokenizer_name=config.text_model_name,
-            max_length=128,
+            max_length=64,
             padding="max_length",
             truncation=True,
             padding_side="right",

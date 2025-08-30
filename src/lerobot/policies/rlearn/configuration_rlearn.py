@@ -34,13 +34,13 @@ class RLearNConfig(PreTrainedConfig):
 
     Notes:
       - This follows the ReWiND paper architecture. It uses frozen vision/text encoders
-        (DINO v3 for vision, sentence-transformers for language) and trains a
+        (SigLIP2 for both vision and language) and trains a
         lightweight temporal aggregator + head.
     """
 
-    # Encoders - Using DINOv2 (base) for vision and sentence-transformers for text (ReWiND paper)
-    vision_model_name: str = "facebook/dinov2-base"
-    text_model_name: str = "sentence-transformers/all-MiniLM-L12-v2"
+    # Encoders - Using SigLIP2 for both vision and text
+    vision_model_name: str = "google/siglip2-base-patch16-224"
+    text_model_name: str = "google/siglip2-base-patch16-224"
     freeze_backbones: bool = True
 
     # Temporal aggregator
@@ -63,6 +63,10 @@ class RLearNConfig(PreTrainedConfig):
     # Training
     learning_rate: float = 3e-5
     weight_decay: float = 0.01
+    
+    # Performance optimizations
+    use_amp: bool = True  # Mixed precision training for speed boost
+    compile_model: bool = True  # torch.compile for additional speedup
 
     # ReWiND-specific parameters
     use_video_rewind: bool = False  # Enable video rewinding augmentation
@@ -85,7 +89,7 @@ class RLearNConfig(PreTrainedConfig):
     )
 
     # Architectural knobs to better mirror ReWiND
-    num_register_tokens: int = 4
+    num_register_tokens: int = 4  # register / memory tokens, can't hurt
     mlp_predictor_depth: int = 3  # depth of the per-frame MLP head
 
     # HLGauss loss parameters
@@ -93,8 +97,7 @@ class RLearNConfig(PreTrainedConfig):
     reward_min_value: float = 0.0
     reward_max_value: float = 1.0
     reward_hl_gauss_loss_num_bins: int = 20
-    categorical_rewards: bool = False
-    reward_bins: int = 10  # only used if categorical_rewards=True
+    
 
     # Optional: path to episodes.jsonl to build full-episode indices automatically
     # Default to common dataset layout: <dataset_root>/meta/episodes.jsonl
