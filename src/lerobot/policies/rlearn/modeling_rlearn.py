@@ -162,16 +162,10 @@ class RLearNPolicy(PreTrainedPolicy):
         self.to_lang_tokens = nn.Linear(self.text_hidden, config.dim_model)
         self.to_video_tokens = nn.Linear(self.vision_hidden, config.dim_model)
 
-        # Full positional encoding for all frames (helps learn temporal structure)
-        # Using sinusoidal positional encoding for better temporal understanding
-        pe = torch.zeros(config.max_seq_len, config.dim_model)
-        position = torch.arange(0, config.max_seq_len).unsqueeze(1).float()
-        div_term = torch.exp(torch.arange(0, config.dim_model, 2).float() * 
-                            -(math.log(10000.0) / config.dim_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        self.pos_embedding = nn.Parameter(pe, requires_grad=True)
-        self.first_pos_emb = None
+        # Temporal positional encoding for window-relative positions only
+        # This helps understand temporal order within 16-frame windows without enabling 
+        # episode-level progress cheating (since episodes are 100-300 frames)
+        self.temporal_pos_embedding = nn.Parameter(torch.randn(config.max_seq_len, config.dim_model) * 0.01)
         
         # Register / memory / attention sink tokens
         self.num_register_tokens = config.num_register_tokens
@@ -270,10 +264,9 @@ class RLearNPolicy(PreTrainedPolicy):
         # Project embeddings
         lang_tokens = self.to_lang_tokens(lang_embeds)
         video_tokens = self.to_video_tokens(video_embeds)
-        
-        # Full positional encoding for temporal learning
-        T_video = video_tokens.shape[1]
-        video_tokens = video_tokens + self.pos_embedding[:T_video]
+        # Add temporal positional encoding (window-relative only)
+        T_video = video_tokens.shape[1] 
+        video_tokens = video_tokens + self.temporal_pos_embedding[:T_video]
         
         # Pack all tokens for attention
         tokens, lang_video_packed_shape = pack((lang_tokens, register_tokens, video_tokens), 'b * d')
@@ -415,9 +408,9 @@ class RLearNPolicy(PreTrainedPolicy):
         video_tokens = self.to_video_tokens(video_embeds)
         
 
-        # Full positional encoding for temporal learning
+        # Add temporal positional encoding (window-relative only)  
         T_video = video_tokens.shape[1]
-        video_tokens = video_tokens + self.pos_embedding[:T_video]
+        video_tokens = video_tokens + self.temporal_pos_embedding[:T_video]
         
         # Pack all tokens for attention [lang | register | video]
         tokens, lang_video_packed_shape = pack((lang_tokens, register_tokens, video_tokens), 'b * d')
