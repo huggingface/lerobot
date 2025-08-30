@@ -222,11 +222,7 @@ class ConRFTPolicy(PreTrainedPolicy):
 
     def _encode_state(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
         """Encode observations into state representation using VLA"""
-        if self.encoder_actor is not None:
-            return self.encoder_actor(batch)
-        else:
-            # When no VLA is used, the actor shares the critic's encoder.
-            return self.encoder_critic(batch), None
+        return self.encoder_actor(batch)
 
     def get_optim_params(self) -> dict:
         """Return parameters for optimization"""
@@ -249,8 +245,8 @@ class ConRFTPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions - not used in ConRFT"""
-        raise NotImplementedError("ConRFT does not support action chunking")
+        """Predict a chunk of actions given environment observations."""
+        raise NotImplementedError("ConRFTPolicy does not support action chunking. It returns single actions!")
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
