@@ -96,6 +96,10 @@ class RLearNConfig(PreTrainedConfig):
     categorical_rewards: bool = False
     reward_bins: int = 10  # only used if categorical_rewards=True
 
+    # Optional: path to episodes.jsonl to build full-episode indices automatically
+    # Default to common dataset layout: <dataset_root>/meta/episodes.jsonl
+    episodes_jsonl_path: str | None = "meta/episodes.jsonl"
+
     def validate_features(self) -> None:
         # Require at least one image feature. Language is recommended but optional (can be blank).
         if not self.image_features:
