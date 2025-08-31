@@ -56,9 +56,6 @@ class RLearNConfig(PreTrainedConfig):
     # Sequence length, amount of past frames including current one to use in the temporal model
     max_seq_len: int = 16
 
-    # Head
-    use_tanh_head: bool = False  # when True, bound outputs in [-1, 1]
-
     # Training
     learning_rate: float = 1e-3
     weight_decay: float = 0.01

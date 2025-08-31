@@ -255,10 +255,10 @@ class RLearNPolicy(PreTrainedPolicy):
         frames = extract_visual_sequence(batch, target_seq_len=self.config.max_seq_len)
         B, T, C, H, W = frames.shape
 
-        # Apply stride (no dropout during eval)
-        idx = torch.arange(0, T, self.stride, device=frames.device)
-        frames = frames[:, idx]
-        T_eff = frames.shape[1]
+        # CRITICAL FIX: Do NOT apply stride during evaluation
+        # During evaluation, we want to process all frames in the sliding window
+        # Stride should only be used during training to reduce computational cost
+        T_eff = T  # Use all frames during evaluation
 
         # Get language commands
         commands = batch.get(OBS_LANGUAGE, None)
