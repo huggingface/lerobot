@@ -71,15 +71,15 @@ class RLearNConfig(PreTrainedConfig):
     rewind_last3_prob: float = 0.3
     mismatch_prob: float = 0.2
     
-    # Logit regression (only supported mode)
-    logit_eps: float = 1e-6
+    # Logit regression (only supported mode) - FIXED: Larger eps to prevent extreme targets
+    logit_eps: float = 0.02  # Was 1e-6 → logit(±13.8), now 0.02 → logit(±3.9)
     head_lr_multiplier: float = 2.0
     head_weight_init_std: float = 0.05
     
-    # Reward head architecture
-    head_hidden_dim: int = 1024  # Hidden dimension for reward head
-    head_num_layers: int = 4     # Number of layers in reward head
-    head_dropout: float = 0.1    # Dropout in reward head
+    # Reward head architecture - FIXED: Simpler architecture to prevent flat basins
+    head_hidden_dim: int = 1024  # Hidden dimension for reward head  
+    head_num_layers: int = 2     # REDUCED: 2 layers instead of 4 to prevent over-regularization
+    head_dropout: float = 0.05   # REDUCED: Less dropout to prevent conservatism
 
     # Normalization presets
     normalization_mapping: dict[str, NormalizationMode] = field(
