@@ -507,17 +507,39 @@ class RLearNPolicy(PreTrainedPolicy):
                 # Calculate progress for each frame in the temporal window
                 all_progress = []
                 
-                # DEBUG: Log first sample's target calculation
-                debug_first_sample = True
-                if debug_first_sample and torch.rand(1).item() < 0.05:  # 5% chance
-                    ep_idx_debug = episode_indices[0].item()
-                    frame_idx_debug = frame_indices[0].item()
-                    ep_start_debug = self.episode_data_index["from"][ep_idx_debug].item()
-                    ep_end_debug = self.episode_data_index["to"][ep_idx_debug].item()
-                    ep_length_debug = ep_end_debug - ep_start_debug
-                    print(f"\n=== TARGET DEBUG ===")
-                    print(f"Episode {ep_idx_debug}: length={ep_length_debug}, current_frame={frame_idx_debug}")
+                # DEBUG: Log indexing details for first sample occasionally
+                debug_indexing = torch.rand(1).item() < 0.05  # 5% chance
+                if debug_indexing:
+                    print(f"\n=== INDEXING DEBUG ===")
                     print(f"Delta indices: {delta_indices}")
+                    print(f"Batch size: {B}")
+                    
+                    # Check if batch samples have diverse frame indices (red flag if all identical)
+                    unique_frames = torch.unique(frame_indices).tolist()
+                    unique_episodes = torch.unique(episode_indices).tolist()
+                    print(f"Unique frame indices in batch: {unique_frames[:10]}{'...' if len(unique_frames) > 10 else ''}")
+                    print(f"Unique episode indices in batch: {unique_episodes[:10]}{'...' if len(unique_episodes) > 10 else ''}")
+                    
+                    if len(unique_frames) == 1:
+                        print("🚨 RED FLAG: All samples have IDENTICAL frame index! This causes identical targets.")
+                    
+                    # First sample details
+                    ep_idx_0 = episode_indices[0].item()
+                    frame_idx_0 = frame_indices[0].item()
+                    ep_start_0 = self.episode_data_index["from"][ep_idx_0].item()
+                    ep_end_0 = self.episode_data_index["to"][ep_idx_0].item()
+                    ep_length_0 = ep_end_0 - ep_start_0
+                    print(f"First sample - Episode: {ep_idx_0}, Frame: {frame_idx_0}/{ep_length_0}, Episode length: {ep_length_0}")
+                    
+                    # Check boundary proximity
+                    frames_from_start = frame_idx_0
+                    frames_from_end = ep_length_0 - frame_idx_0 - 1
+                    print(f"First sample proximity - Start: {frames_from_start}, End: {frames_from_end}")
+                    
+                    if frames_from_start < 15:
+                        print(f"⚠️  Close to episode START: many deltas will go negative")
+                    if frames_from_end < 15:
+                        print(f"⚠️  Close to episode END: many deltas will exceed episode")
                 
                 for i, delta in enumerate(delta_indices):
                     # For each sample, calculate the progress of the frame at delta offset
@@ -534,23 +556,32 @@ class RLearNPolicy(PreTrainedPolicy):
                         ep_end = self.episode_data_index["to"][ep_idx].item()
                         ep_length = ep_end - ep_start
 
-                        # Clamp to episode boundaries (frame_index is relative to episode)
-                        target_frame_idx_clamped = max(0, min(ep_length - 1, target_frame_idx))
-
-                        # Calculate progress for this frame
-                        prog = target_frame_idx_clamped / max(1, ep_length - 1)
+                        # Calculate progress with proper boundary handling
+                        if target_frame_idx < 0:
+                            # Before episode start: extrapolate negative progress
+                            prog = target_frame_idx / max(1, ep_length - 1)
+                        elif target_frame_idx >= ep_length:
+                            # After episode end: extrapolate progress beyond 1.0
+                            prog = target_frame_idx / max(1, ep_length - 1)
+                        else:
+                            # Within episode: normal progress calculation
+                            prog = target_frame_idx / max(1, ep_length - 1)
+                            
+                        # Clip to reasonable bounds to prevent extreme values
+                        prog = max(-1.0, min(2.0, prog))  # Allow some extrapolation
                         frame_progress.append(prog)
                         
-                        # DEBUG: Log first sample calculation
-                        if debug_first_sample and b_idx == 0 and torch.rand(1).item() < 0.05:
-                            print(f"Frame {i:2d} (delta={delta:3d}): target_idx={target_frame_idx:3d} → clamped={target_frame_idx_clamped:3d} → progress={prog:.6f}")
+                        # DEBUG: Log first sample's calculation
+                        if debug_indexing and b_idx == 0:
+                            boundary_status = "BEFORE" if target_frame_idx < 0 else "AFTER" if target_frame_idx >= ep_length else "WITHIN"
+                            print(f"  Frame {i:2d} (δ={delta:3d}): target_idx={target_frame_idx:3d} [{boundary_status}] → progress={prog:.6f}")
 
                     all_progress.append(
                         torch.tensor(frame_progress, device=video_frame_embeds.device, dtype=video_frame_embeds.dtype)
                     )
-
-                if debug_first_sample and torch.rand(1).item() < 0.05:
-                    print("=" * 20)
+                
+                if debug_indexing:
+                    print("=" * 22)
 
                 # Stack to get (B, T) tensor where T is the temporal sequence length
                 target = torch.stack(all_progress, dim=1)  # (B, max_seq_len)
@@ -650,6 +681,23 @@ class RLearNPolicy(PreTrainedPolicy):
                 # Show randomly sampled sequence for comparison
                 print(f"Sample {sample_idx} targets (all 16):", target[sample_idx].cpu().numpy())
                 print(f"Sample {sample_idx} preds (all 16):  ", preds[sample_idx].cpu().numpy())
+                
+                # TARGET FIX VERIFICATION: Check if we still have flat/stuck patterns
+                sample_targets = target[sample_idx].cpu().numpy()
+                # Count consecutive identical values (should be minimal after fix)
+                consecutive_same = 0
+                max_consecutive = 0
+                for i in range(1, len(sample_targets)):
+                    if abs(sample_targets[i] - sample_targets[i-1]) < 1e-6:
+                        consecutive_same += 1
+                        max_consecutive = max(max_consecutive, consecutive_same + 1)
+                    else:
+                        consecutive_same = 0
+                
+                if max_consecutive >= 3:
+                    print(f"⚠️  STILL STUCK: {max_consecutive} consecutive identical targets!")
+                else:
+                    print(f"✅ TARGET FIXED: Max consecutive identical = {max_consecutive}")
                 print("="*25)
         
         total_forward_time = time.perf_counter() - forward_start
@@ -912,7 +960,7 @@ def extract_visual_sequence(batch: dict[str, Tensor], target_seq_len: int = None
             f"All keys: {available_keys}"
         )
 
-    # Pad sequence if needed
+    # Adjust sequence length if needed
     if target_seq_len is not None:
         B, T, C, H, W = frames.shape
         if T < target_seq_len:
@@ -925,6 +973,13 @@ def extract_visual_sequence(batch: dict[str, Tensor], target_seq_len: int = None
             import logging
 
             logging.debug(f"Padded sequence from {T} to {target_seq_len} frames by repeating first frame")
+        elif T > target_seq_len:
+            # Truncate to target length, keeping the most recent frames
+            frames = frames[:, -target_seq_len:]
+
+            import logging
+
+            logging.debug(f"Truncated sequence from {T} to {target_seq_len} frames by keeping most recent frames")
 
     return frames
 
