@@ -10,7 +10,7 @@ Usage:
     python src/lerobot/policies/rlearn/eval_script.py --model MODEL_NAME --dataset DATASET_REPO --episodes N
 
 Example:
-    python src/lerobot/policies/rlearn/eval_script.py --model pepijn223/rlearn_mse5 --dataset pepijn223/phone_pipeline_pickup1 --episodes 2
+    python src/lerobot/policies/rlearn/eval_script.py --model pepijn223/rlearn_18 --dataset pepijn223/phone_pipeline_pickup1 --episodes 2
 """
 
 import argparse
