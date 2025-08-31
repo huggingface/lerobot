@@ -188,6 +188,16 @@ def predict_rewards_sliding(model, frames, language, max_seq_len=16, batch_size=
         # Model returns (B, L) predictions for each temporal position
         values = model.predict_rewards(batch)  # torch.Tensor (B, L)
 
+        # DEBUG: Print model outputs to understand what's happening
+        if s == 0:  # Only print for first batch to avoid spam
+            print(f"\n=== DEBUG EVALUATION ===")
+            print(f"Model output shape: {values.shape}")
+            print(f"Model output range: [{values.min():.6f}, {values.max():.6f}]")
+            print(f"Model output mean: {values.mean():.6f}")
+            print(f"First few frame positions: {batch_positions[:5]}")
+            print(f"Model outputs for first sample (all positions): {values[0].cpu().numpy()}")
+            print("========================")
+
         if values.dim() == 2:
             # Extract the prediction corresponding to each frame's position in its window
             batch_preds = []
