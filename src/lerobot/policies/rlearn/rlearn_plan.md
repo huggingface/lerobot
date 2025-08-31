@@ -81,6 +81,8 @@ _ Open X-Embodiment (OXE)
   - Test rewind (evaluate) [x]
 - benchmark siglip 2 vs this implementation forward pass, debug speed [x]
 - use siglip 2 [x]
+- Fix evaluation bug !!! []
+- Fix sample episode padding bug !!! []
 - Overfit on one episode []
 - Cleanup code? [] + enable language loss
 - Convert python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=IPEC-COMMUNITY/bc_z_lerobot and train on 1 percent
@@ -92,6 +94,7 @@ _ Open X-Embodiment (OXE)
 - Add other datasets from OXE metioned in rewind []
 - Extend evaluation []
 - Ablation for size vision encoder, language encoder, temporal head []
+- Ablation one mlp head per frame or single mlp head []
 - Add other datasets metnioned here []
 - How can we improve spatial aware learning? solve issue of Contrastive learning and position []
 

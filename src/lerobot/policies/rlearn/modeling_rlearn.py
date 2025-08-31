@@ -508,7 +508,7 @@ class RLearNPolicy(PreTrainedPolicy):
                 all_progress = []
                 
                 # DEBUG: Log indexing details for first sample occasionally
-                debug_indexing = torch.rand(1).item() < 0.05  # 5% chance
+                debug_indexing = torch.rand(1).item() < 0.10  # 10% chance - increased for debugging
                 if debug_indexing:
                     print(f"\n=== INDEXING DEBUG ===")
                     print(f"Delta indices: {delta_indices}")
