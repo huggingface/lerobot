@@ -73,6 +73,11 @@ class RLearNConfig(PreTrainedConfig):
     logit_eps: float = 1e-6
     head_lr_multiplier: float = 2.0
     head_weight_init_std: float = 0.05
+    
+    # Reward head architecture
+    head_hidden_dim: int = 1024  # Hidden dimension for reward head
+    head_num_layers: int = 4     # Number of layers in reward head
+    head_dropout: float = 0.1    # Dropout in reward head
 
     # Normalization presets
     normalization_mapping: dict[str, NormalizationMode] = field(

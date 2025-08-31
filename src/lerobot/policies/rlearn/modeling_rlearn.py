@@ -184,22 +184,36 @@ class RLearNPolicy(PreTrainedPolicy):
         # Layer normalization before reward head to stabilize MLP outputs
         self.pre_reward_norm = nn.LayerNorm(config.dim_model)
         
-        # Temporal-aware regression head (logit mode only)
-        # Concatenates frame embedding with normalized temporal position
-        self.reward_head = nn.Sequential(
-            nn.Linear(config.dim_model + 1, config.dim_model),  # +1 for temporal position
-            nn.ReLU(),
-            nn.Linear(config.dim_model, 1)
-        )
+        # Temporal-aware regression head with increased capacity
+        # Build a deeper MLP for better visual-progress learning
+        head_layers = []
         
-        # Initialize temporal-aware head for logit regression
+        # Input layer: embedding + temporal position -> hidden
+        head_layers.extend([
+            nn.Linear(config.dim_model + 1, config.head_hidden_dim),  # +1 for temporal position
+            nn.ReLU(),
+            nn.Dropout(config.head_dropout)
+        ])
+        
+        # Hidden layers: multiple layers for complex visual-progress mapping
+        for _ in range(config.head_num_layers - 2):  # -2 for input and output layers
+            head_layers.extend([
+                nn.Linear(config.head_hidden_dim, config.head_hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(config.head_dropout)
+            ])
+        
+        # Output layer: hidden -> logit
+        head_layers.append(nn.Linear(config.head_hidden_dim, 1))
+        
+        self.reward_head = nn.Sequential(*head_layers)
+        
+        # Initialize the deeper temporal-aware head for logit regression
         with torch.no_grad():
-            # First layer: embedding + position -> embedding
-            nn.init.normal_(self.reward_head[0].weight, 0.0, config.head_weight_init_std)
-            nn.init.zeros_(self.reward_head[0].bias)
-            # Output layer: embedding -> logit
-            nn.init.normal_(self.reward_head[2].weight, 0.0, config.head_weight_init_std) 
-            nn.init.zeros_(self.reward_head[2].bias)
+            for module in self.reward_head:
+                if isinstance(module, nn.Linear):
+                    nn.init.normal_(module.weight, 0.0, config.head_weight_init_std)
+                    nn.init.zeros_(module.bias)
         
         # Simple frame dropout probability
         self.frame_dropout_p = config.frame_dropout_p
