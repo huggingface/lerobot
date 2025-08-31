@@ -73,8 +73,10 @@ class RLearNConfig(PreTrainedConfig):
     
     # Logit regression (only supported mode) - FIXED: Larger eps to prevent extreme targets
     logit_eps: float = 0.02  # Was 1e-6 → logit(±13.8), now 0.02 → logit(±3.9)
-    head_lr_multiplier: float = 2.0
+    head_lr_multiplier: float = 10.0
     head_weight_init_std: float = 0.05
+    # Initialize head bias toward this target probability to avoid 0.5 plateau
+    head_initial_bias_target: float = 0.3
     
     # Reward head architecture - FIXED: Simpler architecture to prevent flat basins
     head_hidden_dim: int = 1024  # Hidden dimension for reward head  

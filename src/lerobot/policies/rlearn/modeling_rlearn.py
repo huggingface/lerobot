@@ -138,13 +138,19 @@ class RLearNPolicy(PreTrainedPolicy):
             nn.Linear(config.head_hidden_dim, 1)
         )
         
-        # FIXED: Larger weight initialization to escape flat basins
+        # FIXED: Larger weight initialization + head bias warm-start to escape 0.5 plateau
         with torch.no_grad():
-            for module in self.reward_head:
+            for i, module in enumerate(self.reward_head):
                 if isinstance(module, nn.Linear):
                     # Use Xavier/Glorot initialization for better gradient flow
                     nn.init.xavier_uniform_(module.weight, gain=1.0)
                     nn.init.zeros_(module.bias)
+            # Set last layer bias to logit(target0) where target0 is a prior (e.g., 0.3)
+            target0 = float(getattr(self.config, 'head_initial_bias_target', 0.3))
+            target0 = min(max(target0, 1e-3), 1 - 1e-3)
+            initial_bias = torch.log(torch.tensor(target0) / (1 - torch.tensor(target0)))
+            last_linear: nn.Linear = self.reward_head[-1]  # type: ignore
+            last_linear.bias.copy_(initial_bias)
         
         # Simple frame dropout probability
         self.frame_dropout_p = config.frame_dropout_p
@@ -622,7 +628,7 @@ class RLearNPolicy(PreTrainedPolicy):
         loss_start = time.perf_counter()
         
         # Get model outputs with temporal-aware head
-        
+
         # Add temporal position information
         temporal_pos = torch.linspace(0, 1, T_eff, device=video_frame_embeds.device)
         temporal_pos = temporal_pos.unsqueeze(0).unsqueeze(-1).expand(B, T_eff, 1)  # (B, T_eff, 1)
@@ -645,7 +651,7 @@ class RLearNPolicy(PreTrainedPolicy):
         # Clip gradients specifically for the reward head during backward pass
         # This prevents extreme gradients from corrupting AdamW momentum
         if self.training:
-            raw_logits.register_hook(lambda grad: torch.clamp(grad, -10.0, 10.0))
+            raw_logits.register_hook(lambda grad: torch.clamp(grad, -5.0, 5.0))
         
         # For logging, compute sigmoid predictions
         predicted_rewards = torch.sigmoid(raw_logits)
