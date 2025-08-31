@@ -39,7 +39,7 @@ class RLearNConfig(PreTrainedConfig):
     """
 
     # Encoders - Using DINOv3 for vision and SigLIP2 for text
-    vision_model_name: str = "facebook/dinov3-vitl16-pretrain-lvd1689m"
+    vision_model_name: str = "facebook/dinov3-vitb16-pretrain-lvd1689m"
     text_model_name: str = "google/siglip2-base-patch16-224"
     freeze_backbones: bool = True
 
