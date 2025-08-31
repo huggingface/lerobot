@@ -69,12 +69,23 @@ class RLearNConfig(PreTrainedConfig):
 
     # ReWiND-specific parameters
     use_video_rewind: bool = True  # Enable video rewinding augmentation
-    rewind_prob: float = 0.8  # Probability of applying rewind to each sample (paper: ~80%)
-    rewind_last3_prob: float = 0.1  # Of the rewinds, 10% only rewind the last 3 frames
+    rewind_prob: float = 0.5  # Reduced from 0.8 to avoid too many artifacts
+    rewind_last3_prob: float = 0.3  # Increased to favor smaller rewinds
     use_mismatch_loss: bool = False  # Enable mismatched language-video loss
     mismatch_prob: float = (
         0.2  # Probability to include a mismatched video-language forward pass (paper: ~20%)
     )
+    
+    # NEW: Loss and head improvements
+    use_logit_regression: bool = True  # Use logit space regression instead of sigmoid+MSE
+    logit_eps: float = 1e-6  # Clipping epsilon for logit transform: logit(clamp(target, eps, 1-eps))
+    head_lr_multiplier: float = 2.0  # Increase head learning rate relative to base
+    head_weight_init_std: float = 0.05  # Larger head weight initialization for faster positive logits
+    remove_head_bias_wd: bool = True  # Remove weight decay from head bias
+    
+    # Window sampling improvements
+    use_random_anchor_sampling: bool = True  # Use explicit random anchor sampling during training
+    use_window_relative_progress: bool = True  # Use window-relative progress (0-1 across window) instead of episode-relative
 
     # Loss hyperparameters (simplified for ReWiND)
     # The main loss is just MSE between predicted and target progress
@@ -91,7 +102,7 @@ class RLearNConfig(PreTrainedConfig):
     num_register_tokens: int = 4  # register / memory tokens, can't hurt
     mlp_predictor_depth: int = 3  # depth of the per-frame MLP head
 
-    # Simple MSE regression loss (no binning)
+    # Loss configuration - supports both sigmoid+MSE and logit regression
     
     # Evaluation visualization parameters
     enable_eval_visualizations: bool = False  # Enable reward evaluation visualizations during training

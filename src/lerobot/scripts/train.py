@@ -248,6 +248,15 @@ def train(cfg: TrainPipelineConfig):
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
         )
+    elif cfg.policy.type == "rlearn":
+        # For RLearN, drop first 15 frames to avoid padding issues with temporal windows
+        shuffle = False
+        sampler = EpisodeAwareSampler(
+            dataset.episode_data_index,
+            drop_n_first_frames=15,  # Skip frames that would need padding
+            drop_n_last_frames=0,
+            shuffle=True,
+        )
     else:
         shuffle = True
         sampler = None
