@@ -59,8 +59,9 @@ class RLearNConfig(PreTrainedConfig):
     # Training
     learning_rate: float = 1e-3
     weight_decay: float = 0.01
-
-    use_tanh_head = False
+    
+    # Backward compatibility field (not used in current implementation)
+    use_tanh_head: bool = False
     
     # Performance optimizations
     use_amp: bool = True  # Mixed precision training for speed boost
