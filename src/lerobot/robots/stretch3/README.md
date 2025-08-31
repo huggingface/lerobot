@@ -14,14 +14,14 @@ To use LeRobot on Stretch, 3 options are available:
 
 On Stretch's CLI, follow these steps:
 
-1. [Install Miniconda](https://docs.anaconda.com/miniconda/#quick-command-line-install):
+1. [Install miniforge](https://conda-forge.org/download/):
 
 ```bash
-mkdir -p ~/miniconda3
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
-bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
-rm ~/miniconda3/miniconda.sh
-~/miniconda3/bin/conda init bash
+mkdir -p ~/miniforge3
+wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" -O ~/miniforge3/miniforge.sh
+bash ~/miniforge3/miniforge.sh -b -u -p ~/miniforge
+rm ~/miniforge3/miniforge.sh
+~/miniforge3/bin/conda init bash
 ```
 
 2. Comment out these lines in `~/.profile` (this can mess up paths used by conda and ~/.local/bin should already be in your PATH)
@@ -47,7 +47,7 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-6. When using `miniconda`, install `ffmpeg` in your environment:
+6. When using `conda`, install `ffmpeg` in your environment:
 
 ```bash
 conda install ffmpeg -c conda-forge
