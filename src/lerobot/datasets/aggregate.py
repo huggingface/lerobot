@@ -39,7 +39,7 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.video_utils import concat_video_files
+from lerobot.datasets.video_utils import concatenate_video_files
 
 
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
@@ -298,12 +298,9 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 timestamps_shift_s = dst_meta.info["total_frames"] / dst_meta.info["fps"]
 
                 # Append to existing video file
-                concat_video_files(
+                concatenate_video_files(
                     [dst_path, src_path],
-                    dst_meta.root,
-                    key,
-                    chunk_idx,
-                    file_idx,
+                    dst_path,
                 )
                 # Update the latest_duration when appending (shifts timestamps!)
                 update_latest_duration = not update_latest_duration
