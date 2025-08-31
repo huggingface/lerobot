@@ -60,59 +60,32 @@ class RLearNConfig(PreTrainedConfig):
     learning_rate: float = 1e-3
     weight_decay: float = 0.01
     
-    # Backward compatibility field (not used in current implementation)
-    use_tanh_head: bool = False
-    
     # Performance optimizations
-    use_amp: bool = True  # Mixed precision training for speed boost
-    compile_model: bool = True  # torch.compile for additional speedup
+    use_amp: bool = True
+    compile_model: bool = True
 
-    # ReWiND-specific parameters
-    use_video_rewind: bool = True  # Enable video rewinding augmentation
-    rewind_prob: float = 0.5  # Reduced from 0.8 to avoid too many artifacts
-    rewind_last3_prob: float = 0.3  # Increased to favor smaller rewinds
-    use_mismatch_loss: bool = False  # Enable mismatched language-video loss
-    mismatch_prob: float = (
-        0.2  # Probability to include a mismatched video-language forward pass (paper: ~20%)
-    )
+    # ReWiND augmentation
+    rewind_prob: float = 0.5
+    rewind_last3_prob: float = 0.3
+    mismatch_prob: float = 0.2
     
-    # NEW: Loss and head improvements
-    use_logit_regression: bool = True  # Use logit space regression instead of sigmoid+MSE
-    logit_eps: float = 1e-6  # Clipping epsilon for logit transform: logit(clamp(target, eps, 1-eps))
-    head_lr_multiplier: float = 2.0  # Increase head learning rate relative to base
-    head_weight_init_std: float = 0.05  # Larger head weight initialization for faster positive logits
-    remove_head_bias_wd: bool = True  # Remove weight decay from head bias
-    
-    # Window sampling improvements
-    use_random_anchor_sampling: bool = True  # Use explicit random anchor sampling during training
-    use_window_relative_progress: bool = True  # Use window-relative progress (0-1 across window) instead of episode-relative
-
-    # Loss hyperparameters (simplified for ReWiND)
-    # The main loss is just MSE between predicted and target progress
+    # Logit regression (only supported mode)
+    logit_eps: float = 1e-6
+    head_lr_multiplier: float = 2.0
+    head_weight_init_std: float = 0.05
 
     # Normalization presets
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
-            # Language is tokenized at the encoder level; no numeric normalization here.
         }
     )
 
-    # Architectural knobs to better mirror ReWiND
-    num_register_tokens: int = 4  # register / memory tokens, can't hurt
-    mlp_predictor_depth: int = 3  # depth of the per-frame MLP head
-
-    # Loss configuration - supports both sigmoid+MSE and logit regression
+    # Architecture
+    num_register_tokens: int = 4
+    mlp_predictor_depth: int = 3
     
-    # Evaluation visualization parameters
-    enable_eval_visualizations: bool = False  # Enable reward evaluation visualizations during training
-    eval_visualization_freq: int = 1000  # Steps between evaluation visualizations
-    eval_holdout_episodes: int = 9  # Number of episodes to hold out for evaluation
-    eval_max_frames: int = 128  # Maximum frames per episode for evaluation
-    eval_visualization_seed: int = 42  # Seed for reproducible episode selection
-
-    # Optional: path to episodes.jsonl to build full-episode indices automatically
-    # Default to common dataset layout: <dataset_root>/meta/episodes.jsonl
+    # Required path to episodes.jsonl for episode boundaries
     episodes_jsonl_path: str | None = "meta/episodes.jsonl"
 
     def validate_features(self) -> None:
