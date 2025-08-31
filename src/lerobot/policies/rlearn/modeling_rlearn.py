@@ -654,7 +654,7 @@ class RLearNPolicy(PreTrainedPolicy):
         L_mismatch = torch.zeros((), device=device)
         if self.training and B > 1 and torch.rand(1, device=device).item() < self.config.mismatch_prob:
             # Create actual mismatches - ensure shuffled language != original language
-                shuffled_indices = torch.randperm(B, device=device)
+            shuffled_indices = torch.randperm(B, device=device)
             
             # Find which samples actually got different languages
             mismatch_mask = []
@@ -755,11 +755,11 @@ class RLearNPolicy(PreTrainedPolicy):
                         target_std = sample_targets.std()
                         print(f"  Variation - Target std: {target_std:.4f} | Pred std: {pred_std:.4f}")
                 else:
-                        # For longer sequences, show first 8 and last 8
-                        print(f"  Targets: {sample_targets[:8]} ... {sample_targets[-8:]}")
-                        print(f"  Preds:   {sample_preds[:8]} ... {sample_preds[-8:]}")
-                else:
-                    print(f"Sample {sample_idx}: T_eff={T_eff}, target ∈ [{sample_targets.min():.3f}, {sample_targets.max():.3f}], pred ∈ [{sample_preds.min():.3f}, {sample_preds.max():.3f}]")
+                    # For longer sequences, show first 8 and last 8
+                    print(f"  Targets: {sample_targets[:8]} ... {sample_targets[-8:]}")
+                    print(f"  Preds:   {sample_preds[:8]} ... {sample_preds[-8:]}")
+                
+                print(f"Sample {sample_idx}: T_eff={T_eff}, target ∈ [{sample_targets.min():.3f}, {sample_targets.max():.3f}], pred ∈ [{sample_preds.min():.3f}, {sample_preds.max():.3f}]")
                 
                 print(f"Loss: {loss:.6f}")
                 print("=" * 60)
@@ -1261,7 +1261,7 @@ def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5, last3_prob: flo
         default_progress = torch.stack(default_progress)
     else:
         # Fallback to window-relative progress
-    default_progress = torch.linspace(0, 1, T, device=device).unsqueeze(0).expand(B, -1)
+        default_progress = torch.linspace(0, 1, T, device=device).unsqueeze(0).expand(B, -1)
 
     # Apply rewind augmentation to each sample in batch independently
     augmented_frames = []
@@ -1283,14 +1283,14 @@ def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5, last3_prob: flo
         
         for attempt in range(max_attempts):
             # Split point i: between frame 2 and T-1
-        i = torch.randint(2, T, (1,)).item()
+            i = torch.randint(2, T, (1,)).item()
 
         # Rewind length k: between 1 and i-1 frames
-        if last3_prob is not None and torch.rand(1).item() < last3_prob and i >= 3:
-            k = min(3, i - 1)
-        else:
-            k = torch.randint(1, i, (1,)).item()
-            k = min(k, i - 1)
+            if last3_prob is not None and torch.rand(1).item() < last3_prob and i >= 3:
+                k = min(3, i - 1)
+            else:
+                k = torch.randint(1, i, (1,)).item()
+                k = min(k, i - 1)
 
             # Create rewound sequence: frames[0:i] + reversed frames[i-k:i]
             forward_length = i
@@ -1302,7 +1302,7 @@ def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5, last3_prob: flo
                 # Perfect fit!
                 forward_frames = frames[b, :i]
                 reverse_frames = frames[b, max(0, i - k):i].flip(dims=[0])
-        rewound_seq = torch.cat([forward_frames, reverse_frames], dim=0)
+                rewound_seq = torch.cat([forward_frames, reverse_frames], dim=0)
 
                 # Create corresponding progress labels based on episode-relative positions
                 if window_frame_indices and episode_lengths:
@@ -1321,9 +1321,9 @@ def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5, last3_prob: flo
                     rewound_progress = torch.cat([forward_progress, reverse_progress])
                 else:
                     # Fallback to window-relative progress
-        denom = max(T - 1, 1)
-        forward_progress = torch.linspace(0, (i - 1) / denom, i, device=device)
-        reverse_progress = torch.linspace((i - 1) / denom, max(0.0, (i - k) / denom), k, device=device)
+                    denom = max(T - 1, 1)
+                    forward_progress = torch.linspace(0, (i - 1) / denom, i, device=device)
+                    reverse_progress = torch.linspace((i - 1) / denom, max(0.0, (i - k) / denom), k, device=device)
                     rewound_progress = torch.cat([forward_progress, reverse_progress])
                 
                 success = True
@@ -1358,15 +1358,15 @@ def apply_video_rewind(frames: Tensor, rewind_prob: float = 0.5, last3_prob: flo
                                 denom = max(T - 1, 1)
                                 forward_progress = torch.linspace(0, (i - 1) / denom, i, device=device)
                                 reverse_progress = torch.linspace((i - 1) / denom, max(0.0, (i - k_extended) / denom), k_extended, device=device)
-        rewound_progress = torch.cat([forward_progress, reverse_progress])
+                                rewound_progress = torch.cat([forward_progress, reverse_progress])
 
                             success = True
                             break
             # If too long or can't fix, try again with different i,k
         
         if success:
-        augmented_frames.append(rewound_seq)
-        augmented_progress.append(rewound_progress)
+            augmented_frames.append(rewound_seq)
+            augmented_progress.append(rewound_progress)
         else:
             # Fallback: use original sequence if we can't create a good rewind
             augmented_frames.append(frames[b])
