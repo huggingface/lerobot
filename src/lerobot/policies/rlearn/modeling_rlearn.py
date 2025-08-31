@@ -77,6 +77,7 @@ from __future__ import annotations
 
 import math
 import numpy as np
+from contextlib import nullcontext
 from itertools import chain
 from operator import truediv
 
@@ -118,13 +119,14 @@ class RLearNPolicy(PreTrainedPolicy):
         self.config = config
         self.episode_data_index = episode_data_index  # Store episode boundaries for progress calculation
 
-        # Encoders - SigLIP2 for both vision and text
-        from transformers import AutoProcessor, AutoModel
+        # Encoders - DINOv3 for vision, SigLIP2 for text
+        from transformers import AutoProcessor, AutoModel, AutoImageProcessor
         
-        # Load SigLIP2 processors and models
-        self.vision_processor = AutoProcessor.from_pretrained(config.vision_model_name, use_fast=True)
+        # Load DINOv3 processor and model for vision
+        self.vision_processor = AutoImageProcessor.from_pretrained(config.vision_model_name)
         self.vision_model = AutoModel.from_pretrained(config.vision_model_name)
         
+        # Load SigLIP2 processor and model for text
         self.text_processor = AutoProcessor.from_pretrained(config.text_model_name, use_fast=True)
         self.text_model = AutoModel.from_pretrained(config.text_model_name)
         
@@ -133,10 +135,11 @@ class RLearNPolicy(PreTrainedPolicy):
             self.vision_model = self.vision_model.to('cuda')
             self.text_model = self.text_model.to('cuda')
         
-        # Get hidden sizes from SigLIP2 config
-        vh = getattr(getattr(self.vision_model, 'config', None), 'vision_config', None)
-        self.vision_hidden = getattr(vh, 'hidden_size', 768)
+        # Get hidden sizes from models
+        # DINOv3-ViTL16 has hidden_size directly in config
+        self.vision_hidden = getattr(self.vision_model.config, 'hidden_size', 1024)  # DINOv3-large default
         
+        # SigLIP2 text model
         th = getattr(getattr(self.text_model, 'config', None), 'text_config', None)
         self.text_hidden = getattr(th, 'hidden_size', 512)
 
@@ -370,38 +373,41 @@ class RLearNPolicy(PreTrainedPolicy):
         # Optimized: Process tensor directly without numpy conversion
         device = next(self.vision_model.parameters()).device
         
-        # Normalize to [0, 1] if needed and ensure correct format for SigLIP2
+        # Normalize to [0, 1] if needed and ensure correct format for DINOv3
         if flat.dtype != torch.float32:
             flat = flat.float()
         if flat.max() > 1.0:
             flat = flat / 255.0
             
-        # SigLIP2 expects images in [0, 1] range, RGB format
-        # Resize and normalize in batch - much faster than individual processing
-        try:
-            # Try direct tensor processing (faster path)
-            processed = self.vision_processor(images=flat, return_tensors="pt")
-            pixel_values = processed["pixel_values"].to(device)
-        except:
-            # Fallback to individual processing if needed, but optimized
-            # Convert entire batch to numpy at once (much faster)
-            flat_numpy = flat.permute(0, 2, 3, 1).cpu().numpy()  # (BT, H, W, C)
-            images_list = [flat_numpy[i] for i in range(B * T)]
-            
-            processed = self.vision_processor(images=images_list, return_tensors="pt") 
-            pixel_values = processed["pixel_values"].to(device)
+        # DINOv3 expects images in [0, 1] range, RGB format
+        # Convert tensor to list of PIL-like arrays for processor
+        flat_numpy = flat.permute(0, 2, 3, 1).cpu().numpy()  # (BT, H, W, C)
+        images_list = [flat_numpy[i] for i in range(B * T)]
         
-        # Process in batch through vision model
-        vision_outputs = self.vision_model.vision_model(pixel_values=pixel_values)
-        cls_tokens = vision_outputs.last_hidden_state[:, 0]
+        # Process through DINOv3 processor and model
+        inputs = self.vision_processor(images=images_list, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        
+        # Process in batch through DINOv3 model
+        # Use inference mode for better performance when possible
+        context_manager = torch.inference_mode() if not self.training else nullcontext()
+        with context_manager:
+            vision_outputs = self.vision_model(**inputs)
+        
+        # Use pooler_output from DINOv3 (better than CLS token)
+        if hasattr(vision_outputs, 'pooler_output') and vision_outputs.pooler_output is not None:
+            vision_features_flat = vision_outputs.pooler_output  # (BT, D)
+        else:
+            # Fallback to last hidden state CLS token if pooler_output not available
+            vision_features_flat = vision_outputs.last_hidden_state[:, 0]  # (BT, D)
         
         # Reshape to (B, T, D) for analysis
-        vision_features = rearrange(cls_tokens, '(b t) d -> b t d', b=B, t=T)
+        vision_features = rearrange(vision_features_flat, '(b t) d -> b t d', b=B, t=T)
         
         # DEBUG: Analyze vision feature variability
         if self.training and torch.rand(1).item() < 0.05:  # 5% of training steps
             with torch.no_grad():
-                print(f"\n🔍 VISION FEATURE DEBUG (B={B}, T={T}):")
+                print(f"\n🔍 DINOv3 VISION FEATURE DEBUG (B={B}, T={T}):")
                 
                 # Check feature statistics
                 feature_mean = vision_features.mean().item()

@@ -34,12 +34,12 @@ class RLearNConfig(PreTrainedConfig):
 
     Notes:
       - This follows the ReWiND paper architecture. It uses frozen vision/text encoders
-        (SigLIP2 for both vision and language) and trains a
+        (DINOv3 for vision, SigLIP2 for language) and trains a
         lightweight temporal aggregator + head.
     """
 
-    # Encoders - Using SigLIP2 for both vision and text
-    vision_model_name: str = "google/siglip2-base-patch16-224"
+    # Encoders - Using DINOv3 for vision and SigLIP2 for text
+    vision_model_name: str = "facebook/dinov3-vitl16-pretrain-lvd1689m"
     text_model_name: str = "google/siglip2-base-patch16-224"
     freeze_backbones: bool = True
 
