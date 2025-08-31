@@ -157,8 +157,15 @@ class _NormalizationMixin:
         if self.device and tensor.device != self.device:
             tensor = tensor.to(self.device)
 
+        # For Accelerate compatibility: move stats to match input tensor device
+        input_device = tensor.device
         stats = self._tensor_stats[key]
         tensor = tensor.to(dtype=torch.float32)
+
+        # Move stats to input device if needed
+        stats_device = next(iter(stats.values())).device
+        if stats_device != input_device:
+            stats = _convert_stats_to_tensors({key: self._tensor_stats[key]}, device=input_device)[key]
 
         if norm_mode == NormalizationMode.MEAN_STD and "mean" in stats and "std" in stats:
             mean, std = stats["mean"], stats["std"]
@@ -175,7 +182,7 @@ class _NormalizationMixin:
             # to prevent division by zero. This consistently maps an input equal to
             # min_val to -1, ensuring a stable transformation.
             denom = torch.where(
-                denom == 0, torch.tensor(self.eps, device=self.device, dtype=torch.float32), denom
+                denom == 0, torch.tensor(self.eps, device=input_device, dtype=torch.float32), denom
             )
             if inverse:
                 # Map from [-1, 1] back to [min, max]
