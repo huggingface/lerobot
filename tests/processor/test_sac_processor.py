@@ -23,7 +23,7 @@ import torch
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.sac.configuration_sac import SACConfig
-from lerobot.policies.sac.processor_sac import make_sac_processor
+from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 from lerobot.processor import (
     DeviceProcessor,
     NormalizerProcessor,
@@ -78,7 +78,7 @@ def test_make_sac_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_processor(config, stats)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, stats)
 
     # Check processor names
     assert preprocessor.name == "robot_preprocessor"
@@ -102,7 +102,7 @@ def test_sac_processor_normalization_modes():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_processor(config, stats)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, stats)
 
     # Create test data
     observation = {OBS_STATE: torch.randn(10) * 2}  # Larger values to test normalization
@@ -133,7 +133,7 @@ def test_sac_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_processor(config, stats)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, stats)
 
     # Create CPU data
     observation = {OBS_STATE: torch.randn(10)}
@@ -162,7 +162,7 @@ def test_sac_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_processor(config, stats)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, stats)
 
     # Simulate Accelerate: data already on GPU
     device = torch.device("cuda:0")
@@ -185,7 +185,7 @@ def test_sac_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_processor(config, stats)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, stats)
 
     # Simulate data on different GPU
     device = torch.device("cuda:1")
@@ -205,7 +205,7 @@ def test_sac_processor_without_stats():
     """Test SAC processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_sac_processor(config, dataset_stats=None)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, dataset_stats=None)
 
     # Should still create processors
     assert preprocessor is not None
@@ -225,7 +225,7 @@ def test_sac_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_processor(config, stats)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, stats)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
@@ -252,7 +252,7 @@ def test_sac_processor_mixed_precision():
     stats = create_default_stats()
 
     # Create processor
-    preprocessor, postprocessor = make_sac_processor(config, stats)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, stats)
 
     # Replace DeviceProcessor with one that uses float16
     for i, step in enumerate(preprocessor.steps):
@@ -277,7 +277,7 @@ def test_sac_processor_batch_data():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_processor(config, stats)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, stats)
 
     # Test with batched data
     batch_size = 32
@@ -298,7 +298,7 @@ def test_sac_processor_edge_cases():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_sac_processor(config, stats)
+    preprocessor, postprocessor = make_sac_pre_post_processors(config, stats)
 
     # Test with empty observation
     transition = create_transition(observation={}, action=torch.randn(5))

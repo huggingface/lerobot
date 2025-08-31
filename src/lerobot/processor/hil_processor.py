@@ -1,3 +1,4 @@
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -8,13 +9,14 @@ import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.processor.pipeline import (
-    ActionProcessor,
     ComplementaryDataProcessor,
     EnvTransition,
     InfoProcessor,
     ObservationProcessor,
+    ProcessorStep,
     ProcessorStepRegistry,
     TransitionKey,
+    TruncatedProcessor,
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
@@ -29,10 +31,10 @@ class AddTeleopActionAsComplimentaryData(ComplementaryDataProcessor):
 
     teleop_device: Teleoperator
 
-    def complementary_data(self, complementary_data: dict | None) -> dict:
-        complementary_data = {} if complementary_data is None else dict(complementary_data)
-        complementary_data["teleop_action"] = self.teleop_device.get_action()
-        return complementary_data
+    def complementary_data(self, complementary_data: dict) -> dict:
+        new_complementary_data = dict(complementary_data)
+        new_complementary_data["teleop_action"] = self.teleop_device.get_action()
+        return new_complementary_data
 
 
 @ProcessorStepRegistry.register("add_teleop_action_as_info")
@@ -42,60 +44,11 @@ class AddTeleopEventsAsInfo(InfoProcessor):
 
     teleop_device: Teleoperator
 
-    def info(self, info: dict | None) -> dict:
-        info = {} if info is None else dict(info)
+    def info(self, info: dict) -> dict:
+        new_info = dict(info)
         teleop_events = getattr(self.teleop_device, "get_teleop_events", lambda: {})()
-        info.update(teleop_events)
-        return info
-
-
-@ProcessorStepRegistry.register("torch2numpy_action_processor")
-@dataclass
-class Torch2NumpyActionProcessor(ActionProcessor):
-    """Convert PyTorch tensor actions to NumPy arrays."""
-
-    squeeze_batch_dim: bool = True
-
-    def action(self, action: torch.Tensor | None) -> np.ndarray | None:
-        if action is None:
-            return None
-
-        if not isinstance(action, torch.Tensor):
-            raise TypeError(
-                f"Expected torch.Tensor or None, got {type(action).__name__}. "
-                "Use appropriate processor for non-tensor actions."
-            )
-
-        numpy_action = action.detach().cpu().numpy()
-
-        # Remove batch dimensions but preserve action dimensions
-        # Only squeeze if there's a batch dimension (first dim == 1)
-        if (
-            self.squeeze_batch_dim
-            and numpy_action.shape
-            and len(numpy_action.shape) > 1
-            and numpy_action.shape[0] == 1
-        ):
-            numpy_action = numpy_action.squeeze(0)
-
-        return numpy_action
-
-
-@ProcessorStepRegistry.register("numpy2torch_action_processor")
-@dataclass
-class Numpy2TorchActionProcessor(ActionProcessor):
-    """Convert NumPy array action to PyTorch tensor."""
-
-    def action(self, action: np.ndarray | None) -> torch.Tensor | None:
-        if action is None:
-            return None
-        if not isinstance(action, np.ndarray):
-            raise TypeError(
-                f"Expected np.ndarray or None, got {type(action).__name__}. "
-                "Use appropriate processor for non-tensor actions."
-            )
-        torch_action = torch.from_numpy(action)
-        return torch_action
+        new_info.update(teleop_events)
+        return new_info
 
 
 @ProcessorStepRegistry.register("image_crop_resize_processor")
@@ -106,10 +59,7 @@ class ImageCropResizeProcessor(ObservationProcessor):
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
     resize_size: tuple[int, int] | None = None
 
-    def observation(self, observation: dict | None) -> dict | None:
-        if observation is None:
-            return None
-
+    def observation(self, observation: dict) -> dict:
         if self.resize_size is None and not self.crop_params_dict:
             return observation
 
@@ -153,61 +103,43 @@ class ImageCropResizeProcessor(ObservationProcessor):
 
 @dataclass
 @ProcessorStepRegistry.register("time_limit_processor")
-class TimeLimitProcessor:
+class TimeLimitProcessor(TruncatedProcessor):
     """Track episode steps and enforce time limits."""
 
     max_episode_steps: int
     current_step: int = 0
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        truncated = transition.get(TransitionKey.TRUNCATED)
-        if truncated is None:
-            return transition
-
+    def truncated(self, truncated):
         self.current_step += 1
         if self.current_step >= self.max_episode_steps:
             truncated = True
-        new_transition = transition.copy()
-        new_transition[TransitionKey.TRUNCATED] = truncated
-        return new_transition
+        # TODO (steven): missing an else truncated = False?
+        return truncated
 
     def get_config(self) -> dict[str, Any]:
         return {
             "max_episode_steps": self.max_episode_steps,
         }
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
     def reset(self) -> None:
         self.current_step = 0
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
 
 
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
-class GripperPenaltyProcessor:
+class GripperPenaltyProcessor(ComplementaryDataProcessor):
     """Apply penalty for inappropriate gripper usage."""
 
     penalty: float = -0.01
     max_gripper_pos: float = 30.0
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def complementary_data(self, complementary_data):
         """Calculate gripper penalty and add to complementary data."""
-        action = transition.get(TransitionKey.ACTION)
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
-
-        if complementary_data is None or action is None:
-            return transition
+        action = self.transition.get(TransitionKey.ACTION)
 
         current_gripper_pos = complementary_data.get("raw_joint_positions", None).get(GRIPPER_KEY, None)
         if current_gripper_pos is None:
-            return transition
+            return complementary_data
 
         gripper_action = action[f"action.{GRIPPER_KEY}.pos"]
         gripper_action_normalized = gripper_action / self.max_gripper_pos
@@ -222,19 +154,11 @@ class GripperPenaltyProcessor:
 
         gripper_penalty = self.penalty * int(gripper_penalty_bool)
 
-        # Add penalty information to complementary data
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
-
         # Create new complementary data with penalty info
         new_complementary_data = dict(complementary_data)
         new_complementary_data["discrete_penalty"] = gripper_penalty
 
-        # Create new transition with updated complementary data
-        new_transition = transition.copy()
-        existing_comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
-        existing_comp_data.update(new_complementary_data)
-        new_transition[TransitionKey.COMPLEMENTARY_DATA] = existing_comp_data  # type: ignore[misc]
-        return new_transition
+        return new_complementary_data
 
     def get_config(self) -> dict[str, Any]:
         return {
@@ -242,23 +166,14 @@ class GripperPenaltyProcessor:
             "max_gripper_pos": self.max_gripper_pos,
         }
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
     def reset(self) -> None:
         """Reset the processor state."""
         self.last_gripper_state = None
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
-
 
 @dataclass
 @ProcessorStepRegistry.register("intervention_action_processor")
-class InterventionActionProcessor:
+class InterventionActionProcessor(ProcessorStep):
     """Handle human intervention actions and episode termination."""
 
     use_gripper: bool = False
@@ -271,7 +186,8 @@ class InterventionActionProcessor:
 
         # Get intervention signals from complementary data
         info = transition.get(TransitionKey.INFO, {})
-        teleop_action = info.get("teleop_action", {})
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        teleop_action = complementary_data.get("teleop_action", {})
         is_intervention = info.get(TeleopEvents.IS_INTERVENTION, False)
         terminate_episode = info.get(TeleopEvents.TERMINATE_EPISODE, False)
         success = info.get(TeleopEvents.SUCCESS, False)
@@ -321,24 +237,13 @@ class InterventionActionProcessor:
     def get_config(self) -> dict[str, Any]:
         return {
             "use_gripper": self.use_gripper,
+            "terminate_on_success": self.terminate_on_success,
         }
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
 
 
 @dataclass
 @ProcessorStepRegistry.register("reward_classifier_processor")
-class RewardClassifierProcessor:
+class RewardClassifierProcessor(ProcessorStep):
     """Apply reward classification to image observations."""
 
     pretrained_path: str | None = None
@@ -380,7 +285,7 @@ class RewardClassifierProcessor:
         reward = transition.get(TransitionKey.REWARD, 0.0)
         terminated = transition.get(TransitionKey.DONE, False)
 
-        if success == 1.0:
+        if math.isclose(success, 1, abs_tol=1e-2):
             reward = self.success_reward
             if self.terminate_on_success:
                 terminated = True
@@ -404,15 +309,3 @@ class RewardClassifierProcessor:
             "success_reward": self.success_reward,
             "terminate_on_success": self.terminate_on_success,
         }
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features

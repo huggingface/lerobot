@@ -14,12 +14,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
+
+
+@ProcessorStepRegistry.register("map_tensor_to_delta_action_dict")
+@dataclass
+class MapTensorToDeltaActionDict(ActionProcessor):
+    """
+    Map a tensor to a delta action dictionary.
+    """
+
+    def action(self, action: Tensor) -> dict:
+        if isinstance(action, dict):
+            return action
+        if action.dim() > 1:
+            action = action.squeeze(0)
+
+        # TODO (maractingi): add rotation
+        delta_action = {
+            "action.delta_x": action[0],
+            "action.delta_y": action[1],
+            "action.delta_z": action[2],
+        }
+        if action.shape[0] > 3:
+            delta_action["action.gripper"] = action[3]
+        return delta_action
 
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
@@ -53,35 +77,25 @@ class MapDeltaActionToRobotAction(ActionProcessor):
     # Scale factors for delta movements
     position_scale: float = 1.0
     rotation_scale: float = 0.0  # No rotation deltas for gamepad/keyboard
-    gripper_deadzone: float = 0.1  # Threshold for gripper activation
-    _prev_enabled: bool = field(default=False, init=False, repr=False)
+    noise_threshold: float = 1e-3  # 1 mm threshold to filter out noise
 
-    def action(self, action: dict | Tensor | None) -> dict:
-        if action is None:
-            return {}
-
+    def action(self, action: dict) -> dict:
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
         # TODO (maractingi): changing this target_xyz naming convention from the teleop_devices
-        if isinstance(action, dict):
-            delta_x = action.pop("action.delta_x", 0.0)
-            delta_y = action.pop("action.delta_y", 0.0)
-            delta_z = action.pop("action.delta_z", 0.0)
-            gripper = action.pop("action.gripper", 1.0)  # Default to "stay" (1.0)
-        else:
-            delta_x = action[0].item()
-            delta_y = action[1].item()
-            delta_z = action[2].item()
-            gripper = action[3].item()
+        delta_x = action.pop("action.delta_x", 0.0)
+        delta_y = action.pop("action.delta_y", 0.0)
+        delta_z = action.pop("action.delta_z", 0.0)
+        gripper = action.pop("action.gripper", 1.0)  # Default to "stay" (1.0)
 
         # Determine if the teleoperator is actively providing input
         # Consider enabled if any significant movement delta is detected
-        position_magnitude = abs(delta_x) + abs(delta_y) + abs(delta_z)
-        enabled = position_magnitude > 1e-6  # Small threshold to avoid noise
+        position_magnitude = (delta_x**2 + delta_y**2 + delta_z**2) ** 0.5  # Use Euclidean norm for position
+        enabled = position_magnitude > self.noise_threshold  # Small threshold to avoid noise
 
         # Scale the deltas appropriately
-        scaled_delta_x = float(delta_x) * self.position_scale
-        scaled_delta_y = float(delta_y) * self.position_scale
-        scaled_delta_z = float(delta_z) * self.position_scale
+        scaled_delta_x = delta_x * self.position_scale
+        scaled_delta_y = delta_y * self.position_scale
+        scaled_delta_z = delta_z * self.position_scale
 
         # For gamepad/keyboard, we don't have rotation input, so set to 0
         # These could be extended in the future for more sophisticated teleoperators
@@ -101,7 +115,6 @@ class MapDeltaActionToRobotAction(ActionProcessor):
             "action.gripper": float(gripper),
         }
 
-        self._prev_enabled = enabled
         return action
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
@@ -120,6 +133,3 @@ class MapDeltaActionToRobotAction(ActionProcessor):
             }
         )
         return features
-
-    def reset(self):
-        self._prev_enabled = False

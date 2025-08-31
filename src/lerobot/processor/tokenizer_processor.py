@@ -11,7 +11,12 @@ import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import OBS_LANGUAGE
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import (
+    EnvTransition,
+    ObservationProcessor,
+    ProcessorStepRegistry,
+    TransitionKey,
+)
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
@@ -22,7 +27,7 @@ else:
 
 @dataclass
 @ProcessorStepRegistry.register(name="tokenizer_processor")
-class TokenizerProcessor:
+class TokenizerProcessor(ObservationProcessor):
     """Tokenizes text tasks in complementary data using a huggingface tokenizer.
 
     This processor handles tokenization of task strings found in the complementary_data
@@ -118,7 +123,7 @@ class TokenizerProcessor:
 
         return None
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def observation(self, observation):
         """Process the transition by tokenizing the task text.
 
         Args:
@@ -130,15 +135,15 @@ class TokenizerProcessor:
         Raises:
             ValueError: If tokenizer initialization failed.
         """
-        task = self.get_task(transition)
+        task = self.get_task(self.transition)
         if task is None:
-            return transition
+            return observation
 
         # Tokenize the task (creates CPU tensors)
         tokenized_prompt = self._tokenize_text(task)
 
         # Detect device from existing tensors in the transition
-        target_device = self._detect_device(transition)
+        target_device = self._detect_device(self.transition)
 
         # Move tokenized tensors to match the device of other data
         if target_device is not None:
@@ -148,20 +153,15 @@ class TokenizerProcessor:
             }
 
         # Get or create observation dict
-        observation = transition.get(TransitionKey.OBSERVATION)
-        if observation is None:
-            observation = {}
-        else:
-            observation = dict(observation)  # Make a copy
+        new_observation = dict(observation)
 
         # Add tokenized data to observation
-        observation[f"{OBS_LANGUAGE}.tokens"] = tokenized_prompt["input_ids"]
-        observation[f"{OBS_LANGUAGE}.attention_mask"] = tokenized_prompt["attention_mask"].to(
+        new_observation[f"{OBS_LANGUAGE}.tokens"] = tokenized_prompt["input_ids"]
+        new_observation[f"{OBS_LANGUAGE}.attention_mask"] = tokenized_prompt["attention_mask"].to(
             dtype=torch.bool
         )
 
-        transition[TransitionKey.OBSERVATION.value] = observation  # type: ignore[misc]
-        return transition
+        return new_observation
 
     def _detect_device(self, transition: EnvTransition) -> torch.device | None:
         """Detect device from existing tensors in the transition.
@@ -186,19 +186,6 @@ class TokenizerProcessor:
         action = transition.get(TransitionKey.ACTION)
         if isinstance(action, torch.Tensor):
             return action.device
-
-        # Check other tensor fields
-        for key in [TransitionKey.REWARD, TransitionKey.DONE, TransitionKey.TRUNCATED]:
-            value = transition.get(key)
-            if isinstance(value, torch.Tensor):
-                return value.device
-
-        # Check complementary data for tensors
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
-        if complementary_data:
-            for value in complementary_data.values():
-                if isinstance(value, torch.Tensor):
-                    return value.device
 
         return None  # No tensors found, keep on CPU
 
@@ -235,22 +222,11 @@ class TokenizerProcessor:
         }
 
         # Only include tokenizer_name if it was used (not when tokenizer object was provided)
-        if self.tokenizer_name is not None:
+        # TODO(steven): Consider saving the name of the _tokenizer if it was loaded
+        if self.tokenizer_name is not None and self.tokenizer is None:
             config["tokenizer_name"] = self.tokenizer_name
 
         return config
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        """Return state dictionary (empty for this processor)."""
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """Load state dictionary (no-op for this processor)."""
-        pass
-
-    def reset(self) -> None:
-        """Reset processor state (no-op for this processor)."""
-        pass
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Add tokenized task features to the feature contract.

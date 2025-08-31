@@ -19,13 +19,14 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor.pipeline import (
     ActionProcessor,
     ComplementaryDataProcessor,
     EnvTransition,
     ObservationProcessor,
+    ProcessorStep,
     ProcessorStepRegistry,
     TransitionKey,
 )
@@ -34,7 +35,7 @@ from lerobot.robots.robot import Robot
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
 @dataclass
-class EEReferenceAndDelta:
+class EEReferenceAndDelta(ActionProcessor):
     """
     Compute the desired end-effector pose from the target pose and the current pose.
 
@@ -61,9 +62,9 @@ class EEReferenceAndDelta:
     _prev_enabled: bool = field(default=False, init=False, repr=False)
     _command_when_disabled: np.ndarray | None = field(default=None, init=False, repr=False)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        act = transition.get(TransitionKey.ACTION) or {}
-        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+    def action(self, action):
+        new_action = action.copy()
+        comp = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)
 
         # Get joint positions from complimentary data
         raw = comp.get("raw_joint_positions", None)
@@ -80,13 +81,13 @@ class EEReferenceAndDelta:
         # Current pose from FK on measured joints
         t_curr = self.kinematics.forward_kinematics(q)
 
-        enabled = bool(act.pop("action.enabled", 0))
-        tx = float(act.pop("action.target_x", 0.0))
-        ty = float(act.pop("action.target_y", 0.0))
-        tz = float(act.pop("action.target_z", 0.0))
-        wx = float(act.pop("action.target_wx", 0.0))
-        wy = float(act.pop("action.target_wy", 0.0))
-        wz = float(act.pop("action.target_wz", 0.0))
+        enabled = bool(new_action.pop("action.enabled", 0))
+        tx = float(new_action.pop("action.target_x", 0.0))
+        ty = float(new_action.pop("action.target_y", 0.0))
+        tz = float(new_action.pop("action.target_z", 0.0))
+        wx = float(new_action.pop("action.target_wx", 0.0))
+        wy = float(new_action.pop("action.target_wy", 0.0))
+        wz = float(new_action.pop("action.target_wz", 0.0))
 
         desired = None
 
@@ -122,22 +123,36 @@ class EEReferenceAndDelta:
         # Write action fields
         pos = desired[:3, 3]
         tw = Rotation.from_matrix(desired[:3, :3]).as_rotvec()
-        act.update(
-            {
-                "action.ee.x": float(pos[0]),
-                "action.ee.y": float(pos[1]),
-                "action.ee.z": float(pos[2]),
-                "action.ee.wx": float(tw[0]),
-                "action.ee.wy": float(tw[1]),
-                "action.ee.wz": float(tw[2]),
-            }
-        )
+        new_action["action.ee.x"] = float(pos[0])
+        new_action["action.ee.y"] = float(pos[1])
+        new_action["action.ee.z"] = float(pos[2])
+        new_action["action.ee.wx"] = float(tw[0])
+        new_action["action.ee.wy"] = float(tw[1])
+        new_action["action.ee.wz"] = float(tw[2])
 
         self._prev_enabled = enabled
-        transition[TransitionKey.ACTION] = act
-        return transition
+        return new_action
+
+    def reset(self):
+        self._prev_enabled = False
+        self.reference_ee_pose = None
+        self._command_when_disabled = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        features.pop("action.enabled", None)
+        features.pop("action.target_x", None)
+        features.pop("action.target_y", None)
+        features.pop("action.target_z", None)
+        features.pop("action.target_wx", None)
+        features.pop("action.target_wy", None)
+        features.pop("action.target_wz", None)
+
+        features["action.ee.x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.ee.wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         return features
 
 
@@ -162,14 +177,15 @@ class EEBoundsAndSafety(ActionProcessor):
     max_ee_step_m: float = 0.05
     max_ee_twist_step_rad: float = 0.20
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
+    _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
 
-    def action(self, act: dict | None) -> dict:
-        x = act.pop("action.ee.x", None)
-        y = act.pop("action.ee.y", None)
-        z = act.pop("action.ee.z", None)
-        wx = act.pop("action.ee.wx", None)
-        wy = act.pop("action.ee.wy", None)
-        wz = act.pop("action.ee.wz", None)
+    def action(self, act: dict) -> dict:
+        x = act.get("action.ee.x", None)
+        y = act.get("action.ee.y", None)
+        z = act.get("action.ee.z", None)
+        wx = act.get("action.ee.wx", None)
+        wy = act.get("action.ee.wy", None)
+        wz = act.get("action.ee.wz", None)
 
         if None in (x, y, z, wx, wy, wz):
             return act
@@ -191,35 +207,22 @@ class EEBoundsAndSafety(ActionProcessor):
         self._last_pos = pos
         self._last_twist = twist
 
-        act.update(
-            {
-                "action.ee.x": float(pos[0]),
-                "action.ee.y": float(pos[1]),
-                "action.ee.z": float(pos[2]),
-                "action.ee.wx": float(twist[0]),
-                "action.ee.wy": float(twist[1]),
-                "action.ee.wz": float(twist[2]),
-            }
-        )
+        act["action.ee.x"] = float(pos[0])
+        act["action.ee.y"] = float(pos[1])
+        act["action.ee.z"] = float(pos[2])
+        act["action.ee.wx"] = float(twist[0])
+        act["action.ee.wy"] = float(twist[1])
+        act["action.ee.wz"] = float(twist[2])
         return act
 
     def reset(self):
         self._last_pos = None
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # Because this is last step we specify the dataset features of this step that we want to be stored in the dataset
-        features["action.ee.x"] = float
-        features["action.ee.y"] = float
-        features["action.ee.z"] = float
-        features["action.ee.wx"] = float
-        features["action.ee.wy"] = float
-        features["action.ee.wz"] = float
-        return features
+        self._last_twist = None
 
 
 @ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
 @dataclass
-class InverseKinematicsEEToJoints:
+class InverseKinematicsEEToJoints(ProcessorStep):
     """
     Compute the desired joint positions from the desired end-effector pose.
 
@@ -255,18 +258,6 @@ class InverseKinematicsEEToJoints:
         wz = act.get("action.ee.wz", None)
 
         if None in (x, y, z, wx, wy, wz):
-            # Nothing to do; restore what we popped and return
-            act.update(
-                {
-                    "action.ee.x": x,
-                    "action.ee.y": y,
-                    "action.ee.z": z,
-                    "action.ee.wx": wx,
-                    "action.ee.wy": wy,
-                    "action.ee.wz": wz,
-                }
-            )
-            transition[TransitionKey.ACTION] = act
             return transition
 
         # Get joint positions from complimentary data
@@ -303,16 +294,11 @@ class InverseKinematicsEEToJoints:
         return transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We specify the dataset features of this step that we want to be stored in the dataset
-        features["action.ee.x"] = float
-        features["action.ee.y"] = float
-        features["action.ee.z"] = float
-        features["action.ee.wx"] = float
-        features["action.ee.wy"] = float
-        features["action.ee.wz"] = float
+        features["observation.state.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        features["action.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        for name in self.motor_names:
+            features[f"action.{name}.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
 
-        features["observation.state.gripper.pos"] = float
-        features["action.gripper.pos"] = float
         return features
 
     def reset(self):
@@ -321,7 +307,7 @@ class InverseKinematicsEEToJoints:
 
 @ProcessorStepRegistry.register("gripper_velocity_to_joint")
 @dataclass
-class GripperVelocityToJoint:
+class GripperVelocityToJoint(ProcessorStep):
     """
     Convert the gripper velocity to a joint velocity.
 
@@ -379,14 +365,13 @@ class GripperVelocityToJoint:
         new_act.pop("action.gripper", None)
         transition[TransitionKey.ACTION] = new_act
 
-        obs.update({"observation.state.gripper.pos": curr_pos})
+        obs["observation.state.gripper.pos"] = curr_pos
         transition[TransitionKey.OBSERVATION] = obs
         return transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We specify the dataset features of this step that we want to be stored in the dataset
-        features["observation.state.gripper.pos"] = float
-        features["action.gripper.pos"] = float
+        features.pop("action.gripper", None)
+        features["action.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         return features
 
 
@@ -410,7 +395,7 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
     kinematics: RobotKinematics
     motor_names: list[str]
 
-    def observation(self, obs: dict | None) -> dict:
+    def observation(self, obs: dict) -> dict:
         if not all(f"observation.state.{n}.pos" in obs for n in self.motor_names):
             return obs
 
@@ -419,22 +404,18 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
         pos = t[:3, 3]
         tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
 
-        obs.update(
-            {
-                "observation.state.ee.x": float(pos[0]),
-                "observation.state.ee.y": float(pos[1]),
-                "observation.state.ee.z": float(pos[2]),
-                "observation.state.ee.wx": float(tw[0]),
-                "observation.state.ee.wy": float(tw[1]),
-                "observation.state.ee.wz": float(tw[2]),
-            }
-        )
+        obs["observation.state.ee.x"] = float(pos[0])
+        obs["observation.state.ee.y"] = float(pos[1])
+        obs["observation.state.ee.z"] = float(pos[2])
+        obs["observation.state.ee.wx"] = float(tw[0])
+        obs["observation.state.ee.wy"] = float(tw[1])
+        obs["observation.state.ee.wz"] = float(tw[2])
         return obs
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
-            features[f"observation.state.ee.{k}"] = float
+            features[f"observation.state.ee.{k}"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
         return features
 
 
@@ -451,15 +432,14 @@ class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessor):
     robot: Robot
 
     def complementary_data(self, comp: dict | None) -> dict:
-        comp = {} if comp is None else dict(comp)
-        obs = self.robot.get_observation()
+        new_comp = dict(comp)
+        obs = (
+            self.robot.get_observation()
+        )  # todo(steven): why not self.trtansition.get(TransitionKey.OBSERVATION)?
 
-        comp["raw_joint_positions"] = {
+        new_comp["raw_joint_positions"] = {
             k.removesuffix(".pos"): float(v)
             for k, v in obs.items()
             if isinstance(k, str) and k.endswith(".pos")
         }
-        return comp
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
+        return new_comp

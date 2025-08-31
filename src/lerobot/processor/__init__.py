@@ -15,18 +15,17 @@
 # limitations under the License.
 
 from .batch_processor import ToBatchProcessor
-from .delta_action_processor import MapDeltaActionToRobotAction
+from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
 from .device_processor import DeviceProcessor
+from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
 from .hil_processor import (
     AddTeleopActionAsComplimentaryData,
     AddTeleopEventsAsInfo,
     GripperPenaltyProcessor,
     ImageCropResizeProcessor,
     InterventionActionProcessor,
-    Numpy2TorchActionProcessor,
     RewardClassifierProcessor,
     TimeLimitProcessor,
-    Torch2NumpyActionProcessor,
 )
 from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
@@ -55,6 +54,7 @@ __all__ = [
     "DeviceProcessor",
     "DoneProcessor",
     "MapDeltaActionToRobotAction",
+    "MapTensorToDeltaActionDict",
     "EnvTransition",
     "GripperPenaltyProcessor",
     "IdentityProcessor",

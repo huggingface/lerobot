@@ -13,11 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any
 
 import torch
 
-from lerobot.configs.types import PolicyFeature
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
@@ -29,10 +27,13 @@ from lerobot.processor import (
     TokenizerProcessor,
     UnnormalizerProcessor,
 )
-from lerobot.processor.pipeline import EnvTransition, ProcessorStep, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.pipeline import (
+    ComplementaryDataProcessor,
+    ProcessorStepRegistry,
+)
 
 
-def make_smolvla_processor(
+def make_smolvla_pre_post_processors(
     config: SmolVLAConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[RobotProcessor, RobotProcessor]:
     input_steps = [
@@ -64,47 +65,27 @@ def make_smolvla_processor(
 
 
 @ProcessorStepRegistry.register(name="smolvla_new_line_processor")
-class SmolVLANewLineProcessor(ProcessorStep):
+class SmolVLANewLineProcessor(ComplementaryDataProcessor):
     """Add a new line to the end of the task if it doesn't have one."""
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        # Check if complementary_data exists
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
-        if complementary_data is None or "task" not in complementary_data:
-            return transition
+    def complementary_data(self, complementary_data):
+        if "task" not in complementary_data:
+            return complementary_data
 
         task = complementary_data["task"]
         if task is None:
-            return transition
+            return complementary_data
+
+        new_complementary_data = dict(complementary_data)
 
         # Handle both string and list of strings
         if isinstance(task, str):
             # Single string: add newline if not present
             if not task.endswith("\n"):
-                complementary_data["task"] = f"{task}\n"
+                new_complementary_data["task"] = f"{task}\n"
         elif isinstance(task, list) and all(isinstance(t, str) for t in task):
             # List of strings: add newline to each if not present
-            complementary_data["task"] = [t if t.endswith("\n") else f"{t}\n" for t in task]
+            new_complementary_data["task"] = [t if t.endswith("\n") else f"{t}\n" for t in task]
         # If task is neither string nor list of strings, leave unchanged
 
-        return transition
-
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        """Adds nothing to the features."""
-        return features
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        """Return state dictionary (empty for this processor)."""
-        return {}
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """Load state dictionary (no-op for this processor)."""
-        pass
-
-    def reset(self) -> None:
-        """Reset processor state (no-op for this processor)."""
-        pass
-
-    def get_config(self) -> dict[str, Any]:
-        """Return configuration for serialization."""
-        return {}
+        return new_complementary_data

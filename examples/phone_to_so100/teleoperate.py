@@ -28,8 +28,8 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
 )
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
-from lerobot.teleoperators.phone.phone import Phone
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
+from lerobot.teleoperators.phone.teleop_phone import Phone
 
 # Initialize the robot and teleoperator
 robot_config = SO100FollowerConfig(
@@ -48,8 +48,8 @@ kinematics_solver = RobotKinematics(
     joint_names=list(robot.bus.motors.keys()),
 )
 
-# Build pipeline to convert phone action to ee pose action
-phone_to_robot_ee_pose = RobotProcessor(
+# Build pipeline to convert phone action to ee pose action to joint action
+phone_to_robot_joints = RobotProcessor(
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         AddRobotObservationAsComplimentaryData(robot=robot),
@@ -63,14 +63,6 @@ phone_to_robot_ee_pose = RobotProcessor(
             max_ee_step_m=0.10,
             max_ee_twist_step_rad=0.50,
         ),
-    ],
-    to_transition=to_transition_teleop_action,
-    to_output=lambda tr: tr,
-)
-
-# Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints = RobotProcessor(
-    steps=[
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
@@ -80,7 +72,7 @@ robot_ee_to_joints = RobotProcessor(
             speed_factor=20.0,
         ),
     ],
-    to_transition=lambda tr: tr,
+    to_transition=to_transition_teleop_action,
     to_output=to_output_robot_action,
 )
 
@@ -89,19 +81,11 @@ teleop_device.connect()
 
 print("Starting teleop loop. Move your phone to teleoperate the robot.")
 while True:
-    phone_obs = teleop_device.get_action()
-    if not phone_obs:
-        time.sleep(0.01)
-        continue
-
     # Get teleop observation
     phone_obs = teleop_device.get_action()
 
-    # Phone to EE pose transition
-    ee_transition = phone_to_robot_ee_pose(phone_obs)
-
-    # EE pose to Joints transition
-    joint_action = robot_ee_to_joints(ee_transition)
+    # Phone -> EE pose -> Joints transition
+    joint_action = phone_to_robot_joints(phone_obs)
 
     if joint_action:
         robot.send_action(joint_action)

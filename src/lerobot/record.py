@@ -74,7 +74,7 @@ from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.datasets.video_utils import VideoEncodingManager
-from lerobot.policies.factory import make_policy, make_processor
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
 from lerobot.processor.converters import (
@@ -83,8 +83,8 @@ from lerobot.processor.converters import (
     to_transition_robot_observation,
     to_transition_teleop_action,
 )
-from lerobot.processor.normalize_processor import rename_stats
 from lerobot.processor.pipeline import IdentityProcessor, TransitionKey
+from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -346,13 +346,14 @@ def record_loop(
         else:
             logging.info(
                 "No policy or teleoperator provided, skipping action generation. "
-                "This is likely to happen during environment reset."
+                "This is likely to happen when resetting the environment without a teleop device."
+                "The robot won't be at its rest position at the start of the next episode."
             )
-            # Still continue to next loop to respect timing
+            continue
 
         # Applies a pipeline to the action, default is IdentityProcessor
         # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
-        if policy_transition is not None:
+        if policy is not None and policy_transition is not None:
             robot_action_to_send = robot_action_processor(policy_transition)
         else:
             robot_action_to_send = robot_action_processor(teleop_transition)
@@ -434,7 +435,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     preprocessor = None
     postprocessor = None
     if cfg.policy is not None:
-        preprocessor, postprocessor = make_processor(
+        preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
             pretrained_path=cfg.policy.pretrained_path,
             dataset_stats=rename_stats(dataset.meta.stats, cfg.dataset.rename_map),
@@ -510,5 +511,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     return dataset
 
 
-if __name__ == "__main__":
+def main():
     record()
+
+
+if __name__ == "__main__":
+    main()
