@@ -55,6 +55,8 @@ class RLearNConfig(PreTrainedConfig):
 
     # Sequence length, amount of past frames including current one to use in the temporal model
     max_seq_len: int = 16
+    # Temporal sampling stride (2 = skip every other frame for wider temporal coverage)
+    temporal_sampling_stride: int = 2
 
     # Training
     learning_rate: float = 1e-3
