@@ -19,7 +19,7 @@ On Stretch's CLI, follow these steps:
 ```bash
 mkdir -p ~/miniforge3
 wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" -O ~/miniforge3/miniforge.sh
-bash ~/miniforge3/miniforge.sh -b -u -p ~/miniforge
+bash ~/miniforge3/miniforge.sh -b -u -p ~/miniforge3
 rm ~/miniforge3/miniforge.sh
 ~/miniforge3/bin/conda init bash
 ```
