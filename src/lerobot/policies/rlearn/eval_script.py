@@ -154,24 +154,21 @@ def predict_rewards_sliding(model, frames, language, max_seq_len=16, batch_size=
     frames = frames.to(device)
 
     windows = []
-    frame_positions = []  # Track which temporal position each frame occupies in its window
+    frame_positions = []  # Track which temporal position each frame should use
     
     for i in range(T):
         start = max(0, i - L + 1)
         window = frames[start : i + 1]  # (len<=L, C, H, W)
         
-        # Calculate the temporal position of the current frame within the padded window
-        actual_window_length = window.shape[0]
-        
         if window.shape[0] < L:
             pad_needed = L - window.shape[0]
             pad = window[:1].expand(pad_needed, -1, -1, -1)  # repeat first frame
             window = torch.cat([pad, window], dim=0)
-            # After padding, the current frame is at position: pad_needed + (actual_window_length - 1)
-            frame_pos = pad_needed + actual_window_length - 1
-        else:
-            # No padding needed, current frame is at the last position
-            frame_pos = L - 1
+        
+        # CRITICAL FIX: Use the MLP corresponding to the frame's temporal position
+        # Frame 0 -> MLP[0], Frame 1 -> MLP[1], ..., Frame 15+ -> MLP[15]
+        # This matches how the model was trained with different MLPs for different temporal positions
+        frame_pos = min(i, L - 1)  # Clamp to available MLP range [0, 15]
             
         windows.append(window)
         frame_positions.append(frame_pos)
@@ -188,15 +185,7 @@ def predict_rewards_sliding(model, frames, language, max_seq_len=16, batch_size=
         # Model returns (B, L) predictions for each temporal position
         values = model.predict_rewards(batch)  # torch.Tensor (B, L)
 
-        # DEBUG: Print model outputs to understand what's happening
-        if s == 0:  # Only print for first batch to avoid spam
-            print(f"\n=== DEBUG EVALUATION ===")
-            print(f"Model output shape: {values.shape}")
-            print(f"Model output range: [{values.min():.6f}, {values.max():.6f}]")
-            print(f"Model output mean: {values.mean():.6f}")
-            print(f"First few frame positions: {batch_positions[:5]}")
-            print(f"Model outputs for first sample (all positions): {values[0].cpu().numpy()}")
-            print("========================")
+        # Debug output removed - issue was identified and fixed
 
         if values.dim() == 2:
             # Extract the prediction corresponding to each frame's position in its window
