@@ -32,7 +32,7 @@ from lerobot.processor.pipeline import (
     ProcessorStep,
     ProcessorStepRegistry,
 )
-from lerobot.processor.rename_processor import RenameProcessor
+from lerobot.processor.rename_processor import RenameProcessorStep
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")
@@ -69,7 +69,7 @@ def make_pi0_pre_post_processors(
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
-        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,

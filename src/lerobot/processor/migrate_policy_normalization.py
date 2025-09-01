@@ -50,7 +50,7 @@ from lerobot.processor.batch_processor import AddBatchDimensionProcessorStep
 from lerobot.processor.device_processor import DeviceProcessorStep
 from lerobot.processor.normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 from lerobot.processor.pipeline import DataProcessorPipeline
-from lerobot.processor.rename_processor import RenameProcessor
+from lerobot.processor.rename_processor import RenameProcessorStep
 
 # Policy type to class mapping
 POLICY_CLASSES = {
@@ -412,7 +412,7 @@ def main():
 
     # Create preprocessor with two normalizers (following the pattern from processor factories)
     preprocessor_steps = [
-        RenameProcessor(rename_map={}),
+        RenameProcessorStep(rename_map={}),
         NormalizerProcessorStep(
             features={**input_features, **output_features},
             norm_map=norm_map,

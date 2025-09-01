@@ -46,7 +46,7 @@ from .pipeline import (
     TransitionKey,
     TruncatedProcessorStep,
 )
-from .rename_processor import RenameProcessor
+from .rename_processor import RenameProcessorStep
 from .tokenizer_processor import TokenizerProcessorStep
 
 __all__ = [
@@ -72,7 +72,7 @@ __all__ = [
     "ObservationProcessorStep",
     "ProcessorStep",
     "ProcessorStepRegistry",
-    "RenameProcessor",
+    "RenameProcessorStep",
     "RewardClassifierProcessorStep",
     "DoneProcessorStep",
     "DataProcessorPipeline",

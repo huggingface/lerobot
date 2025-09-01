@@ -24,7 +24,7 @@ from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
-    RenameProcessor,
+    RenameProcessorStep,
     UnnormalizerProcessorStep,
 )
 
@@ -33,7 +33,7 @@ def make_sac_pre_post_processors(
     config: SACConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
-        RenameProcessor(rename_map={}),
+        RenameProcessorStep(rename_map={}),
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,

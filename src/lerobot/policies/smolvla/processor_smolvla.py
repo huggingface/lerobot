@@ -23,7 +23,7 @@ from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
-    RenameProcessor,
+    RenameProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -37,7 +37,7 @@ def make_smolvla_pre_post_processors(
     config: SmolVLAConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
-        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
