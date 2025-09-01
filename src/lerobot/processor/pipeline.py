@@ -22,7 +22,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, Generic, TypedDict, TypeVar, cast
 
@@ -36,32 +35,8 @@ from lerobot.configs.types import PolicyFeature
 # Type variable for generic processor output type
 TOutput = TypeVar("TOutput")
 
-
-class TransitionKey(str, Enum):
-    """Keys for accessing EnvTransition dictionary components."""
-
-    # TODO(Steven): Use consts
-    OBSERVATION = "observation"
-    ACTION = "action"
-    REWARD = "reward"
-    DONE = "done"
-    TRUNCATED = "truncated"
-    INFO = "info"
-    COMPLEMENTARY_DATA = "complementary_data"
-
-
-EnvTransition = TypedDict(
-    "EnvTransition",
-    {
-        TransitionKey.OBSERVATION.value: dict[str, Any] | None,
-        TransitionKey.ACTION.value: Any | torch.Tensor | None,
-        TransitionKey.REWARD.value: float | torch.Tensor | None,
-        TransitionKey.DONE.value: bool | torch.Tensor | None,
-        TransitionKey.TRUNCATED.value: bool | torch.Tensor | None,
-        TransitionKey.INFO.value: dict[str, Any] | None,
-        TransitionKey.COMPLEMENTARY_DATA.value: dict[str, Any] | None,
-    },
-)
+from .converters import _default_batch_to_transition, _default_transition_to_batch
+from .core import EnvTransition, TransitionKey
 
 
 class ProcessorStepRegistry:
@@ -358,10 +333,7 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
     name: str = "RobotProcessor"
 
     to_transition: Callable[[dict[str, Any]], EnvTransition] = field(
-        default_factory=lambda: __import__(
-            "lerobot.processor.converters", fromlist=["_default_batch_to_transition"]
-        )._default_batch_to_transition,
-        repr=False,
+        default=_default_batch_to_transition, repr=False
     )
     to_output: Callable[[EnvTransition], TOutput] = field(
         # Cast is necessary here: Working around Python type-checker limitation.

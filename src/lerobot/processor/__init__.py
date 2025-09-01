@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from .batch_processor import ToBatchProcessor
+from .core import EnvTransition, TransitionKey
 from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
 from .device_processor import DeviceProcessor
 from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
@@ -33,7 +34,6 @@ from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessor,
     DoneProcessor,
-    EnvTransition,
     IdentityProcessor,
     InfoProcessor,
     ObservationProcessor,
@@ -42,7 +42,6 @@ from .pipeline import (
     ProcessorStepRegistry,
     RewardProcessor,
     RobotProcessor,
-    TransitionKey,
     TruncatedProcessor,
 )
 from .rename_processor import RenameProcessor

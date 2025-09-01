@@ -27,7 +27,7 @@ from scipy.spatial.transform import Rotation
 
 from lerobot.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 
-from .pipeline import EnvTransition, TransitionKey
+from .core import EnvTransition, TransitionKey
 
 
 @singledispatch
