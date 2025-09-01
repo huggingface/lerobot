@@ -71,7 +71,7 @@ class RLearNConfig(PreTrainedConfig):
     compile_model: bool = True
 
     # ReWiND augmentation
-    rewind_prob: float = 0.5
+    rewind_prob: float = 0.8
     rewind_last3_prob: float = 0.3
     mismatch_prob: float = 0.2
     
