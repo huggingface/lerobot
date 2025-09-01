@@ -14,10 +14,12 @@ class PiperSDKInterface:
     def __init__(self, port: str = "can0"):
         if C_PiperInterface_V2 is None:
             raise ImportError("piper_sdk is not installed. Please install it with `pip install piper_sdk`.")
-        try: 
+        try:
             self.piper = C_PiperInterface_V2(port)
         except Exception as e:
-            print(f"Failed to initialize Piper SDK: {e} Did you activate the can interface with `piper_sdk/can_activate.sh can0 1000000`")
+            print(
+                f"Failed to initialize Piper SDK: {e} Did you activate the can interface with `piper_sdk/can_activate.sh can0 1000000`"
+            )
             self.piper = None
             return
         self.piper.ConnectPort()
@@ -26,11 +28,11 @@ class PiperSDKInterface:
         # reset the arm if it's not in idle state
         print(self.piper.GetArmStatus().arm_status.motion_status)
         if self.piper.GetArmStatus().arm_status.motion_status != 0:
-            self.piper.EmergencyStop(0x02) # resume
+            self.piper.EmergencyStop(0x02)  # resume
 
-        if self.piper.GetArmStatus().arm_status.ctrl_mode == 2:            
+        if self.piper.GetArmStatus().arm_status.ctrl_mode == 2:
             print("The arm is in teaching mode, the light is green, press the button to exit teaching mode.")
-            self.piper.EmergencyStop(0x02) # resume
+            self.piper.EmergencyStop(0x02)  # resume
 
         while not self.piper.EnablePiper():
             time.sleep(0.01)
