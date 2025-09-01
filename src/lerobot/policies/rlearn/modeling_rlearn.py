@@ -280,7 +280,7 @@ class RLearNPolicy(PreTrainedPolicy):
                 # Check if all samples in batch have same first frame
                 if B > 1:
                     # FIXED: Use proper tensor operations
-                    batch_first_frames = inputs['pixel_values'][::T]  # Every T-th frame (first frame of each sample)
+                    batch_first_frames = pixel_values[::T]  # Every T-th frame (first frame of each sample)
                     if len(batch_first_frames) > 1:
                         first_frame_diffs = (batch_first_frames[1:] - batch_first_frames[0].unsqueeze(0)).pow(2).sum(dim=(1, 2, 3)).sqrt()
                         batch_first_frame_diff = first_frame_diffs.mean()
