@@ -44,7 +44,7 @@ from lerobot.processor import (
     Numpy2TorchActionProcessor,
     RewardClassifierProcessor,
     TimeLimitProcessor,
-    Torch2NumpyActionProcessor,
+    Torch2NumpyActionProcessorStep,
     VanillaObservationProcessor,
 )
 from lerobot.processor.pipeline import EnvTransition, TransitionKey
@@ -376,7 +376,7 @@ def make_processors(
     if cfg.name == "gym_hil":
         action_pipeline_steps = [
             InterventionActionProcessor(terminate_on_success=terminate_on_success),
-            Torch2NumpyActionProcessor(),
+            Torch2NumpyActionProcessorStep(),
         ]
 
         # Minimal processor pipeline for GymHIL simulation

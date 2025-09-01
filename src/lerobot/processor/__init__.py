@@ -17,7 +17,7 @@
 from .batch_processor import AddBatchDimensionProcessorStep
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
-from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
+from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessorStep
 from .hil_processor import (
     AddTeleopActionAsComplimentaryData,
     AddTeleopEventsAsInfo,
@@ -82,7 +82,7 @@ __all__ = [
     "TokenizerProcessorStep",
     "TimeLimitProcessor",
     "Numpy2TorchActionProcessor",
-    "Torch2NumpyActionProcessor",
+    "Torch2NumpyActionProcessorStep",
     "TransitionKey",
     "TruncatedProcessorStep",
     "VanillaObservationProcessor",
