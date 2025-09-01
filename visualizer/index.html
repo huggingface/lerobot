@@ -14,29 +14,29 @@
             flex-direction: column;
             height: 100vh;
         }
-        
+
         .controls {
             padding: 15px;
             background-color: #f5f5f5;
             z-index: 100;
         }
-        
+
         .status {
             padding: 10px;
             border-radius: 5px;
             margin: 10px 0;
         }
-        
+
         .connected {
             background-color: #d4edda;
             color: #155724;
         }
-        
+
         .disconnected {
             background-color: #f8d7da;
             color: #721c24;
         }
-        
+
         button {
             padding: 8px 16px;
             background-color: #4CAF50;
@@ -46,27 +46,27 @@
             cursor: pointer;
             margin-right: 10px;
         }
-        
+
         button:hover {
             background-color: #45a049;
         }
-        
+
         button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
         }
-        
+
         .container {
             display: flex;
             flex: 1;
             overflow: hidden;
         }
-        
+
         #canvas-container {
             flex: 3;
             position: relative;
         }
-        
+
         #sidebar {
             flex: 1;
             padding: 15px;
@@ -75,22 +75,22 @@
             max-width: 300px;
             border-left: 1px solid #ddd;
         }
-        
+
         .joint-info {
             margin-bottom: 10px;
             padding: 8px;
             border: 1px solid #ddd;
             border-radius: 4px;
         }
-        
+
         .joint-name {
             font-weight: bold;
         }
-        
+
         .joint-value {
             font-family: monospace;
         }
-        
+
         .bar-container {
             width: 100%;
             background-color: #e0e0e0;
@@ -99,14 +99,14 @@
             overflow: hidden;
             margin-top: 5px;
         }
-        
+
         .bar {
             height: 100%;
             background-color: #4CAF50;
             width: 0%;
             transition: width 0.2s ease-in-out;
         }
-        
+
         .log-container {
             margin-top: 20px;
             border: 1px solid #ddd;
@@ -117,14 +117,14 @@
             font-family: monospace;
             background-color: #f8f9fa;
         }
-        
+
         .view-controls {
             position: absolute;
             bottom: 10px;
             left: 10px;
             z-index: 10;
         }
-        
+
         .view-button {
             background-color: rgba(0, 0, 0, 0.5);
             color: white;
@@ -149,7 +149,7 @@
         </select>
         <span id="statusIndicator" class="status disconnected">Status: Disconnected</span>
     </div>
-    
+
     <div class="container">
         <div id="canvas-container">
             <!-- 3D canvas will be inserted here -->
@@ -160,23 +160,23 @@
                 <button class="view-button" id="resetView">Reset</button>
             </div>
         </div>
-        
+
         <div id="sidebar">
             <h3>Joint Values</h3>
             <div id="jointsContainer">
                 <!-- Joint info will be added here -->
             </div>
-            
+
             <div class="log-container" id="logContainer">
                 <!-- Log messages will be added here -->
             </div>
         </div>
     </div>
-    
+
     <!-- Import Three.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-    
+
     <script src="script.js"></script>
 </body>
 </html>
