@@ -28,7 +28,7 @@ from .hil_processor import (
     TimeLimitProcessorStep,
 )
 from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
-from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
+from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessorStep,
@@ -66,8 +66,8 @@ __all__ = [
     "JointVelocityProcessorStep",
     "MapDeltaActionToRobotActionStep",
     "MotorCurrentProcessorStep",
-    "NormalizerProcessor",
-    "UnnormalizerProcessor",
+    "NormalizerProcessorStep",
+    "UnnormalizerProcessorStep",
     "hotswap_stats",
     "ObservationProcessorStep",
     "ProcessorStep",

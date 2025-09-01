@@ -19,7 +19,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.processor import (
     DeviceProcessorStep,
     IdentityProcessorStep,
-    NormalizerProcessor,
+    NormalizerProcessorStep,
     PolicyProcessorPipeline,
 )
 
@@ -28,10 +28,10 @@ def make_classifier_processor(
     config: RewardClassifierConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
-        NormalizerProcessor(
+        NormalizerProcessorStep(
             features=config.input_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        NormalizerProcessor(
+        NormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
         DeviceProcessorStep(device=config.device),

@@ -20,10 +20,10 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
-    NormalizerProcessor,
+    NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RenameProcessor,
-    UnnormalizerProcessor,
+    UnnormalizerProcessorStep,
 )
 
 
@@ -32,7 +32,7 @@ def make_act_pre_post_processors(
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
         RenameProcessor(rename_map={}),
-        NormalizerProcessor(
+        NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
@@ -42,7 +42,7 @@ def make_act_pre_post_processors(
     ]
     output_steps = [
         DeviceProcessorStep(device="cpu"),
-        UnnormalizerProcessor(
+        UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
