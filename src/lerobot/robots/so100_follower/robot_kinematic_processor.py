@@ -82,7 +82,7 @@ class EEReferenceAndDelta(ActionProcessorStep):
 
         # Current pose from FK on measured joints
         t_curr = self.kinematics.forward_kinematics(q)
-        
+
         enabled = bool(new_action.pop(f"{ACTION}.enabled", 0))
         tx = float(new_action.pop(f"{ACTION}.target_x", 0.0))
         ty = float(new_action.pop(f"{ACTION}.target_y", 0.0))
