@@ -3,9 +3,9 @@ import pytest
 import torch
 
 from lerobot.processor.converters import (
+    robot_observation_to_transition,
     to_dataset_frame,
     to_output_robot_action,
-    to_transition_robot_observation,
     to_transition_teleop_action,
 )
 from lerobot.processor.pipeline import TransitionKey
@@ -47,7 +47,7 @@ def test_to_transition_teleop_action_prefix_and_tensor_conversion():
     assert tr[TransitionKey.OBSERVATION] == {}
 
 
-def test_to_transition_robot_observation_state_vs_images_split():
+def test_robot_observation_to_transition_state_vs_images_split():
     # Create an observation with mixed content
     img = np.full((10, 20, 3), 255, dtype=np.uint8)  # image (uint8 HWC)
     obs = {
@@ -58,7 +58,7 @@ def test_to_transition_robot_observation_state_vs_images_split():
         "arr": np.array([1.5, 2.5]),  # vector to state to torch tensor
     }
 
-    tr = to_transition_robot_observation(obs)
+    tr = robot_observation_to_transition(obs)
     assert isinstance(tr, dict)
     assert TransitionKey.OBSERVATION in tr
 

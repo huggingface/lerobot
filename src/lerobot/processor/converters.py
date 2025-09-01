@@ -94,7 +94,7 @@ def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
 
 
 # TODO(Adil, Pepijn): Overtime we can maybe add these converters to pipeline.py itself
-def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransition:
+def robot_observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
     """
     Convert a raw robot observation dict into an EnvTransition under the OBSERVATION TransitionKey.
     """
