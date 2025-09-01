@@ -366,7 +366,9 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         for key in video_keys:
             if not self.features[key].get("info", None):
-                video_path = self.root / self.get_video_file_path(ep_index=0, vid_key=key)
+                video_path = self.root / self.video_path.format(
+                    video_key=video_key, chunk_index=0, file_index=0
+                )
                 self.info["features"][key]["info"] = get_video_info(video_path)
 
     def update_chunk_settings(
@@ -1028,8 +1030,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.episodes_since_last_encoding = 0
 
         if not episode_data:
-            # Reset episode buffer and clean up temporary images
-            self.clear_episode_buffer()
+            # Reset episode buffer and clean up temporary images (if not already deleted during video encoding)
+            self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None):
         """
@@ -1208,14 +1210,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         }
         return metadata
 
-    def clear_episode_buffer(self) -> None:
+    def clear_episode_buffer(self, delete_images: bool = True) -> None:
         # Clean up image files for the current episode buffer
-        episode_index = self.episode_buffer["episode_index"]
-        if self.image_writer is not None:
-            for cam_key in self.meta.camera_keys:
-                img_dir = self._get_image_file_dir(episode_index, cam_key)
-                if img_dir.is_dir():
-                    shutil.rmtree(img_dir)
+        if delete_images:
+            episode_index = self.episode_buffer["episode_index"]
+            if self.image_writer is not None:
+                for cam_key in self.meta.camera_keys:
+                    img_dir = self._get_image_file_dir(episode_index, cam_key)
+                    if img_dir.is_dir():
+                        shutil.rmtree(img_dir)
 
         # Reset the buffer
         self.episode_buffer = self.create_episode_buffer()
@@ -1254,6 +1257,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         temp_path = Path(tempfile.mkdtemp(dir=self.root)) / f"{video_key}_{episode_index:03d}.mp4"
         img_dir = self._get_image_file_dir(episode_index, video_key)
         encode_video_frames(img_dir, temp_path, self.fps, overwrite=True)
+        shutil.rmtree(img_dir)
         return temp_path
 
     @classmethod
