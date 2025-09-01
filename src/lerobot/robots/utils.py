@@ -22,55 +22,55 @@ from .robot import Robot
 
 def make_robot_from_config(config: RobotConfig) -> Robot:
     if config.type == "koch_follower":
-        from .koch_follower import KochFollower
+        from .koch_follower import KochFollower, KochFollowerConfig
 
-        return KochFollower(config)
+        return KochFollower(cast(KochFollowerConfig,config))
     elif config.type == "so100_follower":
-        from .so100_follower import SO100Follower
+        from .so100_follower import SO100Follower, SO100FollowerConfig
 
-        return SO100Follower(config)
+        return SO100Follower(cast(SO100FollowerConfig,config))
     elif config.type == "so100_follower_end_effector":
-        from .so100_follower import SO100FollowerEndEffector
+        from .so100_follower import SO100FollowerEndEffector, SO100FollowerEndEffectorConfig
 
-        return SO100FollowerEndEffector(config)
+        return SO100FollowerEndEffector(cast(SO100FollowerEndEffectorConfig, config))
     elif config.type == "so101_follower":
-        from .so101_follower import SO101Follower
+        from .so101_follower import SO101Follower, SO101FollowerConfig
 
-        return SO101Follower(config)
+        return SO101Follower(cast(SO101FollowerConfig, config))
     elif config.type == "lekiwi":
-        from .lekiwi import LeKiwi
+        from .lekiwi import LeKiwi, LeKiwiConfig
 
-        return LeKiwi(config)
+        return LeKiwi(cast(LeKiwiConfig, config))
     elif config.type == "stretch3":
-        from .stretch3 import Stretch3Robot
+        from .stretch3 import Stretch3Robot, Stretch3RobotConfig
 
-        return Stretch3Robot(config)
+        return Stretch3Robot(cast(Stretch3RobotConfig, config))
     elif config.type == "viperx":
-        from .viperx import ViperX
+        from .viperx import ViperX, ViperXConfig
 
-        return ViperX(config)
+        return ViperX((cast(ViperXConfig, config))
     elif config.type == "hope_jr_hand":
-        from .hope_jr import HopeJrHand
+        from .hope_jr import HopeJrHand, HopeJrHandConfig
 
-        return HopeJrHand(config)
+        return HopeJrHand(cast(HopeJrHandConfig, config))
     elif config.type == "hope_jr_arm":
-        from .hope_jr import HopeJrArm
+        from .hope_jr import HopeJrArm, HopeJrArmConfig
 
-        return HopeJrArm(config)
+        return HopeJrArm(cast(HopeJrArmConfig, config))
     elif config.type == "bi_so100_follower":
-        from .bi_so100_follower import BiSO100Follower
+        from .bi_so100_follower import BiSO100Follower, BiSO100FollowerConfig
 
-        return BiSO100Follower(config)
+        return BiSO100Follower(cast(BiSO100FollowerConfig, config))
     elif config.type == "mock_robot":
-        from tests.mocks.mock_robot import MockRobot
+        from tests.mocks.mock_robot import MockRobot, MockRobotConfig
 
-        return MockRobot(config)
+        return MockRobot(cast(MockRobotConfig, config))
     else:
         raise ValueError(config.type)
 
 
 def ensure_safe_goal_position(
-    goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[float]
+    goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[str, float]
 ) -> dict[str, float]:
     """Caps relative action target magnitude for safety."""
 
