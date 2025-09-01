@@ -118,16 +118,11 @@ class RLearNPolicy(PreTrainedPolicy):
             self.reward_head = nn.Linear(config.dim_model, int(config.num_reward_bins))
             self.hl_gauss_layer = None
         else:
-            # produce embeddings for HL-Gauss (or regression)
-            self.reward_head = nn.Sequential(
-                nn.Linear(config.dim_model, config.dim_model),
-                nn.GELU(),
-                nn.Dropout(config.dropout),
-                nn.Linear(config.dim_model, config.dim_model),
-            )
+            # HL-Gauss expects per-bin logits; head outputs histogram-bin logits
+            self.reward_head = nn.Linear(config.dim_model, int(config.hl_gauss_num_bins))
             if HLGaussLayer is not None:
                 self.hl_gauss_layer = HLGaussLayer(
-                    dim=config.dim_model,
+                    dim=int(config.hl_gauss_num_bins),
                     use_regression=not bool(config.use_hl_gauss_loss),
                     hl_gauss_loss=dict(
                         min_value=float(config.reward_min_value),
@@ -380,7 +375,7 @@ class RLearNPolicy(PreTrainedPolicy):
             predicted_rewards = torch.softmax(video_frame_logits, dim=-1)
         else:
             # embeddings for HL-Gauss (or regression)
-            video_frame_embeds = self.reward_head(frame_tokens)  # (B,T,D)
+            video_frame_embeds = self.reward_head(frame_tokens)  # (B,T,Bins)
             # derive a scalar proxy for regularizers
             raw_like_logits = torch.tanh(video_frame_embeds).mean(dim=-1)
             # predicted_rewards will be set after loss branch below
@@ -441,9 +436,13 @@ class RLearNPolicy(PreTrainedPolicy):
             else:
                 # HL-Gauss or regression
                 if (self.hl_gauss_layer is not None) and (not self.hl_gauss_use_regression):
-                    loss = self.hl_gauss_layer(video_frame_embeds, target, mask=video_mask)
+                    # Ensure targets within configured range
+                    t_min = float(self.config.reward_min_value)
+                    t_max = float(self.config.reward_max_value)
+                    target_clamped = target.clamp(t_min, t_max)
+                    loss = self.hl_gauss_layer(video_frame_embeds, target_clamped, mask=video_mask)
                     total_loss = loss
-                    predicted_rewards = self.hl_gauss_layer(video_frame_embeds).detach()
+                    predicted_rewards = self.hl_gauss_layer(video_frame_embeds)
                 elif (self.hl_gauss_layer is not None) and self.hl_gauss_use_regression:
                     pred_values = self.hl_gauss_layer(video_frame_embeds)  # (B,T)
                     if video_mask is not None:

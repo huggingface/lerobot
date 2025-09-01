@@ -46,7 +46,7 @@ class RLearNConfig(PreTrainedConfig):
     # Sequence length, amount of past frames including current one to use in the temporal model
     max_seq_len: int = 16
     # Temporal sampling stride (2 = skip every other frame for wider temporal coverage)
-    temporal_sampling_stride: int = 2
+    temporal_sampling_stride: int = 3 # Open x mostly has fps 10, and rewind has seq len 16, ours is 30fps so 30/10 = 3 stride lenght to have same timeframe!
 
     # Model dimensions and transformer
     dim_model: int = 512
@@ -65,7 +65,7 @@ class RLearNConfig(PreTrainedConfig):
     hl_gauss_num_bins: int = 25                # histogram resolution
 
     # Inference-time subsampling and regularization
-    inference_stride: int = 2
+    inference_stride: int = 1 # in forward
     frame_dropout_p: float = 0.10
 
     # Training
