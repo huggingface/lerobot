@@ -16,7 +16,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
@@ -124,11 +123,13 @@ class ConRFTConfig(PreTrainedConfig):
 
     # Critic (ensemble + CQL/CalQL)
     critic_hidden_dim: int = 256
-    critic_ensemble_size: int = 2
-    critic_subsample_size: Optional[int] = None
-    discount: float = 0.99
+    discount: float = 0.97
+    # Number of critics in the ensemble
+    num_critics: int = 2
+    # Number of subsampled critics for training
+    num_subsample_critics: int | None = None
 
-    cql_alpha: float = 1.0
+    cql_alpha: float = 0.5
     cql_n_actions: int = 10
     cql_action_sample_method: str = "uniform"
     cql_clip_diff_min: float = -np.inf
@@ -153,6 +154,7 @@ class ConRFTConfig(PreTrainedConfig):
     # Proprioception settings
     use_proprio: bool = True
     proprio_latent_dim: int = 64
+    state_dim: int = 18
 
     vision_encoder_name: str | None = "helper2424/resnet10"
     freeze_vision_encoder: bool = True
@@ -176,8 +178,6 @@ class ConRFTConfig(PreTrainedConfig):
     state_encoder_hidden_dim: int = 256
     grad_clip_norm: float = 10.0
 
-    num_discrete_actions: int | None = None
-
     actor_lr: float = 3e-4
     critic_lr: float = 3e-4
 
@@ -186,7 +186,7 @@ class ConRFTConfig(PreTrainedConfig):
 
     # TODO(lilkm): add config for consistency policy
 
-    discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
+    # TODO(lilkm): add config for policy_t_network
 
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
 
