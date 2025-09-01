@@ -63,8 +63,8 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.configs import parser
 from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import (
+    robot_observation_to_transition,
     to_output_robot_action,
-    to_transition_robot_observation,
     to_transition_teleop_action,
 )
 from lerobot.processor.pipeline import IdentityProcessorStep
@@ -131,7 +131,7 @@ def teleop_loop(
     )
     robot_observation_processor = robot_observation_processor or RobotProcessorPipeline(
         steps=[IdentityProcessorStep()],
-        to_transition=to_transition_robot_observation,
+        to_transition=robot_observation_to_transition,
         to_output=lambda tr: tr,
     )
 

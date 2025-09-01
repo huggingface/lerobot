@@ -22,8 +22,8 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor.converters import (
+    robot_observation_to_transition,
     to_output_robot_action,
-    to_transition_robot_observation,
 )
 from lerobot.processor.pipeline import DataProcessorPipeline
 from lerobot.record import record_loop
@@ -83,7 +83,7 @@ robot_joints_to_ee_pose = DataProcessorPipeline(
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
-    to_transition=to_transition_robot_observation,
+    to_transition=robot_observation_to_transition,
     to_output=lambda tr: tr,
 )
 
