@@ -67,7 +67,7 @@ class RLearNConfig(PreTrainedConfig):
     logit_eps: float = 1e-4
     
     # Performance optimizations
-    use_amp: bool = True
+    use_amp: bool = False
     compile_model: bool = True
 
     # ReWiND augmentation
