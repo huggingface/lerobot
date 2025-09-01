@@ -43,24 +43,28 @@ class RLearNConfig(PreTrainedConfig):
     text_model_name: str = "google/siglip2-base-patch16-224"
     freeze_backbones: bool = True
 
-    # Temporal aggregator
-    dim_model: int = 512
-    n_heads: int = 8
-    n_layers: int = 4
-    dim_feedforward: int = 2048
-    dropout: float = 0.1
-    pre_norm: bool = True
-    frame_dropout_p: float = 0.0
-    stride: int = 1
-
     # Sequence length, amount of past frames including current one to use in the temporal model
     max_seq_len: int = 16
     # Temporal sampling stride (2 = skip every other frame for wider temporal coverage)
     temporal_sampling_stride: int = 2
 
+    # Model dimensions and transformer
+    dim_model: int = 512
+    num_layers: int = 4
+    num_heads: int = 8
+    ff_mult: int = 4  # Feed-forward multiplier, hidden = dim_model * ff_mult
+    dropout: float = 0.10
+    num_register_tokens: int = 4
+
+    # Inference-time subsampling and regularization
+    inference_stride: int = 1
+    frame_dropout_p: float = 0.10
+
     # Training
     learning_rate: float = 1e-3
     weight_decay: float = 0.01
+    head_lr_multiplier: float = 5.0
+    logit_eps: float = 1e-4
     
     # Performance optimizations
     use_amp: bool = True
@@ -71,18 +75,6 @@ class RLearNConfig(PreTrainedConfig):
     rewind_last3_prob: float = 0.3
     mismatch_prob: float = 0.2
     
-    # Logit regression (only supported mode) - FIXED: Larger eps to prevent extreme targets
-    logit_eps: float = 0.02  # Was 1e-6 → logit(±13.8), now 0.02 → logit(±3.9)
-    head_lr_multiplier: float = 10.0
-    head_weight_init_std: float = 0.05
-    # Initialize head bias toward this target probability to avoid 0.5 plateau
-    head_initial_bias_target: float = 0.3
-    
-    # Reward head architecture - FIXED: Simpler architecture to prevent flat basins
-    head_hidden_dim: int = 1024  # Hidden dimension for reward head  
-    head_num_layers: int = 2     # REDUCED: 2 layers instead of 4 to prevent over-regularization
-    head_dropout: float = 0.05   # REDUCED: Less dropout to prevent conservatism
-
     # Normalization presets
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -90,10 +82,6 @@ class RLearNConfig(PreTrainedConfig):
         }
     )
 
-    # Architecture
-    num_register_tokens: int = 4
-    mlp_predictor_depth: int = 3
-    
     # Required path to episodes.jsonl for episode boundaries
     episodes_jsonl_path: str | None = "meta/episodes.jsonl"
 
