@@ -470,7 +470,7 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
     return policy_features
 
 
-def merge_features(*dicts: dict) -> dict:
+def merge_dataset_features(*dicts: dict) -> dict:
     """
     Merge LeRobot grouped feature dicts.
 

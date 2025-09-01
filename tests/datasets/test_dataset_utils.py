@@ -20,7 +20,7 @@ from datasets import Dataset
 from huggingface_hub import DatasetCard
 
 from lerobot.datasets.push_dataset_to_hub.utils import calculate_episode_data_index
-from lerobot.datasets.utils import create_lerobot_dataset_card, hf_transform_to_torch, merge_features
+from lerobot.datasets.utils import create_lerobot_dataset_card, hf_transform_to_torch, merge_dataset_features
 
 
 def test_default_parameters():
@@ -72,7 +72,7 @@ def test_merge_simple_vectors():
         }
     }
 
-    out = merge_features(g1, g2)
+    out = merge_dataset_features(g1, g2)
 
     assert "action" in out
     assert out["action"]["dtype"] == "float32"
@@ -87,7 +87,7 @@ def test_merge_multiple_groups_order_and_dedup():
     g2 = {"action": {"dtype": "float32", "shape": (2,), "names": ["b", "c"]}}
     g3 = {"action": {"dtype": "float32", "shape": (3,), "names": ["a", "c", "d"]}}
 
-    out = merge_features(g1, g2, g3)
+    out = merge_dataset_features(g1, g2, g3)
 
     assert out["action"]["names"] == ["a", "b", "c", "d"]
     assert out["action"]["shape"] == (4,)
@@ -110,7 +110,7 @@ def test_non_vector_last_wins_for_images():
         }
     }
 
-    out = merge_features(g1, g2)
+    out = merge_dataset_features(g1, g2)
     assert out["observation.images.front"]["shape"] == (3, 720, 1280)
     assert out["observation.images.front"]["dtype"] == "image"
 
@@ -120,13 +120,13 @@ def test_dtype_mismatch_raises():
     g2 = {"action": {"dtype": "float64", "shape": (1,), "names": ["b"]}}
 
     with pytest.raises(ValueError, match="dtype mismatch for 'action'"):
-        _ = merge_features(g1, g2)
+        _ = merge_dataset_features(g1, g2)
 
 
 def test_non_dict_passthrough_last_wins():
     g1 = {"misc": 123}
     g2 = {"misc": 456}
 
-    out = merge_features(g1, g2)
+    out = merge_dataset_features(g1, g2)
     # For non-dict entries the last one wins
     assert out["misc"] == 456
