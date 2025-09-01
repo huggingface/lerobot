@@ -48,7 +48,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
     elif config.type == "viperx":
         from .viperx import ViperX, ViperXConfig
 
-        return ViperX((cast(ViperXConfig, config))
+        return ViperX(cast(ViperXConfig, config))
     elif config.type == "hope_jr_hand":
         from .hope_jr import HopeJrHand, HopeJrHandConfig
 
