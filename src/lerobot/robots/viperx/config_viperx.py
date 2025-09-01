@@ -36,7 +36,7 @@ class ViperXConfig(RobotConfig):
     # Also, everything is expected to work safely out-of-the-box, but we highly advise to
     # first try to teleoperate the grippers only (by commenting out the rest of the motors in this yaml),
     # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
-    max_relative_target: int | None = 5
+    max_relative_target: float | None = 5.0
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
