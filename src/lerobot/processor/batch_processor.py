@@ -28,7 +28,7 @@ from lerobot.processor.pipeline import (
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_action")
-class ToBatchProcessorAction(ActionProcessorStep):
+class ToBatchProcessorActionStep(ActionProcessorStep):
     """Process action component in-place, adding batch dimension if needed."""
 
     def action(self, action):
@@ -40,7 +40,7 @@ class ToBatchProcessorAction(ActionProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_observation")
-class ToBatchProcessorObservation(ObservationProcessorStep):
+class ToBatchProcessorObservationStep(ObservationProcessorStep):
     """Process observation component in-place, adding batch dimensions where needed."""
 
     def observation(self, observation):
@@ -66,7 +66,7 @@ class ToBatchProcessorObservation(ObservationProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_complementary_data")
-class ToBatchProcessorComplementaryData(ComplementaryDataProcessorStep):
+class ToBatchProcessorComplementaryDataStep(ComplementaryDataProcessorStep):
     """Process complementary data in-place, handling task field batching."""
 
     def complementary_data(self, complementary_data):
@@ -127,12 +127,12 @@ class AddBatchDimensionProcessorStep(ProcessorStep):
         ```
     """
 
-    to_batch_action_processor: ToBatchProcessorAction = field(default_factory=ToBatchProcessorAction)
-    to_batch_observation_processor: ToBatchProcessorObservation = field(
-        default_factory=ToBatchProcessorObservation
+    to_batch_action_processor: ToBatchProcessorActionStep = field(default_factory=ToBatchProcessorActionStep)
+    to_batch_observation_processor: ToBatchProcessorObservationStep = field(
+        default_factory=ToBatchProcessorObservationStep
     )
-    to_batch_complementary_data_processor: ToBatchProcessorComplementaryData = field(
-        default_factory=ToBatchProcessorComplementaryData
+    to_batch_complementary_data_processor: ToBatchProcessorComplementaryDataStep = field(
+        default_factory=ToBatchProcessorComplementaryDataStep
     )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
