@@ -57,7 +57,7 @@ class RLearNConfig(PreTrainedConfig):
     num_register_tokens: int = 4
 
     # --- reward head options ---
-    use_categorical_rewards: bool = False      # classification over bins
+    use_categorical_rewards: bool = True      # classification over bins
     num_reward_bins: int = 25
     reward_min_value: float = 0.0              # for HL-Gauss range
     reward_max_value: float = 1.0
@@ -65,7 +65,7 @@ class RLearNConfig(PreTrainedConfig):
     hl_gauss_num_bins: int = 25                # histogram resolution
 
     # Inference-time subsampling and regularization
-    inference_stride: int = 1
+    inference_stride: int = 2
     frame_dropout_p: float = 0.10
 
     # Training
