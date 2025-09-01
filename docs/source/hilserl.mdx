@@ -151,7 +151,7 @@ The environment processor (`env_processor`) handles incoming observations and en
 6. **TimeLimitProcessor** (optional): Enforces episode time limits
 7. **GripperPenaltyProcessor** (optional): Applies penalties for inappropriate gripper usage
 8. **RewardClassifierProcessor** (optional): Automated reward detection using vision models
-9. **ToBatchProcessor**: Converts data to batch format for neural network processing
+9. **AddBatchDimensionProcessorStep**: Converts data to batch format for neural network processing
 10. **DeviceProcessor**: Moves data to the specified compute device (CPU/GPU)
 
 #### Action Processor Pipeline
@@ -163,7 +163,7 @@ The action processor (`action_processor`) handles outgoing actions and human int
 3. **AddRobotObservationAsComplimentaryData**: Stores raw robot state for processing
 4. **InterventionActionProcessor**: Handles human interventions and episode termination
 5. **Inverse Kinematics Pipeline** (when enabled):
-   - **MapDeltaActionToRobotAction**: Converts delta actions to robot action format
+   - **MapDeltaActionToRobotActionStep**: Converts delta actions to robot action format
    - **EEReferenceAndDelta**: Computes end-effector reference and delta movements
    - **EEBoundsAndSafety**: Enforces workspace safety bounds
    - **InverseKinematicsEEToJoints**: Converts end-effector actions to joint targets

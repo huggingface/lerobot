@@ -48,7 +48,7 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
 @dataclass
-class MapDeltaActionToRobotAction(ActionProcessorStep):
+class MapDeltaActionToRobotActionStep(ActionProcessorStep):
     """
     Map delta actions from teleoperators (gamepad, keyboard) to robot target actions
     for use with inverse kinematics processors.
