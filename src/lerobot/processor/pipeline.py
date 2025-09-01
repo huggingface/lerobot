@@ -358,7 +358,10 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
     name: str = "RobotProcessor"
 
     to_transition: Callable[[dict[str, Any]], EnvTransition] = field(
-        default_factory=lambda: _default_batch_to_transition, repr=False
+        default_factory=lambda: __import__(
+            "lerobot.processor.converters", fromlist=["_default_batch_to_transition"]
+        )._default_batch_to_transition,
+        repr=False,
     )
     to_output: Callable[[EnvTransition], TOutput] = field(
         # Cast is necessary here: Working around Python type-checker limitation.

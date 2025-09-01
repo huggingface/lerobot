@@ -324,3 +324,86 @@ def to_dataset_frame(
             batch["task"] = comp["task"]
 
     return batch
+
+
+def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
+    """Convert a *batch* dict coming from Learobot replay/dataset code into an
+    ``EnvTransition`` dictionary.
+
+    The function maps well known keys to the EnvTransition structure. Missing keys are
+    filled with sane defaults (``None`` or ``0.0``/``False``).
+
+    Keys recognised (case-sensitive):
+
+    * "observation.*" (keys starting with "observation." are grouped into observation dict)
+    * "action"
+    * "next.reward"
+    * "next.done"
+    * "next.truncated"
+    * "info"
+
+    Additional keys are ignored so that existing dataloaders can carry extra
+    metadata without breaking the processor.
+    """
+
+    # Extract observation keys
+    observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
+    observation = observation_keys if observation_keys else None
+
+    # Extract padding, task, index, and task_index keys for complementary data
+    pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
+    task_key = {"task": batch["task"]} if "task" in batch else {}
+    index_key = {"index": batch["index"]} if "index" in batch else {}
+    task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
+    complementary_data = (
+        {**pad_keys, **task_key, **index_key, **task_index_key}
+        if pad_keys or task_key or index_key or task_index_key
+        else {}
+    )
+
+    transition: EnvTransition = {
+        TransitionKey.OBSERVATION: observation,
+        TransitionKey.ACTION: batch.get("action"),
+        TransitionKey.REWARD: batch.get("next.reward", 0.0),
+        TransitionKey.DONE: batch.get("next.done", False),
+        TransitionKey.TRUNCATED: batch.get("next.truncated", False),
+        TransitionKey.INFO: batch.get("info", {}),
+        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
+    }
+    return transition
+
+
+def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  # noqa: D401
+    """Inverse of :pyfunc:`_default_batch_to_transition`. Returns a dict with
+    the canonical field names used throughout *LeRobot*.
+    """
+
+    batch = {
+        "action": transition.get(TransitionKey.ACTION),
+        "next.reward": transition.get(TransitionKey.REWARD, 0.0),
+        "next.done": transition.get(TransitionKey.DONE, False),
+        "next.truncated": transition.get(TransitionKey.TRUNCATED, False),
+        "info": transition.get(TransitionKey.INFO, {}),
+    }
+
+    # Add padding, task, index, and task_index data from complementary_data
+    complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+    if complementary_data:
+        pad_data = {k: v for k, v in complementary_data.items() if "_is_pad" in k}
+        batch.update(pad_data)
+
+        if "task" in complementary_data:
+            batch["task"] = complementary_data["task"]
+
+        if "index" in complementary_data:
+            batch["index"] = complementary_data["index"]
+
+        if "task_index" in complementary_data:
+            batch["task_index"] = complementary_data["task_index"]
+
+    # Handle observation - flatten dict to observation.* keys if it's a dict
+    observation = transition.get(TransitionKey.OBSERVATION)
+    if isinstance(observation, dict):
+        batch.update(observation)
+
+    return batch
