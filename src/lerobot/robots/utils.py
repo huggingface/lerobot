@@ -70,11 +70,11 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
 
 def ensure_safe_goal_position(
-    goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[float]
+    goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[str, float]
 ) -> dict[str, float]:
     """Caps relative action target magnitude for safety."""
 
-    if isinstance(max_relative_target, float):
+    if isinstance(max_relative_target, (float, int)):
         diff_cap = dict.fromkeys(goal_present_pos, max_relative_target)
     elif isinstance(max_relative_target, dict):
         if not set(goal_present_pos) == set(max_relative_target):
