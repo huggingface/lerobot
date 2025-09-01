@@ -27,7 +27,7 @@ from lerobot.processor.pipeline import ObservationProcessorStep, ProcessorStepRe
 
 @dataclass
 @ProcessorStepRegistry.register(name="observation_processor")
-class VanillaObservationProcessor(ObservationProcessorStep):
+class VanillaObservationProcessorStep(ObservationProcessorStep):
     """
     Processes environment observations into the LeRobot format by handling both images and states.
 

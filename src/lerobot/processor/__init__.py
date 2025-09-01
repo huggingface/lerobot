@@ -29,7 +29,7 @@ from .hil_processor import (
 )
 from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
-from .observation_processor import VanillaObservationProcessor
+from .observation_processor import VanillaObservationProcessorStep
 from .pipeline import (
     ActionProcessorStep,
     DataProcessorPipeline,
@@ -85,5 +85,5 @@ __all__ = [
     "Torch2NumpyActionProcessorStep",
     "TransitionKey",
     "TruncatedProcessorStep",
-    "VanillaObservationProcessor",
+    "VanillaObservationProcessorStep",
 ]
