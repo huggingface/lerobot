@@ -156,7 +156,7 @@ class Stretch3Robot(Robot):
         return obs_dict
 
     def send_action(self, action: np.ndarray) -> np.ndarray:
-        if not self._is_connected
+        if not self._is_connected:
             raise ConnectionError("Robot must be connected to send action")
 
         if self.teleop is None:
