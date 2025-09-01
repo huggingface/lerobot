@@ -80,7 +80,7 @@ class RLearNConfig(PreTrainedConfig):
     # ReWiND augmentation
     rewind_prob: float = 0.3 #0.8
     rewind_last3_prob: float = 0.0 #0.3
-    mismatch_prob: float = 0.0# 0.2
+    mismatch_prob: float = 0.0 #0.2
     
     # Normalization presets
     normalization_mapping: dict[str, NormalizationMode] = field(
