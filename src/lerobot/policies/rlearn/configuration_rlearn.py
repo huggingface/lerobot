@@ -72,6 +72,7 @@ class RLearNConfig(PreTrainedConfig):
     weight_decay: float = 0.01
     head_lr_multiplier: float = 5.0
     logit_eps: float = 1e-4
+    regularizer_warmup_steps: int = 500
     
     # Performance optimizations
     use_amp: bool = False
