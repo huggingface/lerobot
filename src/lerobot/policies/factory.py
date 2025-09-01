@@ -32,7 +32,11 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
+<<<<<<< HEAD
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
+=======
+from lerobot.policies.smolandfast.configuration_smolandfast import SMOLANDFASTConfig
+>>>>>>> 90b2150 (feat: autoregressive transformer poc)
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
@@ -106,6 +110,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "smolandfast":
+        from lerobot.policies.smolandfast.modeling_smolandfast import SMOLANDFASTPolicy
+
+        return SMOLANDFASTPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -149,6 +157,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SmolVLAConfig(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
+    elif policy_type == "smolandfast":
+        return SMOLANDFASTConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
