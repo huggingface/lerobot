@@ -39,8 +39,8 @@ class RLearNConfig(PreTrainedConfig):
     """
 
     # Encoders - Use SigLIP2 for both vision and text (shared checkpoint)
-    vision_model_name: str = "google/siglip2-base-patch16-512"
-    text_model_name: str = "google/siglip2-base-patch16-512"
+    vision_model_name: str = "google/siglip2-base-patch16-224"
+    text_model_name: str = "google/siglip2-base-patch16-224"
     freeze_backbones: bool = True
 
     # Sequence length, amount of past frames including current one to use in the temporal model
