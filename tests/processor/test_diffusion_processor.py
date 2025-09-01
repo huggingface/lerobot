@@ -28,9 +28,9 @@ from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
-    NormalizerProcessor,
-    RenameProcessor,
-    UnnormalizerProcessor,
+    NormalizerProcessorStep,
+    RenameProcessorStep,
+    UnnormalizerProcessorStep,
 )
 from lerobot.processor.pipeline import TransitionKey
 
@@ -89,15 +89,15 @@ def test_make_diffusion_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 4
-    assert isinstance(preprocessor.steps[0], RenameProcessor)
-    assert isinstance(preprocessor.steps[1], NormalizerProcessor)
+    assert isinstance(preprocessor.steps[0], RenameProcessorStep)
+    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
     assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
     assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
-    assert isinstance(postprocessor.steps[1], UnnormalizerProcessor)
+    assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
 
 
 def test_diffusion_processor_with_images():

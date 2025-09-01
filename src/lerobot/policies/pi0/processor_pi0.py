@@ -22,17 +22,17 @@ from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
-    NormalizerProcessor,
+    NormalizerProcessorStep,
     PolicyProcessorPipeline,
     TokenizerProcessorStep,
-    UnnormalizerProcessor,
+    UnnormalizerProcessorStep,
 )
 from lerobot.processor.pipeline import (
     ComplementaryDataProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
 )
-from lerobot.processor.rename_processor import RenameProcessor
+from lerobot.processor.rename_processor import RenameProcessorStep
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")
@@ -69,8 +69,8 @@ def make_pi0_pre_post_processors(
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
-        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
-        NormalizerProcessor(
+        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
@@ -88,7 +88,7 @@ def make_pi0_pre_post_processors(
 
     output_steps: list[ProcessorStep] = [
         DeviceProcessorStep(device="cpu"),
-        UnnormalizerProcessor(
+        UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]

@@ -22,10 +22,10 @@ from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
-    NormalizerProcessor,
+    NormalizerProcessorStep,
     PolicyProcessorPipeline,
-    RenameProcessor,
-    UnnormalizerProcessor,
+    RenameProcessorStep,
+    UnnormalizerProcessorStep,
 )
 
 
@@ -33,8 +33,8 @@ def make_sac_pre_post_processors(
     config: SACConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
-        RenameProcessor(rename_map={}),
-        NormalizerProcessor(
+        RenameProcessorStep(rename_map={}),
+        NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
@@ -44,7 +44,7 @@ def make_sac_pre_post_processors(
     ]
     output_steps = [
         DeviceProcessorStep(device="cpu"),
-        UnnormalizerProcessor(
+        UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]

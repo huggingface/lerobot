@@ -29,7 +29,7 @@ TELEOP_ACTION_KEY = "teleop_action"
 
 @ProcessorStepRegistry.register("add_teleop_action_as_complementary_data")
 @dataclass
-class AddTeleopActionAsComplimentaryData(ComplementaryDataProcessorStep):
+class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
     """Add teleoperator action to transition complementary data."""
 
     teleop_device: Teleoperator
@@ -42,7 +42,7 @@ class AddTeleopActionAsComplimentaryData(ComplementaryDataProcessorStep):
 
 @ProcessorStepRegistry.register("add_teleop_action_as_info")
 @dataclass
-class AddTeleopEventsAsInfo(InfoProcessorStep):
+class AddTeleopEventsAsInfoStep(InfoProcessorStep):
     """Add teleoperator control events to transition info."""
 
     teleop_device: Teleoperator
@@ -56,7 +56,7 @@ class AddTeleopEventsAsInfo(InfoProcessorStep):
 
 @ProcessorStepRegistry.register("image_crop_resize_processor")
 @dataclass
-class ImageCropResizeProcessor(ObservationProcessorStep):
+class ImageCropResizeProcessorStep(ObservationProcessorStep):
     """Crop and resize image observations."""
 
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
@@ -106,7 +106,7 @@ class ImageCropResizeProcessor(ObservationProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("time_limit_processor")
-class TimeLimitProcessor(TruncatedProcessorStep):
+class TimeLimitProcessorStep(TruncatedProcessorStep):
     """Track episode steps and enforce time limits."""
 
     max_episode_steps: int
@@ -130,7 +130,7 @@ class TimeLimitProcessor(TruncatedProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
-class GripperPenaltyProcessor(ComplementaryDataProcessorStep):
+class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
     """Apply penalty for inappropriate gripper usage."""
 
     penalty: float = -0.01
@@ -176,7 +176,7 @@ class GripperPenaltyProcessor(ComplementaryDataProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("intervention_action_processor")
-class InterventionActionProcessor(ProcessorStep):
+class InterventionActionProcessorStep(ProcessorStep):
     """Handle human intervention actions and episode termination."""
 
     use_gripper: bool = False
@@ -246,7 +246,7 @@ class InterventionActionProcessor(ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("reward_classifier_processor")
-class RewardClassifierProcessor(ProcessorStep):
+class RewardClassifierProcessorStep(ProcessorStep):
     """Apply reward classification to image observations."""
 
     pretrained_path: str | None = None

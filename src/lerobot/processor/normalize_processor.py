@@ -196,7 +196,7 @@ class _NormalizationMixin:
 
 @dataclass
 @ProcessorStepRegistry.register(name="normalizer_processor")
-class NormalizerProcessor(_NormalizationMixin, ProcessorStep):
+class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
     """
     A processor that applies normalization to observations and actions in a transition.
 
@@ -215,7 +215,7 @@ class NormalizerProcessor(_NormalizationMixin, ProcessorStep):
         normalize_observation_keys: set[str] | None = None,
         eps: float = 1e-8,
         device: torch.device | str | None = None,
-    ) -> NormalizerProcessor:
+    ) -> NormalizerProcessorStep:
         return cls(
             features=features,
             norm_map=norm_map,
@@ -245,7 +245,7 @@ class NormalizerProcessor(_NormalizationMixin, ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="unnormalizer_processor")
-class UnnormalizerProcessor(_NormalizationMixin, ProcessorStep):
+class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
     """
     A processor that applies unnormalization (the inverse of normalization) to
     observations and actions in a transition.
@@ -262,7 +262,7 @@ class UnnormalizerProcessor(_NormalizationMixin, ProcessorStep):
         norm_map: dict[FeatureType, NormalizationMode],
         *,
         device: torch.device | str | None = None,
-    ) -> UnnormalizerProcessor:
+    ) -> UnnormalizerProcessorStep:
         return cls(features=features, norm_map=norm_map, stats=dataset.meta.stats, device=device)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -288,7 +288,7 @@ def hotswap_stats(
     Replaces normalization statistics in a DataProcessorPipeline pipeline.
 
     This function creates a deep copy of the provided `DataProcessorPipeline` and updates the
-    statistics of any `NormalizerProcessor` or `UnnormalizerProcessor` steps within it.
+    statistics of any `NormalizerProcessorStep` or `UnnormalizerProcessorStep` steps within it.
     It's useful for adapting a trained policy to a new environment or dataset with
     different data distributions.
     """

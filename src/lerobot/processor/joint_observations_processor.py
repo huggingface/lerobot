@@ -13,7 +13,7 @@ from lerobot.robots import Robot
 
 @dataclass
 @ProcessorStepRegistry.register("joint_velocity_processor")
-class JointVelocityProcessor(ObservationProcessorStep):
+class JointVelocityProcessorStep(ObservationProcessorStep):
     """Add joint velocity information to observations."""
 
     dt: float = 0.1
@@ -66,7 +66,7 @@ class JointVelocityProcessor(ObservationProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("current_processor")
-class MotorCurrentProcessor(ObservationProcessorStep):
+class MotorCurrentProcessorStep(ObservationProcessorStep):
     """Add motor current information to observations."""
 
     robot: Robot | None = None

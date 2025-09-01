@@ -24,7 +24,7 @@ from lerobot.processor.pipeline import ActionProcessorStep, ProcessorStepRegistr
 
 @ProcessorStepRegistry.register("map_tensor_to_delta_action_dict")
 @dataclass
-class MapTensorToDeltaActionDict(ActionProcessorStep):
+class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     """
     Map a tensor to a delta action dictionary.
     """
@@ -48,7 +48,7 @@ class MapTensorToDeltaActionDict(ActionProcessorStep):
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
 @dataclass
-class MapDeltaActionToRobotAction(ActionProcessorStep):
+class MapDeltaActionToRobotActionStep(ActionProcessorStep):
     """
     Map delta actions from teleoperators (gamepad, keyboard) to robot target actions
     for use with inverse kinematics processors.

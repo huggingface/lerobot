@@ -21,10 +21,10 @@ from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
-    NormalizerProcessor,
+    NormalizerProcessorStep,
     PolicyProcessorPipeline,
-    RenameProcessor,
-    UnnormalizerProcessor,
+    RenameProcessorStep,
+    UnnormalizerProcessorStep,
 )
 
 
@@ -32,8 +32,8 @@ def make_pi0fast_pre_post_processors(
     config: PI0Config, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     input_steps = [
-        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
-        NormalizerProcessor(
+        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
@@ -43,7 +43,7 @@ def make_pi0fast_pre_post_processors(
     ]
     output_steps = [
         DeviceProcessorStep(device="cpu"),
-        UnnormalizerProcessor(
+        UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]

@@ -15,21 +15,21 @@
 # limitations under the License.
 
 from .batch_processor import AddBatchDimensionProcessorStep
-from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
+from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
-from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
+from .gym_action_processor import Numpy2TorchActionProcessorStep, Torch2NumpyActionProcessorStep
 from .hil_processor import (
-    AddTeleopActionAsComplimentaryData,
-    AddTeleopEventsAsInfo,
-    GripperPenaltyProcessor,
-    ImageCropResizeProcessor,
-    InterventionActionProcessor,
-    RewardClassifierProcessor,
-    TimeLimitProcessor,
+    AddTeleopActionAsComplimentaryDataStep,
+    AddTeleopEventsAsInfoStep,
+    GripperPenaltyProcessorStep,
+    ImageCropResizeProcessorStep,
+    InterventionActionProcessorStep,
+    RewardClassifierProcessorStep,
+    TimeLimitProcessorStep,
 )
-from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
-from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
-from .observation_processor import VanillaObservationProcessor
+from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
+from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
+from .observation_processor import VanillaObservationProcessorStep
 from .pipeline import (
     ActionProcessorStep,
     DataProcessorPipeline,
@@ -46,44 +46,44 @@ from .pipeline import (
     TransitionKey,
     TruncatedProcessorStep,
 )
-from .rename_processor import RenameProcessor
+from .rename_processor import RenameProcessorStep
 from .tokenizer_processor import TokenizerProcessorStep
 
 __all__ = [
     "ActionProcessorStep",
-    "AddTeleopActionAsComplimentaryData",
-    "AddTeleopEventsAsInfo",
+    "AddTeleopActionAsComplimentaryDataStep",
+    "AddTeleopEventsAsInfoStep",
     "DeviceProcessorStep",
     "RewardProcessorStep",
-    "MapDeltaActionToRobotAction",
-    "MapTensorToDeltaActionDict",
+    "MapDeltaActionToRobotActionStep",
+    "MapTensorToDeltaActionDictStep",
     "EnvTransition",
-    "GripperPenaltyProcessor",
+    "GripperPenaltyProcessorStep",
     "IdentityProcessorStep",
-    "ImageCropResizeProcessor",
+    "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
-    "InterventionActionProcessor",
-    "JointVelocityProcessor",
-    "MapDeltaActionToRobotAction",
-    "MotorCurrentProcessor",
-    "NormalizerProcessor",
-    "UnnormalizerProcessor",
+    "InterventionActionProcessorStep",
+    "JointVelocityProcessorStep",
+    "MapDeltaActionToRobotActionStep",
+    "MotorCurrentProcessorStep",
+    "NormalizerProcessorStep",
+    "UnnormalizerProcessorStep",
     "hotswap_stats",
     "ObservationProcessorStep",
     "ProcessorStep",
     "ProcessorStepRegistry",
-    "RenameProcessor",
-    "RewardClassifierProcessor",
+    "RenameProcessorStep",
+    "RewardClassifierProcessorStep",
     "DoneProcessorStep",
     "DataProcessorPipeline",
     "RobotProcessorPipeline",
     "PolicyProcessorPipeline",
     "AddBatchDimensionProcessorStep",
     "TokenizerProcessorStep",
-    "TimeLimitProcessor",
-    "Numpy2TorchActionProcessor",
-    "Torch2NumpyActionProcessor",
+    "TimeLimitProcessorStep",
+    "Numpy2TorchActionProcessorStep",
+    "Torch2NumpyActionProcessorStep",
     "TransitionKey",
     "TruncatedProcessorStep",
-    "VanillaObservationProcessor",
+    "VanillaObservationProcessorStep",
 ]

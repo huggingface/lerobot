@@ -48,9 +48,9 @@ from safetensors.torch import load_file as load_safetensors
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.processor.batch_processor import AddBatchDimensionProcessorStep
 from lerobot.processor.device_processor import DeviceProcessorStep
-from lerobot.processor.normalize_processor import NormalizerProcessor, UnnormalizerProcessor
+from lerobot.processor.normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 from lerobot.processor.pipeline import DataProcessorPipeline
-from lerobot.processor.rename_processor import RenameProcessor
+from lerobot.processor.rename_processor import RenameProcessorStep
 
 # Policy type to class mapping
 POLICY_CLASSES = {
@@ -403,8 +403,8 @@ def main():
     # Now create preprocessor and postprocessor with cleaned_config available
     print("Creating preprocessor and postprocessor...")
     # The pattern from existing processor factories:
-    # - Preprocessor has two NormalizerProcessors: one for input_features, one for output_features
-    # - Postprocessor has one UnnormalizerProcessor for output_features only
+    # - Preprocessor has two NormalizerProcessorSteps: one for input_features, one for output_features
+    # - Postprocessor has one UnnormalizerProcessorStep for output_features only
 
     # Get features from cleaned_config (now they're PolicyFeature objects)
     input_features = cleaned_config.get("input_features", {})
@@ -412,8 +412,8 @@ def main():
 
     # Create preprocessor with two normalizers (following the pattern from processor factories)
     preprocessor_steps = [
-        RenameProcessor(rename_map={}),
-        NormalizerProcessor(
+        RenameProcessorStep(rename_map={}),
+        NormalizerProcessorStep(
             features={**input_features, **output_features},
             norm_map=norm_map,
             stats=stats,
@@ -426,7 +426,7 @@ def main():
     # Create postprocessor with unnormalizer for outputs only
     postprocessor_steps = [
         DeviceProcessorStep(device="cpu"),
-        UnnormalizerProcessor(features=output_features, norm_map=norm_map, stats=stats),
+        UnnormalizerProcessorStep(features=output_features, norm_map=norm_map, stats=stats),
     ]
     postprocessor = DataProcessorPipeline(steps=postprocessor_steps, name="robot_postprocessor")
 
