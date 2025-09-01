@@ -102,10 +102,11 @@ class RLearNConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list | None:
-        # Use temporal sequences: past frames from -(max_seq_len-1) to current (0)
-        # This gives us max_seq_len frames total, e.g. [-3, -2, -1, 0] for max_seq_len=4
-        # The dataset will handle padding/repeating frames for episodes shorter than this
-        return list(range(1 - self.max_seq_len, 1))
+        # Request a long enough context so in-window stride sampling can be >1.
+        # We ask for (max_seq_len * temporal_sampling_stride) frames ending at t=0.
+        # Example: max_seq_len=16, temporal_sampling_stride=3 → 48 deltas → ~46 frames available.
+        total_needed = self.max_seq_len * max(1, int(self.temporal_sampling_stride))
+        return list(range(1 - total_needed, 1))
 
     @property
     def action_delta_indices(self) -> list | None:

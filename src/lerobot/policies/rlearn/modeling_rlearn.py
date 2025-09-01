@@ -792,16 +792,16 @@ class RLearNPolicy(PreTrainedPolicy):
             ep_length = ep_end - ep_start
             episode_lengths.append(ep_length)
             
-            # Proper window-relative stride sampling within available frames
-            stride = self.config.temporal_sampling_stride
-            # Ensure we have room for T frames at given stride; shrink stride if needed
-            if available_T <= 1:
-                effective_stride = 1
-            else:
-                effective_stride = max(1, min(stride, (available_T - 1) // max(T - 1, 1) if (T - 1) > 0 else 1))
+            # Proper window-relative stride sampling; allow clamping for out-of-bounds
+            effective_stride = max(1, int(self.config.temporal_sampling_stride))
             min_anchor_in_window = (T - 1) * effective_stride
-            max_anchor_in_window = max(min_anchor_in_window, available_T - 1)
-            anchor_in_window = torch.randint(min_anchor_in_window, max_anchor_in_window + 1, (1,)).item()
+            max_anchor_in_window = available_T - 1
+            if min_anchor_in_window <= max_anchor_in_window:
+                anchor_in_window = torch.randint(min_anchor_in_window, max_anchor_in_window + 1, (1,)).item()
+            else:
+                # Not enough frames to satisfy stride; anchor at the last available frame,
+                # earlier indices will clamp to 0 (repeat first frame)
+                anchor_in_window = max_anchor_in_window
 
             # Convert window-anchor to episode-anchor (absolute frame index within episode)
             cur_frame_idx = frame_indices[b_idx].item()
