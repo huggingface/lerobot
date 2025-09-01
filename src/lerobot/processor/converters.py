@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
+from functools import singledispatch
 from typing import Any
 
 import numpy as np
@@ -29,17 +30,113 @@ from lerobot.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD, TRUNC
 from .pipeline import EnvTransition, TransitionKey
 
 
-def _to_tensor(x: torch.Tensor | np.ndarray | Sequence[int | float]):
-    if isinstance(x, torch.Tensor):
-        return x
-    if isinstance(x, np.ndarray):
-        # Keep images (uint8 HWC) and python objects as-is
-        if x.dtype == np.uint8 or x.dtype == np.object_:
-            return x
-        # Scalars/arrays to float32 tensor
-        return torch.as_tensor(x, dtype=torch.float32)
-    # Anything else to float32 tensor
-    return torch.as_tensor(x, dtype=torch.float32)
+@singledispatch
+def to_tensor(
+    value: Any,
+    *,
+    dtype: torch.dtype | None = torch.float32,
+    device: torch.device | str | None = None,
+) -> torch.Tensor:
+    """
+    Convert various data types to PyTorch tensors with configurable options.
+
+    This is a unified tensor conversion function using single dispatch to handle
+    different input types appropriately.
+
+    Args:
+        value: Input value to convert (tensor, array, scalar, sequence, etc.)
+        dtype: Target tensor dtype. If None, preserves original dtype.
+        device: Target device for the tensor.
+
+    Returns:
+        PyTorch tensor.
+
+    Raises:
+        TypeError: If the input type is not supported.
+    """
+    raise TypeError(f"Unsupported type for tensor conversion: {type(value)}")
+
+
+@to_tensor.register(torch.Tensor)
+def _(value: torch.Tensor, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
+    """Handle existing PyTorch tensors."""
+    if dtype is not None:
+        value = value.to(dtype=dtype)
+    if device is not None:
+        value = value.to(device=device)
+    return value
+
+
+@to_tensor.register(np.ndarray)
+def _(
+    value: np.ndarray,
+    *,
+    dtype=torch.float32,
+    device=None,
+    **kwargs,
+) -> torch.Tensor:
+    """Handle numpy arrays."""
+    # Check for numpy scalars (0-dimensional arrays) and treat them as scalars
+    if value.ndim == 0:
+        # Numpy scalars should be converted to 0-dimensional tensors
+        scalar_value = value.item()
+        return torch.tensor(scalar_value, dtype=dtype, device=device)
+
+    # Create tensor from numpy array (torch.from_numpy handles contiguity automatically)
+    tensor = torch.from_numpy(value)
+
+    # Apply dtype conversion if specified
+    if dtype is not None:
+        tensor = tensor.to(dtype=dtype)
+    if device is not None:
+        tensor = tensor.to(device=device)
+
+    return tensor
+
+
+@to_tensor.register(int)
+@to_tensor.register(float)
+@to_tensor.register(np.integer)
+@to_tensor.register(np.floating)
+def _(value, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
+    """Handle scalar values including numpy scalars."""
+    return torch.tensor(value, dtype=dtype, device=device)
+
+
+@to_tensor.register(list)
+@to_tensor.register(tuple)
+def _(value: Sequence, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
+    """Handle sequences (lists, tuples)."""
+    return torch.tensor(value, dtype=dtype, device=device)
+
+
+@to_tensor.register(dict)
+def _(value: dict, *, device=None, **kwargs) -> dict:
+    """Handle dictionaries by recursively converting values to tensors."""
+    if not value:
+        return {}
+
+    result = {}
+    for key, sub_value in value.items():
+        if sub_value is None:
+            continue
+
+        if isinstance(sub_value, dict):
+            # Recursively process nested dictionaries
+            result[key] = to_tensor(
+                sub_value,
+                device=device,
+                **kwargs,
+            )
+            continue
+
+        # Convert individual values to tensors
+        result[key] = to_tensor(
+            sub_value,
+            device=device,
+            **kwargs,
+        )
+    return result
 
 
 def _from_tensor(x: Any):
@@ -88,7 +185,7 @@ def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
             continue
 
         arr = np.array(v) if np.isscalar(v) else v
-        act_dict[f"{ACTION}.{k}"] = _to_tensor(arr)
+        act_dict[f"{ACTION}.{k}"] = to_tensor(arr)
 
     return make_obs_act_transition(act=act_dict)
 
@@ -103,7 +200,7 @@ def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransitio
     obs_dict: dict[str, Any] = {}
     for k, v in state.items():
         arr = np.array(v) if np.isscalar(v) else v
-        obs_dict[f"{OBS_STATE}.{k}"] = _to_tensor(arr)
+        obs_dict[f"{OBS_STATE}.{k}"] = to_tensor(arr)
 
     for cam, img in images.items():
         obs_dict[f"{OBS_IMAGES}.{cam}"] = img
