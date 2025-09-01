@@ -35,7 +35,7 @@ from lerobot.configs.types import PolicyFeature
 # Type variable for generic processor output type
 TOutput = TypeVar("TOutput")
 
-from .converters import _default_batch_to_transition, _default_transition_to_batch
+from .converters import batch_to_transition, transition_to_batch
 from .core import EnvTransition, TransitionKey
 
 

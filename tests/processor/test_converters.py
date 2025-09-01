@@ -3,13 +3,13 @@ import pytest
 import torch
 
 from lerobot.processor.converters import (
-    _default_batch_to_transition,
-    _default_transition_to_batch,
-    to_dataset_frame,
+    batch_to_transition,
     to_output_robot_action,
     to_tensor,
     to_transition_robot_observation,
     to_transition_teleop_action,
+    transition_to_batch,
+    transition_to_dataset_frame,
 )
 from lerobot.processor.pipeline import TransitionKey
 
@@ -109,7 +109,7 @@ def test_to_output_robot_action_strips_prefix_and_filters_pos_keys_only():
     assert out["gripper.pos"] == pytest.approx(33.0)
 
 
-def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
+def test_transition_to_dataset_frame_merge_and_pack_vectors_and_metadata():
     # Fabricate dataset features (as stored in dataset.meta["features"])
     features = {
         # Action vector: 3 elements in specific order
@@ -162,7 +162,7 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
     }
 
     # Directly call the refactored function
-    batch = to_dataset_frame([teleop_transition, robot_transition], features)
+    batch = transition_to_dataset_frame([teleop_transition, robot_transition], features)
 
     # Images passthrough
     assert "observation.images.front" in batch
@@ -396,8 +396,8 @@ def create_transition(
     }
 
 
-def test_default_batch_to_transition_with_index_fields():
-    """Test that _default_batch_to_transition handles index and task_index fields correctly."""
+def test_batch_to_transition_with_index_fields():
+    """Test that batch_to_transition handles index and task_index fields correctly."""
 
     # Create batch with index and task_index fields
     batch = {
@@ -410,7 +410,7 @@ def test_default_batch_to_transition_with_index_fields():
         "task_index": torch.tensor([3], dtype=torch.int64),
     }
 
-    transition = _default_batch_to_transition(batch)
+    transition = batch_to_transition(batch)
 
     # Check basic transition structure
     assert TransitionKey.OBSERVATION in transition
@@ -429,8 +429,8 @@ def test_default_batch_to_transition_with_index_fields():
     assert comp_data["task"] == batch["task"]
 
 
-def test_default_transition_to_batch_with_index_fields():
-    """Test that _default_transition_to_batch handles index and task_index fields correctly."""
+def testtransition_to_batch_with_index_fields():
+    """Test that transition_to_batch handles index and task_index fields correctly."""
 
     # Create transition with index and task_index in complementary_data
     transition = create_transition(
@@ -445,7 +445,7 @@ def test_default_transition_to_batch_with_index_fields():
         },
     )
 
-    batch = _default_transition_to_batch(transition)
+    batch = transition_to_batch(transition)
 
     # Check that index and task_index are in the batch
     assert "index" in batch
@@ -468,7 +468,7 @@ def test_batch_to_transition_without_index_fields():
         "task": ["pick_cube"],
     }
 
-    transition = _default_batch_to_transition(batch)
+    transition = batch_to_transition(batch)
     comp_data = transition[TransitionKey.COMPLEMENTARY_DATA]
 
     # Should have task but not index/task_index
@@ -487,7 +487,7 @@ def test_transition_to_batch_without_index_fields():
         complementary_data={"task": ["navigate"]},
     )
 
-    batch = _default_transition_to_batch(transition)
+    batch = transition_to_batch(transition)
 
     # Should have task but not index/task_index
     assert "task" in batch
