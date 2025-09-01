@@ -39,7 +39,7 @@ from torchvision import transforms
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.backward_compatibility import (
-    V21_MESSAGE,
+    FUTURE_MESSAGE,
     BackwardCompatibilityError,
     ForwardCompatibilityError,
 )
@@ -343,7 +343,7 @@ def check_version_compatibility(
     if v_check.major < v_current.major and enforce_breaking_major:
         raise BackwardCompatibilityError(repo_id, v_check)
     elif v_check.minor < v_current.minor:
-        logging.warning(V21_MESSAGE.format(repo_id=repo_id, version=v_check))
+        logging.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 
 def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
