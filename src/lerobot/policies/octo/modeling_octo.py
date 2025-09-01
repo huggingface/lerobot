@@ -222,7 +222,8 @@ class OctoPolicy(PreTrainedPolicy):
         Prepare batch for model input.
         Transforms a batch from the LeRobotDataset format to the format expected by the OctoModel.
         """
-        batch = self.normalize_inputs(batch)
+        # TODO(lilkm): check normalization
+        # batch = self.normalize_inputs(batch)
         # Get device from any available tensor in the batch
         device = next(iter(batch.values())).device
 
