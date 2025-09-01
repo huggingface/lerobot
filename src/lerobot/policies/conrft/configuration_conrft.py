@@ -100,6 +100,33 @@ class ConRFTConfig(PreTrainedConfig):
     n_obs_steps: int = 1
     n_action_steps: int = 4
 
+    # Image preprocessing (from Octo)
+    resize_primary_image: tuple[int, int] = (256, 256)
+    resize_wrist_image: tuple[int, int] = (128, 128)
+
+    # Language model (from Octo)
+    language_model_name: str = "t5-base"
+    language_max_length: int = 16
+    freeze_language_encoder: bool = True
+
+    # Transformer settings (from Octo)
+    repeat_task_tokens: bool = True
+    dropout_rate: float = 0.0
+    attention_dropout_rate: float = 0.0
+    add_position_embedding: bool = False
+
+    # Diffusion settings (from Octo)
+    diffusion_steps: int = 20
+    n_diffusion_samples: int = 1
+    max_action: float = 5.0
+    loss_type: str = "mse"
+    action_dim: int = 7
+
+    # Finetuning settings (from Octo)
+    freeze_transformer: bool = False
+    freeze_vision_encoder: bool = True
+    train_action_head_only: bool = False
+
     # Consistency Policy (CP)
     sigma_data: float = 0.5
     sigma_min: float = 0.002
