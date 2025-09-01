@@ -853,10 +853,6 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
             "actor": torch.optim.Adam(policy.consistency_policy.parameters(), lr=cfg.policy.actor_lr),
             "critic": torch.optim.Adam(policy.critic_ensemble.parameters(), lr=cfg.policy.critic_lr),
         }
-
-        if cfg.policy.num_discrete_actions is not None:
-            optimizers["discrete_critic"] = torch.optim.Adam(params=policy.discrete_critic.parameters(), lr=cfg.policy.critic_lr)
-
         lr_scheduler = None
         return optimizers, lr_scheduler
 

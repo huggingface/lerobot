@@ -231,9 +231,6 @@ class ConRFTPolicy(PreTrainedPolicy):
             "critic": self.critic_ensemble.parameters(),
         }
 
-        if self.config.num_discrete_actions is not None:
-            params["discrete_critic"] = self.discrete_critic.parameters()
-
         if self.encoder_actor is not None and not self.config.freeze_base_vla:
             params["encoder_actor"] = self.encoder_actor.parameters()
 
@@ -293,14 +290,8 @@ class ConRFTPolicy(PreTrainedPolicy):
     def update_target_networks(self):
         """Update target networks with soft updates"""
         tau = self.config.soft_target_update_rate
-        for target_param, param in zip(self.critic_target.parameters(), self.critic_ensemble.parameters(), strict=False):
+        for target_param, param in zip(self.critic_ensemble_target.parameters(), self.critic_ensemble.parameters(), strict=False):
             target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-
-        if self.config.num_discrete_actions is not None:
-            for target_param, param in zip(
-                self.discrete_critic_target.parameters(), self.discrete_critic.parameters(), strict=False
-            ):
-                target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
     def set_training_stage(self, stage: str):
         """Switch between offline and online training stages"""
@@ -323,9 +314,6 @@ class ConRFTPolicy(PreTrainedPolicy):
         next_observations = batch["next_state"]
         obs_feat = batch.get("observation_feature")
         nxt_feat = batch.get("next_observation_feature")
-
-        if self.config.num_discrete_actions is not None:
-            actions = actions[:, :DISCRETE_DIMENSION_INDEX]
 
         # Compute target Q-values
         with torch.no_grad():
