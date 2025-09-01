@@ -23,6 +23,7 @@ from reachy2_sdk import ReachySDK
 from lerobot.cameras.utils import make_cameras_from_configs
 
 from ..robot import Robot
+from ..utils import ensure_safe_goal_position
 from .configuration_reachy2 import Reachy2RobotConfig
 
 # {lerobot_keys: reachy2_sdk_keys}
@@ -186,6 +187,7 @@ class Reachy2Robot(Robot):
             before_write_t = time.perf_counter()
 
             vel = {}
+            goal_pos = {}
             for key, val in action.items():
                 if key not in self.joints_dict:
                     if key not in REACHY2_VEL:
@@ -193,6 +195,18 @@ class Reachy2Robot(Robot):
                     else:
                         vel[REACHY2_VEL[key]] = float(val)
                 else:
+                    if not self.use_external_commands and self.config.max_relative_target is not None:
+                        goal_pos[key] = float(val)
+                        goal_present_pos = {
+                            key: (
+                                goal_pos[key],
+                                self.reachy.joints[self.joints_dict[key]].present_position,
+                            )
+                        }
+                        safe_goal_pos = ensure_safe_goal_position(
+                            goal_present_pos, float(self.config.max_relative_target)
+                        )
+                        val = safe_goal_pos[key]
                     self.reachy.joints[self.joints_dict[key]].goal_position = float(val)
 
             if self.config.with_mobile_base:

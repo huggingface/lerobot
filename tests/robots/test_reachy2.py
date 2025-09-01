@@ -63,6 +63,7 @@ PARAMS = [
     {"use_external_commands": True, "disable_torque_on_disconnect": True},
     {"use_external_commands": True, "with_mobile_base": False, "with_neck": False},
     {"disable_torque_on_disconnect": False},
+    {"max_relative_target": 5},
     {"with_right_teleop_camera": False},
     {"with_left_teleop_camera": False, "with_right_teleop_camera": False},
     {"with_left_teleop_camera": False, "with_torso_camera": True},
@@ -294,19 +295,28 @@ def test_get_observation(reachy2):
 def test_send_action(reachy2):
     reachy2.connect()
 
-    action = {k: i * 10.0 for i, k in enumerate(reachy2.joints_dict.keys())}
+    action = {k: i * 10.0 for i, k in enumerate(reachy2.joints_dict.keys(), start=1)}
     if reachy2.config.with_mobile_base:
         action.update({k: i * 0.1 for i, k in enumerate(REACHY2_VEL.keys(), start=1)})
 
+    previous_present_position = {
+        k: reachy2.reachy.joints[REACHY2_JOINTS[k]].present_position for k in reachy2.joints_dict.keys()
+    }
     returned = reachy2.send_action(action)
 
-    assert returned == action
+    if reachy2.config.max_relative_target is None:
+        assert returned == action
 
     assert reachy2.reachy._goal_position_set_total == len(reachy2.joints_dict)
     for motor in reachy2.joints_dict.keys():
         expected_pos = action[motor]
         real_pos = reachy2.reachy.joints[REACHY2_JOINTS[motor]].goal_position
-        assert real_pos == expected_pos
+        if reachy2.config.max_relative_target is None:
+            assert real_pos == expected_pos
+        else:
+            assert real_pos == previous_present_position[motor] + np.sign(expected_pos) * min(
+                abs(expected_pos - real_pos), reachy2.config.max_relative_target
+            )
 
     if reachy2.config.with_mobile_base:
         goal_speed = [i * 0.1 for i, _ in enumerate(REACHY2_VEL.keys(), start=1)]
