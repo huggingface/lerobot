@@ -41,7 +41,7 @@ from lerobot.processor import (
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
     MotorCurrentProcessor,
-    Numpy2TorchActionProcessor,
+    Numpy2TorchActionProcessorStep,
     RewardClassifierProcessor,
     TimeLimitProcessor,
     Torch2NumpyActionProcessorStep,
@@ -381,7 +381,7 @@ def make_processors(
 
         # Minimal processor pipeline for GymHIL simulation
         env_pipeline_steps = [
-            Numpy2TorchActionProcessor(),
+            Numpy2TorchActionProcessorStep(),
             VanillaObservationProcessor(),
             AddBatchDimensionProcessorStep(),
             DeviceProcessorStep(device=device),
