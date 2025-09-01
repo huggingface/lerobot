@@ -264,6 +264,10 @@ def encode_video_frames(
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
 
+    if video_path.exists() and not overwrite:
+        logging.warning(f"Video file already exists: {video_path}. Skipping encoding.")
+        return
+
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Encoders/pixel formats incompatibility check
