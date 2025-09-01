@@ -621,15 +621,22 @@ class RLearNPolicy(PreTrainedPolicy):
         if self.training and torch.rand(1).item() < 0.03:
             with torch.no_grad():
                 sample_idx = torch.randint(0, B, (1,)).item()
-                sample_targets = target_expanded[sample_idx, :T_eff].cpu().numpy() if target is not None else np.zeros((T_eff,), dtype=np.float32)
-                sample_preds = predicted_rewards[sample_idx].detach().cpu().numpy()
+                debug_target = target if target is not None else torch.zeros((B, T_eff), device=device)
+                sample_targets = debug_target[sample_idx, :T_eff].detach().cpu().numpy()
+                # If categorical, collapse to max-prob over bins for readability
+                if predicted_rewards.dim() == 3:
+                    sample_preds = predicted_rewards.max(dim=-1).values[sample_idx].detach().cpu().numpy()
+                else:
+                    sample_preds = predicted_rewards[sample_idx].detach().cpu().numpy()
                 
                 print(f"\n=== LOGIT REGRESSION DEBUG ===")
-                print(f"Target: min={target_expanded.min():.3f}, max={target_expanded.max():.3f}, mean={target_expanded.mean():.3f}")
-                has_high_targets = (target_expanded > 0.8).any().item()
+                print(f"Target: min={debug_target.min():.3f}, max={debug_target.max():.3f}, mean={debug_target.mean():.3f}")
+                has_high_targets = (debug_target > 0.8).any().item()
                 print(f"✓ Has targets >0.8: {has_high_targets} | T_eff: {T_eff}")
                 print(f"Logits(proxy): min={raw_like_logits.min():.3f}, max={raw_like_logits.max():.3f}, mean={raw_like_logits.mean():.3f}")
-                print(f"Preds:  min={predicted_rewards.min():.3f}, max={predicted_rewards.max():.3f}, mean={predicted_rewards.mean():.3f}")
+                # For categorical, report max-prob stats
+                preds_scalar = predicted_rewards.max(dim=-1).values if predicted_rewards.dim() == 3 else predicted_rewards
+                print(f"Preds:  min={preds_scalar.min():.3f}, max={preds_scalar.max():.3f}, mean={preds_scalar.mean():.3f}")
                 
                 # Show full arrays occasionally (25% chance within debug)
                 show_full = torch.rand(1).item() < 0.25
