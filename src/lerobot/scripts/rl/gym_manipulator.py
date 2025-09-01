@@ -37,10 +37,10 @@ from lerobot.processor import (
     GripperPenaltyProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
-    JointVelocityProcessor,
+    JointVelocityProcessorStep,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
-    MotorCurrentProcessor,
+    MotorCurrentProcessorStep,
     Numpy2TorchActionProcessorStep,
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
@@ -408,9 +408,9 @@ def make_processors(
 
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
-            env_pipeline_steps.append(JointVelocityProcessor(dt=1.0 / cfg.fps))
+            env_pipeline_steps.append(JointVelocityProcessorStep(dt=1.0 / cfg.fps))
         if cfg.processor.observation.add_current_to_observation:
-            env_pipeline_steps.append(MotorCurrentProcessor(robot=env.robot))
+            env_pipeline_steps.append(MotorCurrentProcessorStep(robot=env.robot))
 
     if kinematics_solver is not None:
         env_pipeline_steps.append(
