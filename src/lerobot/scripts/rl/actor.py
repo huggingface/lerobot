@@ -60,6 +60,7 @@ from torch.multiprocessing import Event, Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.policies.conrft.modeling_conrft import ConRFTPolicy
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.robots import so100_follower  # noqa: F401
@@ -247,9 +248,9 @@ def act_with_policy(
     logging.info("make_policy")
 
     ### Instantiate the policy in both the actor and learner processes
-    ### To avoid sending a SACPolicy object through the port, we create a policy instance
+    ### To avoid sending a SACPolicy/ConRFTPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
-    policy: SACPolicy = make_policy(
+    policy: SACPolicy | ConRFTPolicy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
@@ -611,7 +612,7 @@ def interactions_stream(
 #################################################
 
 
-def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
+def update_policy_parameters(policy: SACPolicy | ConRFTPolicy, parameters_queue: Queue, device):
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
@@ -627,9 +628,15 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
         # - Skip encoder params entirely when freeze_vision_encoder=True
         # - Ensure discrete_critic gets correct encoder state (currently uses encoder_critic)
 
-        # Load actor state dict
-        actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        policy.actor.load_state_dict(actor_state_dict)
+        # Load policy state dict - handle both SAC and ConRFT policies
+        policy_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
+
+        if isinstance(policy, ConRFTPolicy):
+            policy.consistency_policy.load_state_dict(policy_state_dict)
+            logging.info("[ACTOR] Loaded ConRFT consistency policy parameters from Learner.")
+        else:
+            policy.actor.load_state_dict(policy_state_dict)
+            logging.info("[ACTOR] Loaded SAC actor parameters from Learner.")
 
         # Load discrete critic if present
         if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
