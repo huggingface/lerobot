@@ -509,7 +509,7 @@ class RLearNPolicy(PreTrainedPolicy):
                     L_mismatch = mismatch_loss_per_sample[mismatch_tensor].mean()
 
         # Total loss
-        total_loss = total_loss + L_mismatch + 0.3 * L_rank + 0.05 * L_flat
+        total_loss = total_loss + L_mismatch
         loss_time = time.perf_counter() - loss_start
         
         # DEBUG: Clean logit regression monitoring with full array printing
@@ -571,8 +571,7 @@ class RLearNPolicy(PreTrainedPolicy):
             "loss": float(total_loss.detach().item()),
             "loss_main": float(loss.detach().item() if isinstance(loss, torch.Tensor) else 0.0),
             "loss_mismatch": float(L_mismatch.detach().item()),
-            "loss_rank": float(L_rank.detach().item()),
-            "loss_flat": float(L_flat.detach().item()),
+            
             "t_eff": float(T_eff),
             "lang_len_mean": float(mask.sum().float().mean().item()), # Use mask to get actual lengths
             # Target statistics for monitoring

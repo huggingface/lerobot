@@ -45,7 +45,7 @@ class RLearNConfig(PreTrainedConfig):
 
     # Sequence length, amount of past frames including current one to use in the temporal model
     max_seq_len: int = 16
-    # Temporal sampling stride (2 = skip every other frame for wider temporal coverage)
+    # Temporal sampling stride
     temporal_sampling_stride: int = 3 # Open x mostly has fps 10, and rewind has seq len 16, ours is 30fps so 30/10 = 3 stride lenght to have same timeframe!
 
     # Model dimensions and transformer
@@ -53,8 +53,7 @@ class RLearNConfig(PreTrainedConfig):
     num_layers: int = 4
     num_heads: int = 8
     ff_mult: int = 4  # Feed-forward multiplier, hidden = dim_model * ff_mult
-    dropout: float = 0.10
-    num_register_tokens: int = 4
+    dropout: float = 0.05
 
     # --- reward head options ---
     use_categorical_rewards: bool = False      # classification over bins
@@ -69,7 +68,7 @@ class RLearNConfig(PreTrainedConfig):
     frame_dropout_p: float = 0.10
 
     # Training
-    learning_rate: float = 1e-3
+    learning_rate: float = 5e-4
     weight_decay: float = 0.01
     head_lr_multiplier: float = 5.0
     logit_eps: float = 1e-4
@@ -79,9 +78,9 @@ class RLearNConfig(PreTrainedConfig):
     compile_model: bool = True
 
     # ReWiND augmentation
-    rewind_prob: float = 0.8
-    rewind_last3_prob: float = 0.3
-    mismatch_prob: float = 0.2
+    rewind_prob: float = 0.3 #0.8
+    rewind_last3_prob: float = 0.0 #0.3
+    mismatch_prob: float = 0.0# 0.2
     
     # Normalization presets
     normalization_mapping: dict[str, NormalizationMode] = field(
