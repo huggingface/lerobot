@@ -42,9 +42,9 @@ from lerobot.policies.normalize import NormalizeBuffer, UnnormalizeBuffer
 from lerobot.policies.octo.modeling_octo import OctoPolicy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.modeling_sac import (
+    MLP,
     CriticEnsemble,
     CriticHead,
-    MLP,
     SACObservationEncoder,
     _convert_normalization_params_to_tensor,
 )
@@ -120,7 +120,7 @@ class ConRFTPolicy(PreTrainedPolicy):
             self.octo_policy,
             use_proprio=self.config.use_proprio,
             state_dim=self.config.state_dim,
-            proprio_latent_dim=self.config.proprio_latent_dim
+            proprio_latent_dim=self.config.proprio_latent_dim,
         )
 
     def _init_consistency_policy(self, continuous_action_dim):
@@ -162,7 +162,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         target_heads = [
             CriticHead(
                 input_dim=self.encoder_critic.output_dim + continuous_action_dim,
-                **asdict(self.config.critic_network_kwargs)
+                **asdict(self.config.critic_network_kwargs),
             )
             for _ in range(self.config.num_critics)
         ]
@@ -245,7 +245,9 @@ class ConRFTPolicy(PreTrainedPolicy):
     def update_target_networks(self):
         """Update target networks with soft updates"""
         tau = self.config.soft_target_update_rate
-        for target_param, param in zip(self.critic_ensemble_target.parameters(), self.critic_ensemble.parameters(), strict=False):
+        for target_param, param in zip(
+            self.critic_ensemble_target.parameters(), self.critic_ensemble.parameters(), strict=False
+        ):
             target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
     def set_training_stage(self, stage: str):
@@ -319,7 +321,7 @@ class ConRFTPolicy(PreTrainedPolicy):
             # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
             # Subsample critics
             if self.config.num_subsample_critics is not None:
-                indices = torch.randperm(self.config.num_critics)[:self.config.num_subsample_critics]
+                indices = torch.randperm(self.config.num_critics)[: self.config.num_subsample_critics]
                 target_q_values = target_q_values[indices]
 
             target_q = torch.min(target_q_values, dim=0)[0]
@@ -330,7 +332,7 @@ class ConRFTPolicy(PreTrainedPolicy):
 
         # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
         if self.config.num_subsample_critics is not None:
-            indices = torch.randperm(self.config.num_critics)[:self.config.num_subsample_critics]
+            indices = torch.randperm(self.config.num_critics)[: self.config.num_subsample_critics]
             current_q_values = current_q_values[indices]
             critic_size = self.config.num_subsample_critics
         else:
@@ -406,7 +408,9 @@ class ConRFTPolicy(PreTrainedPolicy):
         cql_q_samples = torch.cat([cql_q_samples, current_q_expanded], dim=-1)
 
         # Subtract log(num_samples) * temperature
-        cql_q_samples = cql_q_samples - torch.log(torch.tensor(cql_q_samples.shape[-1])) * self.config.cql_temp
+        cql_q_samples = (
+            cql_q_samples - torch.log(torch.tensor(cql_q_samples.shape[-1])) * self.config.cql_temp
+        )
 
         # Compute logsumexp of OOD actions
         cql_ood_values = torch.logsumexp(cql_q_samples / self.config.cql_temp, dim=-1) * self.config.cql_temp
@@ -444,7 +448,9 @@ class ConRFTPolicy(PreTrainedPolicy):
         indices = torch.randint(0, self.config.num_scales - 1, (batch_size,), device=device)
 
         # Compute sigma values using the same formula as JAX
-        t = (self.config.sigma_max**(1 / self.config.rho) + indices / (self.config.num_scales - 1) * (self.config.sigma_min**(1 / self.config.rho) - self.config.sigma_max**(1 / self.config.rho)))
+        t = self.config.sigma_max ** (1 / self.config.rho) + indices / (self.config.num_scales - 1) * (
+            self.config.sigma_min ** (1 / self.config.rho) - self.config.sigma_max ** (1 / self.config.rho)
+        )
         t = t**self.config.rho
 
         # Add noise to actions
@@ -483,7 +489,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         q_values = self.critic_ensemble(observations, policy_action, obs_feat)
         # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
         if self.config.num_subsample_critics is not None:
-            indices = torch.randperm(self.config.num_critics)[:self.config.num_subsample_critics]
+            indices = torch.randperm(self.config.num_critics)[: self.config.num_subsample_critics]
             q_values = q_values[indices]
         q_value = q_values.mean(dim=0)
         q_loss = -q_value.mean()  # Negative for gradient ascent
@@ -500,8 +506,8 @@ class ConRFTPolicy(PreTrainedPolicy):
             "q_mean": q_value.mean(),
         }
 
-class SinusoidalPosEmb(nn.Module):
 
+class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
@@ -515,7 +521,6 @@ class SinusoidalPosEmb(nn.Module):
 
 
 class TimeMLP(nn.Module):
-
     def __init__(self, t_dim: int):
         super().__init__()
         self.t_dim = t_dim
@@ -534,7 +539,13 @@ class TimeMLP(nn.Module):
 class OctoEncodingWrapper(nn.Module):
     """Wrapper around Octo transformer to extract action embeddings for ConRFT."""
 
-    def __init__(self, octo_policy: OctoPolicy, use_proprio: bool = True, state_dim: int = 18, proprio_latent_dim: int = 64):
+    def __init__(
+        self,
+        octo_policy: OctoPolicy,
+        use_proprio: bool = True,
+        state_dim: int = 18,
+        proprio_latent_dim: int = 64,
+    ):
         super().__init__()
         self.octo_policy = octo_policy
         self.octo_transformer = octo_policy.model.octo_transformer
@@ -549,7 +560,7 @@ class OctoEncodingWrapper(nn.Module):
             self.proprio_encoder = nn.Sequential(
                 nn.Linear(state_dim, self.proprio_latent_dim),
                 nn.LayerNorm(self.proprio_latent_dim),
-                nn.Tanh()
+                nn.Tanh(),
             )
 
     def forward(
@@ -584,7 +595,6 @@ class OctoEncodingWrapper(nn.Module):
             #     mask_expanded = mask.view(batch_size, 1, 1, 1, 1)
             #     image_wrist = torch.where(mask_expanded, torch.zeros_like(image_wrist), image_wrist)
 
-
             # Get transformer outputs
             transformer_outputs = self.octo_transformer(obs, task_dict, timestep_pad_mask)
 
@@ -593,13 +603,13 @@ class OctoEncodingWrapper(nn.Module):
 
             # Extract the actual tensor from TimestepGroup
             # TimestepGroup has .tokens attribute containing the tensor
-            if hasattr(action_embeddings, 'tokens'):
+            if hasattr(action_embeddings, "tokens"):
                 action_embeddings = action_embeddings.tokens
 
             # TODO(lilkm): check this
             # Mean over tokens and take last timestep like JAX
             action_embeddings = action_embeddings.mean(dim=-2)  # Mean over tokens
-            action_embeddings = action_embeddings[:, -1, :]     # Take last timestep
+            action_embeddings = action_embeddings[:, -1, :]  # Take last timestep
 
             # # Flatten to [batch_size, embedding_dim] for consistency policy
             # # action_embeddings shape: [batch_size, horizon, n_tokens, embedding_dim]
@@ -685,7 +695,9 @@ class ConsistencyPolicy(nn.Module):
         repeat: int = 1,
     ) -> tuple[Tensor, Tensor]:
         """Forward pass of consistency policy"""
-        obs_enc, action_embeddings = self.encoder(observations, tasks=tasks, action_embeddings=action_embeddings)
+        obs_enc, action_embeddings = self.encoder(
+            observations, tasks=tasks, action_embeddings=action_embeddings
+        )
 
         device = get_device_from_parameters(self)
         batch_size = obs_enc.shape[0]
@@ -719,7 +731,10 @@ class ConsistencyPolicy(nn.Module):
         repeat: int = 1,
     ) -> Tensor:
         # Get scaling factors and ensure proper dimensions
-        c_skip, c_out, c_in = [append_dims(x, x_t.ndim) for x in get_scalings_for_boundary_condition(sigmas, self.sigma_data, self.sigma_min)]
+        c_skip, c_out, c_in = [
+            append_dims(x, x_t.ndim)
+            for x in get_scalings_for_boundary_condition(sigmas, self.sigma_data, self.sigma_min)
+        ]
 
         # Time embedding
         rescaled_t = 1000 * 0.25 * torch.log(sigmas + 1e-44)
@@ -749,9 +764,9 @@ class ConsistencyPolicy(nn.Module):
 def get_sigmas_karras(num_scales, sigma_min, sigma_max, rho, device="cpu"):
     """Generate Karras noise schedule"""
     ramp = torch.linspace(0, 1, num_scales, device=device)
-    min_inv_rho = sigma_min**(1 / rho)
-    max_inv_rho = sigma_max**(1 / rho)
-    sigmas = (max_inv_rho + ramp * (min_inv_rho - max_inv_rho))**rho
+    min_inv_rho = sigma_min ** (1 / rho)
+    max_inv_rho = sigma_max ** (1 / rho)
+    sigmas = (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho
     # Append zero for the final step
     sigmas = torch.cat([sigmas, torch.zeros(1, device=sigmas.device)])
     return sigmas
@@ -759,7 +774,7 @@ def get_sigmas_karras(num_scales, sigma_min, sigma_max, rho, device="cpu"):
 
 def get_scalings_for_boundary_condition(sigma, sigma_data, sigma_min):
     """Get c_skip, c_out, c_in scalings for boundary condition"""
-    c_skip = sigma_data**2 / ((sigma - sigma_min)**2 + sigma_data**2)
+    c_skip = sigma_data**2 / ((sigma - sigma_min) ** 2 + sigma_data**2)
     c_out = (sigma - sigma_min) * sigma_data / torch.sqrt(sigma**2 + sigma_data**2)
     c_in = 1 / torch.sqrt(sigma**2 + sigma_data**2)
     return c_skip, c_out, c_in

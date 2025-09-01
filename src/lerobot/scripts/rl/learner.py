@@ -197,10 +197,10 @@ def start_learner_threads(
     """
     # Check if this is offline-only ConRFT training (no gRPC server needed)
     is_conrft_offline_only = (
-        cfg.policy.type == "conrft" and
-        cfg.policy.offline_steps > 0 and
-        cfg.policy.online_steps == 0 and
-        cfg.dataset is not None
+        cfg.policy.type == "conrft"
+        and cfg.policy.offline_steps > 0
+        and cfg.policy.online_steps == 0
+        and cfg.dataset is not None
     )
 
     if is_conrft_offline_only:
@@ -391,10 +391,10 @@ def add_actor_information_and_train(
 
     # Check if this is ConRFT offline-only training
     is_conrft_offline_only = (
-        is_conrft and
-        cfg.policy.offline_steps > 0 and
-        cfg.policy.online_steps == 0 and
-        offline_replay_buffer is not None
+        is_conrft
+        and cfg.policy.offline_steps > 0
+        and cfg.policy.online_steps == 0
+        and offline_replay_buffer is not None
     )
 
     if is_conrft_offline_only:
@@ -1397,8 +1397,7 @@ def run_conrft_offline_training(
             optimizers["critic"].zero_grad()
             loss_critic.backward()
             torch.nn.utils.clip_grad_norm_(
-                parameters=policy.critic_ensemble.parameters(), 
-                max_norm=clip_grad_norm_value
+                parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
             )
             optimizers["critic"].step()
 
@@ -1438,8 +1437,7 @@ def run_conrft_offline_training(
         optimizers["critic"].zero_grad()
         loss_critic.backward()
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-            parameters=policy.critic_ensemble.parameters(), 
-            max_norm=clip_grad_norm_value
+            parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
         ).item()
         optimizers["critic"].step()
 
@@ -1467,8 +1465,7 @@ def run_conrft_offline_training(
             optimizers["actor"].zero_grad()
             loss_actor.backward()
             actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-                parameters=policy.consistency_policy.parameters(), 
-                max_norm=clip_grad_norm_value
+                parameters=policy.consistency_policy.parameters(), max_norm=clip_grad_norm_value
             ).item()
             optimizers["actor"].step()
 
