@@ -102,13 +102,13 @@ class IOSPhone(BasePhone, Teleoperator):
         )
         print("Press and hold B1 in the HEBI Mobile I/O app to capture this pose...\n")
 
-        pos, rot = self._wait_for_capture_trigger()
+        pos, rot = self._capture_calibration_pose_on_trigger()
         self._calib_pos = pos.copy()
         self._calib_rot_inv = rot.inv()
         self._enabled = False
         print("Calibration done\n")
 
-    def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
+    def _capture_calibration_pose_on_trigger(self) -> tuple[np.ndarray, Rotation]:
         """Wait trigger for calibration: iOS: B1. Android: 'move'."""
         while True:
             ok, pos, rot, pose = self._read_current_pose()
@@ -222,13 +222,13 @@ class AndroidPhone(BasePhone, Teleoperator):
         )
         print("Touch and move on the WebXR page to capture this pose...\n")
 
-        pos, rot = self._wait_for_capture_trigger()
+        pos, rot = self._capture_calibration_pose_on_trigger()
         self._calib_pos = pos.copy()
         self._calib_rot_inv = rot.inv()
         self._enabled = False
         print("Calibration done\n")
 
-    def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
+    def _capture_calibration_pose_on_trigger(self) -> tuple[np.ndarray, Rotation]:
         """Wait trigger for calibration: iOS: B1. Android: 'move'."""
         while True:
             with self._android_lock:
