@@ -28,7 +28,7 @@ from .config import RobotConfig
 @dataclass
 class CalibrationData:
     """Dataclass to hold motor calibration data."""
-    motors: Dict[str, MotorCalibration]
+    motors: dict[str, MotorCalibration]
 
 # TODO(aliberts): action/obs typing such as Generic[ObsType, ActType] similar to gym.Env ?
 # https://github.com/Farama-Foundation/Gymnasium/blob/3287c869f9a48d99454306b0d4b4ec537f0f35e3/gymnasium/core.py#L23
