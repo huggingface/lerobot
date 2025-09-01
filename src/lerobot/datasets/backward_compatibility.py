@@ -70,10 +70,8 @@ class CompatibilityError(Exception): ...
 
 class BackwardCompatibilityError(CompatibilityError):
     def __init__(self, repo_id: str, version: packaging.version.Version):
-        if version.major == 3:
-            message = V30_MESSAGE.format(repo_id=repo_id, version=version)
-        elif version.major == 2:
-            message = V2_MESSAGE.format(repo_id=repo_id, version=version)
+        if version.major == 2 and version.minor == 1:
+                message = V30_MESSAGE.format(repo_id=repo_id, version=version)
         else:
             raise NotImplementedError(
                 "Contact the maintainer on [Discord](https://discord.com/invite/s3KuuzsPFb)."
