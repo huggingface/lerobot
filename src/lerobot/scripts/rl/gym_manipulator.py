@@ -39,7 +39,7 @@ from lerobot.processor import (
     InterventionActionProcessor,
     JointVelocityProcessor,
     MapDeltaActionToRobotAction,
-    MapTensorToDeltaActionDict,
+    MapTensorToDeltaActionDictStep,
     MotorCurrentProcessor,
     Numpy2TorchActionProcessor,
     RewardClassifierProcessor,
@@ -474,7 +474,7 @@ def make_processors(
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
-            MapTensorToDeltaActionDict(),
+            MapTensorToDeltaActionDictStep(),
             MapDeltaActionToRobotAction(),
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,

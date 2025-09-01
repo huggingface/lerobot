@@ -24,7 +24,7 @@ from lerobot.processor.pipeline import ActionProcessorStep, ProcessorStepRegistr
 
 @ProcessorStepRegistry.register("map_tensor_to_delta_action_dict")
 @dataclass
-class MapTensorToDeltaActionDict(ActionProcessorStep):
+class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     """
     Map a tensor to a delta action dictionary.
     """

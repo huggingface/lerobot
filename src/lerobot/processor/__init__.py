@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from .batch_processor import AddBatchDimensionProcessorStep
-from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
+from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
 from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
 from .hil_processor import (
@@ -56,7 +56,7 @@ __all__ = [
     "DeviceProcessorStep",
     "RewardProcessorStep",
     "MapDeltaActionToRobotAction",
-    "MapTensorToDeltaActionDict",
+    "MapTensorToDeltaActionDictStep",
     "EnvTransition",
     "GripperPenaltyProcessor",
     "IdentityProcessorStep",
