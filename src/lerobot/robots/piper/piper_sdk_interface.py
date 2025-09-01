@@ -14,17 +14,29 @@ class PiperSDKInterface:
     def __init__(self, port: str = "can0"):
         if C_PiperInterface_V2 is None:
             raise ImportError("piper_sdk is not installed. Please install it with `pip install piper_sdk`.")
-        self.piper = C_PiperInterface_V2(port)
+        try: 
+            self.piper = C_PiperInterface_V2(port)
+        except Exception as e:
+            print(f"Failed to initialize Piper SDK: {e} Did you activate the can interface with `piper_sdk/can_activate.sh can0 1000000`")
+            self.piper = None
+            return
         self.piper.ConnectPort()
         time.sleep(0.1)  # wait for connection to establish
 
         # reset the arm if it's not in idle state
         print(self.piper.GetArmStatus().arm_status.motion_status)
         if self.piper.GetArmStatus().arm_status.motion_status != 0:
-            self.piper.EmergencyStop(0x02)  # resume
+            self.piper.EmergencyStop(0x02) # resume
+
+        if self.piper.GetArmStatus().arm_status.ctrl_mode == 2:            
+            print("The arm is in teaching mode, the light is green, press the button to exit teaching mode.")
+            self.piper.EmergencyStop(0x02) # resume
 
         while not self.piper.EnablePiper():
             time.sleep(0.01)
+
+        # Set motion control to joint mode at 100% speed
+        self.piper.MotionCtrl_2(0x01, 0x01, 100, 0x00)
 
         # Get the min and max positions for each joint and gripper
         angel_status = self.piper.GetAllMotorAngleLimitMaxSpd()
@@ -58,7 +70,6 @@ class PiperSDKInterface:
         joint_5 = int(-scaled_positions[5])
         joint_6 = int(scaled_positions[6])
 
-        self.piper.MotionCtrl_2(0x01, 0x01, 100, 0x00)
         self.piper.JointCtrl(joint_0, joint_1, joint_2, joint_3, joint_4, joint_5)
         self.piper.GripperCtrl(joint_6, 1000, 0x01, 0)
 
