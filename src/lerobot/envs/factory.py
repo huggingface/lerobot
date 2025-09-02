@@ -35,7 +35,7 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
 
-def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> gym.vector.VectorEnv | None:
+def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> gym.vector.VectorEnv | dict[str, dict[int, gym.vector.VectorEnv]]:
     """Makes a gym vector environment according to the config.
 
     Args:
@@ -50,6 +50,9 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
 
     Returns:
         gym.vector.VectorEnv: The parallelized gym.env instance.
+        dict[str, dict[int, gym.vector.VectorEnv]]: A mapping from task suite
+            names to indexed vectorized environments (when multitask eval is used).
+
     """
     if n_envs < 1:
         raise ValueError("`n_envs must be at least 1")

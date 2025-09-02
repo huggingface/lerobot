@@ -178,8 +178,9 @@ def rollout(
             successes = [False] * env.num_envs
 
         # Keep track of which environments are done so far.
-        # done = terminated | truncated | done
-        # TODO: jadechoghari changed, this is cleaner
+        # Mark the episode as done if we reach the maximum step limit.
+        # This ensures that the rollout always terminates cleanly at `max_steps`,
+        # and allows logging/saving (e.g., videos) to be triggered consistently.
         done = terminated | truncated | done
         if step + 1 == max_steps:
             done = np.ones_like(done, dtype=bool)
@@ -191,8 +192,7 @@ def rollout(
 
         step += 1
         running_success_rate = (
-            # einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean() #TODO: changed by jade
-            einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "max")
+            einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
         )
         progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
         progbar.update()
@@ -321,8 +321,7 @@ def eval_policy(
         sum_rewards.extend(batch_sum_rewards.tolist())
         batch_max_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "max")
         max_rewards.extend(batch_max_rewards.tolist())
-        # batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
-        batch_successes = einops.reduce((rollout_data["success"] * mask).float(), "b n -> b", "max")
+        batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
         all_successes.extend(batch_successes.tolist())
         if seeds:
             all_seeds.extend(seeds)
@@ -495,7 +494,6 @@ def eval_main(cfg: EvalPipelineConfig):
                 max_parallel_tasks=cfg.env.max_parallel_tasks,
                 verbose=False,
             )
-            # Print overall stats
             print("Overall Aggregated Metrics:")
             print(info["overall"]["aggregated"])
 
@@ -548,7 +546,6 @@ def eval_policy_multitask(
     def eval_task(task_group, task_id, env):
         """Evaluates a single task in parallel."""
         print(f"Evaluating: task_group: {task_group}, task_id: {task_id} ...")
-        # jadechoghari : added multi video eval support
         if videos_dir is not None:
             task_videos_dir = videos_dir / f"{task_group}_{task_id}"
             task_videos_dir.mkdir(parents=True, exist_ok=True)
@@ -560,7 +557,6 @@ def eval_policy_multitask(
             task_videos_dir,
             return_episode_data,
             start_seed,
-            # verbose=verbose,
         )
 
         per_episode = task_result["per_episode"]

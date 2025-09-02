@@ -79,7 +79,6 @@ def create_libero_envs(
                 _task
             ]()  # can also choose libero_spatial, libero_object, libero_10 etc.
             tasks_ids = list(range(len(task_suite.tasks)))
-            # tasks_ids = [0] # FIXME(mshukor): debug
             for tasks_id in tasks_ids:
                 episode_indices = list(range(n_envs))
                 print(
@@ -148,7 +147,7 @@ def get_libero_dummy_action():
     """Get dummy/no-op action, used to roll out the simulation while the robot does nothing."""
     return [0, 0, 0, 0, 0, 0, -1]
 
-
+ACTION_DIM = 8
 class LiberoEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
 
@@ -179,7 +178,12 @@ class LiberoEnv(gym.Env):
         self.camera_name = camera_name.split(
             ","
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
-        # TODO: jadechoghari, check mapping
+        
+        # Map raw camera names to "image1" and "image2".
+        # The preprocessing step `preprocess_observation` will then prefix these with `.images.*`,
+        # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
+        # This ensures the policy consistently receives observations in the
+        # expected format regardless of the original camera naming.
         self.camera_name_mapping = {
             "agentview_image": "image",
             "robot0_eye_in_hand_image": "image2",
@@ -227,7 +231,7 @@ class LiberoEnv(gym.Env):
                     "agent_pos": spaces.Box(
                         low=-1000.0,
                         high=1000.0,
-                        shape=(8,),  # TODO: jadechoghari, check compatible
+                        shape=(ACTION_DIM,),
                         dtype=np.float64,
                     ),
                 }

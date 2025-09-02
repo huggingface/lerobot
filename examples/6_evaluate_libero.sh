@@ -4,7 +4,7 @@ unset LEROBOT_HOME
 unset HF_LEROBOT_HOME
 # CONFIGURATION
 POLICY_PATH="ganatrask/lerobot-pi0-libero-object"
-TASK=libero_object
+TASK=libero_object,libero_spatial
 ENV_TYPE="libero"
 BATCH_SIZE=1
 N_EPISODES=1

@@ -2,7 +2,7 @@
 
 # config
 REPO_ID=jadechoghari/smol-libero3
-TASK=libero_10
+TASK=libero_10,libero_spatial
 OUTPUT_DIR=./outputs/
 
 # clean previous run
@@ -13,7 +13,7 @@ STEPS=100000
 BATCH_SIZE=4
 EVAL_FREQ=1
 SAVE_FREQ=10000
-NUM_WORKERS=0
+NUM_WORKERS=4
 
 # model params
 POLICY=smolvla
@@ -48,6 +48,6 @@ python src/lerobot/scripts/train.py \
   --save_freq=$SAVE_FREQ \
   --num_workers=$NUM_WORKERS \
   --policy.repo_id=$VLM_REPO_ID \
-  --env.multitask_eval=False \
+  --env.multitask_eval=True \
   --eval.batch_size=1 \
   --eval.n_episodes=1 \

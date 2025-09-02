@@ -299,7 +299,6 @@ def train(cfg: TrainPipelineConfig):
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
 
     if eval_env:
-        # added by jade, close all env in multi eval setup
         if cfg.env.multitask_eval:
             for _task_group, envs_dict in eval_env.items():
                 for _idx, env in envs_dict.items():
