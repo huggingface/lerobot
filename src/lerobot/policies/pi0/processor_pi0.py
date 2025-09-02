@@ -21,20 +21,18 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
+    ComplementaryDataProcessor,
     DeviceProcessor,
     NormalizerProcessor,
     ProcessorKwargs,
+    ProcessorStep,
+    ProcessorStepRegistry,
+    RenameProcessor,
     RobotProcessor,
     ToBatchProcessor,
     TokenizerProcessor,
     UnnormalizerProcessor,
 )
-from lerobot.processor.pipeline import (
-    ComplementaryDataProcessor,
-    ProcessorStep,
-    ProcessorStepRegistry,
-)
-from lerobot.processor.rename_processor import RenameProcessor
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")

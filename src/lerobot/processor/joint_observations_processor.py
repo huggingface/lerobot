@@ -4,11 +4,9 @@ from typing import Any
 import torch
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.processor.pipeline import (
-    ObservationProcessor,
-    ProcessorStepRegistry,
-)
 from lerobot.robots import Robot
+
+from .pipeline import ObservationProcessor, ProcessorStepRegistry
 
 
 @dataclass

@@ -18,10 +18,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.processor.pipeline import (
-    ObservationProcessor,
-    ProcessorStepRegistry,
-)
+
+from .pipeline import ObservationProcessor, ProcessorStepRegistry
 
 
 @dataclass

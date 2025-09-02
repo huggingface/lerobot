@@ -47,9 +47,8 @@ from pprint import pformat
 
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor import RobotProcessor
+from lerobot.processor import IdentityProcessor, RobotProcessor
 from lerobot.processor.converters import to_output_robot_action, to_transition_teleop_action
-from lerobot.processor.pipeline import IdentityProcessor
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,

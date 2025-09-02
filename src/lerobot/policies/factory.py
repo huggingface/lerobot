@@ -38,7 +38,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.processor.pipeline import ProcessorKwargs, RobotProcessor
+from lerobot.processor import ProcessorKwargs, RobotProcessor
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:

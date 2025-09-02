@@ -19,9 +19,10 @@ from typing import Any
 import torch
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.processor.core import EnvTransition, TransitionKey
-from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
 from lerobot.utils.utils import get_safe_torch_device
+
+from .core import EnvTransition, TransitionKey
+from .pipeline import ProcessorStep, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("device_processor")

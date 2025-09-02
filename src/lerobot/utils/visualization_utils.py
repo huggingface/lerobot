@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import rerun as rr
 
-from lerobot.processor.pipeline import EnvTransition, TransitionKey
+from lerobot.processor import EnvTransition, TransitionKey
 
 
 def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
