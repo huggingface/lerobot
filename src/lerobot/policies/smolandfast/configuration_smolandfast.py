@@ -23,9 +23,6 @@ class SMOLANDFASTConfig(PreTrainedConfig):
         }
     )
 
-    # Shorter state and action vectors will be padded
-    max_state_dim: int = 32  # 32
-    max_action_dim: int = 32  # 32
     n_state_bins = 512
 
     # Tokenizer
@@ -99,7 +96,7 @@ class SMOLANDFASTConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, 1))
+        return None
 
     @property
     def action_delta_indices(self) -> list:

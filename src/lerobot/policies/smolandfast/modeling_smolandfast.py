@@ -245,12 +245,7 @@ class SMOLANDFAST(nn.Module):
         bins = torch.linspace(-1, 1, self.config.n_state_bins + 1, device=device)[:-1]
 
         discretized_state = torch.bucketize(state, bins) - 1
-        discretized_state = discretized_state[:, :self.config.max_state_dim]
-        discretized_state = discretized_state[:,0,:] # TODO: IT IS TEMPORAL FIX TO DO NOT SOLVE MULTIPLE OBS
-
         discretized_env = torch.bucketize(env, bins) - 1
-        discretized_env = discretized_env[:, :self.config.max_state_dim]
-        discretized_env = discretized_env[:,0,:] # TODO: IT IS TEMPORAL FIX TO DO NOT SOLVE MULTIPLE OBS
 
         prefix_texts = []
 
@@ -293,25 +288,26 @@ class SMOLANDFAST(nn.Module):
         eos_mask = torch.tensor([1], dtype=torch.long, device=device).expand(bsize, -1)
 
         # TODO: here we first add PAD tokens, and after EOS token, I think it should be oposite
-        act_ids = torch.cat([act_ids, eos_token], dim=1)
-        act_mask = torch.cat([act_mask, eos_mask], dim=1)
+        act_ids = torch.cat([act_ids, eos_token], dim=1).to(device)
+        act_mask = torch.cat([act_mask, eos_mask], dim=1).to(device)
         return act_ids, act_mask
 
     def create_input_tokens(self, state, env, lang_text, actions=None):
+        device = state.device
 
         prefix_ids, prefix_mask = self.create_obs_prefix_tokens(state=state,
                                                                 env=env,
                                                                 lang_text=lang_text)
-        prefix_lens = prefix_mask.sum(dim=1)[:, None].cpu()
+        prefix_lens = prefix_mask.sum(dim=1)[:, None].to(device)
 
         if actions is not None:
             act_ids, act_mask = self.create_action_tokens(actions=actions)
 
-            final_ids = torch.cat([prefix_ids, act_ids], dim=1)
-            final_mask = torch.cat([prefix_mask, act_mask], dim=1)
+            final_ids = torch.cat([prefix_ids, act_ids], dim=1).to(device)
+            final_mask = torch.cat([prefix_mask, act_mask], dim=1).to(device)
         else:
-            final_ids = prefix_ids
-            final_mask = prefix_mask
+            final_ids = prefix_ids.to(device)
+            final_mask = prefix_mask.to(device)
 
         padded_output = {"input_ids": final_ids, "attention_mask": final_mask}
         # define tensor of padding lengths
