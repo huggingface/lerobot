@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from lerobot.processor.converters import to_tensor
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
 
 
@@ -59,5 +60,5 @@ class Numpy2TorchActionProcessor(ActionProcessor):
                 f"Expected np.ndarray or None, got {type(action).__name__}. "
                 "Use appropriate processor for non-tensor actions."
             )
-        torch_action = torch.from_numpy(action)
+        torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
         return torch_action

@@ -5,6 +5,7 @@ import torch
 from lerobot.processor.converters import (
     to_dataset_frame,
     to_output_robot_action,
+    to_tensor,
     to_transition_robot_observation,
     to_transition_teleop_action,
 )
@@ -12,12 +13,12 @@ from lerobot.processor.pipeline import TransitionKey
 
 
 def test_to_transition_teleop_action_prefix_and_tensor_conversion():
-    # Scalars, arrays, and "image-like" uint8 arrays are supported
+    # Scalars, arrays, and uint8 arrays are all converted to tensors
     img = np.zeros((8, 12, 3), dtype=np.uint8)
     act = {
         "ee.x": 0.5,  # scalar to torch tensor
         "delta": np.array([1.0, 2.0]),  # ndarray to torch tensor
-        "raw_img": img,  # uint8 HWC to passthrough ndarray
+        "raw_img": img,  # uint8 HWC to torch tensor
     }
 
     tr = to_transition_teleop_action(act)
@@ -29,7 +30,7 @@ def test_to_transition_teleop_action_prefix_and_tensor_conversion():
     assert "action.delta" in tr[TransitionKey.ACTION]
     assert "action.raw_img" in tr[TransitionKey.ACTION]
 
-    # Types: scalars/arrays -> torch tensor; images to np.ndarray
+    # Types: all values -> torch tensor
     assert isinstance(tr[TransitionKey.ACTION]["action.ee.x"], torch.Tensor)
     assert tr[TransitionKey.ACTION]["action.ee.x"].item() == pytest.approx(0.5)
 
@@ -37,8 +38,8 @@ def test_to_transition_teleop_action_prefix_and_tensor_conversion():
     assert tr[TransitionKey.ACTION]["action.delta"].shape == (2,)
     assert torch.allclose(tr[TransitionKey.ACTION]["action.delta"], torch.tensor([1.0, 2.0]))
 
-    assert isinstance(tr[TransitionKey.ACTION]["action.raw_img"], np.ndarray)
-    assert tr[TransitionKey.ACTION]["action.raw_img"].dtype == np.uint8
+    assert isinstance(tr[TransitionKey.ACTION]["action.raw_img"], torch.Tensor)
+    assert tr[TransitionKey.ACTION]["action.raw_img"].dtype == torch.float32  # converted from uint8
     assert tr[TransitionKey.ACTION]["action.raw_img"].shape == (8, 12, 3)
 
     # Observation is created as empty dict by make_transition
@@ -194,3 +195,185 @@ def test_to_dataset_frame_merge_and_pack_vectors_and_metadata():
     # Complementary data
     assert batch["frame_is_pad"] is True
     assert batch["task"] == "Pick cube"
+
+
+# Tests for the unified to_tensor function
+def test_to_tensor_numpy_arrays():
+    """Test to_tensor with various numpy arrays."""
+    # Regular numpy array
+    arr = np.array([1.0, 2.0, 3.0])
+    result = to_tensor(arr)
+    assert isinstance(result, torch.Tensor)
+    assert result.dtype == torch.float32
+    assert torch.allclose(result, torch.tensor([1.0, 2.0, 3.0]))
+
+    # Different numpy dtypes should convert to float32 by default
+    int_arr = np.array([1, 2, 3], dtype=np.int64)
+    result = to_tensor(int_arr)
+    assert isinstance(result, torch.Tensor)
+    assert result.dtype == torch.float32
+    assert torch.allclose(result, torch.tensor([1.0, 2.0, 3.0]))
+
+    # uint8 arrays (previously "preserved") should now convert
+    uint8_arr = np.array([100, 150, 200], dtype=np.uint8)
+    result = to_tensor(uint8_arr)
+    assert isinstance(result, torch.Tensor)
+    assert result.dtype == torch.float32
+    assert torch.allclose(result, torch.tensor([100.0, 150.0, 200.0]))
+
+
+def test_to_tensor_numpy_scalars():
+    """Test to_tensor with numpy scalars (0-dimensional arrays)."""
+    # numpy float32 scalar
+    scalar = np.float32(3.14)
+    result = to_tensor(scalar)
+    assert isinstance(result, torch.Tensor)
+    assert result.ndim == 0  # Should be 0-dimensional tensor
+    assert result.dtype == torch.float32
+    assert result.item() == pytest.approx(3.14)
+
+    # numpy int32 scalar
+    int_scalar = np.int32(42)
+    result = to_tensor(int_scalar)
+    assert isinstance(result, torch.Tensor)
+    assert result.ndim == 0
+    assert result.dtype == torch.float32
+    assert result.item() == pytest.approx(42.0)
+
+
+def test_to_tensor_python_scalars():
+    """Test to_tensor with Python scalars."""
+    # Python int
+    result = to_tensor(42)
+    assert isinstance(result, torch.Tensor)
+    assert result.dtype == torch.float32
+    assert result.item() == pytest.approx(42.0)
+
+    # Python float
+    result = to_tensor(3.14)
+    assert isinstance(result, torch.Tensor)
+    assert result.dtype == torch.float32
+    assert result.item() == pytest.approx(3.14)
+
+
+def test_to_tensor_sequences():
+    """Test to_tensor with lists and tuples."""
+    # List
+    result = to_tensor([1, 2, 3])
+    assert isinstance(result, torch.Tensor)
+    assert result.dtype == torch.float32
+    assert torch.allclose(result, torch.tensor([1.0, 2.0, 3.0]))
+
+    # Tuple
+    result = to_tensor((4.5, 5.5, 6.5))
+    assert isinstance(result, torch.Tensor)
+    assert result.dtype == torch.float32
+    assert torch.allclose(result, torch.tensor([4.5, 5.5, 6.5]))
+
+
+def test_to_tensor_existing_tensors():
+    """Test to_tensor with existing PyTorch tensors."""
+    # Tensor with same dtype should pass through with potential device change
+    tensor = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+    result = to_tensor(tensor)
+    assert isinstance(result, torch.Tensor)
+    assert result.dtype == torch.float32
+    assert torch.allclose(result, tensor)
+
+    # Tensor with different dtype should convert
+    int_tensor = torch.tensor([1, 2, 3], dtype=torch.int64)
+    result = to_tensor(int_tensor)
+    assert isinstance(result, torch.Tensor)
+    assert result.dtype == torch.float32
+    assert torch.allclose(result, torch.tensor([1.0, 2.0, 3.0]))
+
+
+def test_to_tensor_dictionaries():
+    """Test to_tensor with nested dictionaries."""
+    # Simple dictionary
+    data = {"mean": [0.1, 0.2], "std": np.array([1.0, 2.0]), "count": 42}
+    result = to_tensor(data)
+    assert isinstance(result, dict)
+    assert isinstance(result["mean"], torch.Tensor)
+    assert isinstance(result["std"], torch.Tensor)
+    assert isinstance(result["count"], torch.Tensor)
+    assert torch.allclose(result["mean"], torch.tensor([0.1, 0.2]))
+    assert torch.allclose(result["std"], torch.tensor([1.0, 2.0]))
+    assert result["count"].item() == pytest.approx(42.0)
+
+    # Nested dictionary
+    nested = {
+        "action": {"mean": [0.1, 0.2], "std": [1.0, 2.0]},
+        "observation": {"mean": np.array([0.5, 0.6]), "count": 10},
+    }
+    result = to_tensor(nested)
+    assert isinstance(result, dict)
+    assert isinstance(result["action"], dict)
+    assert isinstance(result["observation"], dict)
+    assert isinstance(result["action"]["mean"], torch.Tensor)
+    assert isinstance(result["observation"]["mean"], torch.Tensor)
+    assert torch.allclose(result["action"]["mean"], torch.tensor([0.1, 0.2]))
+    assert torch.allclose(result["observation"]["mean"], torch.tensor([0.5, 0.6]))
+
+
+def test_to_tensor_none_filtering():
+    """Test that None values are filtered out from dictionaries."""
+    data = {"valid": [1, 2, 3], "none_value": None, "nested": {"valid": [4, 5], "also_none": None}}
+    result = to_tensor(data)
+    assert "none_value" not in result
+    assert "also_none" not in result["nested"]
+    assert "valid" in result
+    assert "valid" in result["nested"]
+    assert torch.allclose(result["valid"], torch.tensor([1.0, 2.0, 3.0]))
+
+
+def test_to_tensor_dtype_parameter():
+    """Test to_tensor with different dtype parameters."""
+    arr = np.array([1, 2, 3])
+
+    # Default dtype (float32)
+    result = to_tensor(arr)
+    assert result.dtype == torch.float32
+
+    # Explicit float32
+    result = to_tensor(arr, dtype=torch.float32)
+    assert result.dtype == torch.float32
+
+    # Float64
+    result = to_tensor(arr, dtype=torch.float64)
+    assert result.dtype == torch.float64
+
+    # Preserve original dtype
+    float64_arr = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    result = to_tensor(float64_arr, dtype=None)
+    assert result.dtype == torch.float64
+
+
+def test_to_tensor_device_parameter():
+    """Test to_tensor with device parameter."""
+    arr = np.array([1.0, 2.0, 3.0])
+
+    # CPU device (default)
+    result = to_tensor(arr, device="cpu")
+    assert result.device.type == "cpu"
+
+    # CUDA device (if available)
+    if torch.cuda.is_available():
+        result = to_tensor(arr, device="cuda")
+        assert result.device.type == "cuda"
+
+
+def test_to_tensor_empty_dict():
+    """Test to_tensor with empty dictionary."""
+    result = to_tensor({})
+    assert isinstance(result, dict)
+    assert len(result) == 0
+
+
+def test_to_tensor_unsupported_type():
+    """Test to_tensor with unsupported types raises TypeError."""
+    with pytest.raises(TypeError, match="Unsupported type for tensor conversion"):
+        to_tensor("unsupported_string")
+
+    with pytest.raises(TypeError, match="Unsupported type for tensor conversion"):
+        to_tensor(object())
