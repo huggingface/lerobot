@@ -67,46 +67,53 @@ python src/lerobot/scripts/eval.py \
 When using LIBERO through LeRobot, policies interact with the environment via **observations** and **actions**:
 
 - **Observations**
-  - `observation.state` – proprioceptive features (agent state).
-  - `observation.images.image` – main camera view (`agentview_image`).
-  - `observation.images.image2` – wrist camera view (`robot0_eye_in_hand_image`).
-
-  ⚠️ **Note:** LeRobot enforces the `.images.*` prefix for any visual features. Make sure your dataset metadata keys match this convention when evaluating.
-
+    - `observation.state` – proprioceptive features (agent state).
+    - `observation.images.image` – main camera view (`agentview_image`).
+    - `observation.images.image2` – wrist camera view (`robot0_eye_in_hand_image`).
+    
+    ⚠️ **Note:** LeRobot enforces the `.images.*` prefix for any visual features. Make sure your dataset metadata keys match this convention when evaluating.
+    
 - **Actions**
-  - Continuous control values in a `Box(-1, 1, shape=(7,))` space.
+    - Continuous control values in a `Box(-1, 1, shape=(7,))` space.
 
 We also provide a notebook for quick testing:
 Training with LIBERO
 
+## Training with LIBERO
+
 When training on LIBERO tasks, make sure your dataset parquet and metadata keys follow the LeRobot convention.
+
 The environment expects:
 
-observation.state → 8-dim agent state
+- `observation.state` → 8-dim agent state
+- `observation.images.image` → main camera (`agentview_image`)
+- `observation.images.image2` → wrist camera (`robot0_eye_in_hand_image`)
 
-observation.images.image → main camera (agentview_image)
+⚠️ Cleaning the dataset upfront is **cleaner and more efficient** than remapping keys inside the code. We plan to provide a script to easily preprocess such data.
 
-observation.images.image2 → wrist camera (robot0_eye_in_hand_image)
+---
 
-⚠️ Cleaning the dataset upfront is cleaner and more efficient than remapping keys inside the code. We plan to provide a script to easily preprocess such data.
+### Example training command
 
-Example training command
+```bash
 python src/lerobot/scripts/train.py \
- --policy.type=smolvla \
- --dataset.repo_id=jadechoghari/smol-libero3 \
- --env.type=libero \
- --env.task=libero_10,libero_spatial \
- --output_dir=./outputs/ \
- --steps=100000 \
- --batch_size=4 \
- --env.multitask_eval=True \
- --eval.batch_size=1 \
- --eval.n_episodes=1
+  --policy.type=smolvla \
+  --dataset.repo_id=jadechoghari/smol-libero3 \
+  --env.type=libero \
+  --env.task=libero_10,libero_spatial \
+  --output_dir=./outputs/ \
+  --steps=100000 \
+  --batch_size=4 \
+  --env.multitask_eval=True \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1
+```
 
-Note on rendering
+---
+
+### Note on rendering
 
 LeRobot uses MuJoCo for simulation. You need to set the rendering backend before training or evaluation:
 
-export MUJOCO_GL=egl → for headless servers (e.g. HPC, cloud)
-
-export MUJOCO_GL=glfw → for local runs with a display
+- `export MUJOCO_GL=egl` → for headless servers (e.g. HPC, cloud)
+- `export MUJOCO_GL=glfw` → for local runs with a display
