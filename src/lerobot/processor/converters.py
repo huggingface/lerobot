@@ -295,7 +295,8 @@ def merge_transitions(transitions: Sequence[EnvTransition] | EnvTransition) -> E
     Returns:
         Merged EnvTransition.
     """
-    if isinstance(transitions, EnvTransition):  # Single transition
+
+    if not isinstance(transitions, Sequence):  # Single transition
         return transitions
 
     items = list(transitions)

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from torch import Tensor
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.processor.pipeline import (
     ActionProcessor,
@@ -36,6 +37,9 @@ class ToBatchProcessorAction(ActionProcessor):
             return action
 
         return action.unsqueeze(0)
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
 
 
 @dataclass
@@ -63,6 +67,9 @@ class ToBatchProcessorObservation(ObservationProcessor):
                 observation[key] = value.unsqueeze(0)
         return observation
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
+
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_complementary_data")
@@ -88,6 +95,9 @@ class ToBatchProcessorComplementaryData(ComplementaryDataProcessor):
             if isinstance(task_index_value, Tensor) and task_index_value.dim() == 0:
                 complementary_data["task_index"] = task_index_value.unsqueeze(0)
         return complementary_data
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
 
 
 @dataclass
@@ -140,3 +150,6 @@ class ToBatchProcessor(ProcessorStep):
         transition = self.to_batch_observation_processor(transition)
         transition = self.to_batch_complementary_data_processor(transition)
         return transition
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features

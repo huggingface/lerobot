@@ -45,6 +45,9 @@ class MapTensorToDeltaActionDict(ActionProcessor):
             delta_action["action.gripper"] = action[3]
         return delta_action
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
+
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
 @dataclass

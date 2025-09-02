@@ -39,6 +39,9 @@ class AddTeleopActionAsComplimentaryData(ComplementaryDataProcessor):
         new_complementary_data[TELEOP_ACTION_KEY] = self.teleop_device.get_action()
         return new_complementary_data
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
+
 
 @ProcessorStepRegistry.register("add_teleop_action_as_info")
 @dataclass
@@ -52,6 +55,9 @@ class AddTeleopEventsAsInfo(InfoProcessor):
         teleop_events = getattr(self.teleop_device, "get_teleop_events", lambda: {})()
         new_info.update(teleop_events)
         return new_info
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
 
 
 @ProcessorStepRegistry.register("image_crop_resize_processor")
@@ -127,6 +133,9 @@ class TimeLimitProcessor(TruncatedProcessor):
     def reset(self) -> None:
         self.current_step = 0
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
+
 
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
@@ -172,6 +181,9 @@ class GripperPenaltyProcessor(ComplementaryDataProcessor):
     def reset(self) -> None:
         """Reset the processor state."""
         self.last_gripper_state = None
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
 
 
 @dataclass
@@ -243,6 +255,9 @@ class InterventionActionProcessor(ProcessorStep):
             "terminate_on_success": self.terminate_on_success,
         }
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
+
 
 @dataclass
 @ProcessorStepRegistry.register("reward_classifier_processor")
@@ -312,3 +327,6 @@ class RewardClassifierProcessor(ProcessorStep):
             "success_reward": self.success_reward,
             "terminate_on_success": self.terminate_on_success,
         }
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
