@@ -276,8 +276,12 @@ class ConRFTPolicy(PreTrainedPolicy):
 
         # Compute target Q-values
         with torch.no_grad():
-            next_action, _ = self.consistency_policy(next_observations, action_embeddings=next_action_embeddings)
-            target_q_values = self.critic_ensemble_target(next_observations, next_action, next_observation_features)
+            next_action, _ = self.consistency_policy(
+                next_observations, action_embeddings=next_action_embeddings
+            )
+            target_q_values = self.critic_ensemble_target(
+                next_observations, next_action, next_observation_features
+            )
             target_q = torch.min(target_q_values, dim=0)[0]
             target_value = rewards + self.config.discount * (1 - dones) * target_q
 
@@ -317,10 +321,14 @@ class ConRFTPolicy(PreTrainedPolicy):
 
         # Standard TD loss
         with torch.no_grad():
-            next_action, _ = self.consistency_policy(observations=next_observations, action_embeddings=action_embeddings)
+            next_action, _ = self.consistency_policy(
+                observations=next_observations, action_embeddings=action_embeddings
+            )
             # next_action from consistency_policy is already the correct dimension (continuous only)
 
-            target_q_values = self.critic_ensemble_target(next_observations, next_action, next_observation_features)
+            target_q_values = self.critic_ensemble_target(
+                next_observations, next_action, next_observation_features
+            )
 
             # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
             # Subsample critics
@@ -362,7 +370,9 @@ class ConRFTPolicy(PreTrainedPolicy):
         # Sample actions from current policy
         policy_actions = []
         for _ in range(num_random):
-            policy_action, _ = self.consistency_policy(observations=observations, action_embeddings=next_action_embeddings)
+            policy_action, _ = self.consistency_policy(
+                observations=observations, action_embeddings=next_action_embeddings
+            )
             # policy_action is already the correct dimension (continuous only)
             policy_actions.append(policy_action.unsqueeze(1))
         policy_actions = torch.cat(policy_actions, dim=1)
@@ -370,7 +380,9 @@ class ConRFTPolicy(PreTrainedPolicy):
         # Sample next actions
         next_actions_cql = []
         for _ in range(num_random):
-            next_action_cql, _ = self.consistency_policy(observations=next_observations, action_embeddings=next_action_embeddings)
+            next_action_cql, _ = self.consistency_policy(
+                observations=next_observations, action_embeddings=next_action_embeddings
+            )
             # next_action_cql is already the correct dimension (continuous only)
             next_actions_cql.append(next_action_cql.unsqueeze(1))
         next_actions_cql = torch.cat(next_actions_cql, dim=1)
@@ -464,7 +476,9 @@ class ConRFTPolicy(PreTrainedPolicy):
         x_t = actions + noise * append_dims(t, dims)
 
         # Forward pass through consistency policy
-        denoised_action, _ = self.consistency_policy(observations, x_t=x_t, sigmas=t, action_embeddings=action_embeddings)
+        denoised_action, _ = self.consistency_policy(
+            observations, x_t=x_t, sigmas=t, action_embeddings=action_embeddings
+        )
 
         # Compute SNR and weightings
         snrs = get_snr(t)
@@ -572,7 +586,9 @@ class OctoEncodingWrapper(nn.Module):
                 nn.Tanh(),
             )
 
-    def get_cached_action_embeddings(self, observations: dict[str, Tensor], normalize: bool = False) -> dict[str, Tensor]:
+    def get_cached_action_embeddings(
+        self, observations: dict[str, Tensor], normalize: bool = False
+    ) -> dict[str, Tensor]:
         """Extract and cache action embeddings from Octo transformer.
 
         This function processes observations through the Octo transformer once and returns
@@ -616,10 +632,10 @@ class OctoEncodingWrapper(nn.Module):
     def forward(
         self,
         observations: dict[str, Tensor],
-        tasks: Optional[dict[str, Tensor]] = None,
-        action_embeddings: Optional[Tensor] = None,
+        tasks: dict[str, Tensor] | None = None,
+        action_embeddings: Tensor | None = None,
         stop_gradient: bool = True,
-    ) -> tuple[Tensor, Optional[Tensor]]:
+    ) -> tuple[Tensor, Tensor | None]:
         """Extract action embeddings from Octo transformer and concatenate with proprioception"""
         if action_embeddings is None:
             # Get batch size from observations
@@ -738,10 +754,10 @@ class ConsistencyPolicy(nn.Module):
     def forward(
         self,
         observations: dict[str, Tensor],
-        tasks: Optional[dict[str, Tensor]] = None,
-        action_embeddings: Optional[Tensor] = None,
-        x_t: Optional[Tensor] = None,
-        sigmas: Optional[Tensor] = None,
+        tasks: dict[str, Tensor] | None = None,
+        action_embeddings: Tensor | None = None,
+        x_t: Tensor | None = None,
+        sigmas: Tensor | None = None,
         repeat: int = 1,
     ) -> tuple[Tensor, Tensor]:
         """Forward pass of consistency policy"""
@@ -781,10 +797,10 @@ class ConsistencyPolicy(nn.Module):
         repeat: int = 1,
     ) -> Tensor:
         # Get scaling factors and ensure proper dimensions
-        c_skip, c_out, c_in = [
+        c_skip, c_out, c_in = (
             append_dims(x, x_t.ndim)
             for x in get_scalings_for_boundary_condition(sigmas, self.sigma_data, self.sigma_min)
-        ]
+        )
 
         # Time embedding
         rescaled_t = 1000 * 0.25 * torch.log(sigmas + 1e-44)

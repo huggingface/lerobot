@@ -1109,9 +1109,10 @@ def initialize_offline_replay_buffer(
 # Utilities/Helpers functions #
 #################################################
 
+
 def get_action_embeddings(
-        policy: ConRFTPolicy, observations: torch.Tensor, next_observations: torch.Tensor
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    policy: ConRFTPolicy, observations: torch.Tensor, next_observations: torch.Tensor
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     # TODO(lilkm): implement caching
     if not policy.config.freeze_base_vla:
         return None, None
@@ -1119,7 +1120,9 @@ def get_action_embeddings(
     # Cache actor embeddings if Octo model is frozen
     with torch.no_grad():
         action_embeddings = policy.encoder_actor.get_cached_action_embeddings(observations, normalize=False)
-        next_action_embeddings = policy.encoder_actor.get_cached_action_embeddings(next_observations, normalize=False)
+        next_action_embeddings = policy.encoder_actor.get_cached_action_embeddings(
+            next_observations, normalize=False
+        )
 
     return action_embeddings, next_action_embeddings
 
@@ -1148,8 +1151,12 @@ def get_observation_features(
 
         # Cache critic image features
         with torch.no_grad():
-            observation_features = policy.encoder_critic.get_cached_image_features(observations, normalize=False)
-            next_observation_features = policy.encoder_critic.get_cached_image_features(next_observations, normalize=False)
+            observation_features = policy.encoder_critic.get_cached_image_features(
+                observations, normalize=False
+            )
+            next_observation_features = policy.encoder_critic.get_cached_image_features(
+                next_observations, normalize=False
+            )
 
         return observation_features, next_observation_features
 
@@ -1369,9 +1376,7 @@ def run_conrft_offline_training(
 
     # Initialize iterator for offline data
     offline_iterator = offline_replay_buffer.get_iterator(
-        batch_size=batch_size, 
-        async_prefetch=cfg.policy.async_prefetch, 
-        queue_size=2
+        batch_size=batch_size, async_prefetch=cfg.policy.async_prefetch, queue_size=2
     )
 
     # Training loop
@@ -1393,7 +1398,9 @@ def run_conrft_offline_training(
             done = batch["done"]
 
             # Check for NaN values
-            if check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations):
+            if check_nan_in_transition(
+                observations=observations, actions=actions, next_state=next_observations
+            ):
                 logging.warning("[LEARNER] NaN detected in offline batch, skipping")
                 continue
 
@@ -1538,8 +1545,10 @@ def run_conrft_offline_training(
             training_infos["Optimization step"] = step
             training_infos["training_stage"] = "offline"
 
-            logging.info(f"[LEARNER] Offline step {step}/{offline_steps}, "
-                        f"Critic loss: {training_infos['loss_critic']:.4f}")
+            logging.info(
+                f"[LEARNER] Offline step {step}/{offline_steps}, "
+                f"Critic loss: {training_infos['loss_critic']:.4f}"
+            )
 
             if wandb_logger:
                 wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
@@ -1680,7 +1689,9 @@ def run_conrft_online_training(
             next_observations = batch["next_state"]
             done = batch["done"]
 
-            if check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations):
+            if check_nan_in_transition(
+                observations=observations, actions=actions, next_state=next_observations
+            ):
                 logging.warning("[LEARNER] NaN detected in online batch, skipping")
                 continue
 
@@ -1814,14 +1825,18 @@ def run_conrft_online_training(
             training_infos["Optimization step"] = optimization_step
             training_infos["training_stage"] = "online"
 
-            logging.info(f"[LEARNER] Online step {optimization_step}/{online_steps}, "
-                        f"Critic loss: {training_infos['loss_critic']:.4f}")
+            logging.info(
+                f"[LEARNER] Online step {optimization_step}/{online_steps}, "
+                f"Critic loss: {training_infos['loss_critic']:.4f}"
+            )
 
             if wandb_logger:
                 wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
 
         # Save checkpoint
-        if cfg.save_checkpoint and (optimization_step % save_freq == 0 or optimization_step == online_steps - 1):
+        if cfg.save_checkpoint and (
+            optimization_step % save_freq == 0 or optimization_step == online_steps - 1
+        ):
             save_training_checkpoint(
                 cfg=cfg,
                 optimization_step=optimization_step,
