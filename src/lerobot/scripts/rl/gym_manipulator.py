@@ -46,6 +46,7 @@ from lerobot.processor import (
     ToBatchProcessor,
     Torch2NumpyActionProcessor,
     VanillaObservationProcessor,
+    create_transition,
 )
 from lerobot.processor.pipeline import EnvTransition, TransitionKey
 from lerobot.robots import (  # noqa: F401
@@ -96,21 +97,6 @@ class GymManipulatorConfig:
     dataset: DatasetConfig
     mode: str | None = None  # Either "record", "replay", None
     device: str = "cpu"
-
-
-def create_transition(
-    observation=None, action=None, reward=0.0, done=False, truncated=False, info=None, complementary_data=None
-) -> dict[str, Any]:
-    """Create an EnvTransition dictionary with default values."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info if info is not None else {},
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data if complementary_data is not None else {},
-    }
 
 
 def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> None:

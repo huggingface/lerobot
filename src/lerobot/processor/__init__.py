@@ -15,6 +15,14 @@
 # limitations under the License.
 
 from .batch_processor import ToBatchProcessor
+from .converters import (
+    batch_to_transition,
+    create_transition,
+    merge_transitions,
+    transition_to_batch,
+    transition_to_dataset_frame,
+)
+from .core import EnvTransition, TransitionKey
 from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
 from .device_processor import DeviceProcessor
 from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
@@ -33,7 +41,6 @@ from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessor,
     DoneProcessor,
-    EnvTransition,
     IdentityProcessor,
     InfoProcessor,
     ObservationProcessor,
@@ -42,7 +49,6 @@ from .pipeline import (
     ProcessorStepRegistry,
     RewardProcessor,
     RobotProcessor,
-    TransitionKey,
     TruncatedProcessor,
 )
 from .rename_processor import RenameProcessor
@@ -52,22 +58,24 @@ __all__ = [
     "ActionProcessor",
     "AddTeleopActionAsComplimentaryData",
     "AddTeleopEventsAsInfo",
+    "batch_to_transition",
+    "create_transition",
     "DeviceProcessor",
     "DoneProcessor",
-    "MapDeltaActionToRobotAction",
-    "MapTensorToDeltaActionDict",
     "EnvTransition",
     "GripperPenaltyProcessor",
+    "hotswap_stats",
     "IdentityProcessor",
     "ImageCropResizeProcessor",
     "InfoProcessor",
     "InterventionActionProcessor",
     "JointVelocityProcessor",
     "MapDeltaActionToRobotAction",
+    "MapTensorToDeltaActionDict",
+    "merge_transitions",
     "MotorCurrentProcessor",
     "NormalizerProcessor",
-    "UnnormalizerProcessor",
-    "hotswap_stats",
+    "Numpy2TorchActionProcessor",
     "ObservationProcessor",
     "ProcessorKwargs",
     "ProcessorStep",
@@ -76,12 +84,14 @@ __all__ = [
     "RewardClassifierProcessor",
     "RewardProcessor",
     "RobotProcessor",
+    "TimeLimitProcessor",
     "ToBatchProcessor",
     "TokenizerProcessor",
-    "TimeLimitProcessor",
-    "Numpy2TorchActionProcessor",
     "Torch2NumpyActionProcessor",
+    "transition_to_batch",
+    "transition_to_dataset_frame",
     "TransitionKey",
     "TruncatedProcessor",
+    "UnnormalizerProcessor",
     "VanillaObservationProcessor",
 ]

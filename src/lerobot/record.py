@@ -78,10 +78,10 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RobotProcessor
 from lerobot.processor.converters import (
-    to_dataset_frame,
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
+    transition_to_dataset_frame,
 )
 from lerobot.processor.pipeline import IdentityProcessor, TransitionKey
 from lerobot.processor.rename_processor import rename_stats
@@ -308,7 +308,7 @@ def record_loop(
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
             if dataset is not None:
-                observation_frame = to_dataset_frame(
+                observation_frame = transition_to_dataset_frame(
                     obs_transition, dataset.features
                 )  # Convert the observation to the dataset format
 
@@ -366,7 +366,7 @@ def record_loop(
 
         # Write to dataset
         if dataset is not None:
-            # If to_dataset_frame is provided, use it to merge the transitions.
+            # If transition_to_dataset_frame is provided, use it to merge the transitions.
             merged = []
             if obs_transition is not None:  # The observation from the robot
                 merged.append(obs_transition)
@@ -374,7 +374,7 @@ def record_loop(
                 merged.append(teleop_transition)
             if policy_transition is not None:  # The action from policy
                 merged.append(policy_transition)
-            frame = to_dataset_frame(
+            frame = transition_to_dataset_frame(
                 merged if len(merged) > 1 else merged[0], dataset.features
             )  # Convert the observation to the dataset format
             dataset.add_frame(frame, task=single_task)

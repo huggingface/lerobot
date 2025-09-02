@@ -18,7 +18,8 @@ from typing import Any
 
 import torch
 
-from lerobot.processor.pipeline import EnvTransition, ProcessorStep, ProcessorStepRegistry, TransitionKey
+from lerobot.processor.core import EnvTransition, TransitionKey
+from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
 from lerobot.utils.utils import get_safe_torch_device
 
 
