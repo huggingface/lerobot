@@ -18,7 +18,7 @@ Together, these suites cover **130 tasks**, ranging from simple object manipulat
 
 ## Evaluating with LIBERO
 
-At **LeRobot**, we ported [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO?utm_source=chatgpt.com) into our framework and used it mainly to **evaluate SmolVLA**, our lightweight Vision-Language-Action model.
+At **LeRobot**, we ported [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO) into our framework and used it mainly to **evaluate [SmolVLA](https://huggingface.co/docs/lerobot/en/smolvla)**, our lightweight Vision-Language-Action model.
 
 LIBERO is now part of our **multi-eval supported simulation**, meaning you can benchmark your policies either on a **single suite of tasks** or across **multiple suites at once** with just a flag.
 
@@ -77,3 +77,36 @@ When using LIBERO through LeRobot, policies interact with the environment via **
     - Continuous control values in a `Box(-1, 1, shape=(7,))` space.
 
 We also provide a notebook for quick testing:
+Training with LIBERO
+
+When training on LIBERO tasks, make sure your dataset parquet and metadata keys follow the LeRobot convention.
+The environment expects:
+
+observation.state → 8-dim agent state
+
+observation.images.image → main camera (agentview_image)
+
+observation.images.image2 → wrist camera (robot0_eye_in_hand_image)
+
+⚠️ Cleaning the dataset upfront is cleaner and more efficient than remapping keys inside the code. We plan to provide a script to easily preprocess such data.
+
+Example training command
+python src/lerobot/scripts/train.py \
+  --policy.type=smolvla \
+  --dataset.repo_id=jadechoghari/smol-libero3 \
+  --env.type=libero \
+  --env.task=libero_10,libero_spatial \
+  --output_dir=./outputs/ \
+  --steps=100000 \
+  --batch_size=4 \
+  --env.multitask_eval=True \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1
+
+Note on rendering
+
+LeRobot uses MuJoCo for simulation. You need to set the rendering backend before training or evaluation:
+
+export MUJOCO_GL=egl → for headless servers (e.g. HPC, cloud)
+
+export MUJOCO_GL=glfw → for local runs with a display
