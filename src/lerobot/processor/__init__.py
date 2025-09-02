@@ -18,7 +18,6 @@ from .batch_processor import ToBatchProcessor
 from .converters import (
     batch_to_transition,
     create_transition,
-    identity,
     merge_transitions,
     transition_to_batch,
     transition_to_dataset_frame,
@@ -66,7 +65,6 @@ __all__ = [
     "EnvTransition",
     "GripperPenaltyProcessor",
     "hotswap_stats",
-    "identity",
     "IdentityProcessor",
     "ImageCropResizeProcessor",
     "InfoProcessor",

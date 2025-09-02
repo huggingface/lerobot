@@ -99,9 +99,6 @@ class GymManipulatorConfig:
     device: str = "cpu"
 
 
-# create_transition is now imported from processor.transitions
-
-
 def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> None:
     """Reset robot arm to target position using smooth trajectory."""
     current_position_dict = robot_arm.bus.sync_read("Present_Position")
