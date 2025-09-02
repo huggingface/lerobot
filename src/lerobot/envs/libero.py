@@ -148,9 +148,10 @@ def get_libero_dummy_action():
     return [0, 0, 0, 0, 0, 0, -1]
 
 
-
 OBS_STATE_DIM = 8
 ACTION_DIM = 7
+
+
 class LiberoEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
 
