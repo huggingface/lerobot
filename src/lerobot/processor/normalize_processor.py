@@ -4,12 +4,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import torch
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor.converters import to_tensor
 from lerobot.processor.pipeline import (
     EnvTransition,
     ProcessorStep,
@@ -17,6 +17,37 @@ from lerobot.processor.pipeline import (
     RobotProcessor,
     TransitionKey,
 )
+
+
+def _to_tensor(value: Any, device: torch.device | None = None) -> Tensor:
+    """Convert common python/numpy/torch types to a torch.float32 tensor.
+
+    Always returns float32; preserves device if provided.
+    """
+    if isinstance(value, torch.Tensor):
+        return value.to(dtype=torch.float32, device=device)
+    if isinstance(value, np.ndarray):
+        # ensure contiguous, cast to float32 then convert
+        return torch.from_numpy(np.ascontiguousarray(value.astype(np.float32))).to(device=device)
+    if isinstance(value, (int, float)):
+        return torch.tensor(value, dtype=torch.float32, device=device)
+    if isinstance(value, (list, tuple)):
+        return torch.tensor(value, dtype=torch.float32, device=device)
+    raise TypeError(f"Unsupported type for stats value: {type(value)}")
+
+
+def _convert_stats_to_tensors(
+    stats: dict[str, dict[str, Any]], device: torch.device | None = None
+) -> dict[str, dict[str, Tensor]]:
+    """Convert numeric stats values to torch tensors, preserving keys."""
+    tensor_stats: dict[str, dict[str, Tensor]] = {}
+    for key, sub in (stats or {}).items():
+        if sub is None:
+            continue
+        tensor_stats[key] = {}
+        for stat_name, value in sub.items():
+            tensor_stats[key][stat_name] = _to_tensor(value, device=device)
+    return tensor_stats
 
 
 @dataclass
@@ -60,12 +91,12 @@ class _NormalizationMixin:
 
         # Convert stats to tensors and move to the target device once during initialization.
         self.stats = self.stats or {}
-        self._tensor_stats = to_tensor(self.stats, device=self.device)
+        self._tensor_stats = _convert_stats_to_tensors(self.stats, device=self.device)
 
     def to(self, device: torch.device | str) -> _NormalizationMixin:
         """Moves the processor's normalization stats to the specified device and returns self."""
         self.device = device
-        self._tensor_stats = to_tensor(self.stats, device=self.device)
+        self._tensor_stats = _convert_stats_to_tensors(self.stats, device=self.device)
         return self
 
     def state_dict(self) -> dict[str, Tensor]:
@@ -134,7 +165,7 @@ class _NormalizationMixin:
         # Move stats to input device if needed
         stats_device = next(iter(stats.values())).device
         if stats_device != input_device:
-            stats = to_tensor({key: self._tensor_stats[key]}, device=input_device)[key]
+            stats = _convert_stats_to_tensors({key: self._tensor_stats[key]}, device=input_device)[key]
 
         if norm_mode == NormalizationMode.MEAN_STD and "mean" in stats and "std" in stats:
             mean, std = stats["mean"], stats["std"]
@@ -264,5 +295,5 @@ def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, An
         if isinstance(step, _NormalizationMixin):
             step.stats = stats
             # Re-initialize tensor_stats on the correct device.
-            step._tensor_stats = to_tensor(stats, device=step.device)
+            step._tensor_stats = _convert_stats_to_tensors(stats, device=step.device)
     return rp
