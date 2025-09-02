@@ -1109,6 +1109,20 @@ def initialize_offline_replay_buffer(
 # Utilities/Helpers functions #
 #################################################
 
+def get_action_embeddings(
+        policy: ConRFTPolicy, observations: torch.Tensor, next_observations: torch.Tensor
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    # TODO(lilkm): implement caching
+    if not policy.config.freeze_base_vla:
+        return None, None
+
+    # Cache actor embeddings if Octo model is frozen
+    with torch.no_grad():
+        action_embeddings = policy.encoder_actor.get_cached_action_embeddings(observations, normalize=False)
+        next_action_embeddings = policy.encoder_actor.get_cached_action_embeddings(next_observations, normalize=False)
+
+    return action_embeddings, next_action_embeddings
+
 
 def get_observation_features(
     policy: SACPolicy | ConRFTPolicy, observations: torch.Tensor, next_observations: torch.Tensor
@@ -1129,7 +1143,15 @@ def get_observation_features(
 
     # TODO(lilkm): implement caching
     if isinstance(policy, ConRFTPolicy):
-        return None, None
+        if policy.config.vision_encoder_name is None or not policy.config.freeze_vision_encoder:
+            return None, None
+
+        # Cache critic image features
+        with torch.no_grad():
+            observation_features = policy.encoder_critic.get_cached_image_features(observations, normalize=False)
+            next_observation_features = policy.encoder_critic.get_cached_image_features(next_observations, normalize=False)
+
+        return observation_features, next_observation_features
 
     if policy.config.vision_encoder_name is None or not policy.config.freeze_vision_encoder:
         return None, None
@@ -1352,7 +1374,7 @@ def run_conrft_offline_training(
         queue_size=2
     )
 
-    # Training loop matching JAX implementation structure
+    # Training loop
     for step in tqdm.tqdm(range(optimization_step, offline_steps), desc="ConRFT Offline Training"):
         # Exit if shutdown requested
         if shutdown_event is not None and shutdown_event.is_set():
@@ -1375,6 +1397,16 @@ def run_conrft_offline_training(
                 logging.warning("[LEARNER] NaN detected in offline batch, skipping")
                 continue
 
+            # Get cached observation features for performance
+            observation_features, next_observation_features = get_observation_features(
+                policy=policy, observations=observations, next_observations=next_observations
+            )
+
+            # Get cached action embeddings for performance
+            action_embedding, next_action_embeddings = get_action_embeddings(
+                policy=policy, observations=observations, next_observations=next_observations
+            )
+
             # Create forward batch
             forward_batch = {
                 "action": actions,
@@ -1382,8 +1414,10 @@ def run_conrft_offline_training(
                 "state": observations,
                 "next_state": next_observations,
                 "done": done,
-                "observation_feature": None,
-                "next_observation_feature": None,
+                "observation_feature": observation_features,
+                "next_observation_feature": next_observation_features,
+                "action_embeddings": action_embedding,
+                "next_action_embeddings": next_action_embeddings,
             }
 
             # Add MC returns if available (for Cal-QL)
@@ -1404,7 +1438,7 @@ def run_conrft_offline_training(
             # Update target networks
             policy.update_target_networks()
 
-        # Final update with both critic and actor (matching JAX structure)
+        # Final update with both critic and actor
         batch = next(offline_iterator)
 
         actions = batch["action"]
@@ -1417,14 +1451,26 @@ def run_conrft_offline_training(
             logging.warning("[LEARNER] NaN detected in offline batch, skipping")
             continue
 
+        # Get cached observation features for performance
+        observation_features, next_observation_features = get_observation_features(
+            policy=policy, observations=observations, next_observations=next_observations
+        )
+
+        # Get cached action embeddings for performance
+        action_embedding, next_action_embeddings = get_action_embeddings(
+            policy=policy, observations=observations, next_observations=next_observations
+        )
+
         forward_batch = {
             "action": actions,
             "reward": rewards,
             "state": observations,
             "next_state": next_observations,
             "done": done,
-            "observation_feature": None,
-            "next_observation_feature": None,
+            "observation_feature": observation_features,
+            "next_observation_feature": next_observation_features,
+            "action_embeddings": action_embedding,
+            "next_action_embeddings": next_action_embeddings,
         }
 
         if "mc_returns" in batch:
@@ -1653,6 +1699,10 @@ def run_conrft_online_training(
                 "next_observation_feature": next_observation_features,
                 "complementary_info": batch["complementary_info"],
             }
+            if observation_features is not None:
+                forward_batch["observation_features"] = observation_features
+            if next_observation_features is not None:
+                forward_batch["next_observation_features"] = next_observation_features
 
             critic_output = policy.forward(forward_batch, model="critic")
             loss_critic = critic_output["loss_critic"]
@@ -1699,6 +1749,10 @@ def run_conrft_online_training(
             "next_observation_feature": next_observation_features,
             "complementary_info": batch["complementary_info"],
         }
+        if observation_features is not None:
+            forward_batch["observation_features"] = observation_features
+        if next_observation_features is not None:
+            forward_batch["next_observation_features"] = next_observation_features
 
         critic_output = policy.forward(forward_batch, model="critic")
         loss_critic = critic_output["loss_critic"]

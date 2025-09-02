@@ -269,18 +269,20 @@ class ConRFTPolicy(PreTrainedPolicy):
         rewards = batch["reward"]
         dones = batch["done"]
         next_observations = batch["next_state"]
-        obs_feat = batch.get("observation_feature")
-        nxt_feat = batch.get("next_observation_feature")
+        observation_features = batch.get("observation_feature")
+        next_observation_features = batch.get("next_observation_feature")
+        # action_embeddings = batch.get("action_embeddings")
+        next_action_embeddings = batch.get("next_action_embeddings")
 
         # Compute target Q-values
         with torch.no_grad():
-            next_action, _ = self.consistency_policy(next_observations)
-            target_q_values = self.critic_ensemble_target(next_observations, next_action, nxt_feat)
+            next_action, _ = self.consistency_policy(next_observations, action_embeddings=next_action_embeddings)
+            target_q_values = self.critic_ensemble_target(next_observations, next_action, next_observation_features)
             target_q = torch.min(target_q_values, dim=0)[0]
             target_value = rewards + self.config.discount * (1 - dones) * target_q
 
         # Current Q-values
-        current_q_values = self.critic_ensemble(observations, actions, obs_feat)
+        current_q_values = self.critic_ensemble(observations, actions, observation_features)
         # current_q1, current_q2 = current_q_values[0], current_q_values[1]
 
         # TD loss
@@ -303,8 +305,10 @@ class ConRFTPolicy(PreTrainedPolicy):
         dones = batch["done"]
         mc_returns = batch.get("mc_returns", rewards)  # Use MC returns if available
         next_observations = batch["next_state"]
-        obs_feat = batch.get("observation_feature")
-        nxt_feat = batch.get("next_observation_feature")
+        observation_features = batch.get("observation_feature")
+        next_observation_features = batch.get("next_observation_feature")
+        action_embeddings = batch.get("action_embeddings")
+        next_action_embeddings = batch.get("next_action_embeddings")
 
         batch_size = actions.shape[0]
 
@@ -313,10 +317,10 @@ class ConRFTPolicy(PreTrainedPolicy):
 
         # Standard TD loss
         with torch.no_grad():
-            next_action, _ = self.consistency_policy(next_observations)
+            next_action, _ = self.consistency_policy(observations=next_observations, action_embeddings=action_embeddings)
             # next_action from consistency_policy is already the correct dimension (continuous only)
 
-            target_q_values = self.critic_ensemble_target(next_observations, next_action, nxt_feat)
+            target_q_values = self.critic_ensemble_target(next_observations, next_action, next_observation_features)
 
             # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
             # Subsample critics
@@ -328,7 +332,7 @@ class ConRFTPolicy(PreTrainedPolicy):
             target_value = rewards + self.config.discount * (1 - dones) * target_q
 
         # Current Q-values
-        current_q_values = self.critic_ensemble(observations, actions, obs_feat)
+        current_q_values = self.critic_ensemble(observations, actions, observation_features)
 
         # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
         if self.config.num_subsample_critics is not None:
@@ -358,7 +362,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         # Sample actions from current policy
         policy_actions = []
         for _ in range(num_random):
-            policy_action, _ = self.consistency_policy(observations)
+            policy_action, _ = self.consistency_policy(observations=observations, action_embeddings=next_action_embeddings)
             # policy_action is already the correct dimension (continuous only)
             policy_actions.append(policy_action.unsqueeze(1))
         policy_actions = torch.cat(policy_actions, dim=1)
@@ -366,7 +370,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         # Sample next actions
         next_actions_cql = []
         for _ in range(num_random):
-            next_action_cql, _ = self.consistency_policy(next_observations)
+            next_action_cql, _ = self.consistency_policy(observations=next_observations, action_embeddings=next_action_embeddings)
             # next_action_cql is already the correct dimension (continuous only)
             next_actions_cql.append(next_action_cql.unsqueeze(1))
         next_actions_cql = torch.cat(next_actions_cql, dim=1)
@@ -385,7 +389,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         # Compute Q-values for all sampled actions
         cql_q_samples = []
         for i in range(all_sampled_actions.shape[1]):
-            q_vals = self.critic_ensemble(observations, all_sampled_actions[:, i], obs_feat)
+            q_vals = self.critic_ensemble(observations, all_sampled_actions[:, i], observation_features)
             # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
             if self.config.num_subsample_critics is not None:
                 q_vals = q_vals[indices]
@@ -443,6 +447,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         actions = batch["action"]
         batch_size = actions.shape[0]
         device = actions.device
+        action_embeddings = batch.get("action_embeddings")
 
         # Sample random diffusion step (matching JAX: indices from 0 to num_scales-1)
         indices = torch.randint(0, self.config.num_scales - 1, (batch_size,), device=device)
@@ -459,7 +464,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         x_t = actions + noise * append_dims(t, dims)
 
         # Forward pass through consistency policy
-        denoised_action, _ = self.consistency_policy(observations, x_t=x_t, sigmas=t)
+        denoised_action, _ = self.consistency_policy(observations, x_t=x_t, sigmas=t, action_embeddings=action_embeddings)
 
         # Compute SNR and weightings
         snrs = get_snr(t)
@@ -483,10 +488,14 @@ class ConRFTPolicy(PreTrainedPolicy):
 
         # Get Q loss
         observations = batch["state"]
-        obs_feat = batch.get("observation_feature")
-        policy_action, _ = self.consistency_policy(observations)
+        observation_features = batch.get("observation_feature")
+        # next_observation_features = batch.get("next_observation_feature")
+        action_embeddings = batch.get("action_embeddings")
+        # next_action_embeddings = batch.get("next_action_embeddings")
 
-        q_values = self.critic_ensemble(observations, policy_action, obs_feat)
+        policy_action, _ = self.consistency_policy(observations, action_embeddings=action_embeddings)
+
+        q_values = self.critic_ensemble(observations, policy_action, observation_features)
         # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
         if self.config.num_subsample_critics is not None:
             indices = torch.randperm(self.config.num_critics)[: self.config.num_subsample_critics]
@@ -562,6 +571,47 @@ class OctoEncodingWrapper(nn.Module):
                 nn.LayerNorm(self.proprio_latent_dim),
                 nn.Tanh(),
             )
+
+    def get_cached_action_embeddings(self, observations: dict[str, Tensor], normalize: bool = False) -> dict[str, Tensor]:
+        """Extract and cache action embeddings from Octo transformer.
+
+        This function processes observations through the Octo transformer once and returns
+        the resulting action embeddings. When the Octo model is frozen, these embeddings can be safely cached and
+        reused across policy components, avoiding redundant forward passes.
+
+        Args:
+            observations: Dictionary of observation tensors
+            normalize: Whether to normalize observations before encoding (currently unused for Octo)
+
+        Returns:
+            Tensor containing the cached action embeddings
+        """
+        # Get batch size from observations
+        batch_size = next(iter(observations.values())).shape[0]
+
+        # Create empty tasks for the entire batch
+        raw_tasks = [""] * batch_size
+
+        # Prepare batch in Octo format with proper batch size
+        prepared_batch = self.octo_policy._prepare_batch(observations, raw_tasks=raw_tasks)
+        obs, task_dict, _, _, timestep_pad_mask = prepared_batch
+
+        # Get transformer outputs
+        transformer_outputs = self.octo_transformer(obs, task_dict, timestep_pad_mask)
+
+        # Extract action embeddings (readout_action tokens)
+        action_embeddings = transformer_outputs["readout_action"]  # TimestepGroup object
+
+        # Extract the actual tensor from TimestepGroup
+        # TimestepGroup has .tokens attribute containing the tensor
+        if hasattr(action_embeddings, "tokens"):
+            action_embeddings = action_embeddings.tokens
+
+        # Mean over tokens and take last timestep
+        action_embeddings = action_embeddings.mean(dim=-2)  # Mean over tokens
+        action_embeddings = action_embeddings[:, -1, :]  # Take last timestep
+
+        return action_embeddings
 
     def forward(
         self,
