@@ -22,6 +22,7 @@ https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/sr
 """
 
 import math
+from asyncio.log import logger
 
 import torch
 from torch import Tensor
@@ -104,7 +105,7 @@ class RTCProcessor:
 
         if prev_chunk_left_over is None:
             # First step, no guidance
-            return original_denoise_step_partial(x_t)
+            return original_denoise_step_partial(x_t=x_t)
 
         squeezed = False
         if len(x_t.shape) < 3:
@@ -128,6 +129,11 @@ class RTCProcessor:
             pad = torch.zeros(batch_size, action_chunk_size - prev_chunk_left_over.shape[1], action_dim)
             prev_chunk_left_over = torch.cat([prev_chunk_left_over, pad], dim=1)
 
+        if prev_chunk_left_over.shape[2] < action_dim:
+            # We need to pad the left over chunk with zeros
+            pad = torch.zeros(batch_size, action_chunk_size, action_dim - prev_chunk_left_over.shape[2])
+            prev_chunk_left_over = torch.cat([prev_chunk_left_over, pad], dim=2)
+
         assert prev_chunk_left_over.shape[1] == action_chunk_size, (
             "The padded previous chunk must be the same size as the action chunk size"
         )
@@ -138,7 +144,7 @@ class RTCProcessor:
         weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
 
         with torch.enable_grad():
-            v_t = original_denoise_step_partial(x_t)
+            v_t = original_denoise_step_partial(x_t=x_t)
 
             # In the original implementation, the time goes from 0 to 1 and x_1t calculates
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
@@ -161,6 +167,8 @@ class RTCProcessor:
         # Remove the batch dimension if it was added
         if squeezed:
             result = result.squeeze(0)
+
+        logger.info(f"[RTC] result shape: {result.shape}")
 
         return result
 

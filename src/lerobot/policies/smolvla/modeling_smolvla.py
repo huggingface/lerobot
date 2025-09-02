@@ -57,6 +57,7 @@ import os
 import re
 from collections import deque
 from functools import partial
+from venv import logger
 
 import safetensors
 import torch
@@ -341,7 +342,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self._init_rtc_processor()
+        self.init_rtc_processor()
 
         self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
@@ -361,11 +362,17 @@ class SmolVLAPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
-    def _init_rtc_processor(self):
+    def init_rtc_processor(self):
         self.rtc_processor = None
 
         if self.config.rtc_config is not None and self.config.rtc_config.enabled:
             self.rtc_processor = RTCProcessor(self.config.rtc_config)
+
+            # In case of calling init_rtc_processor after the model is created
+            # We need to set the rtc_processor to the model
+            # During the normal initialization process the model is not created yet
+            if self.model is not None:
+                self.model.rtc_processor = self.rtc_processor
 
     # HACK(aliberts, danaaubakirova): we overwrite this classmethod here to fix smolVLA-specific issues
     @classmethod
@@ -916,12 +923,16 @@ class VLAFlowMatching(nn.Module):
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
 
+            logger.info(f"[SMOLVLA] expanded_time shape: {expanded_time.shape}")
+
             denoise_step_partial_call = partial(
                 self.denoise_step,
                 prefix_pad_masks=prefix_pad_masks,
                 past_key_values=past_key_values,
-                expanded_time=expanded_time,
+                timestep=expanded_time,
             )
+
+            logger.info("[SMOLVLA] starting denoise step")
 
             if self.config.rtc_config is not None and self.config.rtc_config.enabled:
                 inference_delay = kwargs.get("inference_delay")
@@ -937,7 +948,9 @@ class VLAFlowMatching(nn.Module):
                     execution_horizon=execution_horizon,
                 )
             else:
-                v_t = denoise_step_partial_call(x_t)
+                v_t = denoise_step_partial_call(x_t=x_t)
+
+            logger.info("[SMOLVLA] denoise step completed")
 
             # Euler step
             x_t += dt * v_t

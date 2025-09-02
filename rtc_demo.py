@@ -34,6 +34,7 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # no
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
+from lerobot.constants import OBS_IMAGES
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.policies.factory import get_policy_class
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -48,7 +49,6 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.process import ProcessSignalHandler
-from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging
 
 logging.basicConfig(level=logging.INFO)
@@ -88,13 +88,17 @@ class ActionQueue:
         with self.lock:
             if self.queue is None:
                 return 0
-            return len(self.queue)
+            length = len(self.queue)
+
+            return length - self.last_index + 1
 
     def empty(self) -> bool:
         with self.lock:
             if self.queue is None:
                 return True
-            return len(self.queue) == 0
+
+            length = len(self.queue)
+            return length - self.last_index + 1 <= 0
 
     def get_action_index(self) -> int:
         with self.lock:
@@ -107,7 +111,7 @@ class ActionQueue:
             return self.queue[: self.last_index]
 
     def merge(
-        self, predicted_actions: Tensor, real_delay: float, action_index_before_inference: int | None = 0
+        self, predicted_actions: Tensor, real_delay: int, action_index_before_inference: int | None = 0
     ):
         with self.lock:
             current_index = self.last_index
@@ -122,6 +126,10 @@ class ActionQueue:
                     )
 
             self.queue = predicted_actions.clone()
+
+            logger.info(f"predicted_actions shape: {predicted_actions.shape}")
+            logger.info(f"real_delay: {real_delay}")
+            logger.info(f"self.queue shape: {self.queue.shape}")
 
             # First real_delay actions are already executed
             self.queue = self.queue[real_delay:]
@@ -158,6 +166,9 @@ class RTCDemoConfig(HubMixin):
     # It should be higher than inference delay + execution horizon.
     action_queue_size_to_get_new_actions: int = 20
 
+    # Task to execute
+    task: str = field(default="", metadata={"help": "Task to execute"})
+
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
@@ -172,6 +183,10 @@ class RTCDemoConfig(HubMixin):
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["policy"]
+
+
+def is_image_key(k: str) -> bool:
+    return k.startswith(OBS_IMAGES)
 
 
 def get_actions(
@@ -209,6 +224,7 @@ def get_actions(
             inference_latency = latency_tracker.max()
             inference_delay = math.ceil(inference_latency / time_per_chunk)
 
+            logger.info("[GET_ACTIONS] get observation")
             obs = robot.get_observation()
             obs_with_policy_features = build_dataset_frame(dataset_features, obs, prefix="observation")
 
@@ -216,19 +232,38 @@ def get_actions(
                 if isinstance(v, np.ndarray):
                     obs_with_policy_features[k] = torch.from_numpy(v).to(policy_device)
 
+                if is_image_key(k):
+                    obs_with_policy_features[k] = obs_with_policy_features[k].permute(2, 0, 1).unsqueeze(0)
+                elif isinstance(obs_with_policy_features[k], torch.Tensor):
+                    obs_with_policy_features[k] = obs_with_policy_features[k].unsqueeze(0)
+
+            obs_with_policy_features["task"] = cfg.task
+
+            logger.info("[GET_ACTIONS] predict action chunk")
             actions = policy.predict_action_chunk(
                 obs_with_policy_features,
-                {"inference_delay": inference_delay, "prev_chunk_left_over": prev_actions},
+                noise=None,
+                inference_delay=inference_delay,
+                prev_chunk_left_over=prev_actions,
             )
 
+            logger.info("[GET_ACTIONS] action chunk predicted")
+
+            # Drop the batch dimension
+            actions = actions.squeeze(0)
+
             new_latency = time.perf_counter() - current_time
-            new_delay = new_latency / time_per_chunk
+            new_delay = math.ceil(new_latency / time_per_chunk)
             latency_tracker.add(new_latency)
 
             if cfg.action_queue_size_to_get_new_actions < cfg.rtc.execution_horizon + new_delay:
                 logger.warning(
                     "[GET_ACTIONS] cfg.action_queue_size_to_get_new_actions Too small, It should be higher than inference delay + execution horizon."
                 )
+
+            logger.info(f"[GET_ACTIONS] new_delay: {new_delay}")
+            logger.info(f"[GET_ACTIONS] actions shape: {actions.shape}")
+            logger.info(f"[GET_ACTIONS] action_index_before_inference: {action_index_before_inference}")
 
             action_queue.merge(actions, new_delay, action_index_before_inference)
         else:
@@ -238,7 +273,7 @@ def get_actions(
     logger.info("[GET_ACTIONS] get actions thread shutting down")
 
 
-def actor_thread(
+def actor_control(
     robot: RobotWrapper,
     action_queue: ActionQueue,
     shutdown_event: Event,
@@ -260,20 +295,24 @@ def actor_thread(
     while not shutdown_event.is_set():
         start_time = time.time()
 
+        logger.info("[ACTOR] Starting to get action from queue")
+
         # Try to get an action from the queue with timeout
         action = action_queue.get()
 
-        # Execute action on robot
-        action_np = action.cpu().numpy()
-        robot.send_action(action_np)
+        if action is not None:
+            action = action.cpu()
+            action = {key: action[i].item() for i, key in enumerate(robot.action_features)}
+            robot.send_action(action)
 
-        action_count += 1
-        logger.info(f"[ACTOR] Executed action {action_count}")
+            action_count += 1
+            logger.info(f"[ACTOR] Executed action {action_count}")
 
         # Wait for the next action time
         elapsed = time.time() - start_time
-        if elapsed < action_interval:
-            busy_wait(action_interval - elapsed)
+        time.sleep(1)
+        # if elapsed < action_interval:
+        #     busy_wait(action_interval - elapsed)
 
     logger.info(f"[ACTOR] Actor thread shutting down. Total actions executed: {action_count}")
 
@@ -306,7 +345,11 @@ def demo_cli(cfg: RTCDemoConfig):
     policy = policy_class.from_pretrained(cfg.policy.pretrained_path)
 
     # Turn on RTC
-    policy.rtc_config = cfg.rtc
+    policy.config.rtc_config = cfg.rtc
+
+    # Init RTC processort, as by default if RTC disabled in the config
+    # The processor won't be created
+    policy.init_rtc_processor()
 
     assert policy.name in ["smolvla", "pi0"], "Only smolvla and pi0 are supported for RTC"
 
@@ -333,7 +376,7 @@ def demo_cli(cfg: RTCDemoConfig):
 
     # Start action executor thread
     actor_thread = Thread(
-        target=actor_thread, args=(robot, action_queue, shutdown_event, cfg), daemon=True, name="Actor"
+        target=actor_control, args=(robot, action_queue, shutdown_event, cfg), daemon=True, name="Actor"
     )
     actor_thread.start()
     logger.info("Started actor thread")
@@ -349,11 +392,11 @@ def demo_cli(cfg: RTCDemoConfig):
     start_time = time.time()
 
     while not shutdown_event.is_set() and (time.time() - start_time) < cfg.duration:
-        time.sleep(0.1)
+        time.sleep(0.5)
 
         # Log queue status periodically
         if int(time.time() - start_time) % 5 == 0:
-            logger.info(f"Action queue size: {action_queue.qsize()}")
+            logger.info(f"[MAIN] Action queue size: {action_queue.qsize()}")
 
     logger.info("Demo duration reached or shutdown requested")
 
