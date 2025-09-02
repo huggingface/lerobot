@@ -1357,8 +1357,6 @@ def run_conrft_offline_training(
         optimization_step: Starting optimization step
         shutdown_event: Event to signal shutdown
     """
-    import tqdm
-
     # Set policy to offline training stage
     policy.set_training_stage("offline")
 
@@ -1380,11 +1378,13 @@ def run_conrft_offline_training(
     )
 
     # Training loop
-    for step in tqdm.tqdm(range(optimization_step, offline_steps), desc="ConRFT Offline Training"):
+    for step in range(optimization_step, offline_steps):
         # Exit if shutdown requested
         if shutdown_event is not None and shutdown_event.is_set():
             logging.info("[LEARNER] Shutdown signal received during offline training. Exiting...")
             break
+
+        time_for_one_optimization_step = time.time()
 
         # UTD ratio - 1 critic-only updates
         for _ in range(utd_ratio - 1):
@@ -1538,6 +1538,23 @@ def run_conrft_offline_training(
 
         # Update target networks
         policy.update_target_networks()
+
+        # Calculate and log optimization frequency
+        time_for_one_optimization_step = time.time() - time_for_one_optimization_step
+        frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)
+
+        logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {frequency_for_one_optimization_step}")
+
+        # Log optimization frequency
+        if wandb_logger:
+            wandb_logger.log_dict(
+                {
+                    "Optimization frequency loop [Hz]": frequency_for_one_optimization_step,
+                    "Optimization step": step,
+                },
+                mode="train",
+                custom_step_key="Optimization step",
+            )
 
         # Logging
         if step % log_freq == 0:
