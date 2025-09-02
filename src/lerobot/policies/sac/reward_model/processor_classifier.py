@@ -14,14 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import torch
-from typing_extensions import Unpack
 
-from lerobot.policies.processor_types import ProcessorFactoryKwargs
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.processor import (
     DeviceProcessor,
     IdentityProcessor,
     NormalizerProcessor,
+    ProcessorKwargs,
     RobotProcessor,
 )
 
@@ -29,8 +28,14 @@ from lerobot.processor import (
 def make_classifier_processor(
     config: RewardClassifierConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
-    **kwargs: Unpack[ProcessorFactoryKwargs],
+    preprocessor_kwargs: ProcessorKwargs | None = None,
+    postprocessor_kwargs: ProcessorKwargs | None = None,
 ) -> tuple[RobotProcessor, RobotProcessor]:
+    if preprocessor_kwargs is None:
+        preprocessor_kwargs = {}
+    if postprocessor_kwargs is None:
+        postprocessor_kwargs = {}
+
     input_steps = [
         NormalizerProcessor(
             features=config.input_features, norm_map=config.normalization_mapping, stats=dataset_stats
@@ -41,10 +46,6 @@ def make_classifier_processor(
         DeviceProcessor(device=config.device),
     ]
     output_steps = [DeviceProcessor(device="cpu"), IdentityProcessor()]
-
-    # Extract processor kwargs
-    preprocessor_kwargs = kwargs.get("preprocessor_kwargs") or {}
-    postprocessor_kwargs = kwargs.get("postprocessor_kwargs") or {}
 
     return (
         RobotProcessor(

@@ -286,6 +286,13 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
     return batch
 
 
+class ProcessorKwargs(TypedDict, total=False):
+    """Keyword arguments for RobotProcessor constructor."""
+
+    to_transition: Callable[[dict[str, Any]], EnvTransition] | None
+    to_output: Callable[[EnvTransition], Any] | None
+
+
 @dataclass
 class RobotProcessor(ModelHubMixin, Generic[TOutput]):
     """
