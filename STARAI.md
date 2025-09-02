@@ -158,14 +158,6 @@ print(torch.cuda.is_available())
 - C型夹具 x2
 - UC-01 转接板 x2
 
-
-
-UC-01 转接板 开关：
-
-<img src="media/image-20250722141339815.png" alt="image-20250722141339815" style="zoom:25%;" />
-
-
-
 https://github.com/user-attachments/assets/56130bd9-21ee-4ae4-9cac-3817ac4d659f
 
 
@@ -219,19 +211,47 @@ lerobot-find-port
 > sudo chmod 777 /dev/ttyUSB*
 > ```
 >
-> 
+
+
 
 ## 校准
 
-如果是第一次校准，直接对每个关节左右转动到极限位置，由于roll轴没有机械限位，对关节左右各转动180度最合适，如果需要重新校准执行命令提示输入字母c后按Enter键。
+如果是第一次校准，请对每个关节左右转动到极限位置。
+
+如果是重新校准，按照命令提示输入字母c后按Enter键。
+
+下面是参考值,通常情况下，真实的角度在上下限的±10°范围内。
+
+| 舵机ID  | 角度下限参考值 | 角度上限参考值 | 备注                               |
+| ------- | -------------: | -------------: | ---------------------------------- |
+| motor_0 |          -180° |           180° | 转动到限位处                       |
+| motor_1 |           -90° |            90° | 转动到限位处                       |
+| motor_2 |           -90° |            90° | 转动到限位处                       |
+| motor_3 |          -180° |           180° | 没有限位，需转动到角度上下限参考值 |
+| motor_4 |           -90° |            90° | 转动到限位处                       |
+| motor_5 |          -180° |           180° | 没有限位，需转动到角度上下限参考值 |
+| motor_6 |             0° |           100° | 转动到限位处                       |
 
 ### leader
+
+> [!TIP]
+>
+> 将leader连接到/dev/ttyUSB0
+
+
 
 ```bash
 lerobot-calibrate     --teleop.type=starai_violin     --teleop.port=/dev/ttyUSB0     --teleop.id=my_awesome_staraiviolin_arm
 ```
 
 ### follower
+
+> [!TIP]
+>
+> 将follower连接到/dev/ttyUSB1
+
+
+
 ```bash
 lerobot-calibrate     --robot.type=starai_viola --robot.port=/dev/ttyUSB1 --robot.id=my_awesome_staraiviola_arm
 ```
@@ -256,7 +276,7 @@ lerobot-teleoperate     --robot.type=starai_viola     --robot.port=/dev/ttyUSB1 
 ```
 远程操作命令将自动:
 
-    识别任何缺失的校准并启动校准程序。
+    识别任何缺失的校准并启动校准程序。【todo】
     连接机器人和远程操作设备并开始远程操作。
 程序启动后，悬停按钮依旧生效。
 
@@ -356,7 +376,9 @@ lerobot-record \
 
 ### 数据集上传
 
-本地,您的数据集存储在此文件夹中:~/.cache/huggingface/lerobot/{repo-id}. .在数据记录结束时,您的数据集将上传到您的Hugging Face页面(例如:https://huggingface.co/datasets/${HF_USER}/record_test) , 你可以通过运行获得:
+本地,您的数据集存储在此文件夹中:~/.cache/huggingface/lerobot/{repo-id}. 
+
+在数据记录结束时,您的数据集将上传到您的Hugging Face页面(例如:https://huggingface.co/datasets/${HF_USER}/record_test) , 你可以通过运行获得:
 
 echo https://huggingface.co/datasets/ ${HF_USER}/record_test
 
@@ -373,13 +395,13 @@ huggingface-cli 上传 ${HF_USER } / record-test ~/.cache/huggingface/lerobot/{r
 因recordfunction 提供了一套用于在机器人操作过程中捕获和管理数据的工具:
 #### 1.数据存储
 
-    数据使用以下命令存储LeRobotDataset格式,在录制时存储在磁盘上。
+    数据使用以下命令存储LeRobotDataset格式,在录制时存储在磁盘上。【todo】
     默认情况下,数据集在录制后会推送到您的 Hugging Face 页面。
         要禁用上传,请使用--dataset.push_to_hub=False..
 
 #### 2.检查点和恢复
 
-    检查点在录制过程中自动创建。
+    检查点在录制过程中自动创建。【todo】
     如果出现问题,可以通过重新运行相同的命令来恢复--resume=true..恢复录音时,--dataset.num_episodes必须设置为要录制的附加剧集数量,而不是数据集中的目标总集数!
     要从头开始录制,请手动删除数据集目录。
 
@@ -387,6 +409,7 @@ huggingface-cli 上传 ${HF_USER } / record-test ~/.cache/huggingface/lerobot/{r
 
 使用命令行参数设置数据记录流:
 
+    【todo】
     --dataset.episode_time_s=60每个数据记录插曲的持续时间(默认值:60秒)。
     --dataset.reset_time_s=60每集后重置环境的持续时间(默认:60秒)。
     --dataset.num_episodes=50记录的总集数(默认值:50)。
@@ -395,6 +418,7 @@ huggingface-cli 上传 ${HF_USER } / record-test ~/.cache/huggingface/lerobot/{r
 
 使用键盘快捷键控制数据记录流:
 
+    【todo】
     按右箭头(→) : 提前停止当前情节或重置时间,然后移动到下一个。
     按 左 箭头 (←) : 取消当前插曲并重新录制。
     新闻 逃生 (ESC):立即停止会话,编码视频并上传数据集。
@@ -403,13 +427,10 @@ huggingface-cli 上传 ${HF_USER } / record-test ~/.cache/huggingface/lerobot/{r
 
 一旦你熟悉了数据记录,你就可以创建一个更大的数据集进行训练。一个好的开始任务是抓住一个物体在不同的位置,并把它放在一个垃圾箱。我们建议录制至少50集,每个地点10集。保持相机固定,并在整个录音中保持一致的抓握行为。还要确保你操纵的对象在相机上可见。一个好的经验法则是,你应该能够只看相机图像自己完成任务。
 
-在以下部分中,您将训练您的神经网络。在实现可靠的抓握性能后,您可以在数据收集过程中开始引入更多变化,例如额外的抓取位置,不同的抓握技术以及更改相机位置。
 
-避免添加太多变化太快,因为它可能会阻碍你的结果。
-
-如果你想深入了解这个重要的话题,blog post你可以看看我们写的关于什么是一个好的数据集的博客文章。
 #### 故障排除:
 
+    【todo】
     在 Linux 上,如果左右箭头键和转义键在数据记录过程中没有任何效果,请确保已设置$DISPLAY环境变量。参见 pynput 限制。
 
 ## 可视化数据集
@@ -481,6 +502,7 @@ lerobot-record  \
 
 正如你所看到的,它几乎与以前用于记录训练数据集的命令相同。有两件事改变了:
 
+    【todo】
     还有一个额外的--control.policy.path参数,指示到您的策略检查点的路径(例如outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model。如果您将模型检查点上传到集线器(例如 ) , 则也可以使用模型存储库。${HF_USER}/act_so101_test。
     数据集的名称从eval反映你正在运行推论(例如:${HF_USER}/eval_act_so101_test。
 
