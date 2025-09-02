@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import math
-from typing import Dict, Optional
 
 import torch
 import torch.nn as nn

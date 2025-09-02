@@ -39,7 +39,6 @@ lerobot-train \
 """
 
 from collections import deque
-from typing import Dict, Optional
 from collections.abc import Sequence
 
 import torch

@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from fnmatch import fnmatch
-from typing import Any, Dict, List
-from collections.abc import Mapping
+from typing import Any
 
 import torch
 

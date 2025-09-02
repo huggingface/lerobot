@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import re
-from typing import Dict, List, Optional, Tuple
 from collections.abc import Sequence
 
 import numpy as np
@@ -167,9 +166,7 @@ class SmallStem(nn.Module):
         # FiLM conditioning layer
         self.film = FilmConditioning() if use_film else None
 
-    def forward(
-        self, observations: torch.Tensor, train: bool = True, cond_var: torch.Tensor | None = None
-    ):
+    def forward(self, observations: torch.Tensor, train: bool = True, cond_var: torch.Tensor | None = None):
         """
         Args:
             observations: Tensor of shape [batch_size, height, width, channels]
