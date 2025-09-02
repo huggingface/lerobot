@@ -29,8 +29,9 @@ Paper: https://arxiv.org/abs/2502.05450
 """
 
 from dataclasses import asdict
-from typing import Literal, Optional
+from typing import Literal
 
+import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
@@ -367,33 +368,12 @@ class ConRFTPolicy(PreTrainedPolicy):
         else:
             raise NotImplementedError
 
-        # Sample actions from current policy
-        policy_actions = []
-        for _ in range(num_random):
-            policy_action, _ = self.consistency_policy(
-                observations=observations, action_embeddings=next_action_embeddings
-            )
-            # policy_action is already the correct dimension (continuous only)
-            policy_actions.append(policy_action.unsqueeze(1))
-        policy_actions = torch.cat(policy_actions, dim=1)
+        # Vectorized: sample num_random actions in one call using the repeat axis
+        policy_actions, _ = self.consistency_policy(observations, repeat=num_random)
+        # policy_actions: [B, num_random, action_dim]
 
-        # Sample next actions
-        next_actions_cql = []
-        for _ in range(num_random):
-            next_action_cql, _ = self.consistency_policy(
-                observations=next_observations, action_embeddings=next_action_embeddings
-            )
-            # next_action_cql is already the correct dimension (continuous only)
-            next_actions_cql.append(next_action_cql.unsqueeze(1))
-        next_actions_cql = torch.cat(next_actions_cql, dim=1)
-
-        # # TODO(lilkm): check this
-        # # Vectorized: sample num_random actions in one call using the repeat axis
-        # policy_actions, _ = self.consistency_policy(observations, repeat=num_random)
-        # # policy_actions: [B, num_random, action_dim]
-
-        # next_actions_cql, _ = self.consistency_policy(next_observations, repeat=num_random)
-        # # next_actions_cql: [B, num_random, action_dim]
+        next_actions_cql, _ = self.consistency_policy(next_observations, repeat=num_random)
+        # next_actions_cql: [B, num_random, action_dim]
 
         # Combine all sampled actions [random, current, next]
         all_sampled_actions = torch.cat([random_actions, policy_actions, next_actions_cql], dim=1)
@@ -774,7 +754,7 @@ class ConsistencyPolicy(nn.Module):
 
         # Handle repeat for multiple samples
         if repeat > 1:
-            obs_enc = extend_and_repeat(obs_enc, 1, repeat)
+            obs_enc = einops.repeat(obs_enc, "b f -> b r f", r=repeat)
 
         if x_t is None and sigmas is None:
             x_shape = (batch_size, repeat, self.action_dim) if repeat > 1 else (batch_size, self.action_dim)
@@ -809,8 +789,7 @@ class ConsistencyPolicy(nn.Module):
         # Handle repeat for time embedding
         cont_axis = 1
         if repeat > 1:
-            t_embed = extend_and_repeat(t_embed, 1, repeat)
-            # obs_enc = extend_and_repeat(obs_enc, 1, repeat)
+            t_embed = einops.repeat(t_embed, "b t -> b r t", r=repeat)
             cont_axis = 2
 
         # Forward pass
@@ -844,11 +823,6 @@ def get_scalings_for_boundary_condition(sigma, sigma_data, sigma_min):
     c_out = (sigma - sigma_min) * sigma_data / torch.sqrt(sigma**2 + sigma_data**2)
     c_in = 1 / torch.sqrt(sigma**2 + sigma_data**2)
     return c_skip, c_out, c_in
-
-
-def extend_and_repeat(tensor, axis, repeats):
-    """Extend and repeat tensor along specified axis"""
-    return tensor.repeat(*[repeats if i == axis else 1 for i in range(tensor.ndim)])
 
 
 def get_snr(sigmas):
