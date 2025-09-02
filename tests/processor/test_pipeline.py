@@ -27,8 +27,7 @@ import torch.nn as nn
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
-from lerobot.processor import EnvTransition, ProcessorStepRegistry, RobotProcessor
-from lerobot.processor.pipeline import TransitionKey
+from lerobot.processor import EnvTransition, ProcessorStepRegistry, RobotProcessor, TransitionKey
 from tests.conftest import assert_contract_is_typed
 
 

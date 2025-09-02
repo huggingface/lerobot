@@ -20,12 +20,12 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
 from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
+from lerobot.processor import RobotProcessor
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
 )
-from lerobot.processor.pipeline import RobotProcessor
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (

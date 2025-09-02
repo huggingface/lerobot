@@ -21,11 +21,11 @@ from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
+from lerobot.processor import RobotProcessor
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
 )
-from lerobot.processor.pipeline import RobotProcessor
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (

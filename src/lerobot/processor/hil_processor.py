@@ -9,18 +9,18 @@ import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.constants import ACTION
-from lerobot.processor.pipeline import (
+from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.teleoperators.utils import TeleopEvents
+
+from .core import EnvTransition, TransitionKey
+from .pipeline import (
     ComplementaryDataProcessor,
-    EnvTransition,
     InfoProcessor,
     ObservationProcessor,
     ProcessorStep,
     ProcessorStepRegistry,
-    TransitionKey,
     TruncatedProcessor,
 )
-from lerobot.teleoperators.teleoperator import Teleoperator
-from lerobot.teleoperators.utils import TeleopEvents
 
 GRIPPER_KEY = "gripper"
 DISCRETE_PENALTY_KEY = "discrete_penalty"

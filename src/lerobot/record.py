@@ -76,14 +76,13 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import RobotProcessor
+from lerobot.processor import IdentityProcessor, RobotProcessor, TransitionKey
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
     transition_to_dataset_frame,
 )
-from lerobot.processor.pipeline import IdentityProcessor, TransitionKey
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,

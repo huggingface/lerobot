@@ -9,14 +9,10 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor.converters import to_tensor
-from lerobot.processor.pipeline import (
-    EnvTransition,
-    ProcessorStep,
-    ProcessorStepRegistry,
-    RobotProcessor,
-    TransitionKey,
-)
+
+from .converters import to_tensor
+from .core import EnvTransition, TransitionKey
+from .pipeline import ProcessorStep, ProcessorStepRegistry, RobotProcessor
 
 
 @dataclass

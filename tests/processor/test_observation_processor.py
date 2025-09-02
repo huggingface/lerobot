@@ -20,8 +20,7 @@ import torch
 
 from lerobot.configs.types import FeatureType
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
-from lerobot.processor import VanillaObservationProcessor
-from lerobot.processor.pipeline import TransitionKey
+from lerobot.processor import TransitionKey, VanillaObservationProcessor
 from tests.conftest import assert_contract_is_typed
 
 

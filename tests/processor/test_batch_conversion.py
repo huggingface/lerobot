@@ -1,7 +1,7 @@
 import torch
 
+from lerobot.processor import RobotProcessor, TransitionKey
 from lerobot.processor.converters import batch_to_transition, transition_to_batch
-from lerobot.processor.pipeline import RobotProcessor, TransitionKey
 
 
 def _dummy_batch():

@@ -61,13 +61,12 @@ import rerun as rr
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.processor import RobotProcessor
+from lerobot.processor import IdentityProcessor, RobotProcessor
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
 )
-from lerobot.processor.pipeline import IdentityProcessor
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,

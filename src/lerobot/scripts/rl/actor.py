@@ -62,7 +62,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
-from lerobot.processor.pipeline import TransitionKey
+from lerobot.processor import TransitionKey
 from lerobot.robots import so100_follower  # noqa: F401
 from lerobot.scripts.rl.gym_manipulator import (
     create_transition,

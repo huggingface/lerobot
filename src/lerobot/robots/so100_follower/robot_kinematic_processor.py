@@ -22,7 +22,7 @@ from scipy.spatial.transform import Rotation
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor.pipeline import (
+from lerobot.processor import (
     ActionProcessor,
     ComplementaryDataProcessor,
     EnvTransition,

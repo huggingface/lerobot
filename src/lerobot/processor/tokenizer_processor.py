@@ -11,13 +11,10 @@ import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
-from lerobot.processor.pipeline import (
-    EnvTransition,
-    ObservationProcessor,
-    ProcessorStepRegistry,
-    TransitionKey,
-)
 from lerobot.utils.import_utils import _transformers_available
+
+from .core import EnvTransition, TransitionKey
+from .pipeline import ObservationProcessor, ProcessorStepRegistry
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
