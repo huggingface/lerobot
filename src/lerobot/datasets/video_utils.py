@@ -26,6 +26,7 @@ from threading import Lock
 from typing import Any, ClassVar
 
 import av
+import fsspec
 import pyarrow as pa
 import torch
 import torchvision
