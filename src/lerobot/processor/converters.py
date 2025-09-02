@@ -16,10 +16,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from copy import deepcopy
 from functools import singledispatch
-from typing import Any, TypeVar
+from typing import Any
 
 import numpy as np
 import torch
@@ -161,28 +161,6 @@ def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any],
 
 
 # ============================================================================
-# Generic Identity Function
-# ============================================================================
-
-T = TypeVar("T")
-
-
-def identity(data: T) -> T:
-    """Generic identity converter for any type.
-
-    This replaces multiple identity functions throughout the codebase
-    with a single, type-safe implementation.
-
-    Args:
-        data: Data of any type to pass through unchanged.
-
-    Returns:
-        The same data unchanged.
-    """
-    return data
-
-
-# ============================================================================
 # Private Helper Functions (Common Logic)
 # ============================================================================
 
@@ -308,7 +286,7 @@ def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
     return out
 
 
-def merge_transitions(transitions: Iterable[EnvTransition] | EnvTransition) -> EnvTransition:
+def merge_transitions(transitions: Sequence[EnvTransition] | EnvTransition) -> EnvTransition:
     """Merge multiple transitions or return single transition.
 
     Args:
@@ -317,12 +295,12 @@ def merge_transitions(transitions: Iterable[EnvTransition] | EnvTransition) -> E
     Returns:
         Merged EnvTransition.
     """
-    if isinstance(transitions, dict):  # Single transition
+    if isinstance(transitions, EnvTransition):  # Single transition
         return transitions
 
     items = list(transitions)
     if not items:
-        return create_transition()
+        raise ValueError("merge_transitions() requires a non-empty sequence of transitions")
 
     result = items[0]
     for t in items[1:]:
@@ -331,7 +309,7 @@ def merge_transitions(transitions: Iterable[EnvTransition] | EnvTransition) -> E
 
 
 def transition_to_dataset_frame(
-    transitions_or_transition: EnvTransition | Iterable[EnvTransition], features: dict[str, dict]
+    transitions_or_transition: EnvTransition | Sequence[EnvTransition], features: dict[str, dict]
 ) -> dict[str, Any]:
     """Convert a single EnvTransition or an iterable of them into a flat, dataset-friendly dictionary for training or evaluation.
 
