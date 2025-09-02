@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.processor.converters import to_tensor
 from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
 
@@ -48,6 +49,9 @@ class Torch2NumpyActionProcessor(ActionProcessor):
 
         return numpy_action
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
+
 
 @ProcessorStepRegistry.register("numpy2torch_action_processor")
 @dataclass
@@ -62,3 +66,6 @@ class Numpy2TorchActionProcessor(ActionProcessor):
             )
         torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
         return torch_action
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features

@@ -220,6 +220,9 @@ class EEBoundsAndSafety(ActionProcessor):
         self._last_pos = None
         self._last_twist = None
 
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
+
 
 @ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
 @dataclass
@@ -444,3 +447,6 @@ class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessor):
             if isinstance(k, str) and k.endswith(".pos")
         }
         return new_comp
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features

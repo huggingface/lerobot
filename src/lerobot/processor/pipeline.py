@@ -169,7 +169,7 @@ class ProcessorStep(ABC):
     def reset(self) -> None:
         return None
 
-    # TODO(Steven): Consider making this abstract so it is more explicit
+    @abstractmethod
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         return features
 
@@ -1091,3 +1091,6 @@ class IdentityProcessor(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features

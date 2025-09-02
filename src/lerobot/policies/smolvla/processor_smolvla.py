@@ -16,6 +16,7 @@
 
 import torch
 
+from lerobot.configs.types import PolicyFeature
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
@@ -107,3 +108,6 @@ class SmolVLANewLineProcessor(ComplementaryDataProcessor):
         # If task is neither string nor list of strings, leave unchanged
 
         return new_complementary_data
+
+    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        return features
