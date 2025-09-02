@@ -35,7 +35,9 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
 
-def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> gym.vector.VectorEnv | dict[str, dict[int, gym.vector.VectorEnv]]:
+def make_env(
+    cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False
+) -> gym.vector.VectorEnv | dict[str, dict[int, gym.vector.VectorEnv]]:
     """Makes a gym vector environment according to the config.
 
     Args:

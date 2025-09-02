@@ -147,7 +147,10 @@ def get_libero_dummy_action():
     """Get dummy/no-op action, used to roll out the simulation while the robot does nothing."""
     return [0, 0, 0, 0, 0, 0, -1]
 
+
 ACTION_DIM = 8
+
+
 class LiberoEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
 
@@ -178,7 +181,7 @@ class LiberoEnv(gym.Env):
         self.camera_name = camera_name.split(
             ","
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
-        
+
         # Map raw camera names to "image1" and "image2".
         # The preprocessing step `preprocess_observation` will then prefix these with `.images.*`,
         # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
