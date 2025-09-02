@@ -148,9 +148,9 @@ def get_libero_dummy_action():
     return [0, 0, 0, 0, 0, 0, -1]
 
 
-ACTION_DIM = 8
 
-
+OBS_STATE_DIM = 8
+ACTION_DIM = 7
 class LiberoEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
 
@@ -234,13 +234,13 @@ class LiberoEnv(gym.Env):
                     "agent_pos": spaces.Box(
                         low=-1000.0,
                         high=1000.0,
-                        shape=(ACTION_DIM,),
+                        shape=(OBS_STATE_DIM,),
                         dtype=np.float64,
                     ),
                 }
             )
 
-        self.action_space = spaces.Box(low=-1, high=1, shape=(7,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1, high=1, shape=(ACTION_DIM,), dtype=np.float32)
 
     def render(self):
         raw_obs = self._env.env._get_observations()
