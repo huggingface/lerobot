@@ -32,10 +32,11 @@ from safetensors.torch import load_file, save_file
 
 from lerobot.configs.types import PolicyFeature
 
+from .converters import batch_to_transition, transition_to_batch
+from .core import EnvTransition, TransitionKey
+
 # Type variable for generic processor output type
 TOutput = TypeVar("TOutput")
-
-from .core import EnvTransition, TransitionKey
 
 
 class ProcessorStepRegistry:
@@ -173,93 +174,6 @@ class ProcessorStep(ABC):
         return features
 
 
-def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
-    """Convert a *batch* dict coming from Learobot replay/dataset code into an
-    ``EnvTransition`` dictionary.
-
-    The function maps well known keys to the EnvTransition structure. Missing keys are
-    filled with sane defaults (``None`` or ``0.0``/``False``).
-
-    Keys recognised (case-sensitive):
-
-    * "observation.*" (keys starting with "observation." are grouped into observation dict)
-    * "action"
-    * "next.reward"
-    * "next.done"
-    * "next.truncated"
-    * "info"
-
-    Additional keys are ignored so that existing dataloaders can carry extra
-    metadata without breaking the processor.
-    """
-
-    # Validate input type
-    if not isinstance(batch, dict):
-        raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
-
-    # Extract observation keys
-    observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
-    observation = observation_keys if observation_keys else None
-
-    # Extract padding, task, index, and task_index keys for complementary data
-    pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
-    task_key = {"task": batch["task"]} if "task" in batch else {}
-    index_key = {"index": batch["index"]} if "index" in batch else {}
-    task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
-    complementary_data = (
-        {**pad_keys, **task_key, **index_key, **task_index_key}
-        if pad_keys or task_key or index_key or task_index_key
-        else {}
-    )
-
-    transition: EnvTransition = {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: batch.get("action"),
-        TransitionKey.REWARD: batch.get("next.reward", 0.0),
-        TransitionKey.DONE: batch.get("next.done", False),
-        TransitionKey.TRUNCATED: batch.get("next.truncated", False),
-        TransitionKey.INFO: batch.get("info", {}),
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-    }
-    return transition
-
-
-def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  # noqa: D401
-    """Inverse of :pyfunc:`_default_batch_to_transition`. Returns a dict with
-    the canonical field names used throughout *LeRobot*.
-    """
-
-    batch = {
-        "action": transition.get(TransitionKey.ACTION),
-        "next.reward": transition.get(TransitionKey.REWARD, 0.0),
-        "next.done": transition.get(TransitionKey.DONE, False),
-        "next.truncated": transition.get(TransitionKey.TRUNCATED, False),
-        "info": transition.get(TransitionKey.INFO, {}),
-    }
-
-    # Add padding, task, index, and task_index data from complementary_data
-    complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
-    if complementary_data:
-        pad_data = {k: v for k, v in complementary_data.items() if "_is_pad" in k}
-        batch.update(pad_data)
-
-        if "task" in complementary_data:
-            batch["task"] = complementary_data["task"]
-
-        if "index" in complementary_data:
-            batch["index"] = complementary_data["index"]
-
-        if "task_index" in complementary_data:
-            batch["task_index"] = complementary_data["task_index"]
-
-    # Handle observation - flatten dict to observation.* keys if it's a dict
-    observation = transition.get(TransitionKey.OBSERVATION)
-    if isinstance(observation, dict):
-        batch.update(observation)
-
-    return batch
-
-
 class ProcessorKwargs(TypedDict, total=False):
     """Keyword arguments for RobotProcessor constructor."""
 
@@ -331,15 +245,13 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
     steps: Sequence[ProcessorStep] = field(default_factory=list)
     name: str = "RobotProcessor"
 
-    to_transition: Callable[[dict[str, Any]], EnvTransition] = field(
-        default=_default_batch_to_transition, repr=False
-    )
+    to_transition: Callable[[dict[str, Any]], EnvTransition] = field(default=batch_to_transition, repr=False)
     to_output: Callable[[EnvTransition], TOutput] = field(
         # Cast is necessary here: Working around Python type-checker limitation.
         # _default_transition_to_batch returns dict[str, Any], but we need it to be TOutput
         # for the generic to work. When no explicit type is given, TOutput defaults to dict[str, Any],
         # making this cast safe.
-        default_factory=lambda: cast(Callable[[EnvTransition], TOutput], _default_transition_to_batch),
+        default_factory=lambda: cast(Callable[[EnvTransition], TOutput], transition_to_batch),
         repr=False,
     )
 
@@ -741,11 +653,11 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
         return cls(
             steps=steps,
             name=loaded_config.get("name", "RobotProcessor"),
-            to_transition=to_transition or _default_batch_to_transition,
+            to_transition=to_transition or batch_to_transition,
             # Cast is necessary here: Same type-checker limitation as above.
             # When to_output is None, we use the default which returns dict[str, Any].
             # The cast ensures type consistency with the generic TOutput parameter.
-            to_output=to_output or cast(Callable[[EnvTransition], TOutput], _default_transition_to_batch),
+            to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
         )
 
     def __len__(self) -> int:

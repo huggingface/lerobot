@@ -425,6 +425,11 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
     Returns:
         EnvTransition dictionary with properly structured transition data.
     """
+
+    # Validate input type
+    if not isinstance(batch, dict):
+        raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
+
     # Extract observation keys
     observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
     complementary_data = _extract_complementary_data(batch)
