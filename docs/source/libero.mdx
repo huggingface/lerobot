@@ -67,13 +67,13 @@ python src/lerobot/scripts/eval.py \
 When using LIBERO through LeRobot, policies interact with the environment via **observations** and **actions**:
 
 - **Observations**
-    - `observation.state` – proprioceptive features (agent state).
-    - `observation.images.image` – main camera view (`agentview_image`).
-    - `observation.images.image2` – wrist camera view (`robot0_eye_in_hand_image`).
-    
-    ⚠️ **Note:** LeRobot enforces the `.images.*` prefix for any visual features. Make sure your dataset metadata keys match this convention when evaluating.
-    
+  - `observation.state` – proprioceptive features (agent state).
+  - `observation.images.image` – main camera view (`agentview_image`).
+  - `observation.images.image2` – wrist camera view (`robot0_eye_in_hand_image`).
+
+  ⚠️ **Note:** LeRobot enforces the `.images.*` prefix for any visual features. Make sure your dataset metadata keys match this convention when evaluating.
+
 - **Actions**
-    - Continuous control values in a `Box(-1, 1, shape=(7,))` space.
+  - Continuous control values in a `Box(-1, 1, shape=(7,))` space.
 
 We also provide a notebook for quick testing:
