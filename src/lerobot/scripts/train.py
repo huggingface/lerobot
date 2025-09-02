@@ -268,7 +268,6 @@ def train(cfg: TrainPipelineConfig):
                             continue  # Skip the overall stats since we already printed it
                         print(f"\nAggregated Metrics for {task_group}:")
                         print(task_group_info["aggregated"])
-                    breakpoint()
                 else:
                     eval_info = eval_policy(
                         eval_env,
@@ -279,7 +278,6 @@ def train(cfg: TrainPipelineConfig):
                         start_seed=cfg.seed,
                     )
                     aggregated = eval_info["aggregated"]
-                    breakpoint()
 
             eval_metrics = {
                 "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
