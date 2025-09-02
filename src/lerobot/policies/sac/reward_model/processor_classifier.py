@@ -20,13 +20,22 @@ from lerobot.processor import (
     DeviceProcessor,
     IdentityProcessor,
     NormalizerProcessor,
+    ProcessorKwargs,
     RobotProcessor,
 )
 
 
 def make_classifier_processor(
-    config: RewardClassifierConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
+    config: RewardClassifierConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    preprocessor_kwargs: ProcessorKwargs | None = None,
+    postprocessor_kwargs: ProcessorKwargs | None = None,
 ) -> tuple[RobotProcessor, RobotProcessor]:
+    if preprocessor_kwargs is None:
+        preprocessor_kwargs = {}
+    if postprocessor_kwargs is None:
+        postprocessor_kwargs = {}
+
     input_steps = [
         NormalizerProcessor(
             features=config.input_features, norm_map=config.normalization_mapping, stats=dataset_stats
@@ -37,6 +46,16 @@ def make_classifier_processor(
         DeviceProcessor(device=config.device),
     ]
     output_steps = [DeviceProcessor(device="cpu"), IdentityProcessor()]
-    return RobotProcessor(steps=input_steps, name="classifier_preprocessor"), RobotProcessor(
-        steps=output_steps, name="classifier_postprocessor"
+
+    return (
+        RobotProcessor(
+            steps=input_steps,
+            name="classifier_preprocessor",
+            **preprocessor_kwargs,
+        ),
+        RobotProcessor(
+            steps=output_steps,
+            name="classifier_postprocessor",
+            **postprocessor_kwargs,
+        ),
     )

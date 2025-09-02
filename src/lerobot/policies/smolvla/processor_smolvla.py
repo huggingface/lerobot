@@ -21,6 +21,7 @@ from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
     DeviceProcessor,
     NormalizerProcessor,
+    ProcessorKwargs,
     RenameProcessor,
     RobotProcessor,
     ToBatchProcessor,
@@ -34,8 +35,16 @@ from lerobot.processor.pipeline import (
 
 
 def make_smolvla_pre_post_processors(
-    config: SmolVLAConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
+    config: SmolVLAConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    preprocessor_kwargs: ProcessorKwargs | None = None,
+    postprocessor_kwargs: ProcessorKwargs | None = None,
 ) -> tuple[RobotProcessor, RobotProcessor]:
+    if preprocessor_kwargs is None:
+        preprocessor_kwargs = {}
+    if postprocessor_kwargs is None:
+        postprocessor_kwargs = {}
+
     input_steps = [
         RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
         NormalizerProcessor(
@@ -59,8 +68,17 @@ def make_smolvla_pre_post_processors(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
-    return RobotProcessor(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), RobotProcessor(
-        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
+    return (
+        RobotProcessor(
+            steps=input_steps,
+            name=PREPROCESSOR_DEFAULT_NAME,
+            **preprocessor_kwargs,
+        ),
+        RobotProcessor(
+            steps=output_steps,
+            name=POSTPROCESSOR_DEFAULT_NAME,
+            **postprocessor_kwargs,
+        ),
     )
 
 

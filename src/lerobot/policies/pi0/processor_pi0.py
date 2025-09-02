@@ -22,6 +22,7 @@ from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
     DeviceProcessor,
     NormalizerProcessor,
+    ProcessorKwargs,
     RobotProcessor,
     ToBatchProcessor,
     TokenizerProcessor,
@@ -65,8 +66,16 @@ class Pi0NewLineProcessor(ComplementaryDataProcessor):
 
 
 def make_pi0_pre_post_processors(
-    config: PI0Config, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
+    config: PI0Config,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    preprocessor_kwargs: ProcessorKwargs | None = None,
+    postprocessor_kwargs: ProcessorKwargs | None = None,
 ) -> tuple[RobotProcessor, RobotProcessor]:
+    if preprocessor_kwargs is None:
+        preprocessor_kwargs = {}
+    if postprocessor_kwargs is None:
+        postprocessor_kwargs = {}
+
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
         RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
@@ -93,6 +102,15 @@ def make_pi0_pre_post_processors(
         ),
     ]
 
-    return RobotProcessor(steps=input_steps, name=PREPROCESSOR_DEFAULT_NAME), RobotProcessor(
-        steps=output_steps, name=POSTPROCESSOR_DEFAULT_NAME
+    return (
+        RobotProcessor(
+            steps=input_steps,
+            name=PREPROCESSOR_DEFAULT_NAME,
+            **preprocessor_kwargs,
+        ),
+        RobotProcessor(
+            steps=output_steps,
+            name=POSTPROCESSOR_DEFAULT_NAME,
+            **postprocessor_kwargs,
+        ),
     )

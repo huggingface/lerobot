@@ -81,7 +81,12 @@ def test_make_vqbet_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Check processor names
     assert preprocessor.name == "robot_preprocessor"
@@ -105,7 +110,12 @@ def test_vqbet_processor_with_images():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Create test data with images and states
     observation = {
@@ -131,7 +141,12 @@ def test_vqbet_processor_cuda():
     config.device = "cuda"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Create CPU data
     observation = {
@@ -164,7 +179,12 @@ def test_vqbet_processor_accelerate_scenario():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Simulate Accelerate: data already on GPU and batched
     device = torch.device("cuda:0")
@@ -191,7 +211,12 @@ def test_vqbet_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Simulate data on different GPU
     device = torch.device("cuda:1")
@@ -215,7 +240,22 @@ def test_vqbet_processor_without_stats():
     """Test VQBeT processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, dataset_stats=None)
+    # Get the steps from the factory function
+    factory_preprocessor, factory_postprocessor = make_vqbet_pre_post_processors(config, dataset_stats=None)
+
+    # Create new processors with EnvTransition input/output
+    preprocessor = RobotProcessor(
+        factory_preprocessor.steps,
+        name=factory_preprocessor.name,
+        to_transition=lambda x: x,
+        to_output=lambda x: x,
+    )
+    postprocessor = RobotProcessor(
+        factory_postprocessor.steps,
+        name=factory_postprocessor.name,
+        to_transition=lambda x: x,
+        to_output=lambda x: x,
+    )
 
     # Should still create processors
     assert preprocessor is not None
@@ -238,14 +278,21 @@ def test_vqbet_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(tmpdir)
+        loaded_preprocessor = RobotProcessor.from_pretrained(
+            tmpdir, to_transition=lambda x: x, to_output=lambda x: x
+        )
 
         # Test that loaded processor works
         observation = {
@@ -269,7 +316,12 @@ def test_vqbet_processor_mixed_precision():
     stats = create_default_stats()
 
     # Create processor
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Replace DeviceProcessor with one that uses float16
     for i, step in enumerate(preprocessor.steps):
@@ -298,7 +350,12 @@ def test_vqbet_processor_large_batch():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Test with large batch
     batch_size = 128
@@ -323,7 +380,12 @@ def test_vqbet_processor_sequential_processing():
     config = create_default_config()
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_vqbet_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_vqbet_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Process multiple samples sequentially
     results = []
