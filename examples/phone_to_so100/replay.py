@@ -19,7 +19,7 @@ import time
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotProcessor
+from lerobot.processor import DataProcessorPipeline
 from lerobot.processor.converters import to_output_robot_action, to_transition_teleop_action
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -50,7 +50,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints_processor = RobotProcessor(
+robot_ee_to_joints_processor = DataProcessorPipeline(
     steps=[
         AddRobotObservationAsComplimentaryData(robot=robot),
         InverseKinematicsEEToJoints(

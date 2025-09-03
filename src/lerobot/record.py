@@ -76,7 +76,7 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import IdentityProcessor, RobotProcessor, TransitionKey
+from lerobot.processor import DataProcessorPipeline, IdentityProcessor, TransitionKey
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
@@ -235,22 +235,22 @@ def record_loop(
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
-    preprocessor: RobotProcessor | None = None,
-    postprocessor: RobotProcessor | None = None,
+    preprocessor: DataProcessorPipeline | None = None,
+    postprocessor: DataProcessorPipeline | None = None,
     control_time_s: int | None = None,
-    teleop_action_processor: RobotProcessor | None = None,  # runs after teleop
-    robot_action_processor: RobotProcessor | None = None,  # runs before robot
-    robot_observation_processor: RobotProcessor | None = None,  # runs after robot
+    teleop_action_processor: DataProcessorPipeline | None = None,  # runs after teleop
+    robot_action_processor: DataProcessorPipeline | None = None,  # runs before robot
+    robot_observation_processor: DataProcessorPipeline | None = None,  # runs after robot
     single_task: str | None = None,
     display_data: bool = False,
 ):
-    teleop_action_processor = teleop_action_processor or RobotProcessor(
+    teleop_action_processor = teleop_action_processor or DataProcessorPipeline(
         steps=[IdentityProcessor()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
     )
-    robot_action_processor = robot_action_processor or RobotProcessor(
+    robot_action_processor = robot_action_processor or DataProcessorPipeline(
         steps=[IdentityProcessor()], to_transition=lambda tr: tr, to_output=to_output_robot_action
     )
-    robot_observation_processor = robot_observation_processor or RobotProcessor(
+    robot_observation_processor = robot_observation_processor or DataProcessorPipeline(
         steps=[IdentityProcessor()], to_transition=to_transition_robot_observation, to_output=lambda tr: tr
     )
 

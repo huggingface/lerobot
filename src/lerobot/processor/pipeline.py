@@ -117,7 +117,7 @@ class ProcessorStep(ABC):
     A step is any callable accepting a full `EnvTransition` dict and
     returning a (possibly modified) dict of the same structure. Implementers
     are encouraged—but not required—to expose the optional helper methods
-    listed below. When present, these hooks let `RobotProcessor`
+    listed below. When present, these hooks let `DataProcessorPipeline`
     automatically serialise the step's configuration and learnable state using
     a safe-to-share JSON + SafeTensors format.
 
@@ -175,14 +175,14 @@ class ProcessorStep(ABC):
 
 
 class ProcessorKwargs(TypedDict, total=False):
-    """Keyword arguments for RobotProcessor constructor."""
+    """Keyword arguments for DataProcessorPipeline constructor."""
 
     to_transition: Callable[[dict[str, Any]], EnvTransition] | None
     to_output: Callable[[EnvTransition], Any] | None
 
 
 @dataclass
-class RobotProcessor(ModelHubMixin, Generic[TOutput]):
+class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
     """
     Composable, debuggable post-processing processor for robot transitions.
 
@@ -196,7 +196,7 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
     Args:
         steps: Ordered list of processing steps executed on every call. Defaults to empty list.
         name: Human-readable identifier that is persisted inside the JSON config.
-            Defaults to "RobotProcessor".
+            Defaults to "DataProcessorPipeline".
         to_transition: Function to convert batch dict to EnvTransition dict.
             Defaults to _default_batch_to_transition.
         to_output: Function to convert EnvTransition dict to the desired output format of type TOutput.
@@ -210,18 +210,20 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
     Type Safety Examples:
         ```python
         # Default behavior - returns batch dict
-        processor: RobotProcessor[dict[str, Any]] = RobotProcessor(steps=[some_step1, some_step2])
+        processor: DataProcessorPipeline[dict[str, Any]] = DataProcessorPipeline(
+            steps=[some_step1, some_step2]
+        )
         result: dict[str, Any] = processor(batch_data)  # Type checker knows this is a dict
 
         # For EnvTransition output, explicitly specify identity function
-        transition_processor: RobotProcessor[EnvTransition] = RobotProcessor(
+        transition_processor: DataProcessorPipeline[EnvTransition] = DataProcessorPipeline(
             steps=[some_step1, some_step2],
             to_output=lambda x: x,  # Identity function
         )
         result: EnvTransition = transition_processor(batch_data)  # Type checker knows this is EnvTransition
 
         # For custom output types
-        processor: RobotProcessor[str] = RobotProcessor(
+        processor: DataProcessorPipeline[str] = DataProcessorPipeline(
             steps=[custom_step], to_output=lambda t: f"Processed {len(t)} keys"
         )
         result: str = processor(batch_data)  # Type checker knows this is str
@@ -243,7 +245,7 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
     """
 
     steps: Sequence[ProcessorStep] = field(default_factory=list)
-    name: str = "RobotProcessor"
+    name: str = "DataProcessorPipeline"
 
     to_transition: Callable[[dict[str, Any]], EnvTransition] = field(default=batch_to_transition, repr=False)
     to_output: Callable[[EnvTransition], TOutput] = field(
@@ -419,7 +421,7 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
         to_transition: Callable[[dict[str, Any]], EnvTransition] | None = None,
         to_output: Callable[[EnvTransition], TOutput] | None = None,
         **kwargs,
-    ) -> RobotProcessor[TOutput]:
+    ) -> DataProcessorPipeline[TOutput]:
         """Load a serialized processor from source (local path or Hugging Face Hub identifier).
 
         Args:
@@ -440,7 +442,7 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
                 Use identity function (lambda x: x) for EnvTransition output.
 
         Returns:
-            A RobotProcessor[TOutput] instance loaded from the saved configuration.
+            A DataProcessorPipeline[TOutput] instance loaded from the saved configuration.
 
         Raises:
             ImportError: If a processor step class cannot be loaded or imported.
@@ -450,12 +452,12 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
         Examples:
             Basic loading:
             ```python
-            processor = RobotProcessor.from_pretrained("path/to/processor")
+            processor = DataProcessorPipeline.from_pretrained("path/to/processor")
             ```
 
             Loading specific config file:
             ```python
-            processor = RobotProcessor.from_pretrained(
+            processor = DataProcessorPipeline.from_pretrained(
                 "username/multi-processor-repo", config_filename="preprocessor.json"
             )
             ```
@@ -465,14 +467,14 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
             import gym
 
             env = gym.make("CartPole-v1")
-            processor = RobotProcessor.from_pretrained(
+            processor = DataProcessorPipeline.from_pretrained(
                 "username/cartpole-processor", overrides={"ActionRepeatStep": {"env": env}}
             )
             ```
 
             Multiple overrides:
             ```python
-            processor = RobotProcessor.from_pretrained(
+            processor = DataProcessorPipeline.from_pretrained(
                 "path/to/processor",
                 overrides={
                     "CustomStep": {"param1": "new_value"},
@@ -656,7 +658,7 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
 
         return cls(
             steps=steps,
-            name=loaded_config.get("name", "RobotProcessor"),
+            name=loaded_config.get("name", "DataProcessorPipeline"),
             to_transition=to_transition or batch_to_transition,
             # Cast is necessary here: Same type-checker limitation as above.
             # When to_output is None, we use the default which returns dict[str, Any].
@@ -668,13 +670,13 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
         """Return the number of steps in the processor."""
         return len(self.steps)
 
-    def __getitem__(self, idx: int | slice) -> ProcessorStep | RobotProcessor[TOutput]:
+    def __getitem__(self, idx: int | slice) -> ProcessorStep | DataProcessorPipeline[TOutput]:
         """Indexing helper exposing underlying steps.
         * ``int`` – returns the idx-th ProcessorStep.
-        * ``slice`` – returns a new RobotProcessor with the sliced steps.
+        * ``slice`` – returns a new DataProcessorPipeline with the sliced steps.
         """
         if isinstance(idx, slice):
-            return RobotProcessor(
+            return DataProcessorPipeline(
                 steps=self.steps[idx],
                 name=self.name,
                 to_transition=self.to_transition,
@@ -745,7 +747,7 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
 
         parts = [f"name='{self.name}'", steps_repr]
 
-        return f"RobotProcessor({', '.join(parts)})"
+        return f"DataProcessorPipeline({', '.join(parts)})"
 
     def __post_init__(self):
         for i, step in enumerate(self.steps):

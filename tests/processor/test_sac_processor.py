@@ -25,10 +25,10 @@ from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 from lerobot.processor import (
+    DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
     RenameProcessor,
-    RobotProcessor,
     ToBatchProcessor,
     TransitionKey,
     UnnormalizerProcessor,
@@ -234,13 +234,13 @@ def test_sac_processor_without_stats():
     factory_preprocessor, factory_postprocessor = make_sac_pre_post_processors(config, dataset_stats=None)
 
     # Create new processors with EnvTransition input/output
-    preprocessor = RobotProcessor(
+    preprocessor = DataProcessorPipeline(
         factory_preprocessor.steps,
         name=factory_preprocessor.name,
         to_transition=lambda x: x,
         to_output=lambda x: x,
     )
-    postprocessor = RobotProcessor(
+    postprocessor = DataProcessorPipeline(
         factory_postprocessor.steps,
         name=factory_postprocessor.name,
         to_transition=lambda x: x,
@@ -277,7 +277,7 @@ def test_sac_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(
             tmpdir, to_transition=lambda x: x, to_output=lambda x: x
         )
 

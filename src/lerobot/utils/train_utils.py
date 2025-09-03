@@ -32,7 +32,7 @@ from lerobot.datasets.utils import load_json, write_json
 from lerobot.optim.optimizers import load_optimizer_state, save_optimizer_state
 from lerobot.optim.schedulers import load_scheduler_state, save_scheduler_state
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import RobotProcessor
+from lerobot.processor import DataProcessorPipeline
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
 
 
@@ -75,8 +75,8 @@ def save_checkpoint(
     policy: PreTrainedPolicy,
     optimizer: Optimizer,
     scheduler: LRScheduler | None = None,
-    preprocessor: RobotProcessor | None = None,
-    postprocessor: RobotProcessor | None = None,
+    preprocessor: DataProcessorPipeline | None = None,
+    postprocessor: DataProcessorPipeline | None = None,
 ) -> None:
     """This function creates the following directory structure:
 

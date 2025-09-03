@@ -1,6 +1,6 @@
 import torch
 
-from lerobot.processor import RobotProcessor, TransitionKey
+from lerobot.processor import DataProcessorPipeline, TransitionKey
 from lerobot.processor.converters import batch_to_transition, transition_to_batch
 
 
@@ -20,7 +20,7 @@ def _dummy_batch():
 
 def test_observation_grouping_roundtrip():
     """Test that observation.* keys are properly grouped and ungrouped."""
-    proc = RobotProcessor([])
+    proc = DataProcessorPipeline([])
     batch_in = _dummy_batch()
     batch_out = proc(batch_in)
 
@@ -261,7 +261,7 @@ def test_custom_converter():
         batch = transition_to_batch(tr)
         return batch
 
-    processor = RobotProcessor(steps=[], to_transition=to_tr, to_output=to_batch)
+    processor = DataProcessorPipeline(steps=[], to_transition=to_tr, to_output=to_batch)
 
     batch = {
         "observation.state": torch.randn(1, 4),

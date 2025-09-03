@@ -25,10 +25,10 @@ from lerobot.constants import OBS_IMAGE, OBS_STATE
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
 from lerobot.processor import (
+    DataProcessorPipeline,
     DeviceProcessor,
     IdentityProcessor,
     NormalizerProcessor,
-    RobotProcessor,
     TransitionKey,
 )
 
@@ -254,7 +254,7 @@ def test_classifier_processor_save_and_load():
     factory_preprocessor, factory_postprocessor = make_classifier_processor(config, stats)
 
     # Create new processors with EnvTransition input/output
-    preprocessor = RobotProcessor(
+    preprocessor = DataProcessorPipeline(
         factory_preprocessor.steps, to_transition=lambda x: x, to_output=lambda x: x
     )
 
@@ -263,7 +263,7 @@ def test_classifier_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(
             tmpdir, to_transition=lambda x: x, to_output=lambda x: x
         )
 
@@ -300,7 +300,7 @@ def test_classifier_processor_mixed_precision():
             modified_steps.append(step)
 
     # Create new processors with EnvTransition input/output
-    preprocessor = RobotProcessor(modified_steps, to_transition=lambda x: x, to_output=lambda x: x)
+    preprocessor = DataProcessorPipeline(modified_steps, to_transition=lambda x: x, to_output=lambda x: x)
 
     # Create test data
     observation = {

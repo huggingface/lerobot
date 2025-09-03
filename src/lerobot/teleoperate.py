@@ -61,7 +61,7 @@ import rerun as rr
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.processor import IdentityProcessor, RobotProcessor
+from lerobot.processor import DataProcessorPipeline, IdentityProcessor
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
@@ -104,9 +104,9 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
     # Optional processors for data transformation
-    teleop_action_processor: RobotProcessor | None = None  # runs after teleop
-    robot_action_processor: RobotProcessor | None = None  # runs before robot
-    robot_observation_processor: RobotProcessor | None = None  # runs after robot
+    teleop_action_processor: DataProcessorPipeline | None = None  # runs after teleop
+    robot_action_processor: DataProcessorPipeline | None = None  # runs before robot
+    robot_observation_processor: DataProcessorPipeline | None = None  # runs after robot
 
 
 def teleop_loop(
@@ -115,20 +115,20 @@ def teleop_loop(
     fps: int,
     display_data: bool = False,
     duration: float | None = None,
-    teleop_action_processor: RobotProcessor | None = None,
-    robot_action_processor: RobotProcessor | None = None,
-    robot_observation_processor: RobotProcessor | None = None,
+    teleop_action_processor: DataProcessorPipeline | None = None,
+    robot_action_processor: DataProcessorPipeline | None = None,
+    robot_observation_processor: DataProcessorPipeline | None = None,
 ):
     # Initialize processors with defaults if not provided
-    teleop_action_processor = teleop_action_processor or RobotProcessor(
+    teleop_action_processor = teleop_action_processor or DataProcessorPipeline(
         steps=[IdentityProcessor()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
     )
-    robot_action_processor = robot_action_processor or RobotProcessor(
+    robot_action_processor = robot_action_processor or DataProcessorPipeline(
         steps=[IdentityProcessor()],
         to_transition=lambda tr: tr,
         to_output=to_output_robot_action,  # type: ignore[arg-type]
     )
-    robot_observation_processor = robot_observation_processor or RobotProcessor(
+    robot_observation_processor = robot_observation_processor or DataProcessorPipeline(
         steps=[IdentityProcessor()], to_transition=to_transition_robot_observation, to_output=lambda tr: tr
     )
 

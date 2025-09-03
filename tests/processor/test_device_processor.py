@@ -19,7 +19,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.processor import DeviceProcessor, RobotProcessor, TransitionKey
+from lerobot.processor import DataProcessorPipeline, DeviceProcessor, TransitionKey
 
 
 def create_transition(
@@ -310,7 +310,7 @@ def test_integration_with_robot_processor():
     device_processor = DeviceProcessor(device="cpu")
     batch_processor = ToBatchProcessor()
 
-    processor = RobotProcessor(
+    processor = DataProcessorPipeline(
         steps=[batch_processor, device_processor],
         name="test_pipeline",
         to_transition=lambda x: x,
@@ -336,14 +336,14 @@ def test_save_and_load_pretrained():
     """Test saving and loading processor with DeviceProcessor."""
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     processor = DeviceProcessor(device=device, float_dtype="float16")
-    robot_processor = RobotProcessor(steps=[processor], name="device_test_processor")
+    robot_processor = DataProcessorPipeline(steps=[processor], name="device_test_processor")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save
         robot_processor.save_pretrained(tmpdir)
 
         # Load
-        loaded_processor = RobotProcessor.from_pretrained(tmpdir)
+        loaded_processor = DataProcessorPipeline.from_pretrained(tmpdir)
 
         assert len(loaded_processor.steps) == 1
         loaded_device_processor = loaded_processor.steps[0]
@@ -982,7 +982,7 @@ def test_policy_processor_integration():
     norm_map = {FeatureType.STATE: NormalizationMode.MEAN_STD, FeatureType.ACTION: NormalizationMode.MEAN_STD}
 
     # Create input processor (preprocessor) that moves to GPU
-    input_processor = RobotProcessor(
+    input_processor = DataProcessorPipeline(
         steps=[
             NormalizerProcessor(features=features, norm_map=norm_map, stats=stats),
             ToBatchProcessor(),
@@ -994,7 +994,7 @@ def test_policy_processor_integration():
     )
 
     # Create output processor (postprocessor) that moves to CPU
-    output_processor = RobotProcessor(
+    output_processor = DataProcessorPipeline(
         steps=[
             DeviceProcessor(device="cpu"),
             UnnormalizerProcessor(features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
