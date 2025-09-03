@@ -19,39 +19,21 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from lerobot.teleoperators.reachy2_teleoperator import (
+    REACHY2_ANTENNAS_JOINTS,
+    REACHY2_L_ARM_JOINTS,
+    REACHY2_NECK_JOINTS,
+    REACHY2_R_ARM_JOINTS,
+    REACHY2_VEL,
     Reachy2Teleoperator,
     Reachy2TeleoperatorConfig,
 )
 
 # {lerobot_keys: reachy2_sdk_keys}
 REACHY2_JOINTS = {
-    "neck_yaw.pos": "head.neck.yaw",
-    "neck_pitch.pos": "head.neck.pitch",
-    "neck_roll.pos": "head.neck.roll",
-    "l_antenna.pos": "head.l_antenna",
-    "r_antenna.pos": "head.r_antenna",
-    "r_shoulder_pitch.pos": "r_arm.shoulder.pitch",
-    "r_shoulder_roll.pos": "r_arm.shoulder.roll",
-    "r_elbow_yaw.pos": "r_arm.elbow.yaw",
-    "r_elbow_pitch.pos": "r_arm.elbow.pitch",
-    "r_wrist_roll.pos": "r_arm.wrist.roll",
-    "r_wrist_pitch.pos": "r_arm.wrist.pitch",
-    "r_wrist_yaw.pos": "r_arm.wrist.yaw",
-    "r_gripper.pos": "r_arm.gripper",
-    "l_shoulder_pitch.pos": "l_arm.shoulder.pitch",
-    "l_shoulder_roll.pos": "l_arm.shoulder.roll",
-    "l_elbow_yaw.pos": "l_arm.elbow.yaw",
-    "l_elbow_pitch.pos": "l_arm.elbow.pitch",
-    "l_wrist_roll.pos": "l_arm.wrist.roll",
-    "l_wrist_pitch.pos": "l_arm.wrist.pitch",
-    "l_wrist_yaw.pos": "l_arm.wrist.yaw",
-    "l_gripper.pos": "l_arm.gripper",
-}
-
-REACHY2_VEL = {
-    "mobile_base.vx": "vx",
-    "mobile_base.vy": "vy",
-    "mobile_base.vtheta": "vtheta",
+    **REACHY2_NECK_JOINTS,
+    **REACHY2_ANTENNAS_JOINTS,
+    **REACHY2_R_ARM_JOINTS,
+    **REACHY2_L_ARM_JOINTS,
 }
 
 PARAMS = [

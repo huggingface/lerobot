@@ -157,7 +157,6 @@ class Reachy2Teleoperator(Teleoperator):
         return {**joint_action, **vel_action}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        # TODO(rcadene, aliberts): Implement force feedback
         raise NotImplementedError
 
     def disconnect(self) -> None:
