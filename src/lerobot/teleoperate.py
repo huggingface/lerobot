@@ -65,7 +65,7 @@ from lerobot.processor import DataProcessorPipeline, IdentityProcessorStep
 from lerobot.processor.converters import (
     action_to_transition,
     observation_to_transition,
-    to_output_robot_action,
+    transition_to_robot_action,
 )
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -126,7 +126,7 @@ def teleop_loop(
     robot_action_processor = robot_action_processor or DataProcessorPipeline(
         steps=[IdentityProcessorStep()],
         to_transition=lambda tr: tr,
-        to_output=to_output_robot_action,  # type: ignore[arg-type]
+        to_output=transition_to_robot_action,  # type: ignore[arg-type]
     )
     robot_observation_processor = robot_observation_processor or DataProcessorPipeline(
         steps=[IdentityProcessorStep()],

@@ -268,7 +268,7 @@ def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
     return create_transition(observation=obs_dict, action={})
 
 
-def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
+def transition_to_robot_action(transition: EnvTransition) -> dict[str, Any]:
     """
     Converts a EnvTransition under the ACTION TransitionKey to a dict with keys ending in '.pos' for raw robot actions.
     """

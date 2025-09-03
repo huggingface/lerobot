@@ -24,7 +24,7 @@ from lerobot.processor import DataProcessorPipeline
 from lerobot.processor.converters import (
     action_to_transition,
     observation_to_transition,
-    to_output_robot_action,
+    transition_to_robot_action,
 )
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
@@ -106,7 +106,7 @@ robot_ee_to_joints_processor = DataProcessorPipeline(
         ),
     ],
     to_transition=lambda tr: tr,
-    to_output=to_output_robot_action,
+    to_output=transition_to_robot_action,
 )
 
 # Build pipeline to convert joint observation to ee pose observation

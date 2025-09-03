@@ -80,8 +80,8 @@ from lerobot.processor import DataProcessorPipeline, IdentityProcessorStep, Tran
 from lerobot.processor.converters import (
     action_to_transition,
     observation_to_transition,
-    to_output_robot_action,
     transition_to_dataset_frame,
+    transition_to_robot_action,
 )
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
@@ -248,7 +248,7 @@ def record_loop(
         steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=lambda tr: tr
     )
     robot_action_processor = robot_action_processor or DataProcessorPipeline(
-        steps=[IdentityProcessorStep()], to_transition=lambda tr: tr, to_output=to_output_robot_action
+        steps=[IdentityProcessorStep()], to_transition=lambda tr: tr, to_output=transition_to_robot_action
     )
     robot_observation_processor = robot_observation_processor or DataProcessorPipeline(
         steps=[IdentityProcessorStep()],
