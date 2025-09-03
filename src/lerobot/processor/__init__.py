@@ -25,7 +25,7 @@ from .converters import (
 from .core import EnvTransition, TransitionKey
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
-from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
+from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessorStep
 from .hil_processor import (
     AddTeleopActionAsComplimentaryData,
     AddTeleopEventsAsInfo,
@@ -89,7 +89,7 @@ __all__ = [
     "TimeLimitProcessor",
     "ToBatchProcessor",
     "TokenizerProcessor",
-    "Torch2NumpyActionProcessor",
+    "Torch2NumpyActionProcessorStep",
     "transition_to_batch",
     "transition_to_dataset_frame",
     "TransitionKey",

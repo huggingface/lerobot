@@ -24,7 +24,7 @@ from .pipeline import ActionProcessorStep, ProcessorStepRegistry
 
 @ProcessorStepRegistry.register("torch2numpy_action_processor")
 @dataclass
-class Torch2NumpyActionProcessor(ActionProcessorStep):
+class Torch2NumpyActionProcessorStep(ActionProcessorStep):
     """Convert PyTorch tensor actions to NumPy arrays."""
 
     squeeze_batch_dim: bool = True
