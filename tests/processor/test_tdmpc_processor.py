@@ -27,11 +27,11 @@ from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_pre_post_processor
 from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
-    NormalizerProcessor,
+    NormalizerProcessorStep,
     RenameProcessor,
     ToBatchProcessor,
     TransitionKey,
-    UnnormalizerProcessor,
+    UnnormalizerProcessorStep,
 )
 
 
@@ -95,14 +95,14 @@ def test_make_tdmpc_processor_basic():
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 4
     assert isinstance(preprocessor.steps[0], RenameProcessor)
-    assert isinstance(preprocessor.steps[1], NormalizerProcessor)
+    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
     assert isinstance(preprocessor.steps[2], ToBatchProcessor)
     assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
     assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
-    assert isinstance(postprocessor.steps[1], UnnormalizerProcessor)
+    assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
 
 
 def test_tdmpc_processor_normalization():

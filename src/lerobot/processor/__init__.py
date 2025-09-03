@@ -36,7 +36,7 @@ from .hil_processor import (
     TimeLimitProcessorStep,
 )
 from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
-from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
+from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessorStep,
@@ -76,7 +76,7 @@ __all__ = [
     "MapTensorToDeltaActionDictStep",
     "merge_transitions",
     "MotorCurrentProcessorStep",
-    "NormalizerProcessor",
+    "NormalizerProcessorStep",
     "Numpy2TorchActionProcessorStep",
     "ObservationProcessorStep",
     "ProcessorKwargs",
@@ -94,6 +94,6 @@ __all__ = [
     "transition_to_dataset_frame",
     "TransitionKey",
     "TruncatedProcessorStep",
-    "UnnormalizerProcessor",
+    "UnnormalizerProcessorStep",
     "VanillaObservationProcessor",
 ]

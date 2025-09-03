@@ -966,7 +966,7 @@ def test_policy_processor_integration():
     """Test integration with policy processors - input on GPU, output on CPU."""
     from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
     from lerobot.constants import ACTION, OBS_STATE
-    from lerobot.processor import NormalizerProcessor, ToBatchProcessor, UnnormalizerProcessor
+    from lerobot.processor import NormalizerProcessorStep, ToBatchProcessor, UnnormalizerProcessorStep
 
     # Create features and stats
     features = {
@@ -984,7 +984,7 @@ def test_policy_processor_integration():
     # Create input processor (preprocessor) that moves to GPU
     input_processor = DataProcessorPipeline(
         steps=[
-            NormalizerProcessor(features=features, norm_map=norm_map, stats=stats),
+            NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats),
             ToBatchProcessor(),
             DeviceProcessorStep(device="cuda"),
         ],
@@ -997,7 +997,7 @@ def test_policy_processor_integration():
     output_processor = DataProcessorPipeline(
         steps=[
             DeviceProcessorStep(device="cpu"),
-            UnnormalizerProcessor(features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
+            UnnormalizerProcessorStep(features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
         ],
         name="test_postprocessor",
         to_transition=lambda x: x,

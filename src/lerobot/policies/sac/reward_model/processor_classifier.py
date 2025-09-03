@@ -20,7 +20,7 @@ from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
     IdentityProcessorStep,
-    NormalizerProcessor,
+    NormalizerProcessorStep,
     ProcessorKwargs,
 )
 
@@ -37,10 +37,10 @@ def make_classifier_processor(
         postprocessor_kwargs = {}
 
     input_steps = [
-        NormalizerProcessor(
+        NormalizerProcessorStep(
             features=config.input_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        NormalizerProcessor(
+        NormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
         DeviceProcessorStep(device=config.device),

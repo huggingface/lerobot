@@ -28,7 +28,7 @@ from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
     IdentityProcessorStep,
-    NormalizerProcessor,
+    NormalizerProcessorStep,
     TransitionKey,
 )
 
@@ -87,8 +87,8 @@ def test_make_classifier_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 3
-    assert isinstance(preprocessor.steps[0], NormalizerProcessor)  # For input features
-    assert isinstance(preprocessor.steps[1], NormalizerProcessor)  # For output features
+    assert isinstance(preprocessor.steps[0], NormalizerProcessorStep)  # For input features
+    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)  # For output features
     assert isinstance(preprocessor.steps[2], DeviceProcessorStep)
 
     # Check steps in postprocessor
