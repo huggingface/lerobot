@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generic, TypedDict, TypeVar, cast
+from typing import Any, Generic, TypeAlias, TypedDict, TypeVar, cast
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
@@ -803,6 +803,10 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
         transition: EnvTransition = create_transition(complementary_data=complementary_data)
         transformed_transition = self._forward(transition)
         return transformed_transition[TransitionKey.COMPLEMENTARY_DATA]
+
+
+RobotProcessorPipeline: TypeAlias = DataProcessorPipeline
+PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline
 
 
 class ObservationProcessorStep(ProcessorStep, ABC):
