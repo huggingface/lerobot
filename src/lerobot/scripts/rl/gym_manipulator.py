@@ -29,25 +29,25 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
-    AddTeleopActionAsComplimentaryData,
-    AddTeleopEventsAsInfo,
+    AddBatchDimensionProcessorStep,
+    AddTeleopActionAsComplimentaryDataStep,
+    AddTeleopEventsAsInfoStep,
     DataProcessorPipeline,
-    DeviceProcessor,
+    DeviceProcessorStep,
     EnvTransition,
-    GripperPenaltyProcessor,
-    ImageCropResizeProcessor,
-    InterventionActionProcessor,
-    JointVelocityProcessor,
-    MapDeltaActionToRobotAction,
-    MapTensorToDeltaActionDict,
-    MotorCurrentProcessor,
-    Numpy2TorchActionProcessor,
-    RewardClassifierProcessor,
-    TimeLimitProcessor,
-    ToBatchProcessor,
-    Torch2NumpyActionProcessor,
+    GripperPenaltyProcessorStep,
+    ImageCropResizeProcessorStep,
+    InterventionActionProcessorStep,
+    JointVelocityProcessorStep,
+    MapDeltaActionToRobotActionStep,
+    MapTensorToDeltaActionDictStep,
+    MotorCurrentProcessorStep,
+    Numpy2TorchActionProcessorStep,
+    RewardClassifierProcessorStep,
+    TimeLimitProcessorStep,
+    Torch2NumpyActionProcessorStep,
     TransitionKey,
-    VanillaObservationProcessor,
+    VanillaObservationProcessorStep,
     create_transition,
 )
 from lerobot.robots import (  # noqa: F401
@@ -362,16 +362,16 @@ def make_processors(
 
     if cfg.name == "gym_hil":
         action_pipeline_steps = [
-            InterventionActionProcessor(terminate_on_success=terminate_on_success),
-            Torch2NumpyActionProcessor(),
+            InterventionActionProcessorStep(terminate_on_success=terminate_on_success),
+            Torch2NumpyActionProcessorStep(),
         ]
 
         # Minimal processor pipeline for GymHIL simulation
         env_pipeline_steps = [
-            Numpy2TorchActionProcessor(),
-            VanillaObservationProcessor(),
-            ToBatchProcessor(),
-            DeviceProcessor(device=device),
+            Numpy2TorchActionProcessorStep(),
+            VanillaObservationProcessorStep(),
+            AddBatchDimensionProcessorStep(),
+            DeviceProcessorStep(device=device),
         ]
 
         return DataProcessorPipeline(steps=env_pipeline_steps), DataProcessorPipeline(
@@ -391,13 +391,13 @@ def make_processors(
             joint_names=motor_names,
         )
 
-    env_pipeline_steps = [VanillaObservationProcessor()]
+    env_pipeline_steps = [VanillaObservationProcessorStep()]
 
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
-            env_pipeline_steps.append(JointVelocityProcessor(dt=1.0 / cfg.fps))
+            env_pipeline_steps.append(JointVelocityProcessorStep(dt=1.0 / cfg.fps))
         if cfg.processor.observation.add_current_to_observation:
-            env_pipeline_steps.append(MotorCurrentProcessor(robot=env.robot))
+            env_pipeline_steps.append(MotorCurrentProcessorStep(robot=env.robot))
 
     if kinematics_solver is not None:
         env_pipeline_steps.append(
@@ -409,7 +409,7 @@ def make_processors(
 
     if cfg.processor.image_preprocessing is not None:
         env_pipeline_steps.append(
-            ImageCropResizeProcessor(
+            ImageCropResizeProcessorStep(
                 crop_params_dict=cfg.processor.image_preprocessing.crop_params_dict,
                 resize_size=cfg.processor.image_preprocessing.resize_size,
             )
@@ -418,13 +418,13 @@ def make_processors(
     # Add time limit processor if reset config exists
     if cfg.processor.reset is not None:
         env_pipeline_steps.append(
-            TimeLimitProcessor(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
+            TimeLimitProcessorStep(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
         )
 
     # Add gripper penalty processor if gripper config exists and enabled
     if cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
         env_pipeline_steps.append(
-            GripperPenaltyProcessor(
+            GripperPenaltyProcessorStep(
                 penalty=cfg.processor.gripper.gripper_penalty,
                 max_gripper_pos=cfg.processor.max_gripper_pos,
             )
@@ -435,7 +435,7 @@ def make_processors(
         and cfg.processor.reward_classifier.pretrained_path is not None
     ):
         env_pipeline_steps.append(
-            RewardClassifierProcessor(
+            RewardClassifierProcessorStep(
                 pretrained_path=cfg.processor.reward_classifier.pretrained_path,
                 device=device,
                 success_threshold=cfg.processor.reward_classifier.success_threshold,
@@ -444,14 +444,14 @@ def make_processors(
             )
         )
 
-    env_pipeline_steps.append(ToBatchProcessor())
-    env_pipeline_steps.append(DeviceProcessor(device=device))
+    env_pipeline_steps.append(AddBatchDimensionProcessorStep())
+    env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
     action_pipeline_steps = [
-        AddTeleopActionAsComplimentaryData(teleop_device=teleop_device),
-        AddTeleopEventsAsInfo(teleop_device=teleop_device),
+        AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
+        AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
         AddRobotObservationAsComplimentaryData(robot=env.robot),
-        InterventionActionProcessor(
+        InterventionActionProcessorStep(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
             terminate_on_success=terminate_on_success,
         ),
@@ -461,10 +461,10 @@ def make_processors(
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
-            MapTensorToDeltaActionDict(
+            MapTensorToDeltaActionDictStep(
                 use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False
             ),
-            MapDeltaActionToRobotAction(),
+            MapDeltaActionToRobotActionStep(),
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
                 end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,

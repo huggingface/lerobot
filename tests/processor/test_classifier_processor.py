@@ -26,9 +26,9 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
 from lerobot.processor import (
     DataProcessorPipeline,
-    DeviceProcessor,
+    DeviceProcessorStep,
     IdentityProcessorStep,
-    NormalizerProcessor,
+    NormalizerProcessorStep,
     TransitionKey,
 )
 
@@ -87,13 +87,13 @@ def test_make_classifier_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 3
-    assert isinstance(preprocessor.steps[0], NormalizerProcessor)  # For input features
-    assert isinstance(preprocessor.steps[1], NormalizerProcessor)  # For output features
-    assert isinstance(preprocessor.steps[2], DeviceProcessor)
+    assert isinstance(preprocessor.steps[0], NormalizerProcessorStep)  # For input features
+    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)  # For output features
+    assert isinstance(preprocessor.steps[2], DeviceProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
-    assert isinstance(postprocessor.steps[0], DeviceProcessor)
+    assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
     assert isinstance(postprocessor.steps[1], IdentityProcessorStep)
 
 
@@ -291,11 +291,11 @@ def test_classifier_processor_mixed_precision():
     # Get the steps from the factory function
     factory_preprocessor, factory_postprocessor = make_classifier_processor(config, stats)
 
-    # Replace DeviceProcessor with one that uses float16
+    # Replace DeviceProcessorStep with one that uses float16
     modified_steps = []
     for step in factory_preprocessor.steps:
-        if isinstance(step, DeviceProcessor):
-            modified_steps.append(DeviceProcessor(device=config.device, float_dtype="float16"))
+        if isinstance(step, DeviceProcessorStep):
+            modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="float16"))
         else:
             modified_steps.append(step)
 

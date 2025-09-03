@@ -20,16 +20,16 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
     DataProcessorPipeline,
-    DeviceProcessor,
-    NormalizerProcessor,
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
     ProcessorKwargs,
     ProcessorStepRegistry,
-    RenameProcessor,
-    ToBatchProcessor,
-    TokenizerProcessor,
-    UnnormalizerProcessor,
+    RenameProcessorStep,
+    TokenizerProcessorStep,
+    UnnormalizerProcessorStep,
 )
 
 
@@ -45,25 +45,25 @@ def make_smolvla_pre_post_processors(
         postprocessor_kwargs = {}
 
     input_steps = [
-        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
-        NormalizerProcessor(
+        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        ToBatchProcessor(),
+        AddBatchDimensionProcessorStep(),
         SmolVLANewLineProcessor(),
-        TokenizerProcessor(
+        TokenizerProcessorStep(
             tokenizer_name=config.vlm_model_name,
             padding=config.pad_language_to,
             padding_side="right",
             max_length=config.tokenizer_max_length,
         ),
-        DeviceProcessor(device=config.device),
+        DeviceProcessorStep(device=config.device),
     ]
     output_steps = [
-        DeviceProcessor(device="cpu"),
-        UnnormalizerProcessor(
+        DeviceProcessorStep(device="cpu"),
+        UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]

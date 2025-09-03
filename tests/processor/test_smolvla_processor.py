@@ -28,12 +28,12 @@ from lerobot.policies.smolvla.processor_smolvla import (
     make_smolvla_pre_post_processors,
 )
 from lerobot.processor import (
-    DeviceProcessor,
-    NormalizerProcessor,
-    RenameProcessor,
-    ToBatchProcessor,
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
+    RenameProcessorStep,
     TransitionKey,
-    UnnormalizerProcessor,
+    UnnormalizerProcessorStep,
 )
 
 
@@ -88,7 +88,7 @@ def test_make_smolvla_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor"):
+    with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep"):
         preprocessor, postprocessor = make_smolvla_pre_post_processors(
             config,
             stats,
@@ -102,17 +102,17 @@ def test_make_smolvla_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 6
-    assert isinstance(preprocessor.steps[0], RenameProcessor)
-    assert isinstance(preprocessor.steps[1], NormalizerProcessor)
-    assert isinstance(preprocessor.steps[2], ToBatchProcessor)
+    assert isinstance(preprocessor.steps[0], RenameProcessorStep)
+    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
+    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[3], SmolVLANewLineProcessor)
-    # Step 4 would be TokenizerProcessor but it's mocked
-    assert isinstance(preprocessor.steps[5], DeviceProcessor)
+    # Step 4 would be TokenizerProcessorStep but it's mocked
+    assert isinstance(preprocessor.steps[5], DeviceProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
-    assert isinstance(postprocessor.steps[0], DeviceProcessor)
-    assert isinstance(postprocessor.steps[1], UnnormalizerProcessor)
+    assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
+    assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
 
 
 def test_smolvla_newline_processor_single_task():
@@ -170,7 +170,7 @@ def test_smolvla_processor_cuda():
     stats = create_default_stats()
 
     # Mock the tokenizer processor to act as pass-through
-    class MockTokenizerProcessor:
+    class MockTokenizerProcessorStep:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -192,7 +192,9 @@ def test_smolvla_processor_cuda():
         def transform_features(self, features):
             return features
 
-    with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor", MockTokenizerProcessor):
+    with patch(
+        "lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep", MockTokenizerProcessorStep
+    ):
         preprocessor, postprocessor = make_smolvla_pre_post_processors(
             config,
             stats,
@@ -225,7 +227,7 @@ def test_smolvla_processor_accelerate_scenario():
     stats = create_default_stats()
 
     # Mock the tokenizer processor to act as pass-through
-    class MockTokenizerProcessor:
+    class MockTokenizerProcessorStep:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -247,7 +249,9 @@ def test_smolvla_processor_accelerate_scenario():
         def transform_features(self, features):
             return features
 
-    with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor", MockTokenizerProcessor):
+    with patch(
+        "lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep", MockTokenizerProcessorStep
+    ):
         preprocessor, postprocessor = make_smolvla_pre_post_processors(
             config,
             stats,
@@ -281,7 +285,7 @@ def test_smolvla_processor_multi_gpu():
     stats = create_default_stats()
 
     # Mock the tokenizer processor to act as pass-through
-    class MockTokenizerProcessor:
+    class MockTokenizerProcessorStep:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -303,7 +307,9 @@ def test_smolvla_processor_multi_gpu():
         def transform_features(self, features):
             return features
 
-    with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor", MockTokenizerProcessor):
+    with patch(
+        "lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep", MockTokenizerProcessorStep
+    ):
         preprocessor, postprocessor = make_smolvla_pre_post_processors(
             config,
             stats,
@@ -334,7 +340,7 @@ def test_smolvla_processor_without_stats():
     config = create_default_config()
 
     # Mock the tokenizer processor
-    with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessor"):
+    with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep"):
         preprocessor, postprocessor = make_smolvla_pre_post_processors(
             config,
             dataset_stats=None,

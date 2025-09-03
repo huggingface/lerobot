@@ -30,7 +30,7 @@ from .pipeline import (
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_action")
-class ToBatchProcessorAction(ActionProcessorStep):
+class AddBatchDimensionActionStep(ActionProcessorStep):
     """Process action component in-place, adding batch dimension if needed."""
 
     def action(self, action):
@@ -45,7 +45,7 @@ class ToBatchProcessorAction(ActionProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_observation")
-class ToBatchProcessorObservation(ObservationProcessorStep):
+class AddBatchDimensionObservationStep(ObservationProcessorStep):
     """Process observation component in-place, adding batch dimensions where needed."""
 
     def observation(self, observation):
@@ -74,7 +74,7 @@ class ToBatchProcessorObservation(ObservationProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_complementary_data")
-class ToBatchProcessorComplementaryData(ComplementaryDataProcessorStep):
+class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
     """Process complementary data in-place, handling task field batching."""
 
     def complementary_data(self, complementary_data):
@@ -103,7 +103,7 @@ class ToBatchProcessorComplementaryData(ComplementaryDataProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor")
-class ToBatchProcessor(ProcessorStep):
+class AddBatchDimensionProcessorStep(ProcessorStep):
     """Processor that adds batch dimensions to observations and actions when needed.
 
     This processor ensures that observations and actions have proper batch dimensions for model processing:
@@ -138,12 +138,14 @@ class ToBatchProcessor(ProcessorStep):
         ```
     """
 
-    to_batch_action_processor: ToBatchProcessorAction = field(default_factory=ToBatchProcessorAction)
-    to_batch_observation_processor: ToBatchProcessorObservation = field(
-        default_factory=ToBatchProcessorObservation
+    to_batch_action_processor: AddBatchDimensionActionStep = field(
+        default_factory=AddBatchDimensionActionStep
     )
-    to_batch_complementary_data_processor: ToBatchProcessorComplementaryData = field(
-        default_factory=ToBatchProcessorComplementaryData
+    to_batch_observation_processor: AddBatchDimensionObservationStep = field(
+        default_factory=AddBatchDimensionObservationStep
+    )
+    to_batch_complementary_data_processor: AddBatchDimensionComplementaryDataStep = field(
+        default_factory=AddBatchDimensionComplementaryDataStep
     )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

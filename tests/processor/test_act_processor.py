@@ -25,13 +25,13 @@ from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
-    DeviceProcessor,
-    NormalizerProcessor,
-    RenameProcessor,
-    ToBatchProcessor,
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
+    RenameProcessorStep,
     TransitionKey,
-    UnnormalizerProcessor,
+    UnnormalizerProcessorStep,
 )
 
 
@@ -86,15 +86,15 @@ def test_make_act_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 4
-    assert isinstance(preprocessor.steps[0], RenameProcessor)
-    assert isinstance(preprocessor.steps[1], NormalizerProcessor)
-    assert isinstance(preprocessor.steps[2], ToBatchProcessor)
-    assert isinstance(preprocessor.steps[3], DeviceProcessor)
+    assert isinstance(preprocessor.steps[0], RenameProcessorStep)
+    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
+    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
+    assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
-    assert isinstance(postprocessor.steps[0], DeviceProcessor)
-    assert isinstance(postprocessor.steps[1], UnnormalizerProcessor)
+    assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
+    assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
 
 
 def test_act_processor_normalization():
@@ -303,11 +303,11 @@ def test_act_processor_mixed_precision():
         postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
     )
 
-    # Replace DeviceProcessor with one that uses float16
+    # Replace DeviceProcessorStep with one that uses float16
     modified_steps = []
     for step in preprocessor.steps:
-        if isinstance(step, DeviceProcessor):
-            modified_steps.append(DeviceProcessor(device=config.device, float_dtype="float16"))
+        if isinstance(step, DeviceProcessorStep):
+            modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="float16"))
         else:
             modified_steps.append(step)
     preprocessor.steps = modified_steps

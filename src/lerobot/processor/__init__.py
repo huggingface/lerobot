@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .batch_processor import ToBatchProcessor
+from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
     batch_to_transition,
     create_transition,
@@ -23,21 +23,21 @@ from .converters import (
     transition_to_dataset_frame,
 )
 from .core import EnvTransition, TransitionKey
-from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
-from .device_processor import DeviceProcessor
-from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
+from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
+from .device_processor import DeviceProcessorStep
+from .gym_action_processor import Numpy2TorchActionProcessorStep, Torch2NumpyActionProcessorStep
 from .hil_processor import (
-    AddTeleopActionAsComplimentaryData,
-    AddTeleopEventsAsInfo,
-    GripperPenaltyProcessor,
-    ImageCropResizeProcessor,
-    InterventionActionProcessor,
-    RewardClassifierProcessor,
-    TimeLimitProcessor,
+    AddTeleopActionAsComplimentaryDataStep,
+    AddTeleopEventsAsInfoStep,
+    GripperPenaltyProcessorStep,
+    ImageCropResizeProcessorStep,
+    InterventionActionProcessorStep,
+    RewardClassifierProcessorStep,
+    TimeLimitProcessorStep,
 )
-from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
-from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
-from .observation_processor import VanillaObservationProcessor
+from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
+from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
+from .observation_processor import VanillaObservationProcessorStep
 from .pipeline import (
     ActionProcessorStep,
     ComplementaryDataProcessorStep,
@@ -52,48 +52,48 @@ from .pipeline import (
     RewardProcessorStep,
     TruncatedProcessorStep,
 )
-from .rename_processor import RenameProcessor
-from .tokenizer_processor import TokenizerProcessor
+from .rename_processor import RenameProcessorStep
+from .tokenizer_processor import TokenizerProcessorStep
 
 __all__ = [
     "ActionProcessorStep",
-    "AddTeleopActionAsComplimentaryData",
-    "AddTeleopEventsAsInfo",
+    "AddTeleopActionAsComplimentaryDataStep",
+    "AddTeleopEventsAsInfoStep",
     "ComplementaryDataProcessorStep",
     "batch_to_transition",
     "create_transition",
-    "DeviceProcessor",
+    "DeviceProcessorStep",
     "DoneProcessorStep",
     "EnvTransition",
-    "GripperPenaltyProcessor",
+    "GripperPenaltyProcessorStep",
     "hotswap_stats",
     "IdentityProcessorStep",
-    "ImageCropResizeProcessor",
+    "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
-    "InterventionActionProcessor",
-    "JointVelocityProcessor",
-    "MapDeltaActionToRobotAction",
-    "MapTensorToDeltaActionDict",
+    "InterventionActionProcessorStep",
+    "JointVelocityProcessorStep",
+    "MapDeltaActionToRobotActionStep",
+    "MapTensorToDeltaActionDictStep",
     "merge_transitions",
-    "MotorCurrentProcessor",
-    "NormalizerProcessor",
-    "Numpy2TorchActionProcessor",
+    "MotorCurrentProcessorStep",
+    "NormalizerProcessorStep",
+    "Numpy2TorchActionProcessorStep",
     "ObservationProcessorStep",
     "ProcessorKwargs",
     "ProcessorStep",
     "ProcessorStepRegistry",
-    "RenameProcessor",
-    "RewardClassifierProcessor",
+    "RenameProcessorStep",
+    "RewardClassifierProcessorStep",
     "RewardProcessorStep",
     "DataProcessorPipeline",
-    "TimeLimitProcessor",
-    "ToBatchProcessor",
-    "TokenizerProcessor",
-    "Torch2NumpyActionProcessor",
+    "TimeLimitProcessorStep",
+    "AddBatchDimensionProcessorStep",
+    "TokenizerProcessorStep",
+    "Torch2NumpyActionProcessorStep",
     "transition_to_batch",
     "transition_to_dataset_frame",
     "TransitionKey",
     "TruncatedProcessorStep",
-    "UnnormalizerProcessor",
-    "VanillaObservationProcessor",
+    "UnnormalizerProcessorStep",
+    "VanillaObservationProcessorStep",
 ]

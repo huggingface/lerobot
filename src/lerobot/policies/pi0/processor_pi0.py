@@ -21,17 +21,17 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
     DataProcessorPipeline,
-    DeviceProcessor,
-    NormalizerProcessor,
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
     ProcessorKwargs,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenameProcessor,
-    ToBatchProcessor,
-    TokenizerProcessor,
-    UnnormalizerProcessor,
+    RenameProcessorStep,
+    TokenizerProcessorStep,
+    UnnormalizerProcessorStep,
 )
 
 
@@ -80,26 +80,26 @@ def make_pi0_pre_post_processors(
 
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
-        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
-        NormalizerProcessor(
+        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        ToBatchProcessor(),
+        AddBatchDimensionProcessorStep(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
-        TokenizerProcessor(
+        TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",
         ),
-        DeviceProcessor(device=config.device),
+        DeviceProcessorStep(device=config.device),
     ]
 
     output_steps: list[ProcessorStep] = [
-        DeviceProcessor(device="cpu"),
-        UnnormalizerProcessor(
+        DeviceProcessorStep(device="cpu"),
+        UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
     ]
