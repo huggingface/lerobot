@@ -319,13 +319,13 @@ class LeRobotDatasetMetadata:
         # Update the Hugging Face dataset by reloading it.
         # This process should be fast because only the latest Parquet file has been modified.
         # Therefore, only this file needs to be converted to PyArrow; the rest is loaded from the PyArrow memory-mapped cache.
-        
+
         # Explicitly delete old dataset to free memory before reloading
-        if hasattr(self, 'episodes') and self.episodes is not None:
+        if hasattr(self, "episodes") and self.episodes is not None:
             del self.episodes
             self.episodes = None
-            gc.collect()  
-        
+            gc.collect()
+
         self.episodes = load_episodes(self.root)
 
     def save_episode(
@@ -1066,13 +1066,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Update the Hugging Face dataset by reloading it.
         # This process should be fast because only the latest Parquet file has been modified.
         # Therefore, only this file needs to be converted to PyArrow; the rest is loaded from the PyArrow memory-mapped cache.
-        
+
         # Explicitly delete old dataset to free memory before reloading
-        if hasattr(self, 'hf_dataset') and self.hf_dataset is not None:
+        if hasattr(self, "hf_dataset") and self.hf_dataset is not None:
             del self.hf_dataset
             self.hf_dataset = None
             gc.collect()
-        
+
         self.hf_dataset = self.load_hf_dataset()
 
         metadata = {
