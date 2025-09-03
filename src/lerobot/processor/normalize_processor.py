@@ -253,7 +253,7 @@ class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
 
 
 def hotswap_stats(
-    robot_processor: DataProcessorPipeline, stats: dict[str, dict[str, Any]]
+    policy_processor: DataProcessorPipeline, stats: dict[str, dict[str, Any]]
 ) -> DataProcessorPipeline:
     """
     Replaces normalization statistics in a RobotProcessor pipeline.
@@ -263,7 +263,7 @@ def hotswap_stats(
     It's useful for adapting a trained policy to a new environment or dataset with
     different data distributions.
     """
-    rp = deepcopy(robot_processor)
+    rp = deepcopy(policy_processor)
     for step in rp.steps:
         if isinstance(step, _NormalizationMixin):
             step.stats = stats
