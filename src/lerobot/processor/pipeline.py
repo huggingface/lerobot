@@ -32,7 +32,7 @@ from safetensors.torch import load_file, save_file
 
 from lerobot.configs.types import PolicyFeature
 
-from .converters import batch_to_transition, transition_to_batch
+from .converters import batch_to_transition, create_transition, transition_to_batch
 from .core import EnvTransition, TransitionKey
 
 # Type variable for generic processor output type
@@ -276,6 +276,12 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
         # Always convert input through to_transition
         transition = self.to_transition(data)
 
+        transformed_transition = self._forward(transition)
+
+        # Always use to_output for consistent typing
+        return self.to_output(transformed_transition)
+
+    def _forward(self, transition: EnvTransition) -> EnvTransition:
         # Process through all steps
         for idx, processor_step in enumerate(self.steps):
             # Apply before hooks
@@ -288,9 +294,7 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
             # Apply after hooks
             for hook in self.after_step_hooks:
                 hook(idx, transition)
-
-        # Always use to_output for consistent typing
-        return self.to_output(transition)
+        return transition
 
     def step_through(self, data: dict[str, Any]) -> Iterable[EnvTransition]:
         """Yield the intermediate results after each processor step.
@@ -762,6 +766,41 @@ class RobotProcessor(ModelHubMixin, Generic[TOutput]):
             out = step.transform_features(features)
             features = out
         return features
+
+    def process_observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        transition: EnvTransition = create_transition(observation=observation)
+        transformed_transition = self._forward(transition)
+        return transformed_transition[TransitionKey.OBSERVATION]
+
+    def process_action(self, action: Any | torch.Tensor) -> Any | torch.Tensor:
+        transition: EnvTransition = create_transition(action=action)
+        transformed_transition = self._forward(transition)
+        return transformed_transition[TransitionKey.ACTION]
+
+    def process_reward(self, reward: float | torch.Tensor) -> float | torch.Tensor:
+        transition: EnvTransition = create_transition(reward=reward)
+        transformed_transition = self._forward(transition)
+        return transformed_transition[TransitionKey.REWARD]
+
+    def process_done(self, done: bool | torch.Tensor) -> bool | torch.Tensor:
+        transition: EnvTransition = create_transition(done=done)
+        transformed_transition = self._forward(transition)
+        return transformed_transition[TransitionKey.DONE]
+
+    def process_truncated(self, truncated: bool | torch.Tensor) -> bool | torch.Tensor:
+        transition: EnvTransition = create_transition(truncated=truncated)
+        transformed_transition = self._forward(transition)
+        return transformed_transition[TransitionKey.TRUNCATED]
+
+    def process_info(self, info: dict[str, Any]) -> dict[str, Any]:
+        transition: EnvTransition = create_transition(info=info)
+        transformed_transition = self._forward(transition)
+        return transformed_transition[TransitionKey.INFO]
+
+    def process_complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
+        transition: EnvTransition = create_transition(complementary_data=complementary_data)
+        transformed_transition = self._forward(transition)
+        return transformed_transition[TransitionKey.COMPLEMENTARY_DATA]
 
 
 class ObservationProcessor(ProcessorStep, ABC):

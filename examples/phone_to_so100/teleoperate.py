@@ -49,7 +49,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert phone action to ee pose action to joint action
-phone_to_robot_joints = RobotProcessor(
+phone_to_robot_joints_processor = RobotProcessor(
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         AddRobotObservationAsComplimentaryData(robot=robot),
@@ -85,7 +85,7 @@ while True:
     phone_obs = teleop_device.get_action()
 
     # Phone -> EE pose -> Joints transition
-    joint_action = phone_to_robot_joints(phone_obs)
+    joint_action = phone_to_robot_joints_processor(phone_obs)
 
     if joint_action:
         robot.send_action(joint_action)

@@ -65,7 +65,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints = RobotProcessor(
+robot_ee_to_joints_processor = RobotProcessor(
     steps=[
         AddRobotObservationAsComplimentaryData(robot=robot),
         InverseKinematicsEEToJoints(
@@ -79,7 +79,7 @@ robot_ee_to_joints = RobotProcessor(
 )
 
 # Build pipeline to convert joint observation to ee pose observation
-robot_joints_to_ee_pose = RobotProcessor(
+robot_joints_to_ee_pose_processor = RobotProcessor(
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
@@ -89,7 +89,7 @@ robot_joints_to_ee_pose = RobotProcessor(
 
 # Build dataset action and gripper features
 action_ee_and_gripper = aggregate_pipeline_dataset_features(
-    pipeline=robot_ee_to_joints,
+    pipeline=robot_ee_to_joints_processor,
     initial_features={},
     use_videos=True,
     patterns=["action.ee", "action.gripper.pos", "observation.state.gripper.pos"],
@@ -97,7 +97,7 @@ action_ee_and_gripper = aggregate_pipeline_dataset_features(
 
 # Build dataset observation features
 obs_ee = aggregate_pipeline_dataset_features(
-    pipeline=robot_joints_to_ee_pose,
+    pipeline=robot_joints_to_ee_pose_processor,
     initial_features=robot.observation_features,
     use_videos=True,
     patterns=["observation.state.ee"],
@@ -147,8 +147,8 @@ for episode_idx in range(NUM_EPISODES):
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
         display_data=True,
-        robot_action_processor=robot_ee_to_joints,
-        robot_observation_processor=robot_joints_to_ee_pose,
+        robot_action_processor=robot_ee_to_joints_processor,
+        robot_observation_processor=robot_joints_to_ee_pose_processor,
     )
     dataset.save_episode()
 
