@@ -24,6 +24,9 @@ class JointVelocityProcessor(ObservationProcessor):
     def observation(self, observation: dict) -> dict:
         # Get current joint positions (assuming they're in observation.state)
         current_positions = observation.get(OBS_STATE)
+        if current_positions is None:
+            # TODO(steven): if we get here, then the transform_features method will not hold
+            raise ValueError(f"{OBS_STATE} is not in observation")
 
         # Initialize last joint positions if not already set
         if self.last_joint_positions is None:
