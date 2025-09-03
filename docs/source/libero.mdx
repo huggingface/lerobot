@@ -59,7 +59,7 @@ python src/lerobot/scripts/eval.py \
   --eval.n_episodes=2
 ```
 
-- Pass a comma-separated list to `-env.task` for multi-suite evaluation.
+- Pass a comma-separated list to `--env.task` for multi-suite evaluation.
 - Set `-env.multitask_eval=True` to enable evaluation across all tasks in those suites.
 
 ### Policy inputs and outputs
@@ -106,7 +106,8 @@ python src/lerobot/scripts/train.py \
   --batch_size=4 \
   --env.multitask_eval=True \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval_freq=1000 \
 ```
 
 ---

@@ -19,6 +19,8 @@
     title: Train RL in Simulation
   - local: async
     title: Use Async Inference
+  - local: libero
+    title: Evaluating with Libero
   title: "Tutorials"
 - sections:
   - local: smolvla
