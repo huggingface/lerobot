@@ -101,28 +101,27 @@ class IOSPhone(BasePhone, Teleoperator):
             "Hold the phone so that: top edge points forward in same direction as the robot (robot +x) and screen points up (robot +z)"
         )
         print("Press and hold B1 in the HEBI Mobile I/O app to capture this pose...\n")
-
-        pos, rot = self._wait_for_capture_trigger()
-        self._calib_pos = pos.copy()
-        self._calib_rot_inv = rot.inv()
+        position, rotation = self._wait_for_capture_trigger()
+        self._calib_pos = position.copy()
+        self._calib_rot_inv = rotation.inv()
         self._enabled = False
         print("Calibration done\n")
 
     def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
         """Wait trigger for calibration: iOS: B1. Android: 'move'."""
         while True:
-            ok, pos, rot, pose = self._read_current_pose()
-            if not ok:
+            has_pose, position, rotation, fb_pose = self._read_current_pose()
+            if not has_pose:
                 time.sleep(0.01)
                 continue
 
-            io = getattr(pose, "io", None)
-            b = getattr(io, "b", None) if io is not None else None
-            b1 = False
-            if b is not None:
-                b1 = bool(b.get_int(1))
-            if b1:
-                return pos, rot
+            io = getattr(fb_pose, "io", None)
+            button_b = getattr(io, "b", None) if io is not None else None
+            button_b1_pressed = False
+            if button_b is not None:
+                button_b1_pressed = bool(button_b.get_int(1))
+            if button_b1_pressed:
+                return position, rotation
 
             time.sleep(0.01)
 
@@ -141,13 +140,13 @@ class IOSPhone(BasePhone, Teleoperator):
         return True, pos, rot, pose
 
     def get_action(self) -> dict:
-        ok, raw_pos, raw_rot, pose = self._read_current_pose()
-        if not ok or not self.is_calibrated:
+        has_pose, raw_position, raw_rotation, fb_pose = self._read_current_pose()
+        if not has_pose or not self.is_calibrated:
             return {}
 
         # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
         raw_inputs: dict[str, float | int | bool] = {}
-        io = getattr(pose, "io", None)
+        io = getattr(fb_pose, "io", None)
         if io is not None:
             bank_a, bank_b = io.a, io.b
             if bank_a:
@@ -165,11 +164,11 @@ class IOSPhone(BasePhone, Teleoperator):
 
         # Rising edge then re-capture calibration immediately from current raw pose
         if enable and not self._enabled:
-            self._reapply_position_calibration(raw_pos)
+            self._reapply_position_calibration(raw_position)
 
         # Apply calibration
-        pos_cal = self._calib_rot_inv.apply(raw_pos - self._calib_pos)
-        rot_cal = self._calib_rot_inv * raw_rot
+        pos_cal = self._calib_rot_inv.apply(raw_position - self._calib_pos)
+        rot_cal = self._calib_rot_inv * raw_rotation
 
         self._enabled = enable
 
