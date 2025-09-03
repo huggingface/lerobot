@@ -63,9 +63,9 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.configs import parser
 from lerobot.processor import DataProcessorPipeline, IdentityProcessorStep
 from lerobot.processor.converters import (
-    to_output_robot_action,
-    to_transition_robot_observation,
-    to_transition_teleop_action,
+    action_to_transition,
+    observation_to_transition,
+    transition_to_robot_action,
 )
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -121,16 +121,16 @@ def teleop_loop(
 ):
     # Initialize processors with defaults if not provided
     teleop_action_processor = teleop_action_processor or DataProcessorPipeline(
-        steps=[IdentityProcessorStep()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
+        steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=lambda tr: tr
     )
     robot_action_processor = robot_action_processor or DataProcessorPipeline(
         steps=[IdentityProcessorStep()],
         to_transition=lambda tr: tr,
-        to_output=to_output_robot_action,  # type: ignore[arg-type]
+        to_output=transition_to_robot_action,  # type: ignore[arg-type]
     )
     robot_observation_processor = robot_observation_processor or DataProcessorPipeline(
         steps=[IdentityProcessorStep()],
-        to_transition=to_transition_robot_observation,
+        to_transition=observation_to_transition,
         to_output=lambda tr: tr,
     )
 

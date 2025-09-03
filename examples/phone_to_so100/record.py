@@ -22,9 +22,9 @@ from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import DataProcessorPipeline
 from lerobot.processor.converters import (
-    to_output_robot_action,
-    to_transition_robot_observation,
-    to_transition_teleop_action,
+    action_to_transition,
+    observation_to_transition,
+    transition_to_robot_action,
 )
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
@@ -88,7 +88,7 @@ phone_to_robot_ee_pose_processor = DataProcessorPipeline(
             max_ee_twist_step_rad=0.50,
         ),
     ],
-    to_transition=to_transition_teleop_action,
+    to_transition=action_to_transition,
     to_output=lambda tr: tr,
 )
 
@@ -106,7 +106,7 @@ robot_ee_to_joints_processor = DataProcessorPipeline(
         ),
     ],
     to_transition=lambda tr: tr,
-    to_output=to_output_robot_action,
+    to_output=transition_to_robot_action,
 )
 
 # Build pipeline to convert joint observation to ee pose observation
@@ -114,7 +114,7 @@ robot_joints_to_ee_pose = DataProcessorPipeline(
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
-    to_transition=to_transition_robot_observation,
+    to_transition=observation_to_transition,
     to_output=lambda tr: tr,
 )
 

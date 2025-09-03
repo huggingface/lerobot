@@ -233,7 +233,7 @@ def create_transition(
     }
 
 
-def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
+def action_to_transition(action: dict[str, Any]) -> EnvTransition:  # action_to_transition
     """
     Convert a raw teleop action dict into an EnvTransition under the ACTION TransitionKey.
     """
@@ -251,7 +251,7 @@ def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
 
 
 # TODO(Adil, Pepijn): Overtime we can maybe add these converters to pipeline.py itself
-def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransition:
+def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
     """
     Convert a raw robot observation dict into an EnvTransition under the OBSERVATION TransitionKey.
     """
@@ -268,7 +268,7 @@ def to_transition_robot_observation(observation: dict[str, Any]) -> EnvTransitio
     return create_transition(observation=obs_dict, action={})
 
 
-def to_output_robot_action(transition: EnvTransition) -> dict[str, Any]:
+def transition_to_robot_action(transition: EnvTransition) -> dict[str, Any]:
     """
     Converts a EnvTransition under the ACTION TransitionKey to a dict with keys ending in '.pos' for raw robot actions.
     """

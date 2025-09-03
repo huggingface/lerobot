@@ -78,10 +78,10 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import DataProcessorPipeline, IdentityProcessorStep, TransitionKey
 from lerobot.processor.converters import (
-    to_output_robot_action,
-    to_transition_robot_observation,
-    to_transition_teleop_action,
+    action_to_transition,
+    observation_to_transition,
     transition_to_dataset_frame,
+    transition_to_robot_action,
 )
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
@@ -245,14 +245,14 @@ def record_loop(
     display_data: bool = False,
 ):
     teleop_action_processor = teleop_action_processor or DataProcessorPipeline(
-        steps=[IdentityProcessorStep()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
+        steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=lambda tr: tr
     )
     robot_action_processor = robot_action_processor or DataProcessorPipeline(
-        steps=[IdentityProcessorStep()], to_transition=lambda tr: tr, to_output=to_output_robot_action
+        steps=[IdentityProcessorStep()], to_transition=lambda tr: tr, to_output=transition_to_robot_action
     )
     robot_observation_processor = robot_observation_processor or DataProcessorPipeline(
         steps=[IdentityProcessorStep()],
-        to_transition=to_transition_robot_observation,
+        to_transition=observation_to_transition,
         to_output=lambda tr: tr,
     )
 

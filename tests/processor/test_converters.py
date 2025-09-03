@@ -4,13 +4,13 @@ import torch
 
 from lerobot.processor import TransitionKey
 from lerobot.processor.converters import (
+    action_to_transition,
     batch_to_transition,
-    to_output_robot_action,
+    observation_to_transition,
     to_tensor,
-    to_transition_robot_observation,
-    to_transition_teleop_action,
     transition_to_batch,
     transition_to_dataset_frame,
+    transition_to_robot_action,
 )
 
 
@@ -23,7 +23,7 @@ def test_to_transition_teleop_action_prefix_and_tensor_conversion():
         "raw_img": img,  # uint8 HWC to torch tensor
     }
 
-    tr = to_transition_teleop_action(act)
+    tr = action_to_transition(act)
 
     # Should be an EnvTransition-like dict with ACTION populated
     assert isinstance(tr, dict)
@@ -61,7 +61,7 @@ def test_to_transition_robot_observation_state_vs_images_split():
         "arr": np.array([1.5, 2.5]),  # vector to state to torch tensor
     }
 
-    tr = to_transition_robot_observation(obs)
+    tr = observation_to_transition(obs)
     assert isinstance(tr, dict)
     assert TransitionKey.OBSERVATION in tr
 
@@ -99,7 +99,7 @@ def test_to_output_robot_action_strips_prefix_and_filters_pos_keys_only():
         }
     }
 
-    out = to_output_robot_action(tr)
+    out = transition_to_robot_action(tr)
     # Only ".pos" keys with "action." prefix are retained and stripped to base names
     assert set(out.keys()) == {"j1.pos", "gripper.pos"}
     # Values converted to float
