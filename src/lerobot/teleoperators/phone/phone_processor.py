@@ -18,13 +18,13 @@ from dataclasses import dataclass, field
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import ACTION
-from lerobot.processor import ActionProcessor, ProcessorStepRegistry
+from lerobot.processor import ActionProcessorStep, ProcessorStepRegistry
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
 
 @ProcessorStepRegistry.register("map_phone_action_to_robot_action")
 @dataclass
-class MapPhoneActionToRobotAction(ActionProcessor):
+class MapPhoneActionToRobotAction(ActionProcessorStep):
     """
     Map calibrated phone pose (actions) to the inputs for robot actions
 

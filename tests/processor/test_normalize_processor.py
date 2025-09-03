@@ -22,7 +22,7 @@ import torch
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.processor import (
     DataProcessorPipeline,
-    IdentityProcessor,
+    IdentityProcessorStep,
     NormalizerProcessor,
     TransitionKey,
     UnnormalizerProcessor,
@@ -1008,7 +1008,7 @@ def test_hotswap_stats_basic_functionality():
     # Create processors
     normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
     unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=initial_stats)
-    identity = IdentityProcessor()
+    identity = IdentityProcessorStep()
 
     # Create robot processor
     robot_processor = DataProcessorPipeline(steps=[normalizer, unnormalizer, identity])
@@ -1089,7 +1089,7 @@ def test_hotswap_stats_only_affects_normalizer_steps():
     # Create mixed steps
     normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
     unnormalizer = UnnormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
-    identity = IdentityProcessor()
+    identity = IdentityProcessorStep()
 
     robot_processor = DataProcessorPipeline(steps=[normalizer, identity, unnormalizer])
 
@@ -1135,7 +1135,7 @@ def test_hotswap_stats_no_normalizer_steps():
     }
 
     # Create processor with only identity steps
-    robot_processor = DataProcessorPipeline(steps=[IdentityProcessor(), IdentityProcessor()])
+    robot_processor = DataProcessorPipeline(steps=[IdentityProcessorStep(), IdentityProcessorStep()])
 
     # Hotswap stats - should work without error
     new_processor = hotswap_stats(robot_processor, stats)

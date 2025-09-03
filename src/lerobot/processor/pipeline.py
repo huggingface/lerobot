@@ -805,7 +805,7 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
         return transformed_transition[TransitionKey.COMPLEMENTARY_DATA]
 
 
-class ObservationProcessor(ProcessorStep, ABC):
+class ObservationProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the observation component of a transition.
 
     Subclasses should override the `observation` method to implement custom observation processing.
@@ -851,7 +851,7 @@ class ObservationProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class ActionProcessor(ProcessorStep, ABC):
+class ActionProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the action component of a transition.
 
     Subclasses should override the `action` method to implement custom action processing.
@@ -898,7 +898,7 @@ class ActionProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class RewardProcessor(ProcessorStep, ABC):
+class RewardProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the reward component of a transition.
 
     Subclasses should override the `reward` method to implement custom reward processing.
@@ -944,7 +944,7 @@ class RewardProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class DoneProcessor(ProcessorStep, ABC):
+class DoneProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the done flag of a transition.
 
     Subclasses should override the `done` method to implement custom done flag processing.
@@ -995,7 +995,7 @@ class DoneProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class TruncatedProcessor(ProcessorStep, ABC):
+class TruncatedProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the truncated flag of a transition.
 
     Subclasses should override the `truncated` method to implement custom truncated flag processing.
@@ -1042,7 +1042,7 @@ class TruncatedProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class InfoProcessor(ProcessorStep, ABC):
+class InfoProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the info dictionary of a transition.
 
     Subclasses should override the `info` method to implement custom info processing.
@@ -1094,7 +1094,7 @@ class InfoProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class ComplementaryDataProcessor(ProcessorStep, ABC):
+class ComplementaryDataProcessorStep(ProcessorStep, ABC):
     """Base class for processors that modify only the complementary data of a transition.
 
     Subclasses should override the `complementary_data` method to implement custom complementary data processing.
@@ -1127,7 +1127,7 @@ class ComplementaryDataProcessor(ProcessorStep, ABC):
         return new_transition
 
 
-class IdentityProcessor(ProcessorStep):
+class IdentityProcessorStep(ProcessorStep):
     """Identity processor that does nothing."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

@@ -14,7 +14,7 @@ from lerobot.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 from lerobot.utils.import_utils import _transformers_available
 
 from .core import EnvTransition, TransitionKey
-from .pipeline import ObservationProcessor, ProcessorStepRegistry
+from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
@@ -24,7 +24,7 @@ else:
 
 @dataclass
 @ProcessorStepRegistry.register(name="tokenizer_processor")
-class TokenizerProcessor(ObservationProcessor):
+class TokenizerProcessor(ObservationProcessorStep):
     """Tokenizes text tasks in complementary data using a huggingface tokenizer.
 
     This processor handles tokenization of task strings found in the complementary_data

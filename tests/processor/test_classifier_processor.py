@@ -27,7 +27,7 @@ from lerobot.policies.sac.reward_model.processor_classifier import make_classifi
 from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessor,
-    IdentityProcessor,
+    IdentityProcessorStep,
     NormalizerProcessor,
     TransitionKey,
 )
@@ -94,7 +94,7 @@ def test_make_classifier_processor_basic():
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
     assert isinstance(postprocessor.steps[0], DeviceProcessor)
-    assert isinstance(postprocessor.steps[1], IdentityProcessor)
+    assert isinstance(postprocessor.steps[1], IdentityProcessorStep)
 
 
 def test_classifier_processor_normalization():

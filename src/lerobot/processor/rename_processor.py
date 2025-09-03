@@ -19,12 +19,12 @@ from typing import Any
 
 from lerobot.configs.types import PolicyFeature
 
-from .pipeline import ObservationProcessor, ProcessorStepRegistry
+from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="rename_processor")
-class RenameProcessor(ObservationProcessor):
+class RenameProcessor(ObservationProcessorStep):
     """Rename processor that renames keys in the observation."""
 
     rename_map: dict[str, str] = field(default_factory=dict)

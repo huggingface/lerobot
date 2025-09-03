@@ -20,9 +20,9 @@ from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
 from .core import EnvTransition
 from .pipeline import (
-    ActionProcessor,
-    ComplementaryDataProcessor,
-    ObservationProcessor,
+    ActionProcessorStep,
+    ComplementaryDataProcessorStep,
+    ObservationProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
 )
@@ -30,7 +30,7 @@ from .pipeline import (
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_action")
-class ToBatchProcessorAction(ActionProcessor):
+class ToBatchProcessorAction(ActionProcessorStep):
     """Process action component in-place, adding batch dimension if needed."""
 
     def action(self, action):
@@ -45,7 +45,7 @@ class ToBatchProcessorAction(ActionProcessor):
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_observation")
-class ToBatchProcessorObservation(ObservationProcessor):
+class ToBatchProcessorObservation(ObservationProcessorStep):
     """Process observation component in-place, adding batch dimensions where needed."""
 
     def observation(self, observation):
@@ -74,7 +74,7 @@ class ToBatchProcessorObservation(ObservationProcessor):
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_complementary_data")
-class ToBatchProcessorComplementaryData(ComplementaryDataProcessor):
+class ToBatchProcessorComplementaryData(ComplementaryDataProcessorStep):
     """Process complementary data in-place, handling task field batching."""
 
     def complementary_data(self, complementary_data):
