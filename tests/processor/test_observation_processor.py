@@ -20,7 +20,7 @@ import torch
 
 from lerobot.configs.types import FeatureType
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
-from lerobot.processor import TransitionKey, VanillaObservationProcessor
+from lerobot.processor import TransitionKey, VanillaObservationProcessorStep
 from tests.conftest import assert_contract_is_typed
 
 
@@ -41,7 +41,7 @@ def create_transition(
 
 def test_process_single_image():
     """Test processing a single image."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     # Create a mock image (H, W, C) format, uint8
     image = np.random.randint(0, 256, size=(64, 64, 3), dtype=np.uint8)
@@ -67,7 +67,7 @@ def test_process_single_image():
 
 def test_process_image_dict():
     """Test processing multiple images in a dictionary."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     # Create mock images
     image1 = np.random.randint(0, 256, size=(32, 32, 3), dtype=np.uint8)
@@ -90,7 +90,7 @@ def test_process_image_dict():
 
 def test_process_batched_image():
     """Test processing already batched images."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     # Create a batched image (B, H, W, C)
     image = np.random.randint(0, 256, size=(2, 64, 64, 3), dtype=np.uint8)
@@ -107,7 +107,7 @@ def test_process_batched_image():
 
 def test_invalid_image_format():
     """Test error handling for invalid image formats."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     # Test wrong channel order (channels first)
     image = np.random.randint(0, 256, size=(3, 64, 64), dtype=np.uint8)
@@ -120,7 +120,7 @@ def test_invalid_image_format():
 
 def test_invalid_image_dtype():
     """Test error handling for invalid image dtype."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     # Test wrong dtype
     image = np.random.rand(64, 64, 3).astype(np.float32)
@@ -133,7 +133,7 @@ def test_invalid_image_dtype():
 
 def test_no_pixels_in_observation():
     """Test processor when no pixels are in observation."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     observation = {"other_data": np.array([1, 2, 3])}
     transition = create_transition(observation=observation)
@@ -148,7 +148,7 @@ def test_no_pixels_in_observation():
 
 def test_none_observation():
     """Test processor with None observation."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     transition = create_transition()
     result = processor(transition)
@@ -158,7 +158,7 @@ def test_none_observation():
 
 def test_serialization_methods():
     """Test serialization methods."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     # Test get_config
     config = processor.get_config()
@@ -177,7 +177,7 @@ def test_serialization_methods():
 
 def test_process_environment_state():
     """Test processing environment_state."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     env_state = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     observation = {"environment_state": env_state}
@@ -198,7 +198,7 @@ def test_process_environment_state():
 
 def test_process_agent_pos():
     """Test processing agent_pos."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     agent_pos = np.array([0.5, -0.5, 1.0], dtype=np.float32)
     observation = {"agent_pos": agent_pos}
@@ -219,7 +219,7 @@ def test_process_agent_pos():
 
 def test_process_batched_states():
     """Test processing already batched states."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     env_state = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
     agent_pos = np.array([[0.5, -0.5], [1.0, -1.0]], dtype=np.float32)
@@ -237,7 +237,7 @@ def test_process_batched_states():
 
 def test_process_both_states():
     """Test processing both environment_state and agent_pos."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     env_state = np.array([1.0, 2.0], dtype=np.float32)
     agent_pos = np.array([0.5, -0.5], dtype=np.float32)
@@ -262,7 +262,7 @@ def test_process_both_states():
 
 def test_no_states_in_observation():
     """Test processor when no states are in observation."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     observation = {"other_data": np.array([1, 2, 3])}
     transition = create_transition(observation=observation)
@@ -276,7 +276,7 @@ def test_no_states_in_observation():
 
 def test_complete_observation_processing():
     """Test processing a complete observation with both images and states."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     # Create mock data
     image = np.random.randint(0, 256, size=(32, 32, 3), dtype=np.uint8)
@@ -313,7 +313,7 @@ def test_complete_observation_processing():
 
 def test_image_only_processing():
     """Test processing observation with only images."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     image = np.random.randint(0, 256, size=(64, 64, 3), dtype=np.uint8)
     observation = {"pixels": image}
@@ -328,7 +328,7 @@ def test_image_only_processing():
 
 def test_state_only_processing():
     """Test processing observation with only states."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     agent_pos = np.array([1.0, 2.0], dtype=np.float32)
     observation = {"agent_pos": agent_pos}
@@ -343,7 +343,7 @@ def test_state_only_processing():
 
 def test_empty_observation():
     """Test processing empty observation."""
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     observation = {}
     transition = create_transition(observation=observation)
@@ -359,7 +359,7 @@ def test_equivalent_to_original_function():
     # Import the original function for comparison
     from lerobot.envs.utils import preprocess_observation
 
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     # Create test data similar to what the original function expects
     image = np.random.randint(0, 256, size=(64, 64, 3), dtype=np.uint8)
@@ -386,7 +386,7 @@ def test_equivalent_with_image_dict():
     """Test equivalence with dictionary of images."""
     from lerobot.envs.utils import preprocess_observation
 
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
 
     # Create test data with multiple cameras
     image1 = np.random.randint(0, 256, size=(32, 32, 3), dtype=np.uint8)
@@ -410,7 +410,7 @@ def test_equivalent_with_image_dict():
 
 
 def test_image_processor_features_pixels_to_image(policy_feature_factory):
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
     features = {
         "pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
@@ -424,7 +424,7 @@ def test_image_processor_features_pixels_to_image(policy_feature_factory):
 
 
 def test_image_processor_features_observation_pixels_to_image(policy_feature_factory):
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
     features = {
         "observation.pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "keep": policy_feature_factory(FeatureType.ENV, (1,)),
@@ -438,7 +438,7 @@ def test_image_processor_features_observation_pixels_to_image(policy_feature_fac
 
 
 def test_image_processor_features_multi_camera_and_prefixed(policy_feature_factory):
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
     features = {
         "pixels.front": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
         "pixels.wrist": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
@@ -456,7 +456,7 @@ def test_image_processor_features_multi_camera_and_prefixed(policy_feature_facto
 
 
 def test_state_processor_features_environment_and_agent_pos(policy_feature_factory):
-    processor = VanillaObservationProcessor()
+    processor = VanillaObservationProcessorStep()
     features = {
         "environment_state": policy_feature_factory(FeatureType.STATE, (3,)),
         "agent_pos": policy_feature_factory(FeatureType.STATE, (7,)),
@@ -472,7 +472,7 @@ def test_state_processor_features_environment_and_agent_pos(policy_feature_facto
 
 
 def test_state_processor_features_prefixed_inputs(policy_feature_factory):
-    proc = VanillaObservationProcessor()
+    proc = VanillaObservationProcessorStep()
     features = {
         "observation.environment_state": policy_feature_factory(FeatureType.STATE, (2,)),
         "observation.agent_pos": policy_feature_factory(FeatureType.STATE, (4,)),

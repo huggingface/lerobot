@@ -47,7 +47,7 @@ from lerobot.processor import (
     ToBatchProcessor,
     Torch2NumpyActionProcessorStep,
     TransitionKey,
-    VanillaObservationProcessor,
+    VanillaObservationProcessorStep,
     create_transition,
 )
 from lerobot.robots import (  # noqa: F401
@@ -369,7 +369,7 @@ def make_processors(
         # Minimal processor pipeline for GymHIL simulation
         env_pipeline_steps = [
             Numpy2TorchActionProcessorStep(),
-            VanillaObservationProcessor(),
+            VanillaObservationProcessorStep(),
             ToBatchProcessor(),
             DeviceProcessorStep(device=device),
         ]
@@ -391,7 +391,7 @@ def make_processors(
             joint_names=motor_names,
         )
 
-    env_pipeline_steps = [VanillaObservationProcessor()]
+    env_pipeline_steps = [VanillaObservationProcessorStep()]
 
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
