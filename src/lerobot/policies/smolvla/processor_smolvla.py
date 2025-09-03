@@ -28,7 +28,7 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameProcessorStep,
     ToBatchProcessor,
-    TokenizerProcessor,
+    TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
 
@@ -53,7 +53,7 @@ def make_smolvla_pre_post_processors(
         ),
         ToBatchProcessor(),
         SmolVLANewLineProcessor(),
-        TokenizerProcessor(
+        TokenizerProcessorStep(
             tokenizer_name=config.vlm_model_name,
             padding=config.pad_language_to,
             padding_side="right",

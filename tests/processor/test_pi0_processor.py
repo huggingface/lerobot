@@ -83,7 +83,7 @@ def test_make_pi0_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor"):
+    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessorStep"):
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
@@ -101,7 +101,7 @@ def test_make_pi0_processor_basic():
     assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
     assert isinstance(preprocessor.steps[2], ToBatchProcessor)
     assert isinstance(preprocessor.steps[3], Pi0NewLineProcessor)
-    # Step 4 would be TokenizerProcessor but it's mocked
+    # Step 4 would be TokenizerProcessorStep but it's mocked
     assert isinstance(preprocessor.steps[5], DeviceProcessorStep)
 
     # Check steps in postprocessor
@@ -165,7 +165,7 @@ def test_pi0_processor_cuda():
     stats = create_default_stats()
 
     # Mock the tokenizer processor to act as pass-through
-    class MockTokenizerProcessor:
+    class MockTokenizerProcessorStep:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -187,7 +187,7 @@ def test_pi0_processor_cuda():
         def transform_features(self, features):
             return features
 
-    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor", MockTokenizerProcessor):
+    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessorStep", MockTokenizerProcessorStep):
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
@@ -220,7 +220,7 @@ def test_pi0_processor_accelerate_scenario():
     stats = create_default_stats()
 
     # Mock the tokenizer processor to act as pass-through
-    class MockTokenizerProcessor:
+    class MockTokenizerProcessorStep:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -242,7 +242,7 @@ def test_pi0_processor_accelerate_scenario():
         def transform_features(self, features):
             return features
 
-    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor", MockTokenizerProcessor):
+    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessorStep", MockTokenizerProcessorStep):
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
@@ -276,7 +276,7 @@ def test_pi0_processor_multi_gpu():
     stats = create_default_stats()
 
     # Mock the tokenizer processor to act as pass-through
-    class MockTokenizerProcessor:
+    class MockTokenizerProcessorStep:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -298,7 +298,7 @@ def test_pi0_processor_multi_gpu():
         def transform_features(self, features):
             return features
 
-    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor", MockTokenizerProcessor):
+    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessorStep", MockTokenizerProcessorStep):
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
@@ -329,7 +329,7 @@ def test_pi0_processor_without_stats():
     config = create_default_config()
 
     # Mock the tokenizer processor
-    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessor"):
+    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessorStep"):
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             dataset_stats=None,

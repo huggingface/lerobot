@@ -53,7 +53,7 @@ from .pipeline import (
     TruncatedProcessorStep,
 )
 from .rename_processor import RenameProcessorStep
-from .tokenizer_processor import TokenizerProcessor
+from .tokenizer_processor import TokenizerProcessorStep
 
 __all__ = [
     "ActionProcessorStep",
@@ -88,7 +88,7 @@ __all__ = [
     "DataProcessorPipeline",
     "TimeLimitProcessorStep",
     "ToBatchProcessor",
-    "TokenizerProcessor",
+    "TokenizerProcessorStep",
     "Torch2NumpyActionProcessorStep",
     "transition_to_batch",
     "transition_to_dataset_frame",

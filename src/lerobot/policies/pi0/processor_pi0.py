@@ -30,7 +30,7 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameProcessorStep,
     ToBatchProcessor,
-    TokenizerProcessor,
+    TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
 
@@ -88,7 +88,7 @@ def make_pi0_pre_post_processors(
         ),
         ToBatchProcessor(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
-        TokenizerProcessor(
+        TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,
             padding_side="right",
