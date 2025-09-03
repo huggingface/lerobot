@@ -35,7 +35,7 @@ from .hil_processor import (
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
-from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessor
+from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
@@ -75,7 +75,7 @@ __all__ = [
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "merge_transitions",
-    "MotorCurrentProcessor",
+    "MotorCurrentProcessorStep",
     "NormalizerProcessor",
     "Numpy2TorchActionProcessorStep",
     "ObservationProcessorStep",

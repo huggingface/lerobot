@@ -67,7 +67,7 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("current_processor")
-class MotorCurrentProcessor(ObservationProcessorStep):
+class MotorCurrentProcessorStep(ObservationProcessorStep):
     """Add motor current information to observations."""
 
     robot: Robot | None = None
