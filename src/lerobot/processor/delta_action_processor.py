@@ -29,9 +29,9 @@ class MapTensorToDeltaActionDict(ActionProcessor):
     Map a tensor to a delta action dictionary.
     """
 
+    use_gripper: bool = True
+
     def action(self, action: Tensor) -> dict:
-        if isinstance(action, dict):
-            return action
         if action.dim() > 1:
             action = action.squeeze(0)
 
@@ -41,12 +41,18 @@ class MapTensorToDeltaActionDict(ActionProcessor):
             "action.delta_y": action[1],
             "action.delta_z": action[2],
         }
-        if action.shape[0] > 3:
+        if self.use_gripper:
             delta_action["action.gripper"] = action[3]
         return delta_action
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        return features
+        new_features = features.copy()
+        new_features["action.delta_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features["action.delta_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features["action.delta_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        if self.use_gripper:
+            new_features["action.gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        return new_features
 
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
@@ -123,16 +129,19 @@ class MapDeltaActionToRobotAction(ActionProcessor):
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Transform features to match output format."""
         # Update features to reflect the new action format
-        features.update(
-            {
-                "action.enabled": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_x": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_y": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_z": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_wx": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_wy": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.target_wz": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-                "action.gripper": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
-            }
-        )
-        return features
+        new_features = features.copy()
+
+        new_features.pop("action.delta_x", None)
+        new_features.pop("action.delta_y", None)
+        new_features.pop("action.delta_z", None)
+        new_features.pop("action.gripper", None)
+
+        new_features["action.enabled"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features["action.target_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features["action.target_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features["action.target_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features["action.target_wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features["action.target_wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features["action.target_wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features["action.gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        return new_features

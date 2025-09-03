@@ -23,9 +23,6 @@ class JointVelocityProcessor(ObservationProcessor):
     def observation(self, observation: dict) -> dict:
         # Get current joint positions (assuming they're in observation.state)
         current_positions = observation.get("observation.state")
-        if current_positions is None:
-            # TODO(steven): if we get here, then the transform_features method will not hold
-            return observation
 
         # Initialize last joint positions if not already set
         if self.last_joint_positions is None:
@@ -55,13 +52,14 @@ class JointVelocityProcessor(ObservationProcessor):
         self.last_joint_positions = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        new_feature = features.copy()
         if "observation.state" in features:
             original_feature = features["observation.state"]
             # Double the shape to account for positions + velocities
             new_shape = (original_feature.shape[0] * 2,) + original_feature.shape[1:]
 
-            features["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
-        return features
+            new_feature["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
+        return new_feature
 
 
 @dataclass
@@ -74,7 +72,8 @@ class MotorCurrentProcessor(ObservationProcessor):
     def observation(self, observation: dict) -> dict:
         # Get current values from robot state
         if self.robot is None:
-            return observation
+            raise ValueError("Robot is not set")
+
         present_current_dict = self.robot.bus.sync_read("Present_Current")  # type: ignore[attr-defined]
         motor_currents = torch.tensor(
             [present_current_dict[name] for name in self.robot.bus.motors],  # type: ignore[attr-defined]
@@ -94,9 +93,8 @@ class MotorCurrentProcessor(ObservationProcessor):
         return new_observation
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        new_features = features.copy()
         if "observation.state" in features and self.robot is not None:
-            from lerobot.configs.types import PolicyFeature
-
             original_feature = features["observation.state"]
             # Add motor current dimensions to the original state shape
             num_motors = 0
@@ -105,5 +103,5 @@ class MotorCurrentProcessor(ObservationProcessor):
 
             if num_motors > 0:
                 new_shape = (original_feature.shape[0] + num_motors,) + original_feature.shape[1:]
-                features["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
-        return features
+                new_features["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
+        return new_features

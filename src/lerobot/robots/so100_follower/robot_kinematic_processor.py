@@ -140,21 +140,22 @@ class EEReferenceAndDelta(ActionProcessor):
         self._command_when_disabled = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features.pop(f"{ACTION}.enabled", None)
-        features.pop(f"{ACTION}.target_x", None)
-        features.pop(f"{ACTION}.target_y", None)
-        features.pop(f"{ACTION}.target_z", None)
-        features.pop(f"{ACTION}.target_wx", None)
-        features.pop(f"{ACTION}.target_wy", None)
-        features.pop(f"{ACTION}.target_wz", None)
+        new_features = features.copy()
+        new_features.pop(f"{ACTION}.enabled", None)
+        new_features.pop(f"{ACTION}.target_x", None)
+        new_features.pop(f"{ACTION}.target_y", None)
+        new_features.pop(f"{ACTION}.target_z", None)
+        new_features.pop(f"{ACTION}.target_wx", None)
+        new_features.pop(f"{ACTION}.target_wy", None)
+        new_features.pop(f"{ACTION}.target_wz", None)
 
-        features[f"{ACTION}.ee.x"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.y"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.z"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.wx"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.wy"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.ee.wz"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        return features
+        new_features[f"{ACTION}.ee.x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features[f"{ACTION}.ee.y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features[f"{ACTION}.ee.z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features[f"{ACTION}.ee.wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features[f"{ACTION}.ee.wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features[f"{ACTION}.ee.wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        return new_features
 
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
@@ -221,6 +222,20 @@ class EEBoundsAndSafety(ActionProcessor):
         self._last_twist = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # check if features as f"{ACTION}.ee.{x,y,z,wx,wy,wz}"
+        if f"{ACTION}.ee.x" not in features:
+            raise ValueError(f"{ACTION}.ee.x is not in features this step needs it")
+        if f"{ACTION}.ee.y" not in features:
+            raise ValueError(f"{ACTION}.ee.y is not in features this step needs it")
+        if f"{ACTION}.ee.z" not in features:
+            raise ValueError(f"{ACTION}.ee.z is not in features this step needs it")
+        if f"{ACTION}.ee.wx" not in features:
+            raise ValueError(f"{ACTION}.ee.wx is not in features this step needs it")
+        if f"{ACTION}.ee.wy" not in features:
+            raise ValueError(f"{ACTION}.ee.wy is not in features this step needs it")
+        if f"{ACTION}.ee.wz" not in features:
+            raise ValueError(f"{ACTION}.ee.wz is not in features this step needs it")
+
         return features
 
 
@@ -289,6 +304,8 @@ class InverseKinematicsEEToJoints(ProcessorStep):
         new_act = dict(act)
         for i, name in enumerate(self.motor_names):
             if name == "gripper":
+                # TODO(pepijn): Investigate if this is correct
+                # Do we want an observation key in the action field?
                 new_act[f"{OBS_STATE}.gripper.pos"] = float(raw["gripper"])
             else:
                 new_act[f"{ACTION}.{name}.pos"] = float(q_target[i])
@@ -298,12 +315,13 @@ class InverseKinematicsEEToJoints(ProcessorStep):
         return transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features[f"{OBS_STATE}.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        features[f"{ACTION}.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+        new_features = features.copy()
+        new_features[f"{OBS_STATE}.gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features[f"{ACTION}.gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         for name in self.motor_names:
-            features[f"{ACTION}.{name}.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
+            new_features[f"{ACTION}.{name}.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
 
-        return features
+        return new_features
 
     def reset(self):
         self.q_curr = None
@@ -374,9 +392,12 @@ class GripperVelocityToJoint(ProcessorStep):
         return transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features.pop(f"{ACTION}.gripper", None)
-        features[f"{ACTION}.gripper.pos"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        return features
+        new_features = features.copy()
+        new_features.pop(f"{ACTION}.gripper", None)
+        new_features[f"{ACTION}.gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        new_features[f"{OBS_STATE}.gripper.pos"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
+
+        return new_features
 
 
 @ProcessorStepRegistry.register("forward_kinematics_joints_to_ee")
@@ -418,9 +439,10 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We specify the dataset features of this step that we want to be stored in the dataset
+        new_features = features.copy()
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
-            features[f"{OBS_STATE}.ee.{k}"] = (PolicyFeature(type=FeatureType.ACTION, shape=(1,)),)
-        return features
+            new_features[f"{OBS_STATE}.ee.{k}"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
+        return new_features
 
 
 @ProcessorStepRegistry.register("add_robot_observation")

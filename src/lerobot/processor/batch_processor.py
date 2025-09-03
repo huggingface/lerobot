@@ -152,4 +152,5 @@ class ToBatchProcessor(ProcessorStep):
         return transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        # NOTE: We ignore the batch dimension when transforming features
         return features

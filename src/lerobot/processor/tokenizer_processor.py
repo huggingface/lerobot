@@ -238,12 +238,15 @@ class TokenizerProcessor(ObservationProcessor):
         # Add features for tokenized output if they don't exist
         # Standard tokenizer output includes tokens and attention_mask
 
+        new_features = features.copy()
         if OBS_LANGUAGE_TOKENS not in features:
-            features[OBS_LANGUAGE_TOKENS] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
-
-        if OBS_LANGUAGE_ATTENTION_MASK not in features:
-            features[OBS_LANGUAGE_ATTENTION_MASK] = PolicyFeature(
+            new_features[OBS_LANGUAGE_TOKENS] = PolicyFeature(
                 type=FeatureType.LANGUAGE, shape=(self.max_length,)
             )
 
-        return features
+        if OBS_LANGUAGE_ATTENTION_MASK not in features:
+            new_features[OBS_LANGUAGE_ATTENTION_MASK] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+
+        return new_features
