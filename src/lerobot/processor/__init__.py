@@ -28,9 +28,9 @@ from .device_processor import DeviceProcessorStep
 from .gym_action_processor import Numpy2TorchActionProcessorStep, Torch2NumpyActionProcessorStep
 from .hil_processor import (
     AddTeleopActionAsComplimentaryDataStep,
-    AddTeleopEventsAsInfo,
+    AddTeleopEventsAsInfoStep,
     GripperPenaltyProcessor,
-    ImageCropResizeProcessor,
+    ImageCropResizeProcessorStep,
     InterventionActionProcessor,
     RewardClassifierProcessor,
     TimeLimitProcessor,
@@ -58,7 +58,7 @@ from .tokenizer_processor import TokenizerProcessor
 __all__ = [
     "ActionProcessorStep",
     "AddTeleopActionAsComplimentaryDataStep",
-    "AddTeleopEventsAsInfo",
+    "AddTeleopEventsAsInfoStep",
     "ComplementaryDataProcessorStep",
     "batch_to_transition",
     "create_transition",
@@ -68,7 +68,7 @@ __all__ = [
     "GripperPenaltyProcessor",
     "hotswap_stats",
     "IdentityProcessorStep",
-    "ImageCropResizeProcessor",
+    "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
     "InterventionActionProcessor",
     "JointVelocityProcessor",

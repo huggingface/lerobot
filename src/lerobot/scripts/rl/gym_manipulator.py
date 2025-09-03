@@ -30,12 +30,12 @@ from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
     AddTeleopActionAsComplimentaryDataStep,
-    AddTeleopEventsAsInfo,
+    AddTeleopEventsAsInfoStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
     EnvTransition,
     GripperPenaltyProcessor,
-    ImageCropResizeProcessor,
+    ImageCropResizeProcessorStep,
     InterventionActionProcessor,
     JointVelocityProcessor,
     MapDeltaActionToRobotActionStep,
@@ -409,7 +409,7 @@ def make_processors(
 
     if cfg.processor.image_preprocessing is not None:
         env_pipeline_steps.append(
-            ImageCropResizeProcessor(
+            ImageCropResizeProcessorStep(
                 crop_params_dict=cfg.processor.image_preprocessing.crop_params_dict,
                 resize_size=cfg.processor.image_preprocessing.resize_size,
             )
@@ -449,7 +449,7 @@ def make_processors(
 
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
-        AddTeleopEventsAsInfo(teleop_device=teleop_device),
+        AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
         AddRobotObservationAsComplimentaryData(robot=env.robot),
         InterventionActionProcessor(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,

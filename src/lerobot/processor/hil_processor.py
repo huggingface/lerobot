@@ -45,7 +45,7 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
 
 @ProcessorStepRegistry.register("add_teleop_action_as_info")
 @dataclass
-class AddTeleopEventsAsInfo(InfoProcessorStep):
+class AddTeleopEventsAsInfoStep(InfoProcessorStep):
     """Add teleoperator control events to transition info."""
 
     teleop_device: Teleoperator
@@ -62,7 +62,7 @@ class AddTeleopEventsAsInfo(InfoProcessorStep):
 
 @ProcessorStepRegistry.register("image_crop_resize_processor")
 @dataclass
-class ImageCropResizeProcessor(ObservationProcessorStep):
+class ImageCropResizeProcessorStep(ObservationProcessorStep):
     """Crop and resize image observations."""
 
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
