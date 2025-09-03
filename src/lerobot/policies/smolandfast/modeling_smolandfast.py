@@ -249,7 +249,6 @@ class SMOLANDFAST(nn.Module):
 
         prefix_texts = []
 
-
         for txt, disc_st, disc_env in zip(lang_text, discretized_state, discretized_env, strict=False):
             cleaned = txt.lower().strip().replace("_", " ")
             state_str = " ".join(str(val.item()) for val in disc_st)
@@ -298,7 +297,7 @@ class SMOLANDFAST(nn.Module):
         prefix_ids, prefix_mask = self.create_obs_prefix_tokens(state=state,
                                                                 env=env,
                                                                 lang_text=lang_text)
-        prefix_lens = prefix_mask.sum(dim=1)[:, None].to(device)
+        prefix_lens = prefix_mask.sum(dim=1)[:, None]
 
         if actions is not None:
             act_ids, act_mask = self.create_action_tokens(actions=actions)
@@ -413,13 +412,14 @@ class SMOLANDFAST(nn.Module):
         return np.stack(decoded_actions)
 
     def generate_actions(self, batch: dict[str, Tensor]):
+        device = batch[OBS_STATE].device
+
         padded_outs = self.create_input_tokens(
             state=batch[OBS_STATE],
             env=batch[OBS_ENV_STATE],
             lang_text=batch["task"] if "task" in batch else "",
             actions=None,
         )
-
 
         input_len = padded_outs["input_ids"].shape[1]
         output_tokens = self.llm.generate(
@@ -456,5 +456,5 @@ class SMOLANDFAST(nn.Module):
                             action_dim=self.action_dim,
                             relaxed_decoding=self.config.relaxed_action_decoding,
                         ).squeeze(0) for tok in fast_action_tokens
-                ], dtype=torch.float32)
+                ], dtype=torch.float32, device=device)
         return decoded_actions
