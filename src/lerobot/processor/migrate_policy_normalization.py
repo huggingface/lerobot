@@ -50,7 +50,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from .batch_processor import AddBatchDimensionProcessorStep
 from .device_processor import DeviceProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
-from .pipeline import DataProcessorPipeline
+from .pipeline import PolicyProcessorPipeline
 from .rename_processor import RenameProcessorStep
 
 # Policy type to class mapping
@@ -422,14 +422,14 @@ def main():
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=policy_config.device),
     ]
-    preprocessor = DataProcessorPipeline(steps=preprocessor_steps, name="robot_preprocessor")
+    preprocessor = PolicyProcessorPipeline(steps=preprocessor_steps, name="robot_preprocessor")
 
     # Create postprocessor with unnormalizer for outputs only
     postprocessor_steps = [
         DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessorStep(features=output_features, norm_map=norm_map, stats=stats),
     ]
-    postprocessor = DataProcessorPipeline(steps=postprocessor_steps, name="robot_postprocessor")
+    postprocessor = PolicyProcessorPipeline(steps=postprocessor_steps, name="robot_postprocessor")
 
     # Determine hub repo ID if pushing to hub
     if args.push_to_hub:

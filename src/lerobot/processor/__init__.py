@@ -46,10 +46,12 @@ from .pipeline import (
     IdentityProcessorStep,
     InfoProcessorStep,
     ObservationProcessorStep,
+    PolicyProcessorPipeline,
     ProcessorKwargs,
     ProcessorStep,
     ProcessorStepRegistry,
     RewardProcessorStep,
+    RobotProcessorPipeline,
     TruncatedProcessorStep,
 )
 from .rename_processor import RenameProcessorStep
@@ -79,6 +81,7 @@ __all__ = [
     "NormalizerProcessorStep",
     "Numpy2TorchActionProcessorStep",
     "ObservationProcessorStep",
+    "PolicyProcessorPipeline",
     "ProcessorKwargs",
     "ProcessorStep",
     "ProcessorStepRegistry",
@@ -88,6 +91,7 @@ __all__ = [
     "DataProcessorPipeline",
     "TimeLimitProcessorStep",
     "AddBatchDimensionProcessorStep",
+    "RobotProcessorPipeline",
     "TokenizerProcessorStep",
     "Torch2NumpyActionProcessorStep",
     "transition_to_batch",

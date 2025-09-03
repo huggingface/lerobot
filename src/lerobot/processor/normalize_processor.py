@@ -12,7 +12,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from .converters import to_tensor
 from .core import EnvTransition, TransitionKey
-from .pipeline import DataProcessorPipeline, ProcessorStep, ProcessorStepRegistry
+from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
@@ -253,17 +253,17 @@ class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
 
 
 def hotswap_stats(
-    robot_processor: DataProcessorPipeline, stats: dict[str, dict[str, Any]]
-) -> DataProcessorPipeline:
+    policy_processor: PolicyProcessorPipeline, stats: dict[str, dict[str, Any]]
+) -> PolicyProcessorPipeline:
     """
-    Replaces normalization statistics in a RobotProcessor pipeline.
+    Replaces normalization statistics in a PolicyProcessor pipeline.
 
-    This function creates a deep copy of the provided `RobotProcessor` and updates the
+    This function creates a deep copy of the provided `PolicyProcessorPipeline` and updates the
     statistics of any `NormalizerProcessorStep` or `UnnormalizerProcessorStep` steps within it.
     It's useful for adapting a trained policy to a new environment or dataset with
     different data distributions.
     """
-    rp = deepcopy(robot_processor)
+    rp = deepcopy(policy_processor)
     for step in rp.steps:
         if isinstance(step, _NormalizationMixin):
             step.stats = stats
