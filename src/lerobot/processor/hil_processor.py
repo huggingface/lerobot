@@ -139,7 +139,7 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
-class GripperPenaltyProcessor(ComplementaryDataProcessorStep):
+class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
     """Apply penalty for inappropriate gripper usage."""
 
     penalty: float = -0.01

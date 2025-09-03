@@ -29,7 +29,7 @@ from .gym_action_processor import Numpy2TorchActionProcessorStep, Torch2NumpyAct
 from .hil_processor import (
     AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfoStep,
-    GripperPenaltyProcessor,
+    GripperPenaltyProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessor,
     RewardClassifierProcessor,
@@ -65,7 +65,7 @@ __all__ = [
     "DeviceProcessorStep",
     "DoneProcessorStep",
     "EnvTransition",
-    "GripperPenaltyProcessor",
+    "GripperPenaltyProcessorStep",
     "hotswap_stats",
     "IdentityProcessorStep",
     "ImageCropResizeProcessorStep",

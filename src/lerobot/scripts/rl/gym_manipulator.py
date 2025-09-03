@@ -34,7 +34,7 @@ from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
     EnvTransition,
-    GripperPenaltyProcessor,
+    GripperPenaltyProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessor,
     JointVelocityProcessor,
@@ -424,7 +424,7 @@ def make_processors(
     # Add gripper penalty processor if gripper config exists and enabled
     if cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
         env_pipeline_steps.append(
-            GripperPenaltyProcessor(
+            GripperPenaltyProcessorStep(
                 penalty=cfg.processor.gripper.gripper_penalty,
                 max_gripper_pos=cfg.processor.max_gripper_pos,
             )
