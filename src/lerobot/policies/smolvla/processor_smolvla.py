@@ -22,7 +22,7 @@ from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     DataProcessorPipeline,
-    DeviceProcessor,
+    DeviceProcessorStep,
     NormalizerProcessor,
     ProcessorKwargs,
     ProcessorStepRegistry,
@@ -59,10 +59,10 @@ def make_smolvla_pre_post_processors(
             padding_side="right",
             max_length=config.tokenizer_max_length,
         ),
-        DeviceProcessor(device=config.device),
+        DeviceProcessorStep(device=config.device),
     ]
     output_steps = [
-        DeviceProcessor(device="cpu"),
+        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),

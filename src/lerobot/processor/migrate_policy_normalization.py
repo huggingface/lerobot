@@ -48,7 +48,7 @@ from safetensors.torch import load_file as load_safetensors
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 from .batch_processor import ToBatchProcessor
-from .device_processor import DeviceProcessor
+from .device_processor import DeviceProcessorStep
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor
 from .pipeline import DataProcessorPipeline
 from .rename_processor import RenameProcessor
@@ -420,13 +420,13 @@ def main():
             stats=stats,
         ),
         ToBatchProcessor(),
-        DeviceProcessor(device=policy_config.device),
+        DeviceProcessorStep(device=policy_config.device),
     ]
     preprocessor = DataProcessorPipeline(steps=preprocessor_steps, name="robot_preprocessor")
 
     # Create postprocessor with unnormalizer for outputs only
     postprocessor_steps = [
-        DeviceProcessor(device="cpu"),
+        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessor(features=output_features, norm_map=norm_map, stats=stats),
     ]
     postprocessor = DataProcessorPipeline(steps=postprocessor_steps, name="robot_postprocessor")

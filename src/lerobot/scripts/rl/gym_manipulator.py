@@ -32,7 +32,7 @@ from lerobot.processor import (
     AddTeleopActionAsComplimentaryData,
     AddTeleopEventsAsInfo,
     DataProcessorPipeline,
-    DeviceProcessor,
+    DeviceProcessorStep,
     EnvTransition,
     GripperPenaltyProcessor,
     ImageCropResizeProcessor,
@@ -371,7 +371,7 @@ def make_processors(
             Numpy2TorchActionProcessor(),
             VanillaObservationProcessor(),
             ToBatchProcessor(),
-            DeviceProcessor(device=device),
+            DeviceProcessorStep(device=device),
         ]
 
         return DataProcessorPipeline(steps=env_pipeline_steps), DataProcessorPipeline(
@@ -445,7 +445,7 @@ def make_processors(
         )
 
     env_pipeline_steps.append(ToBatchProcessor())
-    env_pipeline_steps.append(DeviceProcessor(device=device))
+    env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryData(teleop_device=teleop_device),

@@ -20,7 +20,7 @@ from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_N
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.processor import (
     DataProcessorPipeline,
-    DeviceProcessor,
+    DeviceProcessorStep,
     NormalizerProcessor,
     ProcessorKwargs,
     RenameProcessor,
@@ -48,10 +48,10 @@ def make_tdmpc_pre_post_processors(
             stats=dataset_stats,
         ),
         ToBatchProcessor(),
-        DeviceProcessor(device=config.device),
+        DeviceProcessorStep(device=config.device),
     ]
     output_steps = [
-        DeviceProcessor(device="cpu"),
+        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),

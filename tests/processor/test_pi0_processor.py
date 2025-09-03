@@ -25,7 +25,7 @@ from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0.processor_pi0 import Pi0NewLineProcessor, make_pi0_pre_post_processors
 from lerobot.processor import (
-    DeviceProcessor,
+    DeviceProcessorStep,
     NormalizerProcessor,
     RenameProcessor,
     ToBatchProcessor,
@@ -102,11 +102,11 @@ def test_make_pi0_processor_basic():
     assert isinstance(preprocessor.steps[2], ToBatchProcessor)
     assert isinstance(preprocessor.steps[3], Pi0NewLineProcessor)
     # Step 4 would be TokenizerProcessor but it's mocked
-    assert isinstance(preprocessor.steps[5], DeviceProcessor)
+    assert isinstance(preprocessor.steps[5], DeviceProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
-    assert isinstance(postprocessor.steps[0], DeviceProcessor)
+    assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
     assert isinstance(postprocessor.steps[1], UnnormalizerProcessor)
 
 

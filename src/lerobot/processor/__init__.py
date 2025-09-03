@@ -24,7 +24,7 @@ from .converters import (
 )
 from .core import EnvTransition, TransitionKey
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
-from .device_processor import DeviceProcessor
+from .device_processor import DeviceProcessorStep
 from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
 from .hil_processor import (
     AddTeleopActionAsComplimentaryData,
@@ -62,7 +62,7 @@ __all__ = [
     "ComplementaryDataProcessorStep",
     "batch_to_transition",
     "create_transition",
-    "DeviceProcessor",
+    "DeviceProcessorStep",
     "DoneProcessorStep",
     "EnvTransition",
     "GripperPenaltyProcessor",

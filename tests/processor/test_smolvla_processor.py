@@ -28,7 +28,7 @@ from lerobot.policies.smolvla.processor_smolvla import (
     make_smolvla_pre_post_processors,
 )
 from lerobot.processor import (
-    DeviceProcessor,
+    DeviceProcessorStep,
     NormalizerProcessor,
     RenameProcessor,
     ToBatchProcessor,
@@ -107,11 +107,11 @@ def test_make_smolvla_processor_basic():
     assert isinstance(preprocessor.steps[2], ToBatchProcessor)
     assert isinstance(preprocessor.steps[3], SmolVLANewLineProcessor)
     # Step 4 would be TokenizerProcessor but it's mocked
-    assert isinstance(preprocessor.steps[5], DeviceProcessor)
+    assert isinstance(preprocessor.steps[5], DeviceProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
-    assert isinstance(postprocessor.steps[0], DeviceProcessor)
+    assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
     assert isinstance(postprocessor.steps[1], UnnormalizerProcessor)
 
 

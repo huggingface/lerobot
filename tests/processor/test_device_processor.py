@@ -19,7 +19,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.processor import DataProcessorPipeline, DeviceProcessor, TransitionKey
+from lerobot.processor import DataProcessorPipeline, DeviceProcessorStep, TransitionKey
 
 
 def create_transition(
@@ -46,7 +46,7 @@ def create_transition(
 
 def test_basic_functionality():
     """Test basic device processor functionality on CPU."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     # Create a transition with CPU tensors
     observation = {"observation.state": torch.randn(10), "observation.image": torch.randn(3, 224, 224)}
@@ -73,7 +73,7 @@ def test_basic_functionality():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_cuda_functionality():
     """Test device processor functionality on CUDA."""
-    processor = DeviceProcessor(device="cuda")
+    processor = DeviceProcessorStep(device="cuda")
 
     # Create a transition with CPU tensors
     observation = {"observation.state": torch.randn(10), "observation.image": torch.randn(3, 224, 224)}
@@ -100,7 +100,7 @@ def test_cuda_functionality():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_specific_cuda_device():
     """Test device processor with specific CUDA device."""
-    processor = DeviceProcessor(device="cuda:0")
+    processor = DeviceProcessorStep(device="cuda:0")
 
     observation = {"observation.state": torch.randn(10)}
     action = torch.randn(5)
@@ -116,7 +116,7 @@ def test_specific_cuda_device():
 
 def test_non_tensor_values():
     """Test that non-tensor values are preserved."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     observation = {
         "observation.state": torch.randn(10),
@@ -142,7 +142,7 @@ def test_non_tensor_values():
 
 def test_none_values():
     """Test handling of None values."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     # Test with None observation
     transition = create_transition(observation=None, action=torch.randn(5))
@@ -159,7 +159,7 @@ def test_none_values():
 
 def test_empty_observation():
     """Test handling of empty observation dictionary."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     transition = create_transition(observation={}, action=torch.randn(5))
     result = processor(transition)
@@ -170,7 +170,7 @@ def test_empty_observation():
 
 def test_scalar_tensors():
     """Test handling of scalar tensors."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     observation = {"observation.scalar": torch.tensor(1.5)}
     action = torch.tensor(2.0)
@@ -187,7 +187,7 @@ def test_scalar_tensors():
 
 def test_dtype_preservation():
     """Test that tensor dtypes are preserved."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     observation = {
         "observation.float32": torch.randn(5, dtype=torch.float32),
@@ -209,7 +209,7 @@ def test_dtype_preservation():
 
 def test_shape_preservation():
     """Test that tensor shapes are preserved."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     observation = {
         "observation.1d": torch.randn(10),
@@ -232,7 +232,7 @@ def test_shape_preservation():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_mixed_devices():
     """Test handling of tensors already on different devices."""
-    processor = DeviceProcessor(device="cuda")
+    processor = DeviceProcessorStep(device="cuda")
 
     # Create tensors on different devices
     observation = {
@@ -253,22 +253,22 @@ def test_mixed_devices():
 def test_non_blocking_flag():
     """Test that non_blocking flag is set correctly."""
     # CPU processor should have non_blocking=False
-    cpu_processor = DeviceProcessor(device="cpu")
+    cpu_processor = DeviceProcessorStep(device="cpu")
     assert cpu_processor.non_blocking is False
 
     if torch.cuda.is_available():
         # CUDA processor should have non_blocking=True
-        cuda_processor = DeviceProcessor(device="cuda")
+        cuda_processor = DeviceProcessorStep(device="cuda")
         assert cuda_processor.non_blocking is True
 
-        cuda_0_processor = DeviceProcessor(device="cuda:0")
+        cuda_0_processor = DeviceProcessorStep(device="cuda:0")
         assert cuda_0_processor.non_blocking is True
 
 
 def test_serialization_methods():
     """Test get_config, state_dict, and load_state_dict methods."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    processor = DeviceProcessor(device=device)
+    processor = DeviceProcessorStep(device=device)
 
     # Test get_config
     config = processor.get_config()
@@ -289,7 +289,7 @@ def test_serialization_methods():
 
 def test_features():
     """Test that features returns features unchanged."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     features = {
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,)),
@@ -306,8 +306,8 @@ def test_integration_with_robot_processor():
     from lerobot.constants import OBS_STATE
     from lerobot.processor import ToBatchProcessor
 
-    # Create a pipeline with DeviceProcessor
-    device_processor = DeviceProcessor(device="cpu")
+    # Create a pipeline with DeviceProcessorStep
+    device_processor = DeviceProcessorStep(device="cpu")
     batch_processor = ToBatchProcessor()
 
     processor = DataProcessorPipeline(
@@ -333,9 +333,9 @@ def test_integration_with_robot_processor():
 
 
 def test_save_and_load_pretrained():
-    """Test saving and loading processor with DeviceProcessor."""
+    """Test saving and loading processor with DeviceProcessorStep."""
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    processor = DeviceProcessor(device=device, float_dtype="float16")
+    processor = DeviceProcessorStep(device=device, float_dtype="float16")
     robot_processor = DataProcessorPipeline(steps=[processor], name="device_test_processor")
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -347,7 +347,7 @@ def test_save_and_load_pretrained():
 
         assert len(loaded_processor.steps) == 1
         loaded_device_processor = loaded_processor.steps[0]
-        assert isinstance(loaded_device_processor, DeviceProcessor)
+        assert isinstance(loaded_device_processor, DeviceProcessorStep)
         # Use getattr to access attributes safely
         assert (
             getattr(loaded_device_processor, "device", None) == device.split(":")[0]
@@ -356,18 +356,18 @@ def test_save_and_load_pretrained():
 
 
 def test_registry_functionality():
-    """Test that DeviceProcessor is properly registered."""
+    """Test that DeviceProcessorStep is properly registered."""
     from lerobot.processor import ProcessorStepRegistry
 
-    # Check that DeviceProcessor is registered
+    # Check that DeviceProcessorStep is registered
     registered_class = ProcessorStepRegistry.get("device_processor")
-    assert registered_class is DeviceProcessor
+    assert registered_class is DeviceProcessorStep
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_performance_with_large_tensors():
     """Test performance with large tensors and non_blocking flag."""
-    processor = DeviceProcessor(device="cuda")
+    processor = DeviceProcessorStep(device="cuda")
 
     # Create large tensors
     observation = {
@@ -389,7 +389,7 @@ def test_performance_with_large_tensors():
 
 def test_reward_done_truncated_types():
     """Test handling of different types for reward, done, and truncated."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     # Test with scalar values (not tensors)
     transition = create_transition(
@@ -429,7 +429,7 @@ def test_reward_done_truncated_types():
 
 def test_complementary_data_preserved():
     """Test that complementary_data is preserved unchanged."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     complementary_data = {
         "task": "pick_object",
@@ -449,13 +449,13 @@ def test_complementary_data_preserved():
     assert result[TransitionKey.COMPLEMENTARY_DATA]["task"] == "pick_object"
     assert result[TransitionKey.COMPLEMENTARY_DATA]["episode_id"] == 42
     assert result[TransitionKey.COMPLEMENTARY_DATA]["metadata"] == {"sensor": "camera_1"}
-    # Note: Currently DeviceProcessor doesn't process tensors in complementary_data
+    # Note: Currently DeviceProcessorStep doesn't process tensors in complementary_data
     # This is intentional as complementary_data is typically metadata
 
 
 def test_float_dtype_conversion():
     """Test float dtype conversion functionality."""
-    processor = DeviceProcessor(device="cpu", float_dtype="float16")
+    processor = DeviceProcessorStep(device="cpu", float_dtype="float16")
 
     # Create tensors of different types
     observation = {
@@ -485,7 +485,7 @@ def test_float_dtype_conversion():
 
 def test_float_dtype_none():
     """Test that when float_dtype is None, no dtype conversion occurs."""
-    processor = DeviceProcessor(device="cpu", float_dtype=None)
+    processor = DeviceProcessorStep(device="cpu", float_dtype=None)
 
     observation = {
         "observation.float32": torch.randn(5, dtype=torch.float32),
@@ -506,7 +506,7 @@ def test_float_dtype_none():
 
 def test_float_dtype_bfloat16():
     """Test conversion to bfloat16."""
-    processor = DeviceProcessor(device="cpu", float_dtype="bfloat16")
+    processor = DeviceProcessorStep(device="cpu", float_dtype="bfloat16")
 
     observation = {"observation.state": torch.randn(5, dtype=torch.float32)}
     action = torch.randn(3, dtype=torch.float64)
@@ -520,7 +520,7 @@ def test_float_dtype_bfloat16():
 
 def test_float_dtype_float64():
     """Test conversion to float64."""
-    processor = DeviceProcessor(device="cpu", float_dtype="float64")
+    processor = DeviceProcessorStep(device="cpu", float_dtype="float64")
 
     observation = {"observation.state": torch.randn(5, dtype=torch.float16)}
     action = torch.randn(3, dtype=torch.float32)
@@ -535,27 +535,27 @@ def test_float_dtype_float64():
 def test_float_dtype_invalid():
     """Test that invalid float_dtype raises ValueError."""
     with pytest.raises(ValueError, match="Invalid float_dtype 'invalid_dtype'"):
-        DeviceProcessor(device="cpu", float_dtype="invalid_dtype")
+        DeviceProcessorStep(device="cpu", float_dtype="invalid_dtype")
 
 
 def test_float_dtype_aliases():
     """Test that dtype aliases work correctly."""
     # Test 'half' alias for float16
-    processor_half = DeviceProcessor(device="cpu", float_dtype="half")
+    processor_half = DeviceProcessorStep(device="cpu", float_dtype="half")
     assert processor_half._target_float_dtype == torch.float16
 
     # Test 'float' alias for float32
-    processor_float = DeviceProcessor(device="cpu", float_dtype="float")
+    processor_float = DeviceProcessorStep(device="cpu", float_dtype="float")
     assert processor_float._target_float_dtype == torch.float32
 
     # Test 'double' alias for float64
-    processor_double = DeviceProcessor(device="cpu", float_dtype="double")
+    processor_double = DeviceProcessorStep(device="cpu", float_dtype="double")
     assert processor_double._target_float_dtype == torch.float64
 
 
 def test_float_dtype_with_mixed_tensors():
     """Test float dtype conversion with mixed tensor types."""
-    processor = DeviceProcessor(device="cpu", float_dtype="float32")
+    processor = DeviceProcessorStep(device="cpu", float_dtype="float32")
 
     observation = {
         "observation.image": torch.randint(0, 255, (3, 64, 64), dtype=torch.uint8),  # Should not convert
@@ -579,13 +579,13 @@ def test_float_dtype_with_mixed_tensors():
 def test_float_dtype_serialization():
     """Test that float_dtype is properly serialized in get_config."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    processor = DeviceProcessor(device=device, float_dtype="float16")
+    processor = DeviceProcessorStep(device=device, float_dtype="float16")
     config = processor.get_config()
 
     assert config == {"device": device, "float_dtype": "float16"}
 
     # Test with None float_dtype
-    processor_none = DeviceProcessor(device="cpu", float_dtype=None)
+    processor_none = DeviceProcessorStep(device="cpu", float_dtype=None)
     config_none = processor_none.get_config()
 
     assert config_none == {"device": "cpu", "float_dtype": None}
@@ -594,7 +594,7 @@ def test_float_dtype_serialization():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_float_dtype_with_cuda():
     """Test float dtype conversion combined with CUDA device."""
-    processor = DeviceProcessor(device="cuda", float_dtype="float16")
+    processor = DeviceProcessorStep(device="cuda", float_dtype="float16")
 
     # Create tensors on CPU with different dtypes
     observation = {
@@ -619,7 +619,7 @@ def test_float_dtype_with_cuda():
 
 def test_complementary_data_index_fields():
     """Test processing of index and task_index fields in complementary_data."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     # Create transition with index and task_index in complementary_data
     complementary_data = {
@@ -657,7 +657,7 @@ def test_complementary_data_index_fields():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_complementary_data_index_fields_cuda():
     """Test moving index and task_index fields to CUDA."""
-    processor = DeviceProcessor(device="cuda:0")
+    processor = DeviceProcessorStep(device="cuda:0")
 
     # Create CPU tensors
     complementary_data = {
@@ -679,7 +679,7 @@ def test_complementary_data_index_fields_cuda():
 
 def test_complementary_data_without_index_fields():
     """Test that complementary_data without index/task_index fields works correctly."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     complementary_data = {
         "task": ["navigate"],
@@ -697,7 +697,7 @@ def test_complementary_data_without_index_fields():
 
 def test_complementary_data_mixed_tensors():
     """Test complementary_data with mix of tensors and non-tensors."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     complementary_data = {
         "task": ["pick_and_place"],
@@ -726,7 +726,7 @@ def test_complementary_data_mixed_tensors():
 
 def test_complementary_data_float_dtype_conversion():
     """Test that float dtype conversion doesn't affect int tensors in complementary_data."""
-    processor = DeviceProcessor(device="cpu", float_dtype="float16")
+    processor = DeviceProcessorStep(device="cpu", float_dtype="float16")
 
     complementary_data = {
         "index": torch.tensor([42], dtype=torch.int64),
@@ -750,7 +750,7 @@ def test_complementary_data_float_dtype_conversion():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_complementary_data_full_pipeline_cuda():
     """Test full transition with complementary_data on CUDA."""
-    processor = DeviceProcessor(device="cuda:0", float_dtype="float16")
+    processor = DeviceProcessorStep(device="cuda:0", float_dtype="float16")
 
     # Create full transition with mixed CPU tensors
     observation = {"observation.state": torch.randn(1, 7, dtype=torch.float32)}
@@ -796,7 +796,7 @@ def test_complementary_data_full_pipeline_cuda():
 
 def test_complementary_data_empty():
     """Test empty complementary_data handling."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     transition = create_transition(
         observation={"observation.state": torch.randn(1, 7)},
@@ -811,7 +811,7 @@ def test_complementary_data_empty():
 
 def test_complementary_data_none():
     """Test None complementary_data handling."""
-    processor = DeviceProcessor(device="cpu")
+    processor = DeviceProcessorStep(device="cpu")
 
     transition = create_transition(
         observation={"observation.state": torch.randn(1, 7)},
@@ -826,8 +826,8 @@ def test_complementary_data_none():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_preserves_gpu_placement():
-    """Test that DeviceProcessor preserves GPU placement when tensor is already on GPU."""
-    processor = DeviceProcessor(device="cuda:0")
+    """Test that DeviceProcessorStep preserves GPU placement when tensor is already on GPU."""
+    processor = DeviceProcessorStep(device="cuda:0")
 
     # Create tensors already on GPU
     observation = {
@@ -852,9 +852,9 @@ def test_preserves_gpu_placement():
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
 def test_multi_gpu_preservation():
-    """Test that DeviceProcessor preserves placement on different GPUs in multi-GPU setup."""
+    """Test that DeviceProcessorStep preserves placement on different GPUs in multi-GPU setup."""
     # Test 1: GPU-to-GPU preservation (cuda:0 config, cuda:1 input)
-    processor_gpu = DeviceProcessor(device="cuda:0")
+    processor_gpu = DeviceProcessorStep(device="cuda:0")
 
     # Create tensors on cuda:1 (simulating Accelerate placement)
     cuda1_device = torch.device("cuda:1")
@@ -873,7 +873,7 @@ def test_multi_gpu_preservation():
     assert result[TransitionKey.ACTION].device == cuda1_device
 
     # Test 2: GPU-to-CPU should move to CPU (not preserve GPU)
-    processor_cpu = DeviceProcessor(device="cpu")
+    processor_cpu = DeviceProcessorStep(device="cpu")
 
     transition_gpu = create_transition(
         observation={"observation.state": torch.randn(10).cuda()}, action=torch.randn(5).cuda()
@@ -889,7 +889,7 @@ def test_multi_gpu_preservation():
 def test_multi_gpu_with_cpu_tensors():
     """Test that CPU tensors are moved to configured device even in multi-GPU context."""
     # Processor configured for cuda:1
-    processor = DeviceProcessor(device="cuda:1")
+    processor = DeviceProcessorStep(device="cuda:1")
 
     # Mix of CPU and GPU tensors
     observation = {
@@ -916,7 +916,7 @@ def test_multi_gpu_with_cpu_tensors():
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
 def test_multi_gpu_with_float_dtype():
     """Test float dtype conversion works correctly with multi-GPU preservation."""
-    processor = DeviceProcessor(device="cuda:0", float_dtype="float16")
+    processor = DeviceProcessorStep(device="cuda:0", float_dtype="float16")
 
     # Create float tensors on different GPUs
     observation = {
@@ -946,7 +946,7 @@ def test_simulated_accelerate_scenario():
     for gpu_id in range(min(torch.cuda.device_count(), 2)):
         # Each "process" has a processor configured for cuda:0
         # but data comes in already placed on the process's GPU
-        processor = DeviceProcessor(device="cuda:0")
+        processor = DeviceProcessorStep(device="cuda:0")
 
         # Simulate data already placed by Accelerate
         device = torch.device(f"cuda:{gpu_id}")
@@ -986,7 +986,7 @@ def test_policy_processor_integration():
         steps=[
             NormalizerProcessor(features=features, norm_map=norm_map, stats=stats),
             ToBatchProcessor(),
-            DeviceProcessor(device="cuda"),
+            DeviceProcessorStep(device="cuda"),
         ],
         name="test_preprocessor",
         to_transition=lambda x: x,
@@ -996,7 +996,7 @@ def test_policy_processor_integration():
     # Create output processor (postprocessor) that moves to CPU
     output_processor = DataProcessorPipeline(
         steps=[
-            DeviceProcessor(device="cpu"),
+            DeviceProcessorStep(device="cpu"),
             UnnormalizerProcessor(features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
         ],
         name="test_postprocessor",
