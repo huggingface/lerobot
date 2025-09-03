@@ -190,7 +190,9 @@ class EEBoundsAndSafety(ActionProcessor):
         wz = act.get(f"{ACTION}.ee.wz", None)
 
         if None in (x, y, z, wx, wy, wz):
-            return act
+            raise ValueError(
+                "Missing required end-effector pose components: x, y, z, wx, wy, wz must all be present in action"
+            )
 
         pos = np.array([x, y, z], dtype=float)
         twist = np.array([wx, wy, wz], dtype=float)
@@ -223,18 +225,6 @@ class EEBoundsAndSafety(ActionProcessor):
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # check if features as f"{ACTION}.ee.{x,y,z,wx,wy,wz}"
-        if f"{ACTION}.ee.x" not in features:
-            raise ValueError(f"{ACTION}.ee.x is not in features this step needs it")
-        if f"{ACTION}.ee.y" not in features:
-            raise ValueError(f"{ACTION}.ee.y is not in features this step needs it")
-        if f"{ACTION}.ee.z" not in features:
-            raise ValueError(f"{ACTION}.ee.z is not in features this step needs it")
-        if f"{ACTION}.ee.wx" not in features:
-            raise ValueError(f"{ACTION}.ee.wx is not in features this step needs it")
-        if f"{ACTION}.ee.wy" not in features:
-            raise ValueError(f"{ACTION}.ee.wy is not in features this step needs it")
-        if f"{ACTION}.ee.wz" not in features:
-            raise ValueError(f"{ACTION}.ee.wz is not in features this step needs it")
 
         return features
 
@@ -316,7 +306,6 @@ class InverseKinematicsEEToJoints(ProcessorStep):
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         new_features = features.copy()
-        new_features[f"{OBS_STATE}.gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         new_features[f"{ACTION}.gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         for name in self.motor_names:
             new_features[f"{ACTION}.{name}.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
@@ -356,13 +345,12 @@ class GripperVelocityToJoint(ProcessorStep):
         comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
         if f"{ACTION}.gripper" not in act:
-            return transition
+            raise ValueError(f"Required action key '{ACTION}.gripper' not found in transition")
 
         if "gripper" not in self.motor_names:
-            new_act = dict(act)
-            new_act.pop(f"{ACTION}.gripper", None)
-            transition[TransitionKey.ACTION] = new_act
-            return transition
+            raise ValueError(
+                f"Required motor name 'gripper' not found in self.motor_names={self.motor_names}"
+            )
 
         if self.discrete_gripper:
             # Discrete gripper actions are in [0, 1, 2]
@@ -422,7 +410,7 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
 
     def observation(self, obs: dict) -> dict:
         if not all(f"{OBS_STATE}.{n}.pos" in obs for n in self.motor_names):
-            return obs
+            raise ValueError(f"Missing required joint positions for motors: {self.motor_names}")
 
         q = np.array([obs[f"{OBS_STATE}.{n}.pos"] for n in self.motor_names], dtype=float)
         t = self.kinematics.forward_kinematics(q)

@@ -4,6 +4,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.types import PolicyFeature
+from lerobot.constants import OBS_STATE
 from lerobot.processor.pipeline import (
     ObservationProcessor,
     ProcessorStepRegistry,
@@ -22,7 +23,7 @@ class JointVelocityProcessor(ObservationProcessor):
 
     def observation(self, observation: dict) -> dict:
         # Get current joint positions (assuming they're in observation.state)
-        current_positions = observation.get("observation.state")
+        current_positions = observation.get(OBS_STATE)
 
         # Initialize last joint positions if not already set
         if self.last_joint_positions is None:
@@ -39,7 +40,7 @@ class JointVelocityProcessor(ObservationProcessor):
 
         # Create new observation dict
         new_observation = dict(observation)
-        new_observation["observation.state"] = extended_state
+        new_observation[OBS_STATE] = extended_state
 
         return new_observation
 
@@ -52,14 +53,13 @@ class JointVelocityProcessor(ObservationProcessor):
         self.last_joint_positions = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        new_feature = features.copy()
-        if "observation.state" in features:
-            original_feature = features["observation.state"]
+        if OBS_STATE in features:
+            original_feature = features[OBS_STATE]
             # Double the shape to account for positions + velocities
             new_shape = (original_feature.shape[0] * 2,) + original_feature.shape[1:]
 
-            new_feature["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
-        return new_feature
+            features[OBS_STATE] = PolicyFeature(type=original_feature.type, shape=new_shape)
+        return features
 
 
 @dataclass
@@ -80,7 +80,7 @@ class MotorCurrentProcessor(ObservationProcessor):
             dtype=torch.float32,
         ).unsqueeze(0)
 
-        current_state = observation.get("observation.state")
+        current_state = observation.get(OBS_STATE)
         if current_state is None:
             return observation
 
@@ -88,14 +88,13 @@ class MotorCurrentProcessor(ObservationProcessor):
 
         # Create new observation dict
         new_observation = dict(observation)
-        new_observation["observation.state"] = extended_state
+        new_observation[OBS_STATE] = extended_state
 
         return new_observation
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        new_features = features.copy()
-        if "observation.state" in features and self.robot is not None:
-            original_feature = features["observation.state"]
+        if OBS_STATE in features and self.robot is not None:
+            original_feature = features[OBS_STATE]
             # Add motor current dimensions to the original state shape
             num_motors = 0
             if hasattr(self.robot, "bus") and hasattr(self.robot.bus, "motors"):  # type: ignore[attr-defined]
@@ -103,5 +102,5 @@ class MotorCurrentProcessor(ObservationProcessor):
 
             if num_motors > 0:
                 new_shape = (original_feature.shape[0] + num_motors,) + original_feature.shape[1:]
-                new_features["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
-        return new_features
+                features[OBS_STATE] = PolicyFeature(type=original_feature.type, shape=new_shape)
+        return features
