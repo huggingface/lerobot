@@ -35,7 +35,7 @@ from .hil_processor import (
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
-from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
+from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
@@ -71,7 +71,7 @@ __all__ = [
     "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
     "InterventionActionProcessorStep",
-    "JointVelocityProcessor",
+    "JointVelocityProcessorStep",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "merge_transitions",

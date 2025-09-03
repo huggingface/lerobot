@@ -144,7 +144,7 @@ HIL-SERL uses a modular processor pipeline architecture that processes robot obs
 The environment processor (`env_processor`) handles incoming observations and environment state:
 
 1. **VanillaObservationProcessor**: Converts raw robot observations into standardized format
-2. **JointVelocityProcessor** (optional): Adds joint velocity information to observations
+2. **JointVelocityProcessorStep** (optional): Adds joint velocity information to observations
 3. **MotorCurrentProcessor** (optional): Adds motor current readings to observations
 4. **ForwardKinematicsJointsToEE** (optional): Computes end-effector pose from joint positions
 5. **ImageCropResizeProcessorStep** (optional): Crops and resizes camera images

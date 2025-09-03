@@ -14,7 +14,7 @@ from lerobot.robots import Robot
 
 @dataclass
 @ProcessorStepRegistry.register("joint_velocity_processor")
-class JointVelocityProcessor(ObservationProcessorStep):
+class JointVelocityProcessorStep(ObservationProcessorStep):
     """Add joint velocity information to observations."""
 
     dt: float = 0.1
