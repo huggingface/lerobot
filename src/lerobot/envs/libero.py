@@ -139,7 +139,7 @@ def get_task_init_states(task_suite, i):
         task_suite.tasks[i].problem_folder,
         task_suite.tasks[i].init_states_file,
     )
-    init_states = torch.load(init_states_path, weights_only=False)
+    init_states = torch.load(init_states_path, weights_only=False) # nosec B614
     return init_states
 
 
