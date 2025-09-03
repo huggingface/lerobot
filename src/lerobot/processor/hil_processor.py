@@ -112,7 +112,7 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("time_limit_processor")
-class TimeLimitProcessor(TruncatedProcessorStep):
+class TimeLimitProcessorStep(TruncatedProcessorStep):
     """Track episode steps and enforce time limits."""
 
     max_episode_steps: int

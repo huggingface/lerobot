@@ -43,7 +43,7 @@ from lerobot.processor import (
     MotorCurrentProcessor,
     Numpy2TorchActionProcessorStep,
     RewardClassifierProcessor,
-    TimeLimitProcessor,
+    TimeLimitProcessorStep,
     ToBatchProcessor,
     Torch2NumpyActionProcessorStep,
     TransitionKey,
@@ -418,7 +418,7 @@ def make_processors(
     # Add time limit processor if reset config exists
     if cfg.processor.reset is not None:
         env_pipeline_steps.append(
-            TimeLimitProcessor(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
+            TimeLimitProcessorStep(max_episode_steps=int(cfg.processor.reset.control_time_s * cfg.fps))
         )
 
     # Add gripper penalty processor if gripper config exists and enabled

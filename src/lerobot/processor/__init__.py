@@ -33,7 +33,7 @@ from .hil_processor import (
     ImageCropResizeProcessorStep,
     InterventionActionProcessor,
     RewardClassifierProcessor,
-    TimeLimitProcessor,
+    TimeLimitProcessorStep,
 )
 from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hotswap_stats
@@ -86,7 +86,7 @@ __all__ = [
     "RewardClassifierProcessor",
     "RewardProcessorStep",
     "DataProcessorPipeline",
-    "TimeLimitProcessor",
+    "TimeLimitProcessorStep",
     "ToBatchProcessor",
     "TokenizerProcessor",
     "Torch2NumpyActionProcessorStep",
