@@ -39,9 +39,9 @@ python src/lerobot/scripts/eval.py \
   --eval.n_episodes=3
 ```
 
-- `-env.task` picks the suite (`libero_object`, `libero_spatial`, etc.).
-- `-eval.batch_size` controls how many environments run in parallel.
-- `-eval.n_episodes` sets how many episodes to run in total.
+- `--env.task` picks the suite (`libero_object`, `libero_spatial`, etc.).
+- `--eval.batch_size` controls how many environments run in parallel.
+- `--eval.n_episodes` sets how many episodes to run in total.
 
 ---
 
@@ -98,9 +98,10 @@ The environment expects:
 ```bash
 python src/lerobot/scripts/train.py \
   --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/libero-test \
   --dataset.repo_id=jadechoghari/smol-libero3 \
   --env.type=libero \
-  --env.task=libero_10,libero_spatial \
+  --env.task=libero_10 \
   --output_dir=./outputs/ \
   --steps=100000 \
   --batch_size=4 \
