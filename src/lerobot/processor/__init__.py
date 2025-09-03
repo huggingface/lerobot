@@ -25,7 +25,7 @@ from .converters import (
 from .core import EnvTransition, TransitionKey
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
-from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessorStep
+from .gym_action_processor import Numpy2TorchActionProcessorStep, Torch2NumpyActionProcessorStep
 from .hil_processor import (
     AddTeleopActionAsComplimentaryData,
     AddTeleopEventsAsInfo,
@@ -77,7 +77,7 @@ __all__ = [
     "merge_transitions",
     "MotorCurrentProcessor",
     "NormalizerProcessor",
-    "Numpy2TorchActionProcessor",
+    "Numpy2TorchActionProcessorStep",
     "ObservationProcessorStep",
     "ProcessorKwargs",
     "ProcessorStep",

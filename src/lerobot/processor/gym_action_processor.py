@@ -56,7 +56,7 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
 
 @ProcessorStepRegistry.register("numpy2torch_action_processor")
 @dataclass
-class Numpy2TorchActionProcessor(ActionProcessorStep):
+class Numpy2TorchActionProcessorStep(ActionProcessorStep):
     """Convert NumPy array action to PyTorch tensor."""
 
     def action(self, action: np.ndarray) -> torch.Tensor:
