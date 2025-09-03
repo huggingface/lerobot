@@ -129,9 +129,6 @@ class MapDeltaActionToRobotAction(ActionProcessor):
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         """Transform features to match output format."""
-        # Update features to reflect the new action format
-        features = features.copy()
-
         features.pop(f"{ACTION}.delta_x", None)
         features.pop(f"{ACTION}.delta_y", None)
         features.pop(f"{ACTION}.delta_z", None)
