@@ -296,7 +296,7 @@ class InverseKinematicsEEToJoints(ProcessorStep):
             if name == "gripper":
                 # TODO(pepijn): Investigate if this is correct
                 # Do we want an observation key in the action field?
-                new_act[f"{OBS_STATE}.gripper.pos"] = float(raw["gripper"])
+                new_act[f"{ACTION}.gripper.pos"] = float(raw["gripper"])
             else:
                 new_act[f"{ACTION}.{name}.pos"] = float(q_target[i])
         new_transition[TransitionKey.ACTION] = new_act
