@@ -20,7 +20,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
 from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import DataProcessorPipeline
+from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import (
     action_to_transition,
     observation_to_transition,
@@ -73,7 +73,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert phone action to ee pose action
-phone_to_robot_ee_pose_processor = DataProcessorPipeline(
+phone_to_robot_ee_pose_processor = RobotProcessorPipeline(
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         AddRobotObservationAsComplimentaryData(robot=robot),
@@ -93,7 +93,7 @@ phone_to_robot_ee_pose_processor = DataProcessorPipeline(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints_processor = DataProcessorPipeline(
+robot_ee_to_joints_processor = RobotProcessorPipeline(
     steps=[
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
@@ -110,7 +110,7 @@ robot_ee_to_joints_processor = DataProcessorPipeline(
 )
 
 # Build pipeline to convert joint observation to ee pose observation
-robot_joints_to_ee_pose = DataProcessorPipeline(
+robot_joints_to_ee_pose = RobotProcessorPipeline(
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
