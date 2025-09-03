@@ -22,9 +22,9 @@ from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import DataProcessorPipeline
 from lerobot.processor.converters import (
+    action_to_transition,
     to_output_robot_action,
     to_transition_robot_observation,
-    to_transition_teleop_action,
 )
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
@@ -88,7 +88,7 @@ phone_to_robot_ee_pose_processor = DataProcessorPipeline(
             max_ee_twist_step_rad=0.50,
         ),
     ],
-    to_transition=to_transition_teleop_action,
+    to_transition=action_to_transition,
     to_output=lambda tr: tr,
 )
 

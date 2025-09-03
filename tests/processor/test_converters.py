@@ -4,11 +4,11 @@ import torch
 
 from lerobot.processor import TransitionKey
 from lerobot.processor.converters import (
+    action_to_transition,
     batch_to_transition,
     to_output_robot_action,
     to_tensor,
     to_transition_robot_observation,
-    to_transition_teleop_action,
     transition_to_batch,
     transition_to_dataset_frame,
 )
@@ -23,7 +23,7 @@ def test_to_transition_teleop_action_prefix_and_tensor_conversion():
         "raw_img": img,  # uint8 HWC to torch tensor
     }
 
-    tr = to_transition_teleop_action(act)
+    tr = action_to_transition(act)
 
     # Should be an EnvTransition-like dict with ACTION populated
     assert isinstance(tr, dict)

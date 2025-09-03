@@ -233,7 +233,7 @@ def create_transition(
     }
 
 
-def to_transition_teleop_action(action: dict[str, Any]) -> EnvTransition:
+def action_to_transition(action: dict[str, Any]) -> EnvTransition:  # action_to_transition
     """
     Convert a raw teleop action dict into an EnvTransition under the ACTION TransitionKey.
     """
