@@ -459,7 +459,9 @@ def make_processors(
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
-            MapTensorToDeltaActionDict(),
+            MapTensorToDeltaActionDict(
+                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False
+            ),
             MapDeltaActionToRobotAction(),
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,

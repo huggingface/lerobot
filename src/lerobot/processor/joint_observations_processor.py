@@ -4,9 +4,12 @@ from typing import Any
 import torch
 
 from lerobot.configs.types import PolicyFeature
+from lerobot.constants import OBS_STATE
+from lerobot.processor.pipeline import (
+    ObservationProcessor,
+    ProcessorStepRegistry,
+)
 from lerobot.robots import Robot
-
-from .pipeline import ObservationProcessor, ProcessorStepRegistry
 
 
 @dataclass
@@ -20,10 +23,10 @@ class JointVelocityProcessor(ObservationProcessor):
 
     def observation(self, observation: dict) -> dict:
         # Get current joint positions (assuming they're in observation.state)
-        current_positions = observation.get("observation.state")
+        current_positions = observation.get(OBS_STATE)
         if current_positions is None:
             # TODO(steven): if we get here, then the transform_features method will not hold
-            return observation
+            raise ValueError(f"{OBS_STATE} is not in observation")
 
         # Initialize last joint positions if not already set
         if self.last_joint_positions is None:
@@ -40,7 +43,7 @@ class JointVelocityProcessor(ObservationProcessor):
 
         # Create new observation dict
         new_observation = dict(observation)
-        new_observation["observation.state"] = extended_state
+        new_observation[OBS_STATE] = extended_state
 
         return new_observation
 
@@ -53,12 +56,12 @@ class JointVelocityProcessor(ObservationProcessor):
         self.last_joint_positions = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        if "observation.state" in features:
-            original_feature = features["observation.state"]
+        if OBS_STATE in features:
+            original_feature = features[OBS_STATE]
             # Double the shape to account for positions + velocities
             new_shape = (original_feature.shape[0] * 2,) + original_feature.shape[1:]
 
-            features["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
+            features[OBS_STATE] = PolicyFeature(type=original_feature.type, shape=new_shape)
         return features
 
 
@@ -72,14 +75,15 @@ class MotorCurrentProcessor(ObservationProcessor):
     def observation(self, observation: dict) -> dict:
         # Get current values from robot state
         if self.robot is None:
-            return observation
+            raise ValueError("Robot is not set")
+
         present_current_dict = self.robot.bus.sync_read("Present_Current")  # type: ignore[attr-defined]
         motor_currents = torch.tensor(
             [present_current_dict[name] for name in self.robot.bus.motors],  # type: ignore[attr-defined]
             dtype=torch.float32,
         ).unsqueeze(0)
 
-        current_state = observation.get("observation.state")
+        current_state = observation.get(OBS_STATE)
         if current_state is None:
             return observation
 
@@ -87,15 +91,13 @@ class MotorCurrentProcessor(ObservationProcessor):
 
         # Create new observation dict
         new_observation = dict(observation)
-        new_observation["observation.state"] = extended_state
+        new_observation[OBS_STATE] = extended_state
 
         return new_observation
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        if "observation.state" in features and self.robot is not None:
-            from lerobot.configs.types import PolicyFeature
-
-            original_feature = features["observation.state"]
+        if OBS_STATE in features and self.robot is not None:
+            original_feature = features[OBS_STATE]
             # Add motor current dimensions to the original state shape
             num_motors = 0
             if hasattr(self.robot, "bus") and hasattr(self.robot.bus, "motors"):  # type: ignore[attr-defined]
@@ -103,5 +105,5 @@ class MotorCurrentProcessor(ObservationProcessor):
 
             if num_motors > 0:
                 new_shape = (original_feature.shape[0] + num_motors,) + original_feature.shape[1:]
-                features["observation.state"] = PolicyFeature(type=original_feature.type, shape=new_shape)
+                features[OBS_STATE] = PolicyFeature(type=original_feature.type, shape=new_shape)
         return features
