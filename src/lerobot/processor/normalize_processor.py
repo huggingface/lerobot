@@ -12,7 +12,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from .converters import to_tensor
 from .core import EnvTransition, TransitionKey
-from .pipeline import ProcessorStep, ProcessorStepRegistry, RobotProcessor
+from .pipeline import DataProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
@@ -252,7 +252,9 @@ class UnnormalizerProcessor(_NormalizationMixin, ProcessorStep):
         return features
 
 
-def hotswap_stats(robot_processor: RobotProcessor, stats: dict[str, dict[str, Any]]) -> RobotProcessor:
+def hotswap_stats(
+    robot_processor: DataProcessorPipeline, stats: dict[str, dict[str, Any]]
+) -> DataProcessorPipeline:
     """
     Replaces normalization statistics in a RobotProcessor pipeline.
 

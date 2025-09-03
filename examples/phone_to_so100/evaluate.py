@@ -21,7 +21,7 @@ from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
-from lerobot.processor import RobotProcessor
+from lerobot.processor import DataProcessorPipeline
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
@@ -65,7 +65,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints_processor = RobotProcessor(
+robot_ee_to_joints_processor = DataProcessorPipeline(
     steps=[
         AddRobotObservationAsComplimentaryData(robot=robot),
         InverseKinematicsEEToJoints(
@@ -79,7 +79,7 @@ robot_ee_to_joints_processor = RobotProcessor(
 )
 
 # Build pipeline to convert joint observation to ee pose observation
-robot_joints_to_ee_pose_processor = RobotProcessor(
+robot_joints_to_ee_pose_processor = DataProcessorPipeline(
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],

@@ -17,11 +17,11 @@ from typing import Any
 
 from lerobot.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.processor import RobotProcessor
+from lerobot.processor import DataProcessorPipeline
 
 
 def aggregate_pipeline_dataset_features(
-    pipeline: RobotProcessor,
+    pipeline: DataProcessorPipeline,
     initial_features: dict[str, Any],
     *,
     use_videos: bool = True,

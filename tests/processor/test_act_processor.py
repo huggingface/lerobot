@@ -25,10 +25,10 @@ from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.processor import (
+    DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
     RenameProcessor,
-    RobotProcessor,
     ToBatchProcessor,
     TransitionKey,
     UnnormalizerProcessor,
@@ -250,7 +250,7 @@ def test_act_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(
             tmpdir, to_transition=lambda x: x, to_output=lambda x: x
         )
 

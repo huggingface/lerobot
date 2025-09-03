@@ -22,7 +22,7 @@ import pytest
 import torch
 
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
-from lerobot.processor import ProcessorStepRegistry, RobotProcessor, ToBatchProcessor, TransitionKey
+from lerobot.processor import DataProcessorPipeline, ProcessorStepRegistry, ToBatchProcessor, TransitionKey
 
 
 def create_transition(
@@ -243,7 +243,7 @@ def test_mixed_observation():
 def test_integration_with_robot_processor():
     """Test ToBatchProcessor integration with RobotProcessor."""
     to_batch_processor = ToBatchProcessor()
-    pipeline = RobotProcessor([to_batch_processor], to_transition=lambda x: x, to_output=lambda x: x)
+    pipeline = DataProcessorPipeline([to_batch_processor], to_transition=lambda x: x, to_output=lambda x: x)
 
     # Create unbatched observation
     observation = {
@@ -283,7 +283,7 @@ def test_serialization_methods():
 def test_save_and_load_pretrained():
     """Test saving and loading ToBatchProcessor with RobotProcessor."""
     processor = ToBatchProcessor()
-    pipeline = RobotProcessor(
+    pipeline = DataProcessorPipeline(
         [processor], name="BatchPipeline", to_transition=lambda x: x, to_output=lambda x: x
     )
 
@@ -296,7 +296,7 @@ def test_save_and_load_pretrained():
         assert config_path.exists()
 
         # Load pipeline
-        loaded_pipeline = RobotProcessor.from_pretrained(
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
             tmp_dir, to_transition=lambda x: x, to_output=lambda x: x
         )
 
@@ -325,11 +325,11 @@ def test_registry_functionality():
 def test_registry_based_save_load():
     """Test saving and loading using registry name."""
     processor = ToBatchProcessor()
-    pipeline = RobotProcessor([processor], to_transition=lambda x: x, to_output=lambda x: x)
+    pipeline = DataProcessorPipeline([processor], to_transition=lambda x: x, to_output=lambda x: x)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
-        loaded_pipeline = RobotProcessor.from_pretrained(
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
             tmp_dir, to_transition=lambda x: x, to_output=lambda x: x
         )
 

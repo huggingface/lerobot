@@ -21,12 +21,12 @@ from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_N
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
     ComplementaryDataProcessor,
+    DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
     ProcessorKwargs,
     ProcessorStepRegistry,
     RenameProcessor,
-    RobotProcessor,
     ToBatchProcessor,
     TokenizerProcessor,
     UnnormalizerProcessor,
@@ -38,7 +38,7 @@ def make_smolvla_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     preprocessor_kwargs: ProcessorKwargs | None = None,
     postprocessor_kwargs: ProcessorKwargs | None = None,
-) -> tuple[RobotProcessor, RobotProcessor]:
+) -> tuple[DataProcessorPipeline, DataProcessorPipeline]:
     if preprocessor_kwargs is None:
         preprocessor_kwargs = {}
     if postprocessor_kwargs is None:
@@ -68,12 +68,12 @@ def make_smolvla_pre_post_processors(
         ),
     ]
     return (
-        RobotProcessor(
+        DataProcessorPipeline(
             steps=input_steps,
             name=PREPROCESSOR_DEFAULT_NAME,
             **preprocessor_kwargs,
         ),
-        RobotProcessor(
+        DataProcessorPipeline(
             steps=output_steps,
             name=POSTPROCESSOR_DEFAULT_NAME,
             **postprocessor_kwargs,

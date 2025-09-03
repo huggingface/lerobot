@@ -25,10 +25,10 @@ from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
 from lerobot.processor import (
+    DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
     RenameProcessor,
-    RobotProcessor,
     ToBatchProcessor,
     TransitionKey,
     UnnormalizerProcessor,
@@ -257,7 +257,7 @@ def test_diffusion_processor_save_and_load():
     factory_preprocessor, factory_postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     # Create new processors with EnvTransition input/output
-    preprocessor = RobotProcessor(
+    preprocessor = DataProcessorPipeline(
         factory_preprocessor.steps, to_transition=lambda x: x, to_output=lambda x: x
     )
 
@@ -266,7 +266,7 @@ def test_diffusion_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = RobotProcessor.from_pretrained(
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(
             tmpdir, to_transition=lambda x: x, to_output=lambda x: x
         )
 
@@ -303,7 +303,7 @@ def test_diffusion_processor_mixed_precision():
             modified_steps.append(step)
 
     # Create new processors with EnvTransition input/output
-    preprocessor = RobotProcessor(modified_steps, to_transition=lambda x: x, to_output=lambda x: x)
+    preprocessor = DataProcessorPipeline(modified_steps, to_transition=lambda x: x, to_output=lambda x: x)
 
     # Create test data
     observation = {

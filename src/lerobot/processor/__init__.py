@@ -41,6 +41,7 @@ from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessor,
     ComplementaryDataProcessor,
+    DataProcessorPipeline,
     DoneProcessor,
     IdentityProcessor,
     InfoProcessor,
@@ -49,7 +50,6 @@ from .pipeline import (
     ProcessorStep,
     ProcessorStepRegistry,
     RewardProcessor,
-    RobotProcessor,
     TruncatedProcessor,
 )
 from .rename_processor import RenameProcessor
@@ -85,7 +85,7 @@ __all__ = [
     "RenameProcessor",
     "RewardClassifierProcessor",
     "RewardProcessor",
-    "RobotProcessor",
+    "DataProcessorPipeline",
     "TimeLimitProcessor",
     "ToBatchProcessor",
     "TokenizerProcessor",
