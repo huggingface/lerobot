@@ -304,11 +304,11 @@ def test_features():
 def test_integration_with_robot_processor():
     """Test integration with RobotProcessor."""
     from lerobot.constants import OBS_STATE
-    from lerobot.processor import ToBatchProcessor
+    from lerobot.processor import AddBatchDimensionProcessorStep
 
     # Create a pipeline with DeviceProcessorStep
     device_processor = DeviceProcessorStep(device="cpu")
-    batch_processor = ToBatchProcessor()
+    batch_processor = AddBatchDimensionProcessorStep()
 
     processor = DataProcessorPipeline(
         steps=[batch_processor, device_processor],
@@ -966,7 +966,11 @@ def test_policy_processor_integration():
     """Test integration with policy processors - input on GPU, output on CPU."""
     from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
     from lerobot.constants import ACTION, OBS_STATE
-    from lerobot.processor import NormalizerProcessorStep, ToBatchProcessor, UnnormalizerProcessorStep
+    from lerobot.processor import (
+        AddBatchDimensionProcessorStep,
+        NormalizerProcessorStep,
+        UnnormalizerProcessorStep,
+    )
 
     # Create features and stats
     features = {
@@ -985,7 +989,7 @@ def test_policy_processor_integration():
     input_processor = DataProcessorPipeline(
         steps=[
             NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats),
-            ToBatchProcessor(),
+            AddBatchDimensionProcessorStep(),
             DeviceProcessorStep(device="cuda"),
         ],
         name="test_preprocessor",

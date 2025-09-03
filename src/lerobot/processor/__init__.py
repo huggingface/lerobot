@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .batch_processor import ToBatchProcessor
+from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
     batch_to_transition,
     create_transition,
@@ -87,7 +87,7 @@ __all__ = [
     "RewardProcessorStep",
     "DataProcessorPipeline",
     "TimeLimitProcessorStep",
-    "ToBatchProcessor",
+    "AddBatchDimensionProcessorStep",
     "TokenizerProcessorStep",
     "Torch2NumpyActionProcessorStep",
     "transition_to_batch",

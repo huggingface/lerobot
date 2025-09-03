@@ -25,11 +25,11 @@ from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.vqbet.processor_vqbet import make_vqbet_pre_post_processors
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     RenameProcessorStep,
-    ToBatchProcessor,
     TransitionKey,
     UnnormalizerProcessorStep,
 )
@@ -96,7 +96,7 @@ def test_make_vqbet_processor_basic():
     assert len(preprocessor.steps) == 4
     assert isinstance(preprocessor.steps[0], RenameProcessorStep)
     assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
-    assert isinstance(preprocessor.steps[2], ToBatchProcessor)
+    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
 
     # Check steps in postprocessor

@@ -47,7 +47,7 @@ from safetensors.torch import load_file as load_safetensors
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
-from .batch_processor import ToBatchProcessor
+from .batch_processor import AddBatchDimensionProcessorStep
 from .device_processor import DeviceProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 from .pipeline import DataProcessorPipeline
@@ -419,7 +419,7 @@ def main():
             norm_map=norm_map,
             stats=stats,
         ),
-        ToBatchProcessor(),
+        AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=policy_config.device),
     ]
     preprocessor = DataProcessorPipeline(steps=preprocessor_steps, name="robot_preprocessor")

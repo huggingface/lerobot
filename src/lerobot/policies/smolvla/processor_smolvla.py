@@ -20,6 +20,7 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
@@ -27,7 +28,6 @@ from lerobot.processor import (
     ProcessorKwargs,
     ProcessorStepRegistry,
     RenameProcessorStep,
-    ToBatchProcessor,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -51,7 +51,7 @@ def make_smolvla_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        ToBatchProcessor(),
+        AddBatchDimensionProcessorStep(),
         SmolVLANewLineProcessor(),
         TokenizerProcessorStep(
             tokenizer_name=config.vlm_model_name,

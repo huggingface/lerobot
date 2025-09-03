@@ -18,12 +18,12 @@ import torch
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     ProcessorKwargs,
     RenameProcessorStep,
-    ToBatchProcessor,
     UnnormalizerProcessorStep,
 )
 
@@ -46,7 +46,7 @@ def make_act_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        ToBatchProcessor(),
+        AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
     ]
     output_steps = [
