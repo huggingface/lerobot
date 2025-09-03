@@ -79,8 +79,8 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import DataProcessorPipeline, IdentityProcessorStep, TransitionKey
 from lerobot.processor.converters import (
     action_to_transition,
+    observation_to_transition,
     to_output_robot_action,
-    to_transition_robot_observation,
     transition_to_dataset_frame,
 )
 from lerobot.processor.rename_processor import rename_stats
@@ -252,7 +252,7 @@ def record_loop(
     )
     robot_observation_processor = robot_observation_processor or DataProcessorPipeline(
         steps=[IdentityProcessorStep()],
-        to_transition=to_transition_robot_observation,
+        to_transition=observation_to_transition,
         to_output=lambda tr: tr,
     )
 

@@ -6,9 +6,9 @@ from lerobot.processor import TransitionKey
 from lerobot.processor.converters import (
     action_to_transition,
     batch_to_transition,
+    observation_to_transition,
     to_output_robot_action,
     to_tensor,
-    to_transition_robot_observation,
     transition_to_batch,
     transition_to_dataset_frame,
 )
@@ -61,7 +61,7 @@ def test_to_transition_robot_observation_state_vs_images_split():
         "arr": np.array([1.5, 2.5]),  # vector to state to torch tensor
     }
 
-    tr = to_transition_robot_observation(obs)
+    tr = observation_to_transition(obs)
     assert isinstance(tr, dict)
     assert TransitionKey.OBSERVATION in tr
 

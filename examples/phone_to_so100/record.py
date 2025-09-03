@@ -23,8 +23,8 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import DataProcessorPipeline
 from lerobot.processor.converters import (
     action_to_transition,
+    observation_to_transition,
     to_output_robot_action,
-    to_transition_robot_observation,
 )
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
@@ -114,7 +114,7 @@ robot_joints_to_ee_pose = DataProcessorPipeline(
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
-    to_transition=to_transition_robot_observation,
+    to_transition=observation_to_transition,
     to_output=lambda tr: tr,
 )
 
