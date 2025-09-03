@@ -69,7 +69,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
     truncation: bool = True
 
     # Internal tokenizer instance (not serialized)
-    _tokenizer: Any = field(default=None, init=False, repr=False)
+    input_tokenizer: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         """Initialize the tokenizer from the provided tokenizer or tokenizer name."""
@@ -81,11 +81,11 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         if self.tokenizer is not None:
             # Use provided tokenizer object directly
-            self._tokenizer = self.tokenizer
+            self.input_tokenizer = self.tokenizer
         elif self.tokenizer_name is not None:
             if AutoTokenizer is None:
                 raise ImportError("AutoTokenizer is not available")
-            self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+            self.input_tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         else:
             raise ValueError(
                 "Either 'tokenizer' or 'tokenizer_name' must be provided. "
@@ -193,7 +193,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         Returns:
             Dictionary containing tokenized output with keys like 'input_ids', 'attention_mask'.
         """
-        return self._tokenizer(
+        return self.input_tokenizer(
             text,
             max_length=self.max_length,
             truncation=self.truncation,
