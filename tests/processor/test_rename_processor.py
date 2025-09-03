@@ -233,7 +233,9 @@ def test_save_and_load_pretrained():
         pipeline.save_pretrained(tmp_dir)
 
         # Check files were created
-        config_path = Path(tmp_dir) / "testrenameprocessor.json"  # Based on name="TestRenameProcessorStep"
+        config_path = (
+            Path(tmp_dir) / "testrenameprocessorstep.json"
+        )  # Based on name="TestRenameProcessorStep"
         assert config_path.exists()
 
         # No state files should be created for RenameProcessorStep
