@@ -27,7 +27,7 @@ from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorTo
 from .device_processor import DeviceProcessorStep
 from .gym_action_processor import Numpy2TorchActionProcessorStep, Torch2NumpyActionProcessorStep
 from .hil_processor import (
-    AddTeleopActionAsComplimentaryData,
+    AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfo,
     GripperPenaltyProcessor,
     ImageCropResizeProcessor,
@@ -57,7 +57,7 @@ from .tokenizer_processor import TokenizerProcessor
 
 __all__ = [
     "ActionProcessorStep",
-    "AddTeleopActionAsComplimentaryData",
+    "AddTeleopActionAsComplimentaryDataStep",
     "AddTeleopEventsAsInfo",
     "ComplementaryDataProcessorStep",
     "batch_to_transition",

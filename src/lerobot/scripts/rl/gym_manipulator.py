@@ -29,7 +29,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
-    AddTeleopActionAsComplimentaryData,
+    AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfo,
     DataProcessorPipeline,
     DeviceProcessorStep,
@@ -448,7 +448,7 @@ def make_processors(
     env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
     action_pipeline_steps = [
-        AddTeleopActionAsComplimentaryData(teleop_device=teleop_device),
+        AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
         AddTeleopEventsAsInfo(teleop_device=teleop_device),
         AddRobotObservationAsComplimentaryData(robot=env.robot),
         InterventionActionProcessor(

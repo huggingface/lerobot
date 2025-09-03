@@ -29,7 +29,7 @@ TELEOP_ACTION_KEY = "teleop_action"
 
 @ProcessorStepRegistry.register("add_teleop_action_as_complementary_data")
 @dataclass
-class AddTeleopActionAsComplimentaryData(ComplementaryDataProcessorStep):
+class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
     """Add teleoperator action to transition complementary data."""
 
     teleop_device: Teleoperator
