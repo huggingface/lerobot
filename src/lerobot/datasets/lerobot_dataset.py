@@ -311,6 +311,10 @@ class LeRobotDatasetMetadata:
                 latest_df = pd.read_parquet(latest_path)
                 df = pd.concat([latest_df, df], ignore_index=True)
 
+                # Memort optimization
+                del latest_df
+                gc.collect()
+
         # Write the resulting dataframe from RAM to disk
         path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1054,6 +1058,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 # Update the existing parquet file with new rows
                 latest_df = pd.read_parquet(latest_path)
                 df = pd.concat([latest_df, df], ignore_index=True)
+
+                # Memort optimization
+                del latest_df
+                gc.collect()
 
         # Write the resulting dataframe from RAM to disk
         path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
