@@ -19,8 +19,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.processor import DeviceProcessor, RobotProcessor
-from lerobot.processor.pipeline import TransitionKey
+from lerobot.processor import DeviceProcessor, RobotProcessor, TransitionKey
 
 
 def create_transition(
@@ -358,7 +357,7 @@ def test_save_and_load_pretrained():
 
 def test_registry_functionality():
     """Test that DeviceProcessor is properly registered."""
-    from lerobot.processor.pipeline import ProcessorStepRegistry
+    from lerobot.processor import ProcessorStepRegistry
 
     # Check that DeviceProcessor is registered
     registered_class = ProcessorStepRegistry.get("device_processor")

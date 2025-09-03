@@ -20,7 +20,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import ACTION
-from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
+from .pipeline import ActionProcessor, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("map_tensor_to_delta_action_dict")

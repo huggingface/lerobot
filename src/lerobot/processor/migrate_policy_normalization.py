@@ -46,11 +46,12 @@ from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file as load_safetensors
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.processor.batch_processor import ToBatchProcessor
-from lerobot.processor.device_processor import DeviceProcessor
-from lerobot.processor.normalize_processor import NormalizerProcessor, UnnormalizerProcessor
-from lerobot.processor.pipeline import RobotProcessor
-from lerobot.processor.rename_processor import RenameProcessor
+
+from .batch_processor import ToBatchProcessor
+from .device_processor import DeviceProcessor
+from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor
+from .pipeline import RobotProcessor
+from .rename_processor import RenameProcessor
 
 # Policy type to class mapping
 POLICY_CLASSES = {

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from lerobot.processor.pipeline import TransitionKey
+from lerobot.processor import TransitionKey
 
 
 @pytest.fixture

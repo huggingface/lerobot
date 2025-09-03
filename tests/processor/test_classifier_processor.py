@@ -24,8 +24,13 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.constants import OBS_IMAGE, OBS_STATE
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
-from lerobot.processor import DeviceProcessor, IdentityProcessor, NormalizerProcessor, RobotProcessor
-from lerobot.processor.pipeline import TransitionKey
+from lerobot.processor import (
+    DeviceProcessor,
+    IdentityProcessor,
+    NormalizerProcessor,
+    RobotProcessor,
+    TransitionKey,
+)
 
 
 def create_transition(observation=None, action=None, **kwargs):

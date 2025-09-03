@@ -20,7 +20,12 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import FeatureType
-from lerobot.processor import ProcessorStepRegistry, RenameProcessor, RobotProcessor, TransitionKey
+from lerobot.processor import (
+    ProcessorStepRegistry,
+    RenameProcessor,
+    RobotProcessor,
+    TransitionKey,
+)
 from lerobot.processor.rename_processor import rename_stats
 from tests.conftest import assert_contract_is_typed
 

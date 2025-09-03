@@ -40,6 +40,7 @@ from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor, hot
 from .observation_processor import VanillaObservationProcessor
 from .pipeline import (
     ActionProcessor,
+    ComplementaryDataProcessor,
     DoneProcessor,
     IdentityProcessor,
     InfoProcessor,
@@ -58,6 +59,7 @@ __all__ = [
     "ActionProcessor",
     "AddTeleopActionAsComplimentaryData",
     "AddTeleopEventsAsInfo",
+    "ComplementaryDataProcessor",
     "batch_to_transition",
     "create_transition",
     "DeviceProcessor",

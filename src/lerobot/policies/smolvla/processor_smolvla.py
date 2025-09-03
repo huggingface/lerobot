@@ -20,18 +20,16 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
+    ComplementaryDataProcessor,
     DeviceProcessor,
     NormalizerProcessor,
     ProcessorKwargs,
+    ProcessorStepRegistry,
     RenameProcessor,
     RobotProcessor,
     ToBatchProcessor,
     TokenizerProcessor,
     UnnormalizerProcessor,
-)
-from lerobot.processor.pipeline import (
-    ComplementaryDataProcessor,
-    ProcessorStepRegistry,
 )
 
 

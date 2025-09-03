@@ -22,7 +22,7 @@ from scipy.spatial.transform import Rotation
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor.pipeline import (
+from lerobot.processor import (
     ActionProcessor,
     ComplementaryDataProcessor,
     EnvTransition,
@@ -256,8 +256,9 @@ class InverseKinematicsEEToJoints(ProcessorStep):
     initial_guess_current_joints: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        act = transition.get(TransitionKey.ACTION) or {}
-        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        new_transition = transition.copy()
+        act = new_transition.get(TransitionKey.ACTION) or {}
+        comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
         x = act.get(f"{ACTION}.ee.x", None)
         y = act.get(f"{ACTION}.ee.y", None)
@@ -267,7 +268,7 @@ class InverseKinematicsEEToJoints(ProcessorStep):
         wz = act.get(f"{ACTION}.ee.wz", None)
 
         if None in (x, y, z, wx, wy, wz):
-            return transition
+            return new_transition
 
         # Get joint positions from complimentary data
         raw = comp.get("raw_joint_positions", None)
@@ -299,10 +300,10 @@ class InverseKinematicsEEToJoints(ProcessorStep):
                 new_act[f"{OBS_STATE}.gripper.pos"] = float(raw["gripper"])
             else:
                 new_act[f"{ACTION}.{name}.pos"] = float(q_target[i])
-        transition[TransitionKey.ACTION] = new_act
+        new_transition[TransitionKey.ACTION] = new_act
         if not self.initial_guess_current_joints:
-            transition[TransitionKey.COMPLEMENTARY_DATA]["reference_joint_positions"] = q_target
-        return transition
+            new_transition[TransitionKey.COMPLEMENTARY_DATA]["reference_joint_positions"] = q_target
+        return new_transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         new_features = features.copy()
@@ -340,9 +341,10 @@ class GripperVelocityToJoint(ProcessorStep):
     discrete_gripper: bool = False
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        obs = transition.get(TransitionKey.OBSERVATION) or {}
-        act = transition.get(TransitionKey.ACTION) or {}
-        comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        new_transition = transition.copy()
+        obs = new_transition.get(TransitionKey.OBSERVATION) or {}
+        act = new_transition.get(TransitionKey.ACTION) or {}
+        comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
         if f"{ACTION}.gripper" not in act:
             raise ValueError(f"Required action key '{ACTION}.gripper' not found in transition")
@@ -373,11 +375,11 @@ class GripperVelocityToJoint(ProcessorStep):
         new_act = dict(act)
         new_act[f"{ACTION}.gripper.pos"] = gripper_pos
         new_act.pop(f"{ACTION}.gripper", None)
-        transition[TransitionKey.ACTION] = new_act
+        new_transition[TransitionKey.ACTION] = new_act
 
         obs[f"{OBS_STATE}.gripper.pos"] = curr_pos
-        transition[TransitionKey.OBSERVATION] = obs
-        return transition
+        new_transition[TransitionKey.OBSERVATION] = obs
+        return new_transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         new_features = features.copy()

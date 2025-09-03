@@ -20,12 +20,12 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
 from lerobot.datasets.utils import merge_features
 from lerobot.model.kinematics import RobotKinematics
+from lerobot.processor import RobotProcessor
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
     to_transition_teleop_action,
 )
-from lerobot.processor.pipeline import RobotProcessor
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -73,7 +73,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert phone action to ee pose action
-phone_to_robot_ee_pose = RobotProcessor(
+phone_to_robot_ee_pose_processor = RobotProcessor(
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         AddRobotObservationAsComplimentaryData(robot=robot),
@@ -93,7 +93,7 @@ phone_to_robot_ee_pose = RobotProcessor(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints = RobotProcessor(
+robot_ee_to_joints_processor = RobotProcessor(
     steps=[
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
@@ -120,7 +120,7 @@ robot_joints_to_ee_pose = RobotProcessor(
 
 # Build dataset ee action features
 action_ee = aggregate_pipeline_dataset_features(
-    pipeline=phone_to_robot_ee_pose,
+    pipeline=phone_to_robot_ee_pose_processor,
     initial_features=phone.action_features,
     use_videos=True,
     patterns=["action.ee"],
@@ -128,7 +128,7 @@ action_ee = aggregate_pipeline_dataset_features(
 
 # Get gripper pos action features
 gripper = aggregate_pipeline_dataset_features(
-    pipeline=robot_ee_to_joints,
+    pipeline=robot_ee_to_joints_processor,
     initial_features={},
     use_videos=True,
     patterns=["action.gripper.pos", "observation.state.gripper.pos"],
@@ -177,8 +177,8 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
         display_data=True,
-        teleop_action_processor=phone_to_robot_ee_pose,
-        robot_action_processor=robot_ee_to_joints,
+        teleop_action_processor=phone_to_robot_ee_pose_processor,
+        robot_action_processor=robot_ee_to_joints_processor,
         robot_observation_processor=robot_joints_to_ee_pose,
     )
 
@@ -193,8 +193,8 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
             control_time_s=RESET_TIME_SEC,
             single_task=TASK_DESCRIPTION,
             display_data=True,
-            teleop_action_processor=phone_to_robot_ee_pose,
-            robot_action_processor=robot_ee_to_joints,
+            teleop_action_processor=phone_to_robot_ee_pose_processor,
+            robot_action_processor=robot_ee_to_joints_processor,
             robot_observation_processor=robot_joints_to_ee_pose,
         )
 

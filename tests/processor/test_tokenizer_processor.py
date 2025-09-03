@@ -10,8 +10,7 @@ import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import OBS_LANGUAGE
-from lerobot.processor.pipeline import RobotProcessor, TransitionKey
-from lerobot.processor.tokenizer_processor import TokenizerProcessor
+from lerobot.processor import RobotProcessor, TokenizerProcessor, TransitionKey
 from tests.utils import require_package
 
 
@@ -488,7 +487,7 @@ def test_save_and_load_pretrained_with_tokenizer_object():
 @require_package("transformers")
 def test_registry_functionality():
     """Test that the processor is properly registered."""
-    from lerobot.processor.pipeline import ProcessorStepRegistry
+    from lerobot.processor import ProcessorStepRegistry
 
     # Check that the processor is registered
     assert "tokenizer_processor" in ProcessorStepRegistry.list()

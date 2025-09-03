@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import torch
 
+from lerobot.processor import TransitionKey
 from lerobot.processor.converters import (
     batch_to_transition,
     to_output_robot_action,
@@ -11,7 +12,6 @@ from lerobot.processor.converters import (
     transition_to_batch,
     transition_to_dataset_frame,
 )
-from lerobot.processor.pipeline import TransitionKey
 
 
 def test_to_transition_teleop_action_prefix_and_tensor_conversion():

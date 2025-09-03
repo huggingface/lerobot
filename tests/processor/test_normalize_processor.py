@@ -20,13 +20,15 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.processor.converters import to_tensor
-from lerobot.processor.normalize_processor import (
+from lerobot.processor import (
+    IdentityProcessor,
     NormalizerProcessor,
+    RobotProcessor,
+    TransitionKey,
     UnnormalizerProcessor,
     hotswap_stats,
 )
-from lerobot.processor.pipeline import IdentityProcessor, RobotProcessor, TransitionKey
+from lerobot.processor.converters import to_tensor
 
 
 def create_transition(

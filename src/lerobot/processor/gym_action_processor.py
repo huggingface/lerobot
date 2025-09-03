@@ -17,8 +17,9 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.processor.converters import to_tensor
-from lerobot.processor.pipeline import ActionProcessor, ProcessorStepRegistry
+
+from .converters import to_tensor
+from .pipeline import ActionProcessor, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("torch2numpy_action_processor")

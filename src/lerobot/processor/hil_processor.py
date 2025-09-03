@@ -9,18 +9,18 @@ import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.constants import ACTION
-from lerobot.processor.pipeline import (
+from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.teleoperators.utils import TeleopEvents
+
+from .core import EnvTransition, TransitionKey
+from .pipeline import (
     ComplementaryDataProcessor,
-    EnvTransition,
     InfoProcessor,
     ObservationProcessor,
     ProcessorStep,
     ProcessorStepRegistry,
-    TransitionKey,
     TruncatedProcessor,
 )
-from lerobot.teleoperators.teleoperator import Teleoperator
-from lerobot.teleoperators.utils import TeleopEvents
 
 GRIPPER_KEY = "gripper"
 DISCRETE_PENALTY_KEY = "discrete_penalty"
@@ -283,15 +283,16 @@ class RewardClassifierProcessor(ProcessorStep):
             self.reward_classifier.eval()
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION)
+        new_transition = transition.copy()
+        observation = new_transition.get(TransitionKey.OBSERVATION)
         if observation is None or self.reward_classifier is None:
-            return transition
+            return new_transition
 
         # Extract images from observation
         images = {key: value for key, value in observation.items() if "image" in key}
 
         if not images:
-            return transition
+            return new_transition
 
         # Run reward classifier
         start_time = time.perf_counter()
@@ -301,8 +302,8 @@ class RewardClassifierProcessor(ProcessorStep):
         classifier_frequency = 1 / (time.perf_counter() - start_time)
 
         # Calculate reward and termination
-        reward = transition.get(TransitionKey.REWARD, 0.0)
-        terminated = transition.get(TransitionKey.DONE, False)
+        reward = new_transition.get(TransitionKey.REWARD, 0.0)
+        terminated = new_transition.get(TransitionKey.DONE, False)
 
         if math.isclose(success, 1, abs_tol=1e-2):
             reward = self.success_reward
@@ -310,7 +311,6 @@ class RewardClassifierProcessor(ProcessorStep):
                 terminated = True
 
         # Update transition
-        new_transition = transition.copy()
         new_transition[TransitionKey.REWARD] = reward
         new_transition[TransitionKey.DONE] = terminated
 

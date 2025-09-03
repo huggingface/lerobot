@@ -22,7 +22,8 @@ from torch import Tensor
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
-from lerobot.processor.pipeline import ObservationProcessor, ProcessorStepRegistry
+
+from .pipeline import ObservationProcessor, ProcessorStepRegistry
 
 
 @dataclass

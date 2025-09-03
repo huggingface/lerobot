@@ -32,6 +32,7 @@ from lerobot.processor import (
     AddTeleopActionAsComplimentaryData,
     AddTeleopEventsAsInfo,
     DeviceProcessor,
+    EnvTransition,
     GripperPenaltyProcessor,
     ImageCropResizeProcessor,
     InterventionActionProcessor,
@@ -45,10 +46,10 @@ from lerobot.processor import (
     TimeLimitProcessor,
     ToBatchProcessor,
     Torch2NumpyActionProcessor,
+    TransitionKey,
     VanillaObservationProcessor,
     create_transition,
 )
-from lerobot.processor.pipeline import EnvTransition, TransitionKey
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,

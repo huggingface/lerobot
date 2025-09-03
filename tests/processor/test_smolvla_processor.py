@@ -32,9 +32,9 @@ from lerobot.processor import (
     NormalizerProcessor,
     RenameProcessor,
     ToBatchProcessor,
+    TransitionKey,
     UnnormalizerProcessor,
 )
-from lerobot.processor.pipeline import TransitionKey
 
 
 def create_transition(observation=None, action=None, **kwargs):

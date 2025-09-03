@@ -11,6 +11,8 @@ from lerobot.processor.pipeline import (
 )
 from lerobot.robots import Robot
 
+from .pipeline import ObservationProcessor, ProcessorStepRegistry
+
 
 @dataclass
 @ProcessorStepRegistry.register("joint_velocity_processor")

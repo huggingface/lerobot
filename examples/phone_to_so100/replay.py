@@ -19,8 +19,8 @@ import time
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
+from lerobot.processor import RobotProcessor
 from lerobot.processor.converters import to_output_robot_action, to_transition_teleop_action
-from lerobot.processor.pipeline import RobotProcessor
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
@@ -50,7 +50,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints = RobotProcessor(
+robot_ee_to_joints_processor = RobotProcessor(
     steps=[
         AddRobotObservationAsComplimentaryData(robot=robot),
         InverseKinematicsEEToJoints(
@@ -63,7 +63,7 @@ robot_ee_to_joints = RobotProcessor(
     to_output=to_output_robot_action,
 )
 
-robot_ee_to_joints.reset()
+robot_ee_to_joints_processor.reset()
 
 log_say(f"Replaying episode {EPISODE_IDX}")
 for idx in range(dataset.num_frames):
@@ -73,7 +73,7 @@ for idx in range(dataset.num_frames):
         name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
     }
 
-    joint_action = robot_ee_to_joints(ee_action)
+    joint_action = robot_ee_to_joints_processor(ee_action)
     action_sent = robot.send_action(joint_action)
 
     busy_wait(1.0 / dataset.fps - (time.perf_counter() - t0))
