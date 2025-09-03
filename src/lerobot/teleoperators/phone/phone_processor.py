@@ -17,6 +17,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.constants import ACTION
 from lerobot.processor import ActionProcessor, ProcessorStepRegistry
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
@@ -48,10 +49,10 @@ class MapPhoneActionToRobotAction(ActionProcessor):
 
     def action(self, act: dict) -> dict:
         # Pop them from the action
-        enabled = bool(act.pop("action.phone.enabled", 0))
-        pos = act.pop("action.phone.pos", None)
-        rot = act.pop("action.phone.rot", None)
-        inputs = act.pop("action.phone.raw_inputs", {})
+        enabled = bool(act.pop(f"{ACTION}.phone.enabled", 0))
+        pos = act.pop(f"{ACTION}.phone.pos", None)
+        rot = act.pop(f"{ACTION}.phone.rot", None)
+        inputs = act.pop(f"{ACTION}.phone.raw_inputs", {})
 
         if pos is None or rot is None:
             raise ValueError("pos and rot must be present in action")
@@ -69,28 +70,28 @@ class MapPhoneActionToRobotAction(ActionProcessor):
             )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
 
         # For some actions we need to invert the axis
-        act["action.enabled"] = enabled
-        act["action.target_x"] = -pos[1] if enabled else 0.0
-        act["action.target_y"] = pos[0] if enabled else 0.0
-        act["action.target_z"] = pos[2] if enabled else 0.0
-        act["action.target_wx"] = rotvec[1] if enabled else 0.0
-        act["action.target_wy"] = rotvec[0] if enabled else 0.0
-        act["action.target_wz"] = -rotvec[2] if enabled else 0.0
-        act["action.gripper"] = gripper  # Still send gripper action when disabled
+        act[f"{ACTION}.enabled"] = enabled
+        act[f"{ACTION}.target_x"] = -pos[1] if enabled else 0.0
+        act[f"{ACTION}.target_y"] = pos[0] if enabled else 0.0
+        act[f"{ACTION}.target_z"] = pos[2] if enabled else 0.0
+        act[f"{ACTION}.target_wx"] = rotvec[1] if enabled else 0.0
+        act[f"{ACTION}.target_wy"] = rotvec[0] if enabled else 0.0
+        act[f"{ACTION}.target_wz"] = -rotvec[2] if enabled else 0.0
+        act[f"{ACTION}.gripper"] = gripper  # Still send gripper action when disabled
         return act
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features.pop("action.phone.enabled", None)
-        features.pop("action.phone.pos", None)
-        features.pop("action.phone.rot", None)
-        features.pop("action.phone.raw_inputs", None)
+        features.pop(f"{ACTION}.phone.enabled", None)
+        features.pop(f"{ACTION}.phone.pos", None)
+        features.pop(f"{ACTION}.phone.rot", None)
+        features.pop(f"{ACTION}.phone.raw_inputs", None)
 
-        features["action.enabled"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features["action.target_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features["action.target_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features["action.target_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features["action.target_wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features["action.target_wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features["action.target_wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features["action.gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.enabled"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.target_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.target_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.target_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.target_wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.target_wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.target_wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         return features
