@@ -30,7 +30,7 @@ from lerobot.policies.smolvla.processor_smolvla import (
 from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
-    RenameProcessor,
+    RenameProcessorStep,
     ToBatchProcessor,
     TransitionKey,
     UnnormalizerProcessorStep,
@@ -102,7 +102,7 @@ def test_make_smolvla_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 6
-    assert isinstance(preprocessor.steps[0], RenameProcessor)
+    assert isinstance(preprocessor.steps[0], RenameProcessorStep)
     assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
     assert isinstance(preprocessor.steps[2], ToBatchProcessor)
     assert isinstance(preprocessor.steps[3], SmolVLANewLineProcessor)

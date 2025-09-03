@@ -24,7 +24,7 @@ from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
     ProcessorKwargs,
-    RenameProcessor,
+    RenameProcessorStep,
     ToBatchProcessor,
     UnnormalizerProcessorStep,
 )
@@ -42,7 +42,7 @@ def make_vqbet_pre_post_processors(
         postprocessor_kwargs = {}
 
     input_steps = [
-        RenameProcessor(rename_map={}),  # Let the possibility to the user to rename the keys
+        RenameProcessorStep(rename_map={}),  # Let the possibility to the user to rename the keys
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,

@@ -28,7 +28,7 @@ from lerobot.processor import (
     ProcessorKwargs,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenameProcessor,
+    RenameProcessorStep,
     ToBatchProcessor,
     TokenizerProcessor,
     UnnormalizerProcessorStep,
@@ -80,7 +80,7 @@ def make_pi0_pre_post_processors(
 
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
-        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,

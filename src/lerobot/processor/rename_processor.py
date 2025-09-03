@@ -24,7 +24,7 @@ from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
 @dataclass
 @ProcessorStepRegistry.register(name="rename_processor")
-class RenameProcessor(ObservationProcessorStep):
+class RenameProcessorStep(ObservationProcessorStep):
     """Rename processor that renames keys in the observation."""
 
     rename_map: dict[str, str] = field(default_factory=dict)

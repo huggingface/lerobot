@@ -28,7 +28,7 @@ from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessorStep,
-    RenameProcessor,
+    RenameProcessorStep,
     ToBatchProcessor,
     TransitionKey,
     UnnormalizerProcessorStep,
@@ -94,7 +94,7 @@ def test_make_tdmpc_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 4
-    assert isinstance(preprocessor.steps[0], RenameProcessor)
+    assert isinstance(preprocessor.steps[0], RenameProcessorStep)
     assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
     assert isinstance(preprocessor.steps[2], ToBatchProcessor)
     assert isinstance(preprocessor.steps[3], DeviceProcessorStep)

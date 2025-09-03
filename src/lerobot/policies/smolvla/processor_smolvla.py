@@ -26,7 +26,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     ProcessorKwargs,
     ProcessorStepRegistry,
-    RenameProcessor,
+    RenameProcessorStep,
     ToBatchProcessor,
     TokenizerProcessor,
     UnnormalizerProcessorStep,
@@ -45,7 +45,7 @@ def make_smolvla_pre_post_processors(
         postprocessor_kwargs = {}
 
     input_steps = [
-        RenameProcessor(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
