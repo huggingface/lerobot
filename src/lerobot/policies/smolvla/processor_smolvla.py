@@ -20,7 +20,7 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
-    ComplementaryDataProcessor,
+    ComplementaryDataProcessorStep,
     DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
@@ -82,7 +82,7 @@ def make_smolvla_pre_post_processors(
 
 
 @ProcessorStepRegistry.register(name="smolvla_new_line_processor")
-class SmolVLANewLineProcessor(ComplementaryDataProcessor):
+class SmolVLANewLineProcessor(ComplementaryDataProcessorStep):
     """Add a new line to the end of the task if it doesn't have one."""
 
     def complementary_data(self, complementary_data):

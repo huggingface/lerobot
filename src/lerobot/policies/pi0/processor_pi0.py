@@ -21,7 +21,7 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
-    ComplementaryDataProcessor,
+    ComplementaryDataProcessorStep,
     DataProcessorPipeline,
     DeviceProcessor,
     NormalizerProcessor,
@@ -36,7 +36,7 @@ from lerobot.processor import (
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")
-class Pi0NewLineProcessor(ComplementaryDataProcessor):
+class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
     """Add a new line to the end of the task if it doesn't have one.
     This is required for the PaliGemma tokenizer.
     """

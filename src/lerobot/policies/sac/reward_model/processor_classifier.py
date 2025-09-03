@@ -19,7 +19,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessor,
-    IdentityProcessor,
+    IdentityProcessorStep,
     NormalizerProcessor,
     ProcessorKwargs,
 )
@@ -45,7 +45,7 @@ def make_classifier_processor(
         ),
         DeviceProcessor(device=config.device),
     ]
-    output_steps = [DeviceProcessor(device="cpu"), IdentityProcessor()]
+    output_steps = [DeviceProcessor(device="cpu"), IdentityProcessorStep()]
 
     return (
         DataProcessorPipeline(

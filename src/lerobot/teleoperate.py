@@ -61,7 +61,7 @@ import rerun as rr
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.processor import DataProcessorPipeline, IdentityProcessor
+from lerobot.processor import DataProcessorPipeline, IdentityProcessorStep
 from lerobot.processor.converters import (
     to_output_robot_action,
     to_transition_robot_observation,
@@ -121,15 +121,17 @@ def teleop_loop(
 ):
     # Initialize processors with defaults if not provided
     teleop_action_processor = teleop_action_processor or DataProcessorPipeline(
-        steps=[IdentityProcessor()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
+        steps=[IdentityProcessorStep()], to_transition=to_transition_teleop_action, to_output=lambda tr: tr
     )
     robot_action_processor = robot_action_processor or DataProcessorPipeline(
-        steps=[IdentityProcessor()],
+        steps=[IdentityProcessorStep()],
         to_transition=lambda tr: tr,
         to_output=to_output_robot_action,  # type: ignore[arg-type]
     )
     robot_observation_processor = robot_observation_processor or DataProcessorPipeline(
-        steps=[IdentityProcessor()], to_transition=to_transition_robot_observation, to_output=lambda tr: tr
+        steps=[IdentityProcessorStep()],
+        to_transition=to_transition_robot_observation,
+        to_output=lambda tr: tr,
     )
 
     # Reset processors
