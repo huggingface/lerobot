@@ -38,8 +38,8 @@ from lerobot.processor import (
     ImageCropResizeProcessor,
     InterventionActionProcessor,
     JointVelocityProcessor,
-    MapDeltaActionToRobotAction,
-    MapTensorToDeltaActionDict,
+    MapDeltaActionToRobotActionStep,
+    MapTensorToDeltaActionDictStep,
     MotorCurrentProcessor,
     Numpy2TorchActionProcessor,
     RewardClassifierProcessor,
@@ -461,10 +461,10 @@ def make_processors(
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
-            MapTensorToDeltaActionDict(
+            MapTensorToDeltaActionDictStep(
                 use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False
             ),
-            MapDeltaActionToRobotAction(),
+            MapDeltaActionToRobotActionStep(),
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
                 end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,

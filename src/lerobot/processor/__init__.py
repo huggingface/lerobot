@@ -23,7 +23,7 @@ from .converters import (
     transition_to_dataset_frame,
 )
 from .core import EnvTransition, TransitionKey
-from .delta_action_processor import MapDeltaActionToRobotAction, MapTensorToDeltaActionDict
+from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessor
 from .gym_action_processor import Numpy2TorchActionProcessor, Torch2NumpyActionProcessor
 from .hil_processor import (
@@ -72,8 +72,8 @@ __all__ = [
     "InfoProcessorStep",
     "InterventionActionProcessor",
     "JointVelocityProcessor",
-    "MapDeltaActionToRobotAction",
-    "MapTensorToDeltaActionDict",
+    "MapDeltaActionToRobotActionStep",
+    "MapTensorToDeltaActionDictStep",
     "merge_transitions",
     "MotorCurrentProcessor",
     "NormalizerProcessor",
