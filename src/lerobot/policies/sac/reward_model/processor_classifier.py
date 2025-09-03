@@ -17,10 +17,10 @@ import torch
 
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.processor import (
-    DataProcessorPipeline,
     DeviceProcessorStep,
     IdentityProcessorStep,
     NormalizerProcessorStep,
+    PolicyProcessorPipeline,
     ProcessorKwargs,
 )
 
@@ -30,7 +30,7 @@ def make_classifier_processor(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     preprocessor_kwargs: ProcessorKwargs | None = None,
     postprocessor_kwargs: ProcessorKwargs | None = None,
-) -> tuple[DataProcessorPipeline, DataProcessorPipeline]:
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     if preprocessor_kwargs is None:
         preprocessor_kwargs = {}
     if postprocessor_kwargs is None:
@@ -48,12 +48,12 @@ def make_classifier_processor(
     output_steps = [DeviceProcessorStep(device="cpu"), IdentityProcessorStep()]
 
     return (
-        DataProcessorPipeline(
+        PolicyProcessorPipeline(
             steps=input_steps,
             name="classifier_preprocessor",
             **preprocessor_kwargs,
         ),
-        DataProcessorPipeline(
+        PolicyProcessorPipeline(
             steps=output_steps,
             name="classifier_postprocessor",
             **postprocessor_kwargs,

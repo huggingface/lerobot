@@ -23,9 +23,9 @@ from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
-    DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessorStep,
+    PolicyProcessorPipeline,
     ProcessorKwargs,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -72,7 +72,7 @@ def make_pi0_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     preprocessor_kwargs: ProcessorKwargs | None = None,
     postprocessor_kwargs: ProcessorKwargs | None = None,
-) -> tuple[DataProcessorPipeline, DataProcessorPipeline]:
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     if preprocessor_kwargs is None:
         preprocessor_kwargs = {}
     if postprocessor_kwargs is None:
@@ -105,12 +105,12 @@ def make_pi0_pre_post_processors(
     ]
 
     return (
-        DataProcessorPipeline(
+        PolicyProcessorPipeline(
             steps=input_steps,
             name=PREPROCESSOR_DEFAULT_NAME,
             **preprocessor_kwargs,
         ),
-        DataProcessorPipeline(
+        PolicyProcessorPipeline(
             steps=output_steps,
             name=POSTPROCESSOR_DEFAULT_NAME,
             **postprocessor_kwargs,
