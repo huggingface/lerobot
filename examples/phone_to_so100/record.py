@@ -18,7 +18,7 @@
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
-from lerobot.datasets.utils import merge_features
+from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import DataProcessorPipeline
 from lerobot.processor.converters import (
@@ -142,7 +142,7 @@ observation_ee = aggregate_pipeline_dataset_features(
     patterns=["observation.state.ee"],
 )
 
-dataset_features = merge_features(action_ee, gripper, observation_ee)
+dataset_features = combine_feature_dicts(action_ee, gripper, observation_ee)
 
 print("All dataset features: ", dataset_features)
 

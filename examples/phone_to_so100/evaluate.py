@@ -17,7 +17,7 @@
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
-from lerobot.datasets.utils import merge_features
+from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
@@ -103,7 +103,7 @@ obs_ee = aggregate_pipeline_dataset_features(
     patterns=["observation.state.ee"],
 )  # Get all ee observation features
 
-dataset_features = merge_features(obs_ee, action_ee_and_gripper)
+dataset_features = combine_feature_dicts(obs_ee, action_ee_and_gripper)
 
 print("All dataset features: ", dataset_features)
 
