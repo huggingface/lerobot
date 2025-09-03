@@ -104,11 +104,10 @@ class ImageCropResizeProcessor(ObservationProcessor):
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         if self.resize_size is None:
             return features
-        new_feature = features.copy()
         for key in features:
             if "image" in key:
-                new_feature[key] = PolicyFeature(type=features[key].type, shape=self.resize_size)
-        return new_feature
+                features[key] = PolicyFeature(type=features[key].type, shape=self.resize_size)
+        return features
 
 
 @dataclass
