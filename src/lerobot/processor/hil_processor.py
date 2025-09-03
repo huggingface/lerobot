@@ -188,7 +188,7 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("intervention_action_processor")
-class InterventionActionProcessor(ProcessorStep):
+class InterventionActionProcessorStep(ProcessorStep):
     """Handle human intervention actions and episode termination."""
 
     use_gripper: bool = False

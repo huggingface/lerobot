@@ -36,7 +36,7 @@ from lerobot.processor import (
     EnvTransition,
     GripperPenaltyProcessorStep,
     ImageCropResizeProcessorStep,
-    InterventionActionProcessor,
+    InterventionActionProcessorStep,
     JointVelocityProcessor,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
@@ -362,7 +362,7 @@ def make_processors(
 
     if cfg.name == "gym_hil":
         action_pipeline_steps = [
-            InterventionActionProcessor(terminate_on_success=terminate_on_success),
+            InterventionActionProcessorStep(terminate_on_success=terminate_on_success),
             Torch2NumpyActionProcessorStep(),
         ]
 
@@ -451,7 +451,7 @@ def make_processors(
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
         AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
         AddRobotObservationAsComplimentaryData(robot=env.robot),
-        InterventionActionProcessor(
+        InterventionActionProcessorStep(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
             terminate_on_success=terminate_on_success,
         ),

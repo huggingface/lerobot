@@ -31,7 +31,7 @@ from .hil_processor import (
     AddTeleopEventsAsInfoStep,
     GripperPenaltyProcessorStep,
     ImageCropResizeProcessorStep,
-    InterventionActionProcessor,
+    InterventionActionProcessorStep,
     RewardClassifierProcessor,
     TimeLimitProcessorStep,
 )
@@ -70,7 +70,7 @@ __all__ = [
     "IdentityProcessorStep",
     "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
-    "InterventionActionProcessor",
+    "InterventionActionProcessorStep",
     "JointVelocityProcessor",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
