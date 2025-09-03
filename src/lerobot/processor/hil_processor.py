@@ -261,7 +261,7 @@ class InterventionActionProcessorStep(ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("reward_classifier_processor")
-class RewardClassifierProcessor(ProcessorStep):
+class RewardClassifierProcessorStep(ProcessorStep):
     """Apply reward classification to image observations."""
 
     pretrained_path: str | None = None

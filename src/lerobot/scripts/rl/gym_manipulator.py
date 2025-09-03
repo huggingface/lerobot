@@ -42,7 +42,7 @@ from lerobot.processor import (
     MapTensorToDeltaActionDictStep,
     MotorCurrentProcessor,
     Numpy2TorchActionProcessorStep,
-    RewardClassifierProcessor,
+    RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
     ToBatchProcessor,
     Torch2NumpyActionProcessorStep,
@@ -435,7 +435,7 @@ def make_processors(
         and cfg.processor.reward_classifier.pretrained_path is not None
     ):
         env_pipeline_steps.append(
-            RewardClassifierProcessor(
+            RewardClassifierProcessorStep(
                 pretrained_path=cfg.processor.reward_classifier.pretrained_path,
                 device=device,
                 success_threshold=cfg.processor.reward_classifier.success_threshold,

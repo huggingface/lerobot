@@ -32,7 +32,7 @@ from .hil_processor import (
     GripperPenaltyProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
-    RewardClassifierProcessor,
+    RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
 from .joint_observations_processor import JointVelocityProcessor, MotorCurrentProcessor
@@ -83,7 +83,7 @@ __all__ = [
     "ProcessorStep",
     "ProcessorStepRegistry",
     "RenameProcessor",
-    "RewardClassifierProcessor",
+    "RewardClassifierProcessorStep",
     "RewardProcessorStep",
     "DataProcessorPipeline",
     "TimeLimitProcessorStep",
