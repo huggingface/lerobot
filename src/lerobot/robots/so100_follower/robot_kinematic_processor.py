@@ -140,22 +140,21 @@ class EEReferenceAndDelta(ActionProcessor):
         self._command_when_disabled = None
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        new_features = features.copy()
-        new_features.pop(f"{ACTION}.enabled", None)
-        new_features.pop(f"{ACTION}.target_x", None)
-        new_features.pop(f"{ACTION}.target_y", None)
-        new_features.pop(f"{ACTION}.target_z", None)
-        new_features.pop(f"{ACTION}.target_wx", None)
-        new_features.pop(f"{ACTION}.target_wy", None)
-        new_features.pop(f"{ACTION}.target_wz", None)
+        features.pop(f"{ACTION}.enabled", None)
+        features.pop(f"{ACTION}.target_x", None)
+        features.pop(f"{ACTION}.target_y", None)
+        features.pop(f"{ACTION}.target_z", None)
+        features.pop(f"{ACTION}.target_wx", None)
+        features.pop(f"{ACTION}.target_wy", None)
+        features.pop(f"{ACTION}.target_wz", None)
 
-        new_features[f"{ACTION}.ee.x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        new_features[f"{ACTION}.ee.y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        new_features[f"{ACTION}.ee.z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        new_features[f"{ACTION}.ee.wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        new_features[f"{ACTION}.ee.wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        new_features[f"{ACTION}.ee.wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        return new_features
+        features[f"{ACTION}.ee.x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.ee.y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.ee.z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.ee.wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.ee.wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.ee.wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        return features
 
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
@@ -306,12 +305,11 @@ class InverseKinematicsEEToJoints(ProcessorStep):
         return new_transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        new_features = features.copy()
-        new_features[f"{ACTION}.gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{ACTION}.gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         for name in self.motor_names:
-            new_features[f"{ACTION}.{name}.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+            features[f"{ACTION}.{name}.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
 
-        return new_features
+        return features
 
     def reset(self):
         self.q_curr = None
@@ -382,12 +380,11 @@ class GripperVelocityToJoint(ProcessorStep):
         return new_transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        new_features = features.copy()
-        new_features.pop(f"{ACTION}.gripper", None)
-        new_features[f"{ACTION}.gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        new_features[f"{OBS_STATE}.gripper.pos"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
+        features.pop(f"{ACTION}.gripper", None)
+        features[f"{ACTION}.gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[f"{OBS_STATE}.gripper.pos"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
 
-        return new_features
+        return features
 
 
 @ProcessorStepRegistry.register("forward_kinematics_joints_to_ee")
@@ -429,10 +426,9 @@ class ForwardKinematicsJointsToEE(ObservationProcessor):
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
         # We specify the dataset features of this step that we want to be stored in the dataset
-        new_features = features.copy()
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
-            new_features[f"{OBS_STATE}.ee.{k}"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
-        return new_features
+            features[f"{OBS_STATE}.ee.{k}"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
+        return features
 
 
 @ProcessorStepRegistry.register("add_robot_observation")
