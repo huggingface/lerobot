@@ -82,10 +82,10 @@ from lerobot.robots import (  # noqa: F401
     bi_so100_follower,
     hope_jr,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
     so100_follower,
     so101_follower,
-    lekiwi,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -93,10 +93,10 @@ from lerobot.teleoperators import (  # noqa: F401
     bi_so100_leader,
     homunculus,
     koch_leader,
+    lekiwi_leader,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
-    lekiwi_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.control_utils import (

@@ -1,16 +1,18 @@
 import logging
+from functools import cached_property
+
+import numpy as np
+
+from lerobot.teleoperators import Teleoperator
+from lerobot.teleoperators.so101_leader import SO101Leader
 
 from ..keyboard import KeyboardTeleop
-from lerobot.teleoperators import Teleoperator
-from functools import cached_property
 from .config_lekiwi_leader import LekiwiLeaderConfig
-from lerobot.teleoperators.so101_leader import SO101Leader
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
-class LekiwiLeader(Teleoperator):
 
+class LekiwiLeader(Teleoperator):
     config_class = LekiwiLeaderConfig
     name = "lekiwi_leader"
 
@@ -44,7 +46,7 @@ class LekiwiLeader(Teleoperator):
             float,
         )
 
-    def action_features(self)-> dict[str, type]:
+    def action_features(self) -> dict[str, type]:
         return self._state_ft()
 
     @property
@@ -72,7 +74,7 @@ class LekiwiLeader(Teleoperator):
     def setup_motors(self) -> None:
         self.leader_arm.setup_motors()
 
-    def get_action(self)->dict[str, float]:
+    def get_action(self) -> dict[str, float]:
         arm_action = self.leader_arm.get_action()
         arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
         keyboard_keys = self.keyboard.get_action()
@@ -112,12 +114,13 @@ class LekiwiLeader(Teleoperator):
             "theta.vel": theta_cmd,
         }
 
-    def feedback_features(self)-> dict[str, type]:
+    def feedback_features(self) -> dict[str, type]:
         raise NotImplementedError
         return {}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError
         pass
+
 
 #        log_rerun_data(observation, {**arm_action, **base_action})

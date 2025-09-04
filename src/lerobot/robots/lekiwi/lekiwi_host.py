@@ -23,7 +23,7 @@ import cv2
 import draccus
 import zmq
 
-from .config_lekiwi import LeKiwiConfig, LeKiwiHostConfig
+from .config_lekiwi import LeKiwiHostConfig
 from .lekiwi import LeKiwi
 
 
@@ -47,17 +47,18 @@ class LeKiwiHost:
         self.zmq_cmd_socket.close()
         self.zmq_context.term()
 
+
 @draccus.wrap()
 def lekiwi_host(robot_config: LeKiwiHostConfig = None) -> None:
     logging.info("Configuring LeKiwi")
-    #robot_config = LeKiwiConfig()
+    # robot_config = LeKiwiConfig()
     robot = LeKiwi(robot_config)
 
     logging.info("Connecting LeKiwi")
     robot.connect()
 
     logging.info("Starting HostAgent")
-    host_config = robot_config#LeKiwiHostConfig()
+    host_config = robot_config  # LeKiwiHostConfig()
     host = LeKiwiHost(host_config)
 
     last_cmd_time = time.time()
@@ -123,8 +124,10 @@ def lekiwi_host(robot_config: LeKiwiHostConfig = None) -> None:
 
     logging.info("Finished LeKiwi cleanly")
 
+
 def main():
     lekiwi_host()
+
 
 if __name__ == "__main__":
     main()

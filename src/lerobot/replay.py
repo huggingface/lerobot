@@ -54,10 +54,10 @@ from lerobot.robots import (  # noqa: F401
     bi_so100_follower,
     hope_jr,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
     so100_follower,
     so101_follower,
-    lekiwi
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (

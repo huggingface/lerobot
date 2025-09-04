@@ -327,7 +327,7 @@ class LeKiwiClient(Robot):
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        if not isinstance(action['arm_elbow_flex.pos'], float):
+        if not isinstance(action["arm_elbow_flex.pos"], float):
             action = {k: float(v) for k, v in action.items()}
 
         self.zmq_cmd_socket.send_string(json.dumps(action))  # action is in motor space
