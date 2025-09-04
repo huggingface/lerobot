@@ -1714,15 +1714,25 @@ def test_override_with_device_strings():
 
 def test_from_pretrained_nonexistent_path():
     """Test error handling when loading from non-existent sources."""
-    from huggingface_hub.errors import HfHubHTTPError, HFValidationError
+    from huggingface_hub.errors import HfHubHTTPError
 
-    # Test with an invalid repo ID (too many slashes) - caught by HF validation
-    with pytest.raises(HFValidationError):
+    # Test with an invalid local path - should raise FileNotFoundError
+    with pytest.raises(FileNotFoundError):
         DataProcessorPipeline.from_pretrained("/path/that/does/not/exist")
 
-    # Test with a non-existent but valid Hub repo format
-    with pytest.raises((FileNotFoundError, HfHubHTTPError)):
+    # Test with a Hub repo format that would be a local path (too many slashes)
+    with pytest.raises(FileNotFoundError):
+        DataProcessorPipeline.from_pretrained("user/repo/extra/path")
+
+    # Test with a non-existent but valid Hub repo format (now requires config_filename)
+    with pytest.raises(ValueError, match="you must specify the config_filename parameter"):
         DataProcessorPipeline.from_pretrained("nonexistent-user/nonexistent-repo")
+
+    # Test with a non-existent Hub repo when config_filename is provided
+    with pytest.raises((FileNotFoundError, HfHubHTTPError)):
+        DataProcessorPipeline.from_pretrained(
+            "nonexistent-user/nonexistent-repo", config_filename="processor.json"
+        )
 
     # Test with a local directory that exists but has no config files
     with tempfile.TemporaryDirectory() as tmp_dir:
