@@ -406,7 +406,15 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     action_features = hw_to_dataset_features(robot.action_features, "action", cfg.dataset.video)
     obs_features = hw_to_dataset_features(robot.observation_features, "observation", cfg.dataset.video)
-    dataset_features = {**action_features, **obs_features}
+
+    # Add next.* features that are generated during recording
+    transition_features = {
+        "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
+        "next.done": {"dtype": "bool", "shape": (1,), "names": None},
+        "next.truncated": {"dtype": "bool", "shape": (1,), "names": None},
+    }
+
+    dataset_features = {**action_features, **obs_features, **transition_features}
 
     if cfg.resume:
         dataset = LeRobotDataset(
