@@ -150,6 +150,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         Returns:
             The policy features dictionary with standardized LeRobot keys.
         """
+        # TODO(Steven): This will blow up
         exact_pairs = {
             "pixels": OBS_IMAGE,
             "environment_state": OBS_ENV_STATE,

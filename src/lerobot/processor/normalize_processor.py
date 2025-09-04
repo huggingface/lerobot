@@ -32,6 +32,7 @@ from .core import EnvTransition, TransitionKey
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 
+# TODO(Steven): Update this for features to now be: dict[FeatureType, dict[str, PolicyFeature]]
 @dataclass
 class _NormalizationMixin:
     """
@@ -294,7 +295,7 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
     def from_lerobot_dataset(
         cls,
         dataset: LeRobotDataset,
-        features: dict[str, PolicyFeature],
+        features: dict[FeatureType, dict[str, PolicyFeature]],
         norm_map: dict[FeatureType, NormalizationMode],
         *,
         normalize_observation_keys: set[str] | None = None,

@@ -27,8 +27,8 @@ REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
 
-OBS_LANGUAGE_TOKENS = "observation.language.tokens"
-OBS_LANGUAGE_ATTENTION_MASK = "observation.language.attention_mask"
+OBS_LANGUAGE_TOKENS = "tokens"
+OBS_LANGUAGE_ATTENTION_MASK = "attention_mask"
 
 ROBOTS = "robots"
 ROBOT_TYPE = "robot_type"

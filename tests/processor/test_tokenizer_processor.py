@@ -110,12 +110,12 @@ def test_basic_tokenization(mock_auto_tokenizer):
 
     # Check that tokens were added to observation
     observation = result[TransitionKey.OBSERVATION]
-    assert f"{OBS_LANGUAGE}.tokens" in observation
-    assert f"{OBS_LANGUAGE}.attention_mask" in observation
+    assert "tokens" in observation
+    assert "attention_mask" in observation
 
     # Check token structure
-    tokens = observation[f"{OBS_LANGUAGE}.tokens"]
-    attention_mask = observation[f"{OBS_LANGUAGE}.attention_mask"]
+    tokens = observation["tokens"]
+    attention_mask = observation["attention_mask"]
     assert isinstance(tokens, torch.Tensor)
     assert isinstance(attention_mask, torch.Tensor)
     assert tokens.shape == (10,)
@@ -142,12 +142,12 @@ def test_basic_tokenization_with_tokenizer_object():
 
     # Check that tokens were added to observation
     observation = result[TransitionKey.OBSERVATION]
-    assert f"{OBS_LANGUAGE}.tokens" in observation
-    assert f"{OBS_LANGUAGE}.attention_mask" in observation
+    assert "tokens" in observation
+    assert "attention_mask" in observation
 
     # Check token structure
-    tokens = observation[f"{OBS_LANGUAGE}.tokens"]
-    attention_mask = observation[f"{OBS_LANGUAGE}.attention_mask"]
+    tokens = observation["tokens"]
+    attention_mask = observation["attention_mask"]
     assert isinstance(tokens, torch.Tensor)
     assert isinstance(attention_mask, torch.Tensor)
     assert tokens.shape == (10,)
@@ -176,8 +176,8 @@ def test_list_of_strings_tokenization(mock_auto_tokenizer):
 
     # Check that tokens were added to observation
     observation = result[TransitionKey.OBSERVATION]
-    tokens = observation[f"{OBS_LANGUAGE}.tokens"]
-    attention_mask = observation[f"{OBS_LANGUAGE}.attention_mask"]
+    tokens = observation["tokens"]
+    attention_mask = observation["attention_mask"]
     assert tokens.shape == (2, 8)  # batch_size=2, seq_len=8
     assert attention_mask.shape == (2, 8)
 
@@ -201,10 +201,10 @@ def test_custom_keys(mock_auto_tokenizer):
 
     # Check that tokens are stored in observation regardless of task_key
     observation = result[TransitionKey.OBSERVATION]
-    assert f"{OBS_LANGUAGE}.tokens" in observation
-    assert f"{OBS_LANGUAGE}.attention_mask" in observation
+    assert "tokens" in observation
+    assert "attention_mask" in observation
 
-    tokens = observation[f"{OBS_LANGUAGE}.tokens"]
+    tokens = observation["tokens"]
     assert tokens.shape == (5,)
 
 
@@ -403,10 +403,10 @@ def test_integration_with_robot_processor(mock_auto_tokenizer):
     # Check that observation exists and tokenization was applied
     assert TransitionKey.OBSERVATION in result
     observation = result[TransitionKey.OBSERVATION]
-    assert f"{OBS_LANGUAGE}.tokens" in observation
-    assert f"{OBS_LANGUAGE}.attention_mask" in observation
-    tokens = observation[f"{OBS_LANGUAGE}.tokens"]
-    attention_mask = observation[f"{OBS_LANGUAGE}.attention_mask"]
+    assert "tokens" in observation
+    assert "attention_mask" in observation
+    tokens = observation["tokens"]
+    attention_mask = observation["attention_mask"]
     assert tokens.shape == (6,)
     assert attention_mask.shape == (6,)
 
@@ -450,8 +450,8 @@ def test_save_and_load_pretrained_with_tokenizer_name(mock_auto_tokenizer):
 
         result = loaded_processor(transition)
         assert TransitionKey.OBSERVATION in result
-        assert f"{OBS_LANGUAGE}.tokens" in result[TransitionKey.OBSERVATION]
-        assert f"{OBS_LANGUAGE}.attention_mask" in result[TransitionKey.OBSERVATION]
+        assert "tokens" in result[TransitionKey.OBSERVATION]
+        assert "attention_mask" in result[TransitionKey.OBSERVATION]
 
 
 @require_package("transformers")
@@ -488,8 +488,8 @@ def test_save_and_load_pretrained_with_tokenizer_object():
 
         result = loaded_processor(transition)
         assert TransitionKey.OBSERVATION in result
-        assert f"{OBS_LANGUAGE}.tokens" in result[TransitionKey.OBSERVATION]
-        assert f"{OBS_LANGUAGE}.attention_mask" in result[TransitionKey.OBSERVATION]
+        assert "tokens" in result[TransitionKey.OBSERVATION]
+        assert "attention_mask" in result[TransitionKey.OBSERVATION]
 
 
 @require_package("transformers")
@@ -512,23 +512,24 @@ def test_features_basic():
     processor = TokenizerProcessorStep(tokenizer=mock_tokenizer, max_length=128)
 
     input_features = {
-        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,)),
-        "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
+        FeatureType.STATE: {"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,))},
+        FeatureType.ACTION: {"action": PolicyFeature(type=FeatureType.ACTION, shape=(5,))},
+        FeatureType.LANGUAGE: {},
     }
 
     output_features = processor.transform_features(input_features)
 
     # Check that original features are preserved
-    assert "observation.state" in output_features
-    assert "action" in output_features
+    assert "observation.state" in output_features[FeatureType.STATE]
+    assert "action" in output_features[FeatureType.ACTION]
 
     # Check that tokenized features are added
-    assert f"{OBS_LANGUAGE}.tokens" in output_features
-    assert f"{OBS_LANGUAGE}.attention_mask" in output_features
+    assert "tokens" in output_features[FeatureType.LANGUAGE]
+    assert "attention_mask" in output_features[FeatureType.LANGUAGE]
 
     # Check feature properties
-    tokens_feature = output_features[f"{OBS_LANGUAGE}.tokens"]
-    attention_mask_feature = output_features[f"{OBS_LANGUAGE}.attention_mask"]
+    tokens_feature = output_features[FeatureType.LANGUAGE]["tokens"]
+    attention_mask_feature = output_features[FeatureType.LANGUAGE]["attention_mask"]
 
     assert tokens_feature.type == FeatureType.LANGUAGE
     assert tokens_feature.shape == (128,)
@@ -542,15 +543,15 @@ def test_features_with_custom_max_length():
     mock_tokenizer = MockTokenizer(vocab_size=100)
     processor = TokenizerProcessorStep(tokenizer=mock_tokenizer, max_length=64)
 
-    input_features = {}
+    input_features = {FeatureType.LANGUAGE: {}}
     output_features = processor.transform_features(input_features)
 
     # Check that features use correct max_length
-    assert f"{OBS_LANGUAGE}.tokens" in output_features
-    assert f"{OBS_LANGUAGE}.attention_mask" in output_features
+    assert "tokens" in output_features[FeatureType.LANGUAGE]
+    assert "attention_mask" in output_features[FeatureType.LANGUAGE]
 
-    tokens_feature = output_features[f"{OBS_LANGUAGE}.tokens"]
-    attention_mask_feature = output_features[f"{OBS_LANGUAGE}.attention_mask"]
+    tokens_feature = output_features[FeatureType.LANGUAGE]["tokens"]
+    attention_mask_feature = output_features[FeatureType.LANGUAGE]["attention_mask"]
 
     assert tokens_feature.shape == (64,)
     assert attention_mask_feature.shape == (64,)
@@ -563,15 +564,15 @@ def test_features_existing_features():
     processor = TokenizerProcessorStep(tokenizer=mock_tokenizer, max_length=256)
 
     input_features = {
-        f"{OBS_LANGUAGE}.tokens": PolicyFeature(type=FeatureType.LANGUAGE, shape=(100,)),
-        f"{OBS_LANGUAGE}.attention_mask": PolicyFeature(type=FeatureType.LANGUAGE, shape=(100,)),
+        "tokens": PolicyFeature(type=FeatureType.LANGUAGE, shape=(100,)),
+        "attention_mask": PolicyFeature(type=FeatureType.LANGUAGE, shape=(100,)),
     }
 
     output_features = processor.transform_features(input_features)
 
     # Should not overwrite existing features
-    assert output_features[f"{OBS_LANGUAGE}.tokens"].shape == (100,)  # Original shape preserved
-    assert output_features[f"{OBS_LANGUAGE}.attention_mask"].shape == (100,)
+    assert output_features["tokens"].shape == (100,)  # Original shape preserved
+    assert output_features["attention_mask"].shape == (100,)
 
 
 @require_package("transformers")
@@ -653,8 +654,8 @@ def test_preserves_other_complementary_data(mock_auto_tokenizer):
 
     # Check that tokens were added to observation
     observation = result[TransitionKey.OBSERVATION]
-    assert f"{OBS_LANGUAGE}.tokens" in observation
-    assert f"{OBS_LANGUAGE}.attention_mask" in observation
+    assert "tokens" in observation
+    assert "attention_mask" in observation
 
 
 @require_package("transformers")
@@ -675,10 +676,10 @@ def test_deterministic_tokenization(mock_auto_tokenizer):
     result1 = processor(transition)
     result2 = processor(transition)
 
-    tokens1 = result1[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
-    attention_mask1 = result1[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
-    tokens2 = result2[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
-    attention_mask2 = result2[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+    tokens1 = result1[TransitionKey.OBSERVATION]["tokens"]
+    attention_mask1 = result1[TransitionKey.OBSERVATION]["attention_mask"]
+    tokens2 = result2[TransitionKey.OBSERVATION]["tokens"]
+    attention_mask2 = result2[TransitionKey.OBSERVATION]["attention_mask"]
 
     # Results should be identical
     assert torch.equal(tokens1, tokens2)
@@ -704,8 +705,8 @@ def test_empty_string_task(mock_auto_tokenizer):
 
     # Should still tokenize (mock tokenizer handles empty strings)
     observation = result[TransitionKey.OBSERVATION]
-    assert f"{OBS_LANGUAGE}.tokens" in observation
-    tokens = observation[f"{OBS_LANGUAGE}.tokens"]
+    assert "tokens" in observation
+    tokens = observation["tokens"]
     assert tokens.shape == (8,)
 
 
@@ -729,8 +730,8 @@ def test_very_long_task(mock_auto_tokenizer):
 
     # Should be truncated to max_length
     observation = result[TransitionKey.OBSERVATION]
-    tokens = observation[f"{OBS_LANGUAGE}.tokens"]
-    attention_mask = observation[f"{OBS_LANGUAGE}.attention_mask"]
+    tokens = observation["tokens"]
+    attention_mask = observation["attention_mask"]
     assert tokens.shape == (5,)
     assert attention_mask.shape == (5,)
 
@@ -805,8 +806,8 @@ def test_device_detection_cpu():
     result = processor(transition)
 
     # Check that tokenized tensors are on CPU
-    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
-    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+    tokens = result[TransitionKey.OBSERVATION]["tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION]["attention_mask"]
 
     assert tokens.device.type == "cpu"
     assert attention_mask.device.type == "cpu"
@@ -877,8 +878,8 @@ def test_device_detection_no_tensors():
     result = processor(transition)
 
     # Check that tokenized tensors are on CPU (default)
-    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
-    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+    tokens = result[TransitionKey.OBSERVATION]["tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION]["attention_mask"]
 
     assert tokens.device.type == "cpu"
     assert attention_mask.device.type == "cpu"
@@ -948,8 +949,8 @@ def test_device_detection_preserves_dtype():
     result = processor(transition)
 
     # Check that tokenized tensors have correct dtypes (not affected by input dtype)
-    tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]
-    attention_mask = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.attention_mask"]
+    tokens = result[TransitionKey.OBSERVATION]["tokens"]
+    attention_mask = result[TransitionKey.OBSERVATION]["attention_mask"]
 
     assert tokens.dtype == torch.long  # Should remain long
     assert attention_mask.dtype == torch.bool  # Should be bool (converted in processor)

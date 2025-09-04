@@ -400,7 +400,7 @@ def test_smolvla_newline_processor_transform_features():
 
     # Test transform_features
     features = {
-        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,)),
+        FeatureType.STATE: {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
     }
     result = processor.transform_features(features)
     assert result == features  # Should return unchanged

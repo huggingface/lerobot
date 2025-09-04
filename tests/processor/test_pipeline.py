@@ -1820,14 +1820,14 @@ def test_save_load_with_custom_converter_functions():
         assert "observation.image" in result
 
 
-class NonCompliantStep:
+class NonCompliantStep(ProcessorStep):
     """Intentionally non-compliant: missing features."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
 
-class NonCallableStep:
+class NonCallableStep(ProcessorStep):
     """Intentionally non-compliant: missing __call__."""
 
     def transform_features(
@@ -1836,9 +1836,10 @@ class NonCallableStep:
         return features
 
 
-def test_construction_rejects_step_without_processorstep():
-    """Test that DataProcessorPipeline rejects steps that don't inherit from ProcessorStep."""
-    with pytest.raises(TypeError, match=r"must inherit from ProcessorStep"):
+def test_construction_rejects_step_without_call():
+    with pytest.raises(
+        TypeError, match=r"Can't instantiate abstract class NonCallableStep with abstract method __call_"
+    ):
         DataProcessorPipeline([NonCallableStep()])
 
     with pytest.raises(TypeError, match=r"must inherit from ProcessorStep"):
@@ -1858,7 +1859,7 @@ class FeatureContractAddStep(ProcessorStep):
     def transform_features(
         self, features: dict[FeatureType, dict[str, PolicyFeature]]
     ) -> dict[FeatureType, dict[str, PolicyFeature]]:
-        features[self.key] = self.value
+        features[FeatureType.STATE][self.key] = self.value
         return features
 
 
@@ -1875,7 +1876,7 @@ class FeatureContractMutateStep(ProcessorStep):
     def transform_features(
         self, features: dict[FeatureType, dict[str, PolicyFeature]]
     ) -> dict[FeatureType, dict[str, PolicyFeature]]:
-        features[self.key] = self.fn(features.get(self.key))
+        features[FeatureType.STATE][self.key] = self.fn(features[FeatureType.STATE].get(self.key))
         return features
 
 
@@ -1904,7 +1905,7 @@ class FeatureContractRemoveStep(ProcessorStep):
     def transform_features(
         self, features: dict[FeatureType, dict[str, PolicyFeature]]
     ) -> dict[FeatureType, dict[str, PolicyFeature]]:
-        features.pop(self.key, None)
+        features[FeatureType.STATE].pop(self.key, None)
         return features
 
 
@@ -1913,20 +1914,21 @@ def test_features_orders_and_merges(policy_feature_factory):
         [
             FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
             FeatureContractMutateStep("a", lambda v: PolicyFeature(type=v.type, shape=(3,))),
-            FeatureContractAddStep("b", policy_feature_factory(FeatureType.ENV, (2,))),
+            FeatureContractAddStep("b", policy_feature_factory(FeatureType.STATE, (2,))),
         ]
     )
-    out = p.transform_features({})
-
-    assert out["a"].type == FeatureType.STATE and out["a"].shape == (3,)
-    assert out["b"].type == FeatureType.ENV and out["b"].shape == (2,)
+    out = p.transform_features({FeatureType.STATE: {}})
+    assert out[FeatureType.STATE]["a"].type == FeatureType.STATE and out[FeatureType.STATE]["a"].shape == (3,)
+    assert out[FeatureType.STATE]["b"].type == FeatureType.STATE and out[FeatureType.STATE]["b"].shape == (2,)
     assert_contract_is_typed(out)
 
 
 def test_features_respects_initial_without_mutation(policy_feature_factory):
     initial = {
-        "seed": policy_feature_factory(FeatureType.STATE, (7,)),
-        "nested": policy_feature_factory(FeatureType.ENV, (0,)),
+        FeatureType.STATE: {
+            "seed": policy_feature_factory(FeatureType.STATE, (7,)),
+            "nested": policy_feature_factory(FeatureType.STATE, (0,)),
+        }
     }
     p = DataProcessorPipeline(
         [
@@ -1938,15 +1940,16 @@ def test_features_respects_initial_without_mutation(policy_feature_factory):
     )
     out = p.transform_features(initial_features=initial)
 
-    assert out["seed"].shape == (8,)
-    assert out["nested"].shape == (5,)
+    assert out[FeatureType.STATE]["seed"].shape == (8,)
+    assert out[FeatureType.STATE]["nested"].shape == (5,)
     # Initial dict must be preserved
-    assert initial["seed"].shape == (7,)
-    assert initial["nested"].shape == (0,)
+    assert initial[FeatureType.STATE]["seed"].shape == (7,)
+    assert initial[FeatureType.STATE]["nested"].shape == (0,)
 
     assert_contract_is_typed(out)
 
 
+# TODO(Steven): Update this
 def test_features_execution_order_tracking():
     class Track(ProcessorStep):
         def __init__(self, label):
@@ -1974,18 +1977,23 @@ def test_features_remove_key(policy_feature_factory):
             FeatureContractRemoveStep("a"),
         ]
     )
-    out = p.transform_features({})
+    out = p.transform_features({FeatureType.STATE: {}})
     assert "a" not in out
 
 
 def test_features_remove_from_initial(policy_feature_factory):
     initial = {
-        "keep": policy_feature_factory(FeatureType.STATE, (1,)),
-        "drop": policy_feature_factory(FeatureType.STATE, (1,)),
+        FeatureType.STATE: {
+            "keep": policy_feature_factory(FeatureType.STATE, (1,)),
+            "drop": policy_feature_factory(FeatureType.STATE, (1,)),
+        },
     }
     p = DataProcessorPipeline([FeatureContractRemoveStep("drop")])
     out = p.transform_features(initial_features=initial)
-    assert "drop" not in out and out["keep"] == initial["keep"]
+    assert (
+        "drop" not in out[FeatureType.STATE]
+        and out[FeatureType.STATE]["keep"] == initial[FeatureType.STATE]["keep"]
+    )
 
 
 @dataclass

@@ -406,9 +406,9 @@ def full_stats():
 
 def _create_full_features():
     return {
-        "observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96)),
-        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
-        "action": PolicyFeature(FeatureType.ACTION, (2,)),
+        FeatureType.VISUAL: {"observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96))},
+        FeatureType.STATE: {"observation.state": PolicyFeature(FeatureType.STATE, (2,))},
+        FeatureType.ACTION: {"action": PolicyFeature(FeatureType.ACTION, (2,))},
     }
 
 

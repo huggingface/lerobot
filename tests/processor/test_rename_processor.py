@@ -425,9 +425,9 @@ def test_value_types_preserved():
 def test_features_basic_renaming(policy_feature_factory):
     processor = RenameProcessorStep(rename_map={"a": "x", "b": "y"})
     features = {
-        "a": policy_feature_factory(FeatureType.STATE, (2,)),
-        "b": policy_feature_factory(FeatureType.ACTION, (3,)),
-        "c": policy_feature_factory(FeatureType.ENV, (1,)),
+        FeatureType.STATE: {"a": policy_feature_factory(FeatureType.STATE, (2,))},
+        FeatureType.ACTION: {"b": policy_feature_factory(FeatureType.ACTION, (3,))},
+        FeatureType.ENV: {"c": policy_feature_factory(FeatureType.ENV, (1,))},
     }
 
     out = processor.transform_features(features.copy())
@@ -446,8 +446,8 @@ def test_features_overlapping_keys(policy_feature_factory):
     # Overlapping renames: both 'a' and 'b' exist. 'a'->'b', 'b'->'c'
     processor = RenameProcessorStep(rename_map={"a": "b", "b": "c"})
     features = {
-        "a": policy_feature_factory(FeatureType.STATE, (1,)),
-        "b": policy_feature_factory(FeatureType.STATE, (2,)),
+        FeatureType.STATE: {"a": policy_feature_factory(FeatureType.STATE, (1,))},
+        FeatureType.STATE: {"b": policy_feature_factory(FeatureType.STATE, (2,))},
     }
     out = processor.transform_features(features)
 
@@ -466,9 +466,9 @@ def test_features_chained_processors(policy_feature_factory):
     pipeline = DataProcessorPipeline([processor1, processor2])
 
     spec = {
-        "pos": policy_feature_factory(FeatureType.STATE, (7,)),
-        "img": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
-        "extra": policy_feature_factory(FeatureType.ENV, (1,)),
+        FeatureType.STATE: {"pos": policy_feature_factory(FeatureType.STATE, (7,))},
+        FeatureType.VISUAL: {"img": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64))},
+        FeatureType.ENV: {"extra": policy_feature_factory(FeatureType.ENV, (1,))},
     }
     out = pipeline.transform_features(initial_features=spec)
 

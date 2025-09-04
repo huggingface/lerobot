@@ -295,11 +295,11 @@ def action_to_transition(action: dict[str, Any]) -> EnvTransition:
     for k, v in action.items():
         # Check if the value is a type that should not be converted to a tensor.
         if isinstance(v, (Rotation, dict)):
-            act_dict[f"{ACTION}.{k}"] = v
+            act_dict[f"{k}"] = v
             continue
 
         arr = np.array(v) if np.isscalar(v) else v
-        act_dict[f"{ACTION}.{k}"] = to_tensor(arr)
+        act_dict[f"{k}"] = to_tensor(arr)
 
     return create_transition(observation={}, action=act_dict)
 
@@ -323,9 +323,10 @@ def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
     obs_dict: dict[str, Any] = {}
     for k, v in state.items():
         arr = np.array(v) if np.isscalar(v) else v
-        obs_dict[f"{OBS_STATE}.{k}"] = to_tensor(arr)
+        obs_dict[f"{k}"] = to_tensor(arr)
 
     for cam, img in images.items():
+        # TODO(Steven): remove prefix?
         obs_dict[f"{OBS_IMAGES}.{cam}"] = img
 
     return create_transition(observation=obs_dict, action={})
@@ -351,10 +352,9 @@ def transition_to_robot_action(transition: EnvTransition) -> dict[str, Any]:
         return out
 
     for k, v in action_dict.items():
-        if isinstance(k, str) and k.startswith(f"{ACTION}.") and k.endswith((".pos", ".vel")):
-            out_key = k[len(f"{ACTION}.") :]  # Strip the 'action.' prefix.
-            out[out_key] = float(v)
-
+        if isinstance(k, str) and k.endswith((".pos", ".vel")):
+            out[k] = float(v)
+    # TODO(Steven): Return only transition.get(TransitionKey.ACTION)?
     return out
 
 

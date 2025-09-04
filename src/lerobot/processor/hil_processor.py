@@ -250,6 +250,7 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
         """
         if self.resize_size is None:
             return features
+        # TODO(Steven, Michel): This will blow up
         for key in features:
             if "image" in key:
                 features[key] = PolicyFeature(type=features[key].type, shape=self.resize_size)

@@ -292,8 +292,8 @@ def test_features():
     processor = DeviceProcessorStep(device="cpu")
 
     features = {
-        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,)),
-        "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
+        FeatureType.STATE: {"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,))},
+        FeatureType.ACTION: {"action": PolicyFeature(type=FeatureType.ACTION, shape=(5,))},
     }
 
     result = processor.transform_features(features)

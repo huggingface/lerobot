@@ -90,17 +90,17 @@ class MapPhoneActionToRobotAction(ActionProcessorStep):
     def transform_features(
         self, features: dict[FeatureType, dict[str, PolicyFeature]]
     ) -> dict[FeatureType, dict[str, PolicyFeature]]:
-        features.pop(f"{ACTION}.phone.enabled", None)
-        features.pop(f"{ACTION}.phone.pos", None)
-        features.pop(f"{ACTION}.phone.rot", None)
-        features.pop(f"{ACTION}.phone.raw_inputs", None)
+        features[FeatureType.ACTION].pop("phone.enabled", None)
+        features[FeatureType.ACTION].pop("phone.pos", None)
+        features[FeatureType.ACTION].pop("phone.rot", None)
+        features[FeatureType.ACTION].pop("phone.raw_inputs", None)
 
-        features[f"{ACTION}.enabled"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[f"{ACTION}.target_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[f"{ACTION}.target_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[f"{ACTION}.target_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[f"{ACTION}.target_wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[f"{ACTION}.target_wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[f"{ACTION}.target_wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[f"{ACTION}.gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[FeatureType.ACTION]["enabled"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[FeatureType.ACTION]["target_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[FeatureType.ACTION]["target_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[FeatureType.ACTION]["target_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[FeatureType.ACTION]["target_wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[FeatureType.ACTION]["target_wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[FeatureType.ACTION]["target_wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[FeatureType.ACTION]["gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         return features

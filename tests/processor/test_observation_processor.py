@@ -412,8 +412,8 @@ def test_equivalent_with_image_dict():
 def test_image_processor_features_pixels_to_image(policy_feature_factory):
     processor = VanillaObservationProcessorStep()
     features = {
-        "pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
-        "keep": policy_feature_factory(FeatureType.ENV, (1,)),
+        FeatureType.VISUAL: {"pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64))},
+        FeatureType.ENV: {"keep": policy_feature_factory(FeatureType.ENV, (1,))},
     }
     out = processor.transform_features(features.copy())
 
@@ -426,8 +426,8 @@ def test_image_processor_features_pixels_to_image(policy_feature_factory):
 def test_image_processor_features_observation_pixels_to_image(policy_feature_factory):
     processor = VanillaObservationProcessorStep()
     features = {
-        "observation.pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
-        "keep": policy_feature_factory(FeatureType.ENV, (1,)),
+        FeatureType.VISUAL: {"observation.pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64))},
+        FeatureType.ENV: {"keep": policy_feature_factory(FeatureType.ENV, (1,))},
     }
     out = processor.transform_features(features.copy())
 
@@ -440,10 +440,12 @@ def test_image_processor_features_observation_pixels_to_image(policy_feature_fac
 def test_image_processor_features_multi_camera_and_prefixed(policy_feature_factory):
     processor = VanillaObservationProcessorStep()
     features = {
-        "pixels.front": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
-        "pixels.wrist": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
-        "observation.pixels.rear": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
-        "keep": policy_feature_factory(FeatureType.ENV, (7,)),
+        FeatureType.VISUAL: {"pixels.front": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64))},
+        FeatureType.VISUAL: {"pixels.wrist": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64))},
+        FeatureType.VISUAL: {
+            "observation.pixels.rear": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64))
+        },
+        FeatureType.ENV: {"keep": policy_feature_factory(FeatureType.ENV, (7,))},
     }
     out = processor.transform_features(features.copy())
 
@@ -458,9 +460,9 @@ def test_image_processor_features_multi_camera_and_prefixed(policy_feature_facto
 def test_state_processor_features_environment_and_agent_pos(policy_feature_factory):
     processor = VanillaObservationProcessorStep()
     features = {
-        "environment_state": policy_feature_factory(FeatureType.STATE, (3,)),
-        "agent_pos": policy_feature_factory(FeatureType.STATE, (7,)),
-        "keep": policy_feature_factory(FeatureType.ENV, (1,)),
+        FeatureType.STATE: {"environment_state": policy_feature_factory(FeatureType.STATE, (3,))},
+        FeatureType.STATE: {"agent_pos": policy_feature_factory(FeatureType.STATE, (7,))},
+        FeatureType.ENV: {"keep": policy_feature_factory(FeatureType.ENV, (1,))},
     }
     out = processor.transform_features(features.copy())
 
@@ -471,11 +473,12 @@ def test_state_processor_features_environment_and_agent_pos(policy_feature_facto
     assert_contract_is_typed(out)
 
 
+# TODO(Steven): Update this
 def test_state_processor_features_prefixed_inputs(policy_feature_factory):
     proc = VanillaObservationProcessorStep()
     features = {
-        "observation.environment_state": policy_feature_factory(FeatureType.STATE, (2,)),
-        "observation.agent_pos": policy_feature_factory(FeatureType.STATE, (4,)),
+        FeatureType.STATE: {"observation.environment_state": policy_feature_factory(FeatureType.STATE, (2,))},
+        FeatureType.STATE: {"observation.agent_pos": policy_feature_factory(FeatureType.STATE, (4,))},
     }
     out = proc.transform_features(features.copy())
 

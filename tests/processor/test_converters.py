@@ -28,21 +28,21 @@ def test_to_transition_teleop_action_prefix_and_tensor_conversion():
     # Should be an EnvTransition-like dict with ACTION populated
     assert isinstance(tr, dict)
     assert TransitionKey.ACTION in tr
-    assert "action.ee.x" in tr[TransitionKey.ACTION]
-    assert "action.delta" in tr[TransitionKey.ACTION]
-    assert "action.raw_img" in tr[TransitionKey.ACTION]
+    assert "ee.x" in tr[TransitionKey.ACTION]
+    assert "delta" in tr[TransitionKey.ACTION]
+    assert "raw_img" in tr[TransitionKey.ACTION]
 
     # Types: all values -> torch tensor
-    assert isinstance(tr[TransitionKey.ACTION]["action.ee.x"], torch.Tensor)
-    assert tr[TransitionKey.ACTION]["action.ee.x"].item() == pytest.approx(0.5)
+    assert isinstance(tr[TransitionKey.ACTION]["ee.x"], torch.Tensor)
+    assert tr[TransitionKey.ACTION]["ee.x"].item() == pytest.approx(0.5)
 
-    assert isinstance(tr[TransitionKey.ACTION]["action.delta"], torch.Tensor)
-    assert tr[TransitionKey.ACTION]["action.delta"].shape == (2,)
-    assert torch.allclose(tr[TransitionKey.ACTION]["action.delta"], torch.tensor([1.0, 2.0]))
+    assert isinstance(tr[TransitionKey.ACTION]["delta"], torch.Tensor)
+    assert tr[TransitionKey.ACTION]["delta"].shape == (2,)
+    assert torch.allclose(tr[TransitionKey.ACTION]["delta"], torch.tensor([1.0, 2.0]))
 
-    assert isinstance(tr[TransitionKey.ACTION]["action.raw_img"], torch.Tensor)
-    assert tr[TransitionKey.ACTION]["action.raw_img"].dtype == torch.float32  # converted from uint8
-    assert tr[TransitionKey.ACTION]["action.raw_img"].shape == (8, 12, 3)
+    assert isinstance(tr[TransitionKey.ACTION]["raw_img"], torch.Tensor)
+    assert tr[TransitionKey.ACTION]["raw_img"].dtype == torch.float32  # converted from uint8
+    assert tr[TransitionKey.ACTION]["raw_img"].shape == (8, 12, 3)
 
     # Observation is created as empty dict by make_transition
     assert TransitionKey.OBSERVATION in tr
@@ -68,7 +68,7 @@ def test_to_transition_robot_observation_state_vs_images_split():
     out = tr[TransitionKey.OBSERVATION]
     # Check state keys are present and converted to tensors
     for k in ("j1.pos", "j2.pos", "flag", "arr"):
-        key = f"observation.state.{k}"
+        key = f"{k}"
         assert key in out
         v = out[key]
         if k != "arr":
@@ -92,9 +92,9 @@ def test_to_output_robot_action_strips_prefix_and_filters_pos_keys_only():
     # Build a transition with mixed action keys
     tr = {
         TransitionKey.ACTION: {
-            "action.j1.pos": 11.0,  # keep "j1.pos"
-            "action.gripper.pos": torch.tensor(33.0),  # keep: tensor accepted
-            "action.ee.x": 0.5,  # ignore (doesn't end with .pos)
+            "j1.pos": 11.0,  # keep "j1.pos"
+            "gripper.pos": torch.tensor(33.0),  # keep: tensor accepted
+            "ee.x": 0.5,  # ignore (doesn't end with .pos)
             "misc": "ignore_me",  # ignore (no 'action.' prefix)
         }
     }

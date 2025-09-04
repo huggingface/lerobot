@@ -260,11 +260,13 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         """
         # Add a feature for the token IDs if it doesn't already exist
         if OBS_LANGUAGE_TOKENS not in features:
-            features[OBS_LANGUAGE_TOKENS] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
+            features[FeatureType.LANGUAGE][OBS_LANGUAGE_TOKENS] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
 
         # Add a feature for the attention mask if it doesn't already exist
         if OBS_LANGUAGE_ATTENTION_MASK not in features:
-            features[OBS_LANGUAGE_ATTENTION_MASK] = PolicyFeature(
+            features[FeatureType.LANGUAGE][OBS_LANGUAGE_ATTENTION_MASK] = PolicyFeature(
                 type=FeatureType.LANGUAGE, shape=(self.max_length,)
             )
 

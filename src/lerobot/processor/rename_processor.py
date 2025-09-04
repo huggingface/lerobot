@@ -56,6 +56,7 @@ class RenameProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[FeatureType, dict[str, PolicyFeature]]
     ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        # TODO(Steven): This will blow up
         """Transforms:
         - Each key in the observation that appears in `rename_map` is renamed to its value.
         - Keys not in `rename_map` remain unchanged.
