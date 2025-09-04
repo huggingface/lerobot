@@ -60,7 +60,6 @@ class Reachy2CameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     ip_address: str | None = "localhost"
     port: int = 50065
-    # use_depth: bool = False
 
     def __post_init__(self):
         if self.name not in ["teleop", "depth"]:
