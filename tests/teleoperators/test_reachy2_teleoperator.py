@@ -28,6 +28,8 @@ from lerobot.teleoperators.reachy2_teleoperator import (
     Reachy2TeleoperatorConfig,
 )
 
+pytest.importorskip("reachy2_sdk")
+
 # {lerobot_keys: reachy2_sdk_keys}
 REACHY2_JOINTS = {
     **REACHY2_NECK_JOINTS,
