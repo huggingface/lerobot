@@ -16,7 +16,7 @@
 # limitations under the License.
 import torch
 
-from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
+from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
@@ -59,12 +59,12 @@ def make_diffusion_pre_post_processors(
     return (
         PolicyProcessorPipeline(
             steps=input_steps,
-            name=PREPROCESSOR_DEFAULT_NAME,
+            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
             **preprocessor_kwargs,
         ),
         PolicyProcessorPipeline(
             steps=output_steps,
-            name=POSTPROCESSOR_DEFAULT_NAME,
+            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
             **postprocessor_kwargs,
         ),
     )

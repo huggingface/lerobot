@@ -45,8 +45,8 @@ OPTIMIZER_STATE = "optimizer_state.safetensors"
 OPTIMIZER_PARAM_GROUPS = "optimizer_param_groups.json"
 SCHEDULER_STATE = "scheduler_state.json"
 
-PREPROCESSOR_DEFAULT_NAME = "robot_preprocessor"
-POSTPROCESSOR_DEFAULT_NAME = "robot_postprocessor"
+POLICY_PREPROCESSOR_DEFAULT_NAME = "policy_preprocessor"
+POLICY_POSTPROCESSOR_DEFAULT_NAME = "policy_postprocessor"
 
 if "LEROBOT_HOME" in os.environ:
     raise ValueError(

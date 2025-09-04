@@ -18,7 +18,7 @@
 import torch
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.constants import POSTPROCESSOR_DEFAULT_NAME, PREPROCESSOR_DEFAULT_NAME
+from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
@@ -107,12 +107,12 @@ def make_pi0_pre_post_processors(
     return (
         PolicyProcessorPipeline(
             steps=input_steps,
-            name=PREPROCESSOR_DEFAULT_NAME,
+            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
             **preprocessor_kwargs,
         ),
         PolicyProcessorPipeline(
             steps=output_steps,
-            name=POSTPROCESSOR_DEFAULT_NAME,
+            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
             **postprocessor_kwargs,
         ),
     )
