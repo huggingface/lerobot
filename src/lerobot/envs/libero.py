@@ -311,6 +311,7 @@ class LiberoEnv(gym.Env):
 
     def step(self, action):
         assert action.ndim == 1
+        action[-1] = 1.0 - action[-1]
         raw_obs, reward, done, info = self._env.step(action)
         is_success = self._env.check_success()
         terminated = done or is_success
