@@ -63,7 +63,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from transformers import AutoProcessor
 
-from lerobot.constants import ACTION, OBS_STATE
+from lerobot.constants import ACTION
 from lerobot.policies.normalize import (
     Normalize,
     Unnormalize,
@@ -75,7 +75,8 @@ from lerobot.policies.utils import (
     populate_queues,
 )
 from lerobot.utils.utils import get_safe_dtype
-
+OBS_STATE = 'state'
+ACTION = 'actions'
 # Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
 _VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
 
@@ -824,12 +825,21 @@ class VLAFlowMatching(nn.Module):
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        # added by jade
+        seq_len = pad_masks.shape[1]
+        if seq_len < self.config.chunk_size:
+            embs = pad_tensor(embs, self.config.chunk_size, pad_value=0)
+            pad_masks = pad_tensor(pad_masks, self.config.chunk_size, pad_value=0)
+            att_masks = pad_tensor(att_masks, self.config.chunk_size, pad_value=0)
         return embs, pad_masks, att_masks
 
     def forward(
         self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
+        #added by jade
+        if actions.ndim == 2:
+            actions = actions[:, None, :].expand(-1, self.config.chunk_size, -1)
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -857,7 +867,8 @@ class VLAFlowMatching(nn.Module):
             use_cache=False,
             fill_kv_cache=False,
         )
-        suffix_out = suffix_out[:, -self.config.chunk_size :]
+        # suffix_out = suffix_out[:, -self.config.chunk_size :]
+        suffix_out = suffix_out[:, -self.config.chunk_size:, :]
         # Original openpi code, upcast attention output
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
