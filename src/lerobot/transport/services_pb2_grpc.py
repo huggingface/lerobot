@@ -3,9 +3,9 @@
 import grpc
 import warnings
 
-from lerobot.transport import services_pb2 as lerobot_dot_transport_dot_services__pb2
+import services_pb2 as services__pb2
 
-GRPC_GENERATED_VERSION = '1.73.1'
+GRPC_GENERATED_VERSION = '1.70.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,14 +18,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in lerobot/transport/services_pb2_grpc.py depends on'
+        + f' but the generated code in services_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class LearnerServiceStub:
+class LearnerServiceStub(object):
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -38,27 +38,27 @@ class LearnerServiceStub:
         """
         self.StreamParameters = channel.unary_stream(
                 '/transport.LearnerService/StreamParameters',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-                response_deserializer=lerobot_dot_transport_dot_services__pb2.Parameters.FromString,
+                request_serializer=services__pb2.Empty.SerializeToString,
+                response_deserializer=services__pb2.Parameters.FromString,
                 _registered_method=True)
         self.SendTransitions = channel.stream_unary(
                 '/transport.LearnerService/SendTransitions',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.Transition.SerializeToString,
-                response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                request_serializer=services__pb2.Transition.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
         self.SendInteractions = channel.stream_unary(
                 '/transport.LearnerService/SendInteractions',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.InteractionMessage.SerializeToString,
-                response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                request_serializer=services__pb2.InteractionMessage.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
         self.Ready = channel.unary_unary(
                 '/transport.LearnerService/Ready',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-                response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                request_serializer=services__pb2.Empty.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
 
 
-class LearnerServiceServicer:
+class LearnerServiceServicer(object):
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -93,23 +93,23 @@ def add_LearnerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'StreamParameters': grpc.unary_stream_rpc_method_handler(
                     servicer.StreamParameters,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
-                    response_serializer=lerobot_dot_transport_dot_services__pb2.Parameters.SerializeToString,
+                    request_deserializer=services__pb2.Empty.FromString,
+                    response_serializer=services__pb2.Parameters.SerializeToString,
             ),
             'SendTransitions': grpc.stream_unary_rpc_method_handler(
                     servicer.SendTransitions,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Transition.FromString,
-                    response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.Transition.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
             'SendInteractions': grpc.stream_unary_rpc_method_handler(
                     servicer.SendInteractions,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.InteractionMessage.FromString,
-                    response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.InteractionMessage.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
             'Ready': grpc.unary_unary_rpc_method_handler(
                     servicer.Ready,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
-                    response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.Empty.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -119,7 +119,7 @@ def add_LearnerServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class LearnerService:
+class LearnerService(object):
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -139,8 +139,8 @@ class LearnerService:
             request,
             target,
             '/transport.LearnerService/StreamParameters',
-            lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-            lerobot_dot_transport_dot_services__pb2.Parameters.FromString,
+            services__pb2.Empty.SerializeToString,
+            services__pb2.Parameters.FromString,
             options,
             channel_credentials,
             insecure,
@@ -166,8 +166,8 @@ class LearnerService:
             request_iterator,
             target,
             '/transport.LearnerService/SendTransitions',
-            lerobot_dot_transport_dot_services__pb2.Transition.SerializeToString,
-            lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+            services__pb2.Transition.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -193,8 +193,8 @@ class LearnerService:
             request_iterator,
             target,
             '/transport.LearnerService/SendInteractions',
-            lerobot_dot_transport_dot_services__pb2.InteractionMessage.SerializeToString,
-            lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+            services__pb2.InteractionMessage.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -220,8 +220,8 @@ class LearnerService:
             request,
             target,
             '/transport.LearnerService/Ready',
-            lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-            lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+            services__pb2.Empty.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -233,7 +233,7 @@ class LearnerService:
             _registered_method=True)
 
 
-class AsyncInferenceStub:
+class AsyncInferenceStub(object):
     """AsyncInference: from Robot perspective
     Robot send observations to & executes action received from a remote Policy server
     """
@@ -246,27 +246,27 @@ class AsyncInferenceStub:
         """
         self.SendObservations = channel.stream_unary(
                 '/transport.AsyncInference/SendObservations',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.Observation.SerializeToString,
-                response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                request_serializer=services__pb2.Observation.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
         self.GetActions = channel.unary_unary(
                 '/transport.AsyncInference/GetActions',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-                response_deserializer=lerobot_dot_transport_dot_services__pb2.Actions.FromString,
+                request_serializer=services__pb2.Empty.SerializeToString,
+                response_deserializer=services__pb2.Actions.FromString,
                 _registered_method=True)
         self.SendPolicyInstructions = channel.unary_unary(
                 '/transport.AsyncInference/SendPolicyInstructions',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.PolicySetup.SerializeToString,
-                response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                request_serializer=services__pb2.PolicySetup.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
         self.Ready = channel.unary_unary(
                 '/transport.AsyncInference/Ready',
-                request_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-                response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                request_serializer=services__pb2.Empty.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
 
 
-class AsyncInferenceServicer:
+class AsyncInferenceServicer(object):
     """AsyncInference: from Robot perspective
     Robot send observations to & executes action received from a remote Policy server
     """
@@ -302,23 +302,23 @@ def add_AsyncInferenceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'SendObservations': grpc.stream_unary_rpc_method_handler(
                     servicer.SendObservations,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Observation.FromString,
-                    response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.Observation.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
             'GetActions': grpc.unary_unary_rpc_method_handler(
                     servicer.GetActions,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
-                    response_serializer=lerobot_dot_transport_dot_services__pb2.Actions.SerializeToString,
+                    request_deserializer=services__pb2.Empty.FromString,
+                    response_serializer=services__pb2.Actions.SerializeToString,
             ),
             'SendPolicyInstructions': grpc.unary_unary_rpc_method_handler(
                     servicer.SendPolicyInstructions,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.PolicySetup.FromString,
-                    response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.PolicySetup.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
             'Ready': grpc.unary_unary_rpc_method_handler(
                     servicer.Ready,
-                    request_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
-                    response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.Empty.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -328,7 +328,7 @@ def add_AsyncInferenceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class AsyncInference:
+class AsyncInference(object):
     """AsyncInference: from Robot perspective
     Robot send observations to & executes action received from a remote Policy server
     """
@@ -348,8 +348,8 @@ class AsyncInference:
             request_iterator,
             target,
             '/transport.AsyncInference/SendObservations',
-            lerobot_dot_transport_dot_services__pb2.Observation.SerializeToString,
-            lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+            services__pb2.Observation.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -375,8 +375,8 @@ class AsyncInference:
             request,
             target,
             '/transport.AsyncInference/GetActions',
-            lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-            lerobot_dot_transport_dot_services__pb2.Actions.FromString,
+            services__pb2.Empty.SerializeToString,
+            services__pb2.Actions.FromString,
             options,
             channel_credentials,
             insecure,
@@ -402,8 +402,8 @@ class AsyncInference:
             request,
             target,
             '/transport.AsyncInference/SendPolicyInstructions',
-            lerobot_dot_transport_dot_services__pb2.PolicySetup.SerializeToString,
-            lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+            services__pb2.PolicySetup.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -429,8 +429,8 @@ class AsyncInference:
             request,
             target,
             '/transport.AsyncInference/Ready',
-            lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-            lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+            services__pb2.Empty.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,

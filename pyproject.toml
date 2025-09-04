@@ -96,7 +96,7 @@ dependencies = [
 pygame-dep = ["pygame>=2.5.1"]
 placo-dep = ["placo>=0.9.6"]
 transformers-dep = ["transformers>=4.50.3,<4.52.0"] # TODO: Bumb dependency
-grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
+grpcio-dep = ["grpcio==1.70.0", "protobuf==5.29.5"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0"]
