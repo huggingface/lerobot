@@ -23,6 +23,7 @@ from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import (
+    identity_transition,
     observation_to_transition,
     transition_to_robot_action,
 )
@@ -74,7 +75,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline(
             initial_guess_current_joints=True,
         ),
     ],
-    to_transition=lambda tr: tr,
+    to_transition=identity_transition,
     to_output=transition_to_robot_action,
 )
 
@@ -84,7 +85,7 @@ robot_joints_to_ee_pose_processor = RobotProcessorPipeline(
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
     to_transition=observation_to_transition,
-    to_output=lambda tr: tr,
+    to_output=identity_transition,
 )
 
 # Build dataset action and gripper features

@@ -19,8 +19,6 @@ from typing import Any
 import numpy as np
 import rerun as rr
 
-from lerobot.processor import EnvTransition, TransitionKey
-
 
 def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
     """Initializes the Rerun SDK for visualizing the control loop."""
@@ -33,85 +31,51 @@ def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
 
 def _is_scalar(x):
     return (
-        isinstance(x, numbers.Real)
+        isinstance(x, float)
+        or isinstance(x, numbers.Real)
         or isinstance(x, (np.integer, np.floating))
         or (isinstance(x, np.ndarray) and x.ndim == 0)
     )
 
 
 def log_rerun_data(
-    data: list[dict[str | Any] | EnvTransition] | dict[str | Any] | EnvTransition | None = None,
-    *,
     observation: dict[str, Any] | None = None,
     action: dict[str, Any] | None = None,
 ) -> None:
-    items = data if isinstance(data, list) else ([data] if data is not None else [])
+    """Log observation and action data to Rerun for visualization."""
+    if observation:
+        for k, v in observation.items():
+            if v is None:
+                continue
+            key = k if str(k).startswith("observation.") else f"observation.{k}"
 
-    obs = {} if observation is None else dict(observation)
-    act = {} if action is None else dict(action)
+            if _is_scalar(v):
+                rr.log(key, rr.Scalar(float(v)))
+            elif isinstance(v, np.ndarray):
+                arr = v
+                # Convert CHW -> HWC when needed
+                if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+                    arr = np.transpose(arr, (1, 2, 0))
+                if arr.ndim == 1:
+                    for i, vi in enumerate(arr):
+                        rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
+                else:
+                    rr.log(key, rr.Image(arr), static=True)
 
-    for idx, item in enumerate(items):
-        if not isinstance(item, dict):
-            continue
+    if action:
+        for k, v in action.items():
+            if v is None:
+                continue
+            key = k if str(k).startswith("action.") else f"action.{k}"
 
-        if any(isinstance(k, TransitionKey) for k in item.keys()):
-            o = item.get(TransitionKey.OBSERVATION) or {}
-            a = item.get(TransitionKey.ACTION) or {}
-            if isinstance(o, dict):
-                obs.update(o)
-            if isinstance(a, dict):
-                act.update(a)
-            continue
-
-        keys = list(item.keys())
-        has_obs = any(str(k).startswith("observation.") for k in keys)
-        has_act = any(str(k).startswith("action.") for k in keys)
-
-        if has_obs or has_act:
-            if has_obs:
-                obs.update(item)
-            if has_act:
-                act.update(item)
-        else:
-            # No prefixes: assume first is observation, second is action, others are observation
-            if idx == 0:
-                obs.update(item)
-            elif idx == 1:
-                act.update(item)
-            else:
-                obs.update(item)
-
-    for k, v in obs.items():
-        if v is None:
-            continue
-        key = k if str(k).startswith("observation.") else f"observation.{k}"
-
-        if _is_scalar(v):
-            rr.log(key, rr.Scalar(float(v)))
-        elif isinstance(v, np.ndarray):
-            arr = v
-            # Convert CHW -> HWC when needed
-            if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
-                arr = np.transpose(arr, (1, 2, 0))
-            if arr.ndim == 1:
-                for i, vi in enumerate(arr):
-                    rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
-            else:
-                rr.log(key, rr.Image(arr), static=True)
-
-    for k, v in act.items():
-        if v is None:
-            continue
-        key = k if str(k).startswith("action.") else f"action.{k}"
-
-        if _is_scalar(v):
-            rr.log(key, rr.Scalar(float(v)))
-        elif isinstance(v, np.ndarray):
-            if v.ndim == 1:
-                for i, vi in enumerate(v):
-                    rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
-            else:
-                # Fall back to flattening higher-dimensional arrays
-                flat = v.flatten()
-                for i, vi in enumerate(flat):
-                    rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
+            if _is_scalar(v):
+                rr.log(key, rr.Scalar(float(v)))
+            elif isinstance(v, np.ndarray):
+                if v.ndim == 1:
+                    for i, vi in enumerate(v):
+                        rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
+                else:
+                    # Fall back to flattening higher-dimensional arrays
+                    flat = v.flatten()
+                    for i, vi in enumerate(flat):
+                        rr.log(f"{key}_{i}", rr.Scalar(float(vi)))

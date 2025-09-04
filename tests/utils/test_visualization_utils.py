@@ -86,7 +86,10 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
         TransitionKey.ACTION: act,
     }
 
-    vu.log_rerun_data(transition)
+    # Extract observation and action data from transition like in the real call sites
+    obs_data = transition.get(TransitionKey.OBSERVATION, {})
+    action_data = transition.get(TransitionKey.ACTION, {})
+    vu.log_rerun_data(observation=obs_data, action=action_data)
 
     # We expect:
     # - observation.state.temperature -> Scalar
@@ -141,7 +144,9 @@ def test_log_rerun_data_plain_list_ordering_and_prefixes(mock_rerun):
         "vec": np.array([9, 8, 7], dtype=np.float32),
     }
 
-    vu.log_rerun_data([obs_plain, act_plain])
+    # Extract observation and action data from list like the old function logic did
+    # First dict was treated as observation, second as action
+    vu.log_rerun_data(observation=obs_plain, action=act_plain)
 
     # Expected keys with auto-prefixes
     expected = {
@@ -181,7 +186,6 @@ def test_log_rerun_data_kwargs_only(mock_rerun):
     vu, calls = mock_rerun
 
     vu.log_rerun_data(
-        None,
         observation={"observation.temp": 10.0, "observation.gray": np.zeros((8, 8, 1), dtype=np.uint8)},
         action={"action.a": 1.0},
     )
