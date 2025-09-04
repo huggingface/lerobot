@@ -39,6 +39,8 @@
 - sections:
   - local: notebooks
     title: Notebooks
+  - local: feetech
+    title: Updating Feetech Firmware
   title: "Resources"
 - sections:
   - local: contributing
