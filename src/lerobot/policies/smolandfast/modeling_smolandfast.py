@@ -56,6 +56,7 @@ from torch import Tensor, nn
 from transformers import AutoProcessor, AutoTokenizer, GPT2Config, GPT2LMHeadModel
 from transformers.cache_utils import HybridCache, StaticCache
 from transformers.models.auto import CONFIG_MAPPING
+from transformers import LogitsProcessorList
 
 from lerobot.constants import ACTION, OBS_STATE, OBS_ENV_STATE
 from lerobot.policies.normalize import Normalize, Unnormalize
@@ -190,9 +191,10 @@ class SMOLANDFAST(nn.Module):
             if hasattr(self.llm_tokenizer, "pad_token_id")
             else self.llm_tokenizer.eos_token_id
         )
+        self.eos_token_id = self.llm_tokenizer.eos_token_id
 
-        cfg = GPT2Config()
-        self.llm = GPT2LMHeadModel(config=cfg)
+        # cfg = GPT2Config()
+        self.llm = GPT2LMHeadModel.from_pretrained(llm_path)
 
         # change important stuff in bf16
         params_to_change_dtype = [
@@ -253,7 +255,7 @@ class SMOLANDFAST(nn.Module):
             cleaned = txt.lower().strip().replace("_", " ")
             state_str = " ".join(str(val.item()) for val in disc_st)
             env_str = " ".join(str(val.item()) for val in disc_env)
-            prefix_texts.append(f"Task: {cleaned}, State: {state_str} {env_str}, Action: ")
+            prefix_texts.append(f"Task: {cleaned}, State: {state_str}, Env: {env_str}, Action: ")
 
         prefix_out = self.llm_tokenizer(
             prefix_texts, add_special_tokens=True, return_tensors="pt", padding="longest", truncation=False
@@ -275,15 +277,10 @@ class SMOLANDFAST(nn.Module):
         act_mask = act_mask.to(device)
 
         # Replace action with 0 to pad tokens
-        act_ids = torch.where(
-            act_ids == self.llm_tokenizer.vocab_size - 1 - self.fast_skip_tokens,
-            self.pad_token_id,
-            act_ids,
-        )
-
-        eos_token = torch.tensor(
-            [self.llm_tokenizer.eos_token_id], dtype=torch.long, device=device
-        ).expand(bsize, -1)
+        mapped_fast_pad = self.llm_tokenizer.vocab_size - 1 - self.fast_skip_tokens  # fast_id=0
+        act_ids = torch.where(act_ids == mapped_fast_pad, self.pad_token_id, act_ids)
+        # then append eos (distinct from pad)
+        eos_token = torch.full((bsize, 1), self.eos_token_id, dtype=torch.long, device=device)
         eos_mask = torch.tensor([1], dtype=torch.long, device=device).expand(bsize, -1)
 
         # TODO: here we first add PAD tokens, and after EOS token, I think it should be oposite
@@ -297,7 +294,6 @@ class SMOLANDFAST(nn.Module):
         prefix_ids, prefix_mask = self.create_obs_prefix_tokens(state=state,
                                                                 env=env,
                                                                 lang_text=lang_text)
-        prefix_lens = prefix_mask.sum(dim=1)[:, None]
 
         if actions is not None:
             act_ids, act_mask = self.create_action_tokens(actions=actions)
@@ -308,11 +304,13 @@ class SMOLANDFAST(nn.Module):
             final_ids = prefix_ids.to(device)
             final_mask = prefix_mask.to(device)
 
-        padded_output = {"input_ids": final_ids, "attention_mask": final_mask}
+        padded_output = {"input_ids": final_ids,
+                         "attention_mask": final_mask}
         # define tensor of padding lengths
-        prefix_mask = (padded_output["attention_mask"] != 0).cumsum(dim=1) > prefix_lens
-        # loss is computed not on prefix, and not on padding
-        padded_output["loss_mask"] = prefix_mask & padded_output["attention_mask"]
+        prefix_lens = prefix_mask.sum(dim=1, keepdim=True)
+        seq_mask = (padded_output["attention_mask"] != 0)
+        loss_mask = (seq_mask.cumsum(dim=1) > prefix_lens) & seq_mask
+        padded_output["loss_mask"] = loss_mask
         return padded_output
 
     def forward(self, batch: dict[str, Tensor]):
@@ -321,7 +319,7 @@ class SMOLANDFAST(nn.Module):
         padded_outs = self.create_input_tokens(
             state=batch[OBS_STATE],
             env=batch[OBS_ENV_STATE],
-            lang_text= batch["task"] if "task" in batch else "",
+            lang_text=batch["task"] if "task" in batch else "",
             actions=batch[ACTION],
         )
 
@@ -422,20 +420,36 @@ class SMOLANDFAST(nn.Module):
         )
 
         input_len = padded_outs["input_ids"].shape[1]
+
+        def make_fast_band_processor(low, high, eos_id):
+            def processor(input_ids, scores):
+                # Everything outside [low, high] and eos_id → -inf
+                mask = torch.ones_like(scores, dtype=torch.bool)
+                mask[:, low:high+1] = False
+                mask[:, eos_id] = False
+                scores = scores.masked_fill(mask, torch.finfo(scores.dtype).min)
+                return scores
+            return processor
+        # Example usage in generate_actions
+        fast_vocab_size = self.fast_tokenizer.bpe_tokenizer.vocab_size
+        high = self.llm_tokenizer.vocab_size - 1 - self.fast_skip_tokens
+        low = high - (fast_vocab_size - 1)
+
+        processors = LogitsProcessorList([make_fast_band_processor(low, high, self.eos_token_id)])
+
         output_tokens = self.llm.generate(
             input_ids=padded_outs["input_ids"],
             attention_mask=padded_outs["attention_mask"],
             use_cache=self.config.use_cache,
             max_new_tokens=self.config.max_decoding_steps,
-            do_sample=True,
+            do_sample=False,
             num_beams=1,
             eos_token_id=self.llm_tokenizer.eos_token_id,
-            pad_token_id=self.llm_tokenizer.pad_token_id
+            pad_token_id=self.llm_tokenizer.pad_token_id,
+            logits_processor=processors,
         )
         gemma_action_tokens = output_tokens[:,input_len:]
 
-        # remove eos token
-        gemma_action_tokens = gemma_action_tokens[:,:-1]
         # replace gemma pad tokens with fast pad tokens
         gemma_action_tokens = torch.where(
                     gemma_action_tokens == self.pad_token_id,
@@ -445,9 +459,9 @@ class SMOLANDFAST(nn.Module):
 
         fast_action_tokens = self._paligemma_tokens_to_act_tokens(gemma_action_tokens).tolist() 
         # remove fast pad tokens
-        for seq in fast_action_tokens:
-            while seq and seq[-1] == 0:
-                seq.pop()
+        # for seq in fast_action_tokens:
+        #     while seq and seq[-1] == 0:
+        #         seq.pop()
 
         decoded_actions = torch.tensor([
                         self.decode_actions_with_fast(
