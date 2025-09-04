@@ -30,11 +30,29 @@ from lerobot.policies.smolvla.processor_smolvla import (
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
+    EnvTransition,
     NormalizerProcessorStep,
+    ProcessorStep,
     RenameProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
 )
+
+
+class MockTokenizerProcessorStep(ProcessorStep):
+    """Mock tokenizer processor step for testing."""
+
+    def __init__(self, *args, **kwargs):
+        # Accept any arguments to mimic the real TokenizerProcessorStep interface
+        pass
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        # Pass through transition unchanged
+        return transition
+
+    def transform_features(self, features):
+        # Pass through features unchanged
+        return features
 
 
 def create_transition(observation=None, action=None, **kwargs):
@@ -88,7 +106,9 @@ def test_make_smolvla_processor_basic():
     config = create_default_config()
     stats = create_default_stats()
 
-    with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep"):
+    with patch(
+        "lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep", MockTokenizerProcessorStep
+    ):
         preprocessor, postprocessor = make_smolvla_pre_post_processors(
             config,
             stats,
@@ -170,7 +190,7 @@ def test_smolvla_processor_cuda():
     stats = create_default_stats()
 
     # Mock the tokenizer processor to act as pass-through
-    class MockTokenizerProcessorStep:
+    class MockTokenizerProcessorStep(ProcessorStep):
         def __init__(self, *args, **kwargs):
             pass
 
@@ -227,7 +247,7 @@ def test_smolvla_processor_accelerate_scenario():
     stats = create_default_stats()
 
     # Mock the tokenizer processor to act as pass-through
-    class MockTokenizerProcessorStep:
+    class MockTokenizerProcessorStep(ProcessorStep):
         def __init__(self, *args, **kwargs):
             pass
 
@@ -285,7 +305,7 @@ def test_smolvla_processor_multi_gpu():
     stats = create_default_stats()
 
     # Mock the tokenizer processor to act as pass-through
-    class MockTokenizerProcessorStep:
+    class MockTokenizerProcessorStep(ProcessorStep):
         def __init__(self, *args, **kwargs):
             pass
 
@@ -340,7 +360,9 @@ def test_smolvla_processor_without_stats():
     config = create_default_config()
 
     # Mock the tokenizer processor
-    with patch("lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep"):
+    with patch(
+        "lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep", MockTokenizerProcessorStep
+    ):
         preprocessor, postprocessor = make_smolvla_pre_post_processors(
             config,
             dataset_stats=None,
