@@ -82,85 +82,70 @@ For Ubuntu X86:
 需要根据你的 CUDA 版本安装 pytorch 和 torchvision 等环境。
 
 1. 安装 Miniconda： 对于 Jetson：
+    ```bash
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
+    chmod +x Miniconda3-latest-Linux-aarch64.sh
+    ./Miniconda3-latest-Linux-aarch64.sh
+    source ~/.bashrc
+    ```
+	或者，对于 X86 Ubuntu 22.04：
 
-```bash
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
-chmod +x Miniconda3-latest-Linux-aarch64.sh
-./Miniconda3-latest-Linux-aarch64.sh
-source ~/.bashrc
-```
+    ```bash
+    mkdir -p ~/miniconda3
+    cd miniconda3
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
+    bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+    rm ~/miniconda3/miniconda.sh
+    source ~/miniconda3/bin/activate
+    conda init --all
+    ```
 
-或者，对于 X86 Ubuntu 22.04：
+2. 创建并激活一个新的 conda 环境用于 LeRobot
 
-```bash
-mkdir -p ~/miniconda3
-cd miniconda3
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
-bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
-rm ~/miniconda3/miniconda.sh
-source ~/miniconda3/bin/activate
-conda init --all
-```
+    ```bash
+    conda create -y -n lerobot python=3.10 && conda activate lerobot
+    ```
 
-2.创建并激活一个新的 conda 环境用于 LeRobot
+3. 克隆 LeRobot 仓库：
 
-```bash
-conda create -y -n lerobot python=3.10 && conda activate lerobot
-```
+    ```bash
+    git clone https://github.com/servodevelop/lerobot.git
+    ```
+	切换到develop分支
 
-3.克隆 LeRobot 仓库：
+4. 使用 miniconda 时，在环境中安装 ffmpeg：
 
-```bash
-https://github.com/servodevelop/lerobot.git
-```
+    ```bash
+    conda install ffmpeg -c conda-forge
+    ```
+    这通常会为你的平台安装使用 libsvtav1 编码器编译的 ffmpeg 7.X。如果不支持 libsvtav1（可以通过 ffmpeg -encoders 查看支持的编码器），你可以：
 
+    - 【适用于所有平台】显式安装 ffmpeg 7.X：
 
-4.使用 miniconda 时，在环境中安装 ffmpeg：
+    ```bash
+    conda install ffmpeg=7.1.1 -c conda-forge
+    ```
 
-```bash
-conda install ffmpeg -c conda-forge
-```
-这通常会为你的平台安装使用 libsvtav1 编码器编译的 ffmpeg 7.X。如果不支持 libsvtav1（可以通过 ffmpeg -encoders 查看支持的编码器），你可以：
+5. 安装带有 fashionstar 电机依赖的 LeRobot：
 
-- 【适用于所有平台】显式安装 ffmpeg 7.X：
+    ```bash
+    cd ~/lerobot && pip install -e ".[dynamixel]"
+    pip install fashionstar-uart-sdk==1.3.1
+    ```
+6. 检查 Pytorch 和 Torchvision
 
-```bash
-conda install ffmpeg=7.1.1 -c conda-forge
-```
+    由于通过 pip 安装 LeRobot 环境时会卸载原有的 Pytorch 和 Torchvision 并安装 CPU 版本，因此需要在 Python 中进行检查。
 
-5.安装带有 fashionstar 电机依赖的 LeRobot：
+    ```python
+    import torch
+    print(torch.cuda.is_available())
+    ```
 
-```bash
-cd ~/lerobot && pip install -e ".[dynamixel]"
-pip install fashionstar-uart-sdk==1.3.1
-```
-6.检查 Pytorch 和 Torchvision
+    如果输出结果为 False，需要根据[官网教程](https://pytorch.org/index.html)重新安装 Pytorch 和 Torchvision。
 
-由于通过 pip 安装 LeRobot 环境时会卸载原有的 Pytorch 和 Torchvision 并安装 CPU 版本，因此需要在 Python 中进行检查。
-
-```python
-import torch
-print(torch.cuda.is_available())
-```
-
-如果输出结果为 False，需要根据[官网教程](https://pytorch.org/index.html)重新安装 Pytorch 和 Torchvision。
-
-### 机械臂开箱
-
-机械臂套装内包含：
-
-- Leader arm 主体
-- Follower arm 主体
-- 手柄
-- 平行夹爪
-- 安装工具（螺丝、内六角扳手）
-- 电源 x2
-- C型夹具 x2
-- UC-01 转接板 x2
+### 接线
 
 https://github.com/user-attachments/assets/56130bd9-21ee-4ae4-9cac-3817ac4d659f
-
-
 
 
 
@@ -220,7 +205,7 @@ lerobot-find-port
 
 如果是重新校准，按照命令提示输入字母c后按Enter键。
 
-下面是参考值,通常情况下，真实的角度在上下限的±10°范围内。
+下面是参考值,通常情况下，真实的限位参考值的±10°范围内。
 
 | 舵机ID  | 角度下限参考值 | 角度上限参考值 | 备注                               |
 | ------- | -------------: | -------------: | ---------------------------------- |
@@ -236,25 +221,24 @@ lerobot-find-port
 
 > [!TIP]
 >
-> 将leader连接到/dev/ttyUSB0
+> 将leader连接到/dev/ttyUSB0，或者修改下面的命令。
 
 
 
 ```bash
-lerobot-calibrate     --teleop.type=starai_violin     --teleop.port=/dev/ttyUSB0     --teleop.id=my_awesome_staraiviolin_arm
+lerobot-calibrate     --teleop.type=starai_violin --teleop.port=/dev/ttyUSB0 --teleop.id=my_awesome_staraiviolin_arm
 ```
 
 ### follower
 
 > [!TIP]
 >
-> 将follower连接到/dev/ttyUSB1
-
-
+> 将follower连接到/dev/ttyUSB1，或者修改下面的命令。
 
 ```bash
 lerobot-calibrate     --robot.type=starai_viola --robot.port=/dev/ttyUSB1 --robot.id=my_awesome_staraiviola_arm
 ```
+
 
 
 ## 遥操作
@@ -272,12 +256,21 @@ https://github.com/user-attachments/assets/23b3aa00-9889-48d3-ae2c-00ad50595e0a
 您已准备好遥操作您的机器人（不包括摄像头）！运行以下简单脚本：
 
 ```bash
-lerobot-teleoperate     --robot.type=starai_viola     --robot.port=/dev/ttyUSB1     --robot.id=my_awesome_staraiviola_arm     --teleop.type=starai_violin     --teleop.port=/dev/ttyUSB0     --teleop.id=my_awesome_staraiviolin_arm
+lerobot-teleoperate \
+    --robot.type=starai_viola \
+    --robot.port=/dev/ttyUSB1 \
+    --robot.id=my_awesome_staraiviola_arm \
+    --teleop.type=starai_violin \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=my_awesome_staraiviolin_arm
 ```
-远程操作命令将自动:
+远程操作命令将自动检测下列参数:
 
-    识别任何缺失的校准并启动校准程序。【todo】
-    连接机器人和远程操作设备并开始远程操作。
+1. 识别任何缺失的校准并启动校准程序。
+2. 连接机器人和远程操作设备并开始远程操作。
+
+
+
 程序启动后，悬停按钮依旧生效。
 
 
@@ -328,7 +321,16 @@ Image capture finished. Images saved to outputs/captured_images
 确认外接摄像头后，将摄像头信息替换下方cameras信息您将能够在遥操作时在计算机上显示摄像头：
 
 ```bash
-lerobot-teleoperate     --robot.type=starai_viola     --robot.port=/dev/ttyUSB1     --robot.id=my_awesome_staraiviola_arm     --robot.cameras="{ front: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}"     --teleop.type=starai_violin     --teleop.port=/dev/ttyUSB0     --teleop.id=my_awesome_staraiviolin_arm     --display_data=true
+lerobot-teleoperate \
+    --robot.type=starai_viola \
+    --robot.port=/dev/ttyUSB1 \
+    --robot.id=my_awesome_staraiviola_arm \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=starai_violin \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=my_awesome_staraiviolin_arm \
+    --display_data=true
+    
 ```
 
 ## 数据集制作采集
@@ -336,25 +338,18 @@ lerobot-teleoperate     --robot.type=starai_viola     --robot.port=/dev/ttyUSB1 
 
 https://github.com/user-attachments/assets/8bb25714-783a-4f29-83dd-58b457aed80c
 
-
+> [!TIP]
+>
+> 如果您想使用 Hugging Face Hub 的功能来上传您的数据集，请参考以下官方文章链接。本教程将不涉及这部分内容。
+>
+> [lmitation Learning for Robots](https://huggingface.co/docs/lerobot/il_robots?teleoperate_koch_camera=Command)
+>
+> 
 
 
 一旦您熟悉了遥操作，您就可以开始您的第一个数据集。
 
-如果您想使用 Hugging Face Hub 的功能来上传您的数据集，并且您之前尚未这样做，请确保您已使用具有写入权限的令牌登录，该令牌可以从 [Hugging Face 设置](https://huggingface.co/settings/tokens) 中生成：
-
-```bash
-huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
-```
-
-将您的 Hugging Face 仓库名称存储在一个变量中，以运行以下命令：
-
-```bash
-HF_USER=$(huggingface-cli whoami | head -n 1)
-echo $HF_USER
-```
-
-记录 10 个回合并将您的数据集上传到 Hub：
+记录 10 个回合：
 
 ```bash
 lerobot-record \
@@ -369,80 +364,62 @@ lerobot-record \
     --dataset.repo_id=starai/record-test \
     --dataset.episode_time_s=30 \
     --dataset.reset_time_s=30 \
-    --dataset.num_episodes=5 \
+    --dataset.num_episodes=10 \
     --dataset.push_to_hub=False \
     --dataset.single_task="Grab the black cube"
 ```
 
-### 数据集上传
 
-本地,您的数据集存储在此文件夹中:~/.cache/huggingface/lerobot/{repo-id}. 
-
-在数据记录结束时,您的数据集将上传到您的Hugging Face页面(例如:https://huggingface.co/datasets/${HF_USER}/record_test) , 你可以通过运行获得:
-
-echo https://huggingface.co/datasets/ ${HF_USER}/record_test
-
-您的数据集将自动标记为LeRobot让社区轻松找到它,您还可以添加自定义标签(在这种情况下)tutorial例如。
-
-您可以通过搜索中心查找其他 LeRobot 数据集LeRobottags.
-
-您还可以手动将本地数据集推送到 Hub,运行:
-
-huggingface-cli 上传 ${HF_USER } / record-test ~/.cache/huggingface/lerobot/{repo-id } - - - repo-type 数据集
 
 ### 记录功能
 
-因recordfunction 提供了一套用于在机器人操作过程中捕获和管理数据的工具:
+record提供了一套用于在机器人操作过程中捕获和管理数据的工具:
 #### 1.数据存储
 
-    数据使用以下命令存储LeRobotDataset格式,在录制时存储在磁盘上。【todo】
-    默认情况下,数据集在录制后会推送到您的 Hugging Face 页面。
-        要禁用上传,请使用--dataset.push_to_hub=False..
+- 数据使用 `LeRobotDataset` 格式存储，并在录制过程中存储在磁盘上。
 
 #### 2.检查点和恢复
 
-    检查点在录制过程中自动创建。【todo】
-    如果出现问题,可以通过重新运行相同的命令来恢复--resume=true..恢复录音时,--dataset.num_episodes必须设置为要录制的附加剧集数量,而不是数据集中的目标总集数!
-    要从头开始录制,请手动删除数据集目录。
+- 记录期间会自动创建检查点。
+- 如果出现问题，可以通过使用 重新运行相同的命令来恢复。恢复录制时，必须设置为**要录制的额外剧集数**，而不是数据集中的目标总剧集数！`--resume=true` `--dataset.num_episodes`
+- 要从头开始录制，请**手动删除**数据集目录。
 
-#### 3.记录 参数
+#### 3.记录 参数 
 
-使用命令行参数设置数据记录流:
+使用命令行参数设置数据记录流：
 
-    【todo】
-    --dataset.episode_time_s=60每个数据记录插曲的持续时间(默认值:60秒)。
-    --dataset.reset_time_s=60每集后重置环境的持续时间(默认:60秒)。
-    --dataset.num_episodes=50记录的总集数(默认值:50)。
+--dataset.episode_time_s=60每个数据记录插曲的持续时间(默认值:60秒)。
+--dataset.reset_time_s=60每集后重置环境的持续时间(默认:60秒)。
+--dataset.num_episodes=50记录的总集数(默认值:50秒)。
+
+
 
 #### 4.录制期间的键盘控制
 
-使用键盘快捷键控制数据记录流:
+使用键盘快捷键控制数据记录流：
 
-    【todo】
-    按右箭头(→) : 提前停止当前情节或重置时间,然后移动到下一个。
-    按 左 箭头 (←) : 取消当前插曲并重新录制。
-    新闻 逃生 (ESC):立即停止会话,编码视频并上传数据集。
+- 按**右方向键(→)** ： 提前停止当前情节或重置时间,然后移动到下一个。
 
-#### 收集数据的提示
-
-一旦你熟悉了数据记录,你就可以创建一个更大的数据集进行训练。一个好的开始任务是抓住一个物体在不同的位置,并把它放在一个垃圾箱。我们建议录制至少50集,每个地点10集。保持相机固定,并在整个录音中保持一致的抓握行为。还要确保你操纵的对象在相机上可见。一个好的经验法则是,你应该能够只看相机图像自己完成任务。
+- 按**左方向键 (←)** ：取消当前插曲并重新录制。
+- 按**ESC**：立即停止会话,编码视频并上传数据集。
 
 
-#### 故障排除:
 
-    【todo】
-    在 Linux 上,如果左右箭头键和转义键在数据记录过程中没有任何效果,请确保已设置$DISPLAY环境变量。参见 pynput 限制。
+>[!TIP]
+>
+>在 Linux 上,如果左右箭头键和转义键在数据记录过程中没有任何效果,请确保已设置$DISPLAY环境变量。参见 pynput 限制。
+>
+>一旦你熟悉了数据记录,你就可以创建一个更大的数据集进行训练。一个好的开始任务是抓住一个物体在不同的位置,并把它放在一个垃圾箱。我们建议录制至少50集,每个地点10集。保持相机固定,并在整个录音中保持一致的抓握行为。还要确保你操纵的对象在相机上可见。一个好的经验法则是,你应该能够只看相机图像自己完成任务。
 
-## 可视化数据集
 
-如果您将数据集上传到集线器--control.push_to_hub=true, visualize your dataset online你可以可视化你的数据集通过复制粘贴你的repo id给:
 
-```bash
-echo ${HF_USER}/record_test
-```
+
+
 
 
 ## 重播一个回合
+
+播放已经录制好的动作，可以借此测试机器人动作的重复性。
 
 ```
 lerobot-replay \
@@ -470,9 +447,13 @@ lerobot-train \
   --policy.repo_id=starai/my_policy
 ```
 
-如果你想训练本地数据集，repo_id与采集数据的repo_id对齐即可。训练应该需要几个小时。
+1. 我们提供了数据集作为参数。`dataset.repo_id=starai/record-test`
+2. 我们为 .这将从 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py) 加载配置。重要的是，此策略将自动适应机器人的电机状态、电机动作和相机的数量已保存在您的数据集中。`policy.type=act` `laptop` `phone`
+4. 我们提供了使用[权重和偏差](https://docs.wandb.ai/quickstart)来可视化训练图。这是可选的，但如果您使用它，请确保您已通过运行 登录。`wandb.enable=true` `wandb login`
 
-要从某个检查点恢复训练
+
+
+要从某个检查点恢复训练。
 
 ```bash
 lerobot-train \
@@ -480,7 +461,7 @@ lerobot-train \
   --resume=true
 ```
 
-## 评估
+## 运行推理并评估
 
 运行以下命令记录 10 个评估回合：
 
@@ -495,16 +476,12 @@ lerobot-record  \
   --dataset.single_task="Put lego brick into the transparent box" \
   --policy.path=outputs/train/act_viola_test/checkpoints/last/pretrained_model
   # <- Teleop optional if you want to teleoperate in between episodes \
-  # --teleop.type=so100_leader \
-  # --teleop.port=/dev/ttyACM0 \
+  # --teleop.type=starai_violin \
+  # --teleop.port=/dev/ttyUSB0 \
   # --teleop.id=my_awesome_leader_arm \
 ```
 
-正如你所看到的,它几乎与以前用于记录训练数据集的命令相同。有两件事改变了:
 
-    【todo】
-    还有一个额外的--control.policy.path参数,指示到您的策略检查点的路径(例如outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model。如果您将模型检查点上传到集线器(例如 ) , 则也可以使用模型存储库。${HF_USER}/act_so101_test。
-    数据集的名称从eval反映你正在运行推论(例如:${HF_USER}/eval_act_so101_test。
 
 ## FAQ
 
@@ -530,14 +507,6 @@ lerobot-record  \
 
 - 对于Jetson，请先安装[Pytorch和Torchvsion](https://github.com/Seeed-Projects/reComputer-Jetson-for-Beginners/blob/main/3-Basic-Tools-and-Getting-Started/3.3-Pytorch-and-Tensorflow/README.md#installing-pytorch-on-recomputer-nvidia-jetson)再执行`conda install -y -c conda-forge ffmpeg`,否则编译torchvision的时候会出现ffmpeg版本不匹配的问题。
 
-- 如果出现如下问题，是电脑的不支持此格式的视频编码，需要修改`lerobot/lerobot/common/datasets /video_utils.py`文件134行`vcodec: str = "libsvtav1"`的值修改为`libx264`或者`libopenh264`,不同电脑参数不同，可以进行尝试。 [Issues 705](https://github.com/huggingface/lerobot/issues/705)
-
-  ```bash
-  [vost#0:0 @ 0x13207240] Unknown encoder 'libsvtav1' [vost#0:0 @ 0x13207240] Error selecting an encoder Error opening output file /home/han/.cache/huggingface/lerobot/lyhhan/so100_test/videos/chunk-000/observation.images.laptop/episode_000000.mp4. Error opening output files: Encoder not found
-  ```
-
-  
-
 - 在3060的8G笔记本上训练ACT的50组数据的时间大概为6小时，在4090和A100的电脑上训练50组数据时间大概为2~3小时。
 
 - 数据采集过程中要确保摄像头位置和角度和环境光线的稳定，并且减少摄像头采集到过多的不稳定背景和行人，否则部署的环境变化过大会导致机械臂无法正常抓取。
@@ -552,6 +521,8 @@ lerobot-record  \
 
 Huggingface Project:[Lerobot](https://github.com/huggingface/lerobot/tree/main)
 
+Huggingface:[LeRobot](https://huggingface.co/docs/lerobot/index)
+
 ACT or ALOHA:[Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://tonyzhaozh.github.io/aloha/)
 
 VQ-BeT:[VQ-BeT: Behavior Generation with Latent Actions](https://sjlee.cc/vq-bet/)
@@ -559,3 +530,6 @@ VQ-BeT:[VQ-BeT: Behavior Generation with Latent Actions](https://sjlee.cc/vq-bet
 Diffusion Policy:[Diffusion Policy](https://diffusion-policy.cs.columbia.edu/)
 
 TD-MPC:[TD-MPC](https://www.nicklashansen.com/td-mpc/)
+
+
+
