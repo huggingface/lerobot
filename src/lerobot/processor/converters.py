@@ -23,9 +23,9 @@ from typing import Any
 
 import numpy as np
 import torch
-from scipy.spatial.transform import Rotation
 
 from lerobot.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
+from lerobot.utils.rotation import Rotation
 
 from .core import EnvTransition, TransitionKey
 
