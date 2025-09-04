@@ -60,11 +60,39 @@ def load_training_step(save_dir: Path) -> int:
 
 
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
+    import fcntl
+    import tempfile
+    import os
+    
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
-    if last_checkpoint_dir.is_symlink():
-        last_checkpoint_dir.unlink()
     relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
-    last_checkpoint_dir.symlink_to(relative_target)
+    
+    # Use file locking to prevent race conditions in multi-GPU training
+    lock_file = checkpoint_dir.parent / ".symlink_lock"
+    
+    try:
+        with open(lock_file, 'w') as f:
+            # Get exclusive lock
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            
+            # Update symlink atomically
+            if last_checkpoint_dir.exists() or last_checkpoint_dir.is_symlink():
+                last_checkpoint_dir.unlink()
+            last_checkpoint_dir.symlink_to(relative_target)
+            
+    except (OSError, FileExistsError) as e:
+        # Handle race conditions gracefully - another process may have already updated
+        if not last_checkpoint_dir.exists():
+            try:
+                last_checkpoint_dir.symlink_to(relative_target)
+            except FileExistsError:
+                pass  # Another process created it, that's fine
+    finally:
+        # Clean up lock file
+        try:
+            lock_file.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def save_checkpoint(

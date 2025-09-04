@@ -1,0 +1,11 @@
+compute_environment: LOCAL_MACHINE
+debug: false
+distributed_type: NO
+downcast_bf16: 'no'
+enable_cpu_affinity: false
+machine_rank: 0
+main_training_function: main
+mixed_precision: 'no'
+num_machines: 1
+num_processes: 1
+use_cpu: false

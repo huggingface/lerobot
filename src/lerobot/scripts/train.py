@@ -16,6 +16,7 @@
 import logging
 import time
 from contextlib import nullcontext
+from functools import partial
 from pprint import pformat
 from typing import Any
 
@@ -23,6 +24,8 @@ import torch
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
+import os
+from datetime import timedelta
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
@@ -52,6 +55,8 @@ from lerobot.utils.utils import (
 )
 from lerobot.utils.wandb_utils import WandBLogger
 
+def is_launched_with_accelerate() -> bool:
+    return "ACCELERATE_MIXED_PRECISION" in os.environ
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -59,36 +64,65 @@ def update_policy(
     batch: Any,
     optimizer: Optimizer,
     grad_clip_norm: float,
-    grad_scaler: GradScaler,
+    grad_scaler: GradScaler | None,
     lr_scheduler=None,
     use_amp: bool = False,
     lock=None,
+    accelerator=None,
 ) -> tuple[MetricsTracker, dict]:
     start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
     policy.train()
-    with torch.autocast(device_type=device.type) if use_amp else nullcontext():
-        loss, output_dict = policy.forward(batch)
+    
+    grad_norm = 0.0  # Initialize grad_norm to avoid undefined variable
+
+    if accelerator:
+        with accelerator.accumulate(policy):
+            with torch.autocast(device_type=device.type) if use_amp else nullcontext():
+                loss, output_dict = policy.forward(batch)
+            # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+            accelerator.backward(loss)
+            if accelerator.sync_gradients:
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    policy.parameters(),
+                    grad_clip_norm,
+                    error_if_nonfinite=False,
+                )
+            optimizer.step()
+            optimizer.zero_grad()
+    else:
+        # Standard training loop without accelerate
+        with torch.autocast(device_type=device.type) if use_amp else nullcontext():
+            loss, output_dict = policy.forward(batch)
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-    grad_scaler.scale(loss).backward()
+        
+        if grad_scaler is not None:
+            grad_scaler.scale(loss).backward()
+            # Unscale the gradient of the optimizer's assigned params in-place **prior to gradient clipping**.
+            grad_scaler.unscale_(optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                policy.parameters(),
+                grad_clip_norm,
+                error_if_nonfinite=False,
+            )
+            # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
+            # although it still skips optimizer.step() if the gradients contain infs or NaNs.
+            with lock if lock is not None else nullcontext():
+                grad_scaler.step(optimizer)
+            # Updates the scale for next iteration.
+            grad_scaler.update()
+        else:
+            # Without GradScaler (fallback)
+            loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                policy.parameters(),
+                grad_clip_norm,
+                error_if_nonfinite=False,
+            )
+            with lock if lock is not None else nullcontext():
+                optimizer.step()
 
-    # Unscale the gradient of the optimizer's assigned params in-place **prior to gradient clipping**.
-    grad_scaler.unscale_(optimizer)
-
-    grad_norm = torch.nn.utils.clip_grad_norm_(
-        policy.parameters(),
-        grad_clip_norm,
-        error_if_nonfinite=False,
-    )
-
-    # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
-    # although it still skips optimizer.step() if the gradients contain infs or NaNs.
-    with lock if lock is not None else nullcontext():
-        grad_scaler.step(optimizer)
-    # Updates the scale for next iteration.
-    grad_scaler.update()
-
-    optimizer.zero_grad()
+        optimizer.zero_grad()
 
     # Step through pytorch scheduler at every batch instead of epoch
     if lr_scheduler is not None:
@@ -99,7 +133,7 @@ def update_policy(
         policy.update()
 
     train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
+    train_metrics.grad_norm = grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
@@ -108,7 +142,32 @@ def update_policy(
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
+    
+    accelerator = None
+    if is_launched_with_accelerate():
+        import accelerate
+
+        # For example pi0 has unused params (last llm block)
+        from accelerate import DistributedDataParallelKwargs
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        # accelerator = accelerate.Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs])
+        from accelerate import InitProcessGroupKwargs
+        # Set NCCL timeout (default 30 minutes = 1800 seconds)
+        nccl_timeout = getattr(cfg, 'nccl_timeout', 1800)
+        ddp_init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=nccl_timeout)) # FIXME(mshukor): allow user to set timeout. This should be longer than the evaluation time
+        # Set gradient accumulation steps (default 1)
+        gradient_accumulation_steps = getattr(cfg, 'gradient_accumulation_steps', 1)
+        accelerator = accelerate.Accelerator(step_scheduler_with_optimizer=False, gradient_accumulation_steps=gradient_accumulation_steps, kwargs_handlers=[ddp_init_kwargs, ddp_kwargs])
+        if accelerator is not None and not accelerator.is_main_process:
+            # Disable duplicate logging on non-main processes
+            logging.info(f"Setting logging level on non-main process {accelerator.process_index} to WARNING.")
+            logging.getLogger().setLevel(logging.WARNING)
+
     logging.info(pformat(cfg.to_dict()))
+
+    if accelerator and not accelerator.is_main_process:
+            # Disable logging on non-main processes.
+            cfg.wandb.enable = False
 
     if cfg.wandb.enable and cfg.wandb.project:
         wandb_logger = WandBLogger(cfg)
@@ -143,7 +202,8 @@ def train(cfg: TrainPipelineConfig):
 
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
-    grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
+    # Only use GradScaler when not using accelerate (accelerate handles mixed precision internally)
+    grad_scaler = None if accelerator else GradScaler(device.type, enabled=cfg.policy.use_amp)
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -185,6 +245,11 @@ def train(cfg: TrainPipelineConfig):
     )
     dl_iter = cycle(dataloader)
 
+    # Prepare models for accelerate if using multi-GPU
+    if accelerator:
+        policy, optimizer, dataloader = accelerator.prepare(policy, optimizer, dataloader)
+        dl_iter = cycle(dataloader)
+
     policy.train()
 
     train_metrics = {
@@ -205,9 +270,10 @@ def train(cfg: TrainPipelineConfig):
         batch = next(dl_iter)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        for key in batch:
-            if isinstance(batch[key], torch.Tensor):
-                batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")
+        if not accelerator:
+            for key in batch:
+                if isinstance(batch[key], torch.Tensor):
+                    batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")
 
         train_tracker, output_dict = update_policy(
             train_tracker,
@@ -218,6 +284,7 @@ def train(cfg: TrainPipelineConfig):
             grad_scaler=grad_scaler,
             lr_scheduler=lr_scheduler,
             use_amp=cfg.policy.use_amp,
+            accelerator=accelerator,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -237,15 +304,17 @@ def train(cfg: TrainPipelineConfig):
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
-        if cfg.save_checkpoint and is_saving_step:
+        if cfg.save_checkpoint and is_saving_step and (not accelerator or accelerator.is_main_process):
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler)
+            # Unwrap model for accelerate
+            policy_to_save = accelerator.unwrap_model(policy) if accelerator else policy
+            save_checkpoint(checkpoint_dir, step, cfg, policy_to_save, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
                 wandb_logger.log_policy(checkpoint_dir)
 
-        if cfg.env and is_eval_step:
+        if cfg.env and is_eval_step and (not accelerator or accelerator.is_main_process):
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")
             with (
@@ -254,7 +323,7 @@ def train(cfg: TrainPipelineConfig):
             ):
                 eval_info = eval_policy(
                     eval_env,
-                    policy,
+                    accelerator.unwrap_model(policy) if accelerator else policy,
                     cfg.eval.n_episodes,
                     videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                     max_episodes_rendered=4,
