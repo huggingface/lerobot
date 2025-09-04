@@ -17,7 +17,6 @@
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import ACTION, OBS_STATE
@@ -32,6 +31,7 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.robots.robot import Robot
+from lerobot.utils.rotation import Rotation
 
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
