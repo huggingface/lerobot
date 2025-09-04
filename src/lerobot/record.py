@@ -386,7 +386,12 @@ def record_loop(
             dataset.add_frame(frame, task=single_task)
 
         if display_data:
-            log_rerun_data([obs_transition, teleop_transition or policy_transition])
+            # Extract observation and action data from transitions
+            obs_data = obs_transition.get(TransitionKey.OBSERVATION, {}) if obs_transition else {}
+            action_transition = teleop_transition or policy_transition
+            action_data = action_transition.get(TransitionKey.ACTION, {}) if action_transition else {}
+
+            log_rerun_data(observation=obs_data, action=action_data)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)

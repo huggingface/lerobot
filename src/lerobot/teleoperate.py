@@ -61,7 +61,7 @@ import rerun as rr
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.processor import IdentityProcessorStep, RobotProcessorPipeline
+from lerobot.processor import IdentityProcessorStep, RobotProcessorPipeline, TransitionKey
 from lerobot.processor.converters import (
     action_to_transition,
     observation_to_transition,
@@ -162,7 +162,12 @@ def teleop_loop(
             obs = robot.get_observation()
             # Process robot observation through pipeline
             obs_transition = robot_observation_processor(obs)
-            log_rerun_data([obs_transition, teleop_transition])
+
+            # Extract observation and action data from transitions
+            obs_data = obs_transition.get(TransitionKey.OBSERVATION, {}) if obs_transition else {}
+            action_data = teleop_transition.get(TransitionKey.ACTION, {}) if teleop_transition else {}
+
+            log_rerun_data(observation=obs_data, action=action_data)
 
             print("\n" + "-" * (display_len + 10))
             print(f"{'NAME':<{display_len}} | {'NORM':>7}")
