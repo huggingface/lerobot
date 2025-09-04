@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import OBS_STATE
 from lerobot.processor.pipeline import (
     ObservationProcessorStep,
@@ -103,7 +103,9 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
         """Resets the internal state, clearing the last known joint positions."""
         self.last_joint_positions = None
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         Updates the `observation.state` feature to reflect the added velocities.
 
@@ -177,7 +179,9 @@ class MotorCurrentProcessorStep(ObservationProcessorStep):
 
         return new_observation
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         Updates the `observation.state` feature to reflect the added motor currents.
 

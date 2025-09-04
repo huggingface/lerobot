@@ -17,7 +17,7 @@
 
 import torch
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
@@ -77,7 +77,9 @@ class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
 
         return new_complementary_data
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         This step does not alter the feature definitions.
 

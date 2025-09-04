@@ -243,7 +243,9 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         return config
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         Adds feature definitions for the language tokens and attention mask.
 

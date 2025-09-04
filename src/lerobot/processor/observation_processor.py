@@ -20,7 +20,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
@@ -128,7 +128,9 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
     def observation(self, observation):
         return self._process_observation(observation)
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         Transforms feature keys from the Gym standard to the LeRobot standard.
 

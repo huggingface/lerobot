@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 from torch import Tensor
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
 from .core import EnvTransition
@@ -60,7 +60,9 @@ class AddBatchDimensionActionStep(ActionProcessorStep):
             return action
         return action.unsqueeze(0)
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         Returns the input features unchanged.
 
@@ -116,7 +118,9 @@ class AddBatchDimensionObservationStep(ObservationProcessorStep):
                 observation[key] = value.unsqueeze(0)
         return observation
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         Returns the input features unchanged.
 
@@ -171,7 +175,9 @@ class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
                 complementary_data["task_index"] = task_index_value.unsqueeze(0)
         return complementary_data
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         Returns the input features unchanged.
 
@@ -226,7 +232,9 @@ class AddBatchDimensionProcessorStep(ProcessorStep):
         transition = self.to_batch_complementary_data_processor(transition)
         return transition
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         Returns the input features unchanged.
 

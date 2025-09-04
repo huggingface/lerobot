@@ -24,7 +24,7 @@ import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import ACTION
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
@@ -121,7 +121,9 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
         new_complementary_data[TELEOP_ACTION_KEY] = self.teleop_device.get_action()
         return new_complementary_data
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -161,7 +163,9 @@ class AddTeleopEventsAsInfoStep(InfoProcessorStep):
         new_info.update(teleop_events)
         return new_info
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -232,7 +236,9 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
             "resize_size": self.resize_size,
         }
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         """
         Updates the image feature shapes in the policy features dictionary if resizing is applied.
 
@@ -295,7 +301,9 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
         """Resets the step counter, typically called at the start of a new episode."""
         self.current_step = 0
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -368,7 +376,9 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
         """Resets the processor's internal state."""
         pass
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -468,7 +478,9 @@ class InterventionActionProcessorStep(ProcessorStep):
             "terminate_on_success": self.terminate_on_success,
         }
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -570,5 +582,7 @@ class RewardClassifierProcessorStep(ProcessorStep):
             "terminate_on_success": self.terminate_on_success,
         }
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         return features

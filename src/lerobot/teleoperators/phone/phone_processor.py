@@ -87,7 +87,9 @@ class MapPhoneActionToRobotAction(ActionProcessorStep):
         act[f"{ACTION}.gripper"] = gripper  # Still send gripper action when disabled
         return act
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[FeatureType, dict[str, PolicyFeature]]
+    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
         features.pop(f"{ACTION}.phone.enabled", None)
         features.pop(f"{ACTION}.phone.pos", None)
         features.pop(f"{ACTION}.phone.rot", None)
