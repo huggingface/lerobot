@@ -24,6 +24,7 @@ from typing_extensions import Unpack
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
+from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.envs.configs import EnvConfig
@@ -148,14 +149,18 @@ def make_pre_post_processors(
         return (
             PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get("preprocessor_config_filename", "robot_preprocessor.json"),
+                config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                ),
                 overrides=kwargs.get("preprocessor_overrides", {}),
                 to_transition=preprocessor_kwargs.get("to_transition"),
                 to_output=preprocessor_kwargs.get("to_output"),
             ),
             PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
-                config_filename=kwargs.get("postprocessor_config_filename", "robot_postprocessor.json"),
+                config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                ),
                 overrides=kwargs.get("postprocessor_overrides", {}),
                 to_transition=postprocessor_kwargs.get("to_transition"),
                 to_output=postprocessor_kwargs.get("to_output"),
