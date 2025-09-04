@@ -55,15 +55,17 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
+from typing import Any
 
 import rerun as rr
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.processor import IdentityProcessorStep, RobotProcessorPipeline, TransitionKey
+from lerobot.processor import EnvTransition, IdentityProcessorStep, RobotProcessorPipeline, TransitionKey
 from lerobot.processor.converters import (
     action_to_transition,
+    identity_transition,
     observation_to_transition,
     transition_to_robot_action,
 )
@@ -115,23 +117,23 @@ def teleop_loop(
     fps: int,
     display_data: bool = False,
     duration: float | None = None,
-    teleop_action_processor: RobotProcessorPipeline | None = None,
-    robot_action_processor: RobotProcessorPipeline | None = None,
-    robot_observation_processor: RobotProcessorPipeline | None = None,
+    teleop_action_processor: RobotProcessorPipeline[EnvTransition] | None = None,
+    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] | None = None,
+    robot_observation_processor: RobotProcessorPipeline[EnvTransition] | None = None,
 ):
     # Initialize processors with defaults if not provided
-    teleop_action_processor = teleop_action_processor or RobotProcessorPipeline(
-        steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=lambda tr: tr
+    teleop_action_processor = teleop_action_processor or RobotProcessorPipeline[EnvTransition](
+        steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=identity_transition
     )
-    robot_action_processor = robot_action_processor or RobotProcessorPipeline(
+    robot_action_processor = robot_action_processor or RobotProcessorPipeline[dict[str, Any]](
         steps=[IdentityProcessorStep()],
-        to_transition=lambda tr: tr,
+        to_transition=identity_transition,
         to_output=transition_to_robot_action,  # type: ignore[arg-type]
     )
-    robot_observation_processor = robot_observation_processor or RobotProcessorPipeline(
+    robot_observation_processor = robot_observation_processor or RobotProcessorPipeline[EnvTransition](
         steps=[IdentityProcessorStep()],
         to_transition=observation_to_transition,
-        to_output=lambda tr: tr,
+        to_output=identity_transition,
     )
 
     # Reset processors
@@ -149,10 +151,10 @@ def teleop_loop(
         raw_action = teleop.get_action()
 
         # Process teleop action through pipeline
-        teleop_transition = teleop_action_processor(raw_action)
+        teleop_transition: EnvTransition = teleop_action_processor(raw_action)
 
         # Process action for robot through pipeline
-        robot_action_to_send = robot_action_processor(teleop_transition)
+        robot_action_to_send: dict[str, Any] = robot_action_processor(teleop_transition)
 
         # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
         robot.send_action(robot_action_to_send)  # type: ignore[arg-type]
@@ -161,13 +163,12 @@ def teleop_loop(
             # Get robot observation
             obs = robot.get_observation()
             # Process robot observation through pipeline
-            obs_transition = robot_observation_processor(obs)
+            obs_transition: EnvTransition = robot_observation_processor(obs)
 
-            # Extract observation and action data from transitions
-            obs_data = obs_transition.get(TransitionKey.OBSERVATION, {}) if obs_transition else {}
-            action_data = teleop_transition.get(TransitionKey.ACTION, {}) if teleop_transition else {}
-
-            log_rerun_data(observation=obs_data, action=action_data)
+            log_rerun_data(
+                observation=obs_transition.get(TransitionKey.OBSERVATION),
+                action=teleop_transition.get(TransitionKey.ACTION),
+            )
 
             print("\n" + "-" * (display_len + 10))
             print(f"{'NAME':<{display_len}} | {'NORM':>7}")

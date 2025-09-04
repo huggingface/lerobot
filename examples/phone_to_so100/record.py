@@ -23,6 +23,7 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import (
     action_to_transition,
+    identity_transition,
     observation_to_transition,
     transition_to_robot_action,
 )
@@ -89,7 +90,7 @@ phone_to_robot_ee_pose_processor = RobotProcessorPipeline(
         ),
     ],
     to_transition=action_to_transition,
-    to_output=lambda tr: tr,
+    to_output=identity_transition,
 )
 
 # Build pipeline to convert ee pose action to joint action
@@ -105,7 +106,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline(
             speed_factor=20.0,
         ),
     ],
-    to_transition=lambda tr: tr,
+    to_transition=identity_transition,
     to_output=transition_to_robot_action,
 )
 
@@ -115,7 +116,7 @@ robot_joints_to_ee_pose = RobotProcessorPipeline(
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
     to_transition=observation_to_transition,
-    to_output=lambda tr: tr,
+    to_output=identity_transition,
 )
 
 # Build dataset ee action features

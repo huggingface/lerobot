@@ -31,7 +31,8 @@ def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
 
 def _is_scalar(x):
     return (
-        isinstance(x, numbers.Real)
+        isinstance(x, float)
+        or isinstance(x, numbers.Real)
         or isinstance(x, (np.integer, np.floating))
         or (isinstance(x, np.ndarray) and x.ndim == 0)
     )

@@ -479,3 +479,7 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
         batch.update(observation)
 
     return batch
+
+
+def identity_transition(tr: EnvTransition) -> EnvTransition:
+    return tr

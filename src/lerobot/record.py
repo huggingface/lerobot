@@ -62,6 +62,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
+from typing import Any
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -77,6 +78,7 @@ from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
+    EnvTransition,
     IdentityProcessorStep,
     PolicyProcessorPipeline,
     RobotProcessorPipeline,
@@ -84,6 +86,7 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import (
     action_to_transition,
+    identity_transition,
     observation_to_transition,
     transition_to_dataset_frame,
     transition_to_robot_action,
@@ -243,22 +246,33 @@ def record_loop(
     preprocessor: PolicyProcessorPipeline | None = None,
     postprocessor: PolicyProcessorPipeline | None = None,
     control_time_s: int | None = None,
-    teleop_action_processor: RobotProcessorPipeline | None = None,  # runs after teleop
-    robot_action_processor: RobotProcessorPipeline | None = None,  # runs before robot
-    robot_observation_processor: RobotProcessorPipeline | None = None,  # runs after robot
+    teleop_action_processor: RobotProcessorPipeline[EnvTransition] | None = None,  # runs after teleop
+    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] | None = None,  # runs before robot
+    robot_observation_processor: RobotProcessorPipeline[EnvTransition] | None = None,  # runs after robot
     single_task: str | None = None,
     display_data: bool = False,
 ):
-    teleop_action_processor = teleop_action_processor or RobotProcessorPipeline(
-        steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=lambda tr: tr
+    teleop_action_processor: RobotProcessorPipeline[EnvTransition] = (
+        teleop_action_processor
+        or RobotProcessorPipeline[EnvTransition](
+            steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=identity_transition
+        )
     )
-    robot_action_processor = robot_action_processor or RobotProcessorPipeline(
-        steps=[IdentityProcessorStep()], to_transition=lambda tr: tr, to_output=transition_to_robot_action
+    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] = (
+        robot_action_processor
+        or RobotProcessorPipeline[dict[str, Any]](
+            steps=[IdentityProcessorStep()],
+            to_transition=identity_transition,
+            to_output=transition_to_robot_action,
+        )
     )
-    robot_observation_processor = robot_observation_processor or RobotProcessorPipeline(
-        steps=[IdentityProcessorStep()],
-        to_transition=observation_to_transition,
-        to_output=lambda tr: tr,
+    robot_observation_processor: RobotProcessorPipeline[EnvTransition] = (
+        robot_observation_processor
+        or RobotProcessorPipeline[EnvTransition](
+            steps=[IdentityProcessorStep()],
+            to_transition=observation_to_transition,
+            to_output=identity_transition,
+        )
     )
 
     if dataset is not None and dataset.fps != fps:
@@ -309,7 +323,7 @@ def record_loop(
         obs = robot.get_observation()
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
-        obs_transition = robot_observation_processor(obs)
+        obs_transition: EnvTransition = robot_observation_processor(obs)
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
@@ -340,7 +354,9 @@ def record_loop(
             act = teleop.get_action()
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
-            teleop_transition = teleop_action_processor(act)
+            # TODO(Steven): This assumes that the processor passed by the user should have identity_transition as to_output.
+            # TODO(Steven): Why is this not automatically typed as EnvTransition?
+            teleop_transition: EnvTransition = teleop_action_processor(act)
 
         elif isinstance(teleop, list):
             arm_action = teleop_arm.get_action()
@@ -348,7 +364,7 @@ def record_loop(
             keyboard_action = teleop_keyboard.get_action()
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-            teleop_transition = teleop_action_processor(act)
+            teleop_transition: EnvTransition = teleop_action_processor(act)
         else:
             logging.info(
                 "No policy or teleoperator provided, skipping action generation. "
@@ -360,9 +376,9 @@ def record_loop(
         # Applies a pipeline to the action, default is IdentityProcessor
         # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
         if policy is not None and policy_transition is not None:
-            robot_action_to_send = robot_action_processor(policy_transition)
+            robot_action_to_send: dict[str, Any] = robot_action_processor(policy_transition)
         else:
-            robot_action_to_send = robot_action_processor(teleop_transition)
+            robot_action_to_send: dict[str, Any] = robot_action_processor(teleop_transition)
 
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
@@ -386,12 +402,9 @@ def record_loop(
             dataset.add_frame(frame, task=single_task)
 
         if display_data:
-            # Extract observation and action data from transitions
-            obs_data = obs_transition.get(TransitionKey.OBSERVATION, {}) if obs_transition else {}
-            action_transition = teleop_transition or policy_transition
-            action_data = action_transition.get(TransitionKey.ACTION, {}) if action_transition else {}
-
-            log_rerun_data(observation=obs_data, action=action_data)
+            log_rerun_data(
+                observation=obs_transition.get(TransitionKey.OBSERVATION), action=robot_action_to_send
+            )
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
