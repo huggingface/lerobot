@@ -81,8 +81,8 @@ def test_make_act_processor_basic():
     preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
 
     # Check processor names
-    assert preprocessor.name == "robot_preprocessor"
-    assert postprocessor.name == "robot_postprocessor"
+    assert preprocessor.name == "policy_preprocessor"
+    assert postprocessor.name == "policy_postprocessor"
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 4

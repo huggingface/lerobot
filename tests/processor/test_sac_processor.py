@@ -86,8 +86,8 @@ def test_make_sac_processor_basic():
     )
 
     # Check processor names
-    assert preprocessor.name == "robot_preprocessor"
-    assert postprocessor.name == "robot_postprocessor"
+    assert preprocessor.name == "policy_preprocessor"
+    assert postprocessor.name == "policy_postprocessor"
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 4
