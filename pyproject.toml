@@ -73,7 +73,6 @@ dependencies = [
     "pynput>=1.7.7",
     "pyserial>=3.5",
     "wandb>=0.20.0",
-    "scipy>=1.15.2",
 
     "torch>=2.2.1,<2.8.0", # TODO: Bumb dependency
     "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bumb dependency
