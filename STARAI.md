@@ -29,7 +29,7 @@
 
 ## 规格参数
 
-![image-20250709072845215](media/starai/image-20250709072845215.png)
+![image-20250709072845215](media/starai/1-114090080-fashionstar-star-arm-cello-violin.jpg)
 
 | Item                 | Follower Arm \| Viola                             | Leder Arm \|Violin                                |
 | -------------------- | ------------------------------------------------- | ------------------------------------------------- |

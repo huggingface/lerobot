@@ -16,6 +16,7 @@
 
 import logging
 import time
+from typing import Any
 
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -78,7 +79,7 @@ class StaraiViolin(Teleoperator):
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
             )
             self.calibrate()
-
+        self.arm_init()
         self.configure()
         logger.info(f"{self} connected.")
 
@@ -156,3 +157,26 @@ class StaraiViolin(Teleoperator):
 
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")
+
+    def arm_init(self) -> None:
+        action={0.0, -65.0, 60.0, 0.0, 15.0, 0.0, 10.0}
+        action = {f"{motor}.pos": val for motor, val in action.items()}
+        self.send_action(action)
+
+
+    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        # Cap goal position when too far away from present position.
+        # /!\ Slower fps expected due to reading from the follower.
+        # if self.config.max_relative_target is not None:
+            # present_pos = self.bus.sync_read("Present_Position")
+            # goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
+            # goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+
+        # Send goal position to the arm
+        self.bus.sync_write("Goal_Position", goal_pos)
+        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
