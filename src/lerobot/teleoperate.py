@@ -122,18 +122,27 @@ def teleop_loop(
     robot_observation_processor: RobotProcessorPipeline[EnvTransition] | None = None,
 ):
     # Initialize processors with defaults if not provided
-    teleop_action_processor = teleop_action_processor or RobotProcessorPipeline[EnvTransition](
-        steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=identity_transition
+    teleop_action_processor: RobotProcessorPipeline[EnvTransition] = (
+        teleop_action_processor
+        or RobotProcessorPipeline(
+            steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=identity_transition
+        )
     )
-    robot_action_processor = robot_action_processor or RobotProcessorPipeline[dict[str, Any]](
-        steps=[IdentityProcessorStep()],
-        to_transition=identity_transition,
-        to_output=transition_to_robot_action,  # type: ignore[arg-type]
+    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] = (
+        robot_action_processor
+        or RobotProcessorPipeline(
+            steps=[IdentityProcessorStep()],
+            to_transition=identity_transition,
+            to_output=transition_to_robot_action,  # type: ignore[arg-type]
+        )
     )
-    robot_observation_processor = robot_observation_processor or RobotProcessorPipeline[EnvTransition](
-        steps=[IdentityProcessorStep()],
-        to_transition=observation_to_transition,
-        to_output=identity_transition,
+    robot_observation_processor: RobotProcessorPipeline[EnvTransition] = (
+        robot_observation_processor
+        or RobotProcessorPipeline(
+            steps=[IdentityProcessorStep()],
+            to_transition=observation_to_transition,
+            to_output=identity_transition,
+        )
     )
 
     # Reset processors
@@ -151,10 +160,10 @@ def teleop_loop(
         raw_action = teleop.get_action()
 
         # Process teleop action through pipeline
-        teleop_transition: EnvTransition = teleop_action_processor(raw_action)
+        teleop_transition = teleop_action_processor(raw_action)
 
         # Process action for robot through pipeline
-        robot_action_to_send: dict[str, Any] = robot_action_processor(teleop_transition)
+        robot_action_to_send = robot_action_processor(teleop_transition)
 
         # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
         robot.send_action(robot_action_to_send)  # type: ignore[arg-type]
@@ -163,7 +172,7 @@ def teleop_loop(
             # Get robot observation
             obs = robot.get_observation()
             # Process robot observation through pipeline
-            obs_transition: EnvTransition = robot_observation_processor(obs)
+            obs_transition = robot_observation_processor(obs)
 
             log_rerun_data(
                 observation=obs_transition.get(TransitionKey.OBSERVATION),
