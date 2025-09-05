@@ -28,8 +28,12 @@ if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 import numpy as np
-from reachy2_sdk.media.camera import CameraView
-from reachy2_sdk.media.camera_manager import CameraManager
+
+try:
+    from reachy2_sdk.media.camera import CameraView
+    from reachy2_sdk.media.camera_manager import CameraManager
+except Exception as e:
+    logging.info(f"Could not import ReachSDK: {e}")
 
 from lerobot.errors import DeviceNotConnectedError
 

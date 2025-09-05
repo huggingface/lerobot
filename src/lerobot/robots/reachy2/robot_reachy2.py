@@ -18,7 +18,6 @@ import time
 from typing import Any
 
 import numpy as np
-from reachy2_sdk import ReachySDK
 
 from lerobot.cameras.utils import make_cameras_from_configs
 
@@ -76,7 +75,10 @@ class Reachy2Robot(Robot):
     name = "reachy2"
 
     def __init__(self, config: Reachy2RobotConfig):
+        from reachy2_sdk import ReachySDK
+
         super().__init__(config)
+        self._sdk = ReachySDK
 
         self.config = config
         self.robot_type = self.config.type
@@ -122,7 +124,7 @@ class Reachy2Robot(Robot):
         return self.reachy.is_connected() if self.reachy is not None else False
 
     def connect(self, calibrate: bool = False) -> None:
-        self.reachy = ReachySDK(self.config.ip_address)
+        self.reachy = self._sdk(self.config.ip_address)
         if not self.is_connected:
             raise ConnectionError()
 

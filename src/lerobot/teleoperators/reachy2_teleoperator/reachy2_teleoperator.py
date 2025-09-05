@@ -17,8 +17,6 @@
 import logging
 import time
 
-from reachy2_sdk import ReachySDK
-
 from ..teleoperator import Teleoperator
 from .config_reachy2_teleoperator import Reachy2TeleoperatorConfig
 
@@ -74,6 +72,9 @@ class Reachy2Teleoperator(Teleoperator):
     name = "reachy2_specific"
 
     def __init__(self, config: Reachy2TeleoperatorConfig):
+        from reachy2_sdk import ReachySDK
+
+        self._sdk = ReachySDK
         super().__init__(config)
         self.config = config
         self.reachy: None | ReachySDK = None
@@ -117,7 +118,7 @@ class Reachy2Teleoperator(Teleoperator):
         return self.reachy.is_connected() if self.reachy is not None else False
 
     def connect(self, calibrate: bool = True) -> None:
-        self.reachy = ReachySDK(self.config.ip_address)
+        self.reachy = self._sdk(self.config.ip_address)
         if not self.is_connected:
             raise ConnectionError()
         logger.info(f"{self} connected.")
