@@ -31,6 +31,26 @@ def make_classifier_processor(
     preprocessor_kwargs: ProcessorKwargs | None = None,
     postprocessor_kwargs: ProcessorKwargs | None = None,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """
+    Constructs pre-processor and post-processor pipelines for the reward classifier.
+
+    The pre-processing pipeline prepares input data for the classifier by:
+    1. Normalizing both input and output features based on dataset statistics.
+    2. Moving the data to the specified device.
+
+    The post-processing pipeline handles the classifier's output by:
+    1. Moving the data to the CPU.
+    2. Applying an identity step, as no unnormalization is needed for the output logits.
+
+    Args:
+        config: The configuration object for the RewardClassifier.
+        dataset_stats: A dictionary of statistics for normalization.
+        preprocessor_kwargs: Additional arguments for the pre-processor pipeline.
+        postprocessor_kwargs: Additional arguments for the post-processor pipeline.
+
+    Returns:
+        A tuple containing the configured pre-processor and post-processor pipelines.
+    """
     if preprocessor_kwargs is None:
         preprocessor_kwargs = {}
     if postprocessor_kwargs is None:
