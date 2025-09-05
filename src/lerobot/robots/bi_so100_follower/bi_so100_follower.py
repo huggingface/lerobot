@@ -67,7 +67,7 @@ class BiSO100Follower(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
-    def _motors_ft(self) -> dict[str, type]:
+    def _motors_ft(self) -> Mapping[str, type]:
         return {f"left_{motor}.pos": float for motor in self.left_arm.bus.motors} | {
             f"right_{motor}.pos": float for motor in self.right_arm.bus.motors
         }
