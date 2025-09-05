@@ -77,7 +77,6 @@ class StaraiViolin(Teleoperator):
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
             )
             self.calibrate()
-        self.arm_init()
         self.configure()
         logger.info(f"{self} connected.")
 
@@ -155,14 +154,6 @@ class StaraiViolin(Teleoperator):
 
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")
-
-    def arm_init(self) -> None:
-        action = self.bus.sync_read("Present_Position")
-        action["Motor_1"] = -65.0
-        action["Motor_2"] =40.0
-        action["Motor_4"] = 15.0
-        action = {f"{motor}.pos": val for motor, val in action.items()}
-        self.send_action(action)
 
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
