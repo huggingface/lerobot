@@ -84,8 +84,8 @@ class BiSO100Follower(Robot):
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
-    def action_features(self) -> Mapping[str, type]:
-        return self._motors_ft
+    def action_features(self) -> dict[str, type]:
+        return dict(self._motors_ft)
 
     @property
     def is_connected(self) -> bool:
