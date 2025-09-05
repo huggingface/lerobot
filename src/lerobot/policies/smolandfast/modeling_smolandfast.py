@@ -459,9 +459,9 @@ class SMOLANDFAST(nn.Module):
 
         fast_action_tokens = self._paligemma_tokens_to_act_tokens(gemma_action_tokens).tolist() 
         # remove fast pad tokens
-        # for seq in fast_action_tokens:
-        #     while seq and seq[-1] == 0:
-        #         seq.pop()
+        for seq in fast_action_tokens:
+            while seq and seq[-1] == 0:
+                seq.pop()
 
         decoded_actions = torch.tensor([
                         self.decode_actions_with_fast(
