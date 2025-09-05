@@ -14,14 +14,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
-This module provides a collection of common processor steps for `lerobot` environments.
-
-These steps handle various aspects of the environment interaction loop, including
-integrating teleoperation devices, processing observations (e.g., image manipulation),
-enforcing environment constraints like time limits, calculating rewards, and managing
-human-in-the-loop interventions.
-"""
 
 import math
 import time
