@@ -159,7 +159,10 @@ class StaraiViolin(Teleoperator):
         logger.info(f"{self} disconnected.")
 
     def arm_init(self) -> None:
-        action={0.0, -65.0, 60.0, 0.0, 15.0, 0.0, 10.0}
+        action = self.bus.sync_read("Present_Position")
+        action["Motor_1"] = -65.0
+        action["Motor_2"] = 60.0
+        action["Motor_4"] = 15.0
         action = {f"{motor}.pos": val for motor, val in action.items()}
         self.send_action(action)
 
