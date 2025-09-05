@@ -51,6 +51,8 @@ PARAMS = [
     {"with_left_teleop_camera": False, "with_torso_camera": True},
 ]
 
+pytest.importorskip("reachy2_sdk")
+
 
 def _make_reachy2_sdk_mock():
     class JointSpy:
