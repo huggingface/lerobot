@@ -30,23 +30,44 @@ from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 @ProcessorStepRegistry.register(name="observation_processor")
 class VanillaObservationProcessorStep(ObservationProcessorStep):
     """
-    Processes environment observations into the LeRobot format by handling both images and states.
+    Processes standard Gymnasium observations into the LeRobot format.
 
-    Image processing:
-        - Converts channel-last (H, W, C) images to channel-first (C, H, W)
-        - Normalizes uint8 images ([0, 255]) to float32 ([0, 1])
-        - Adds a batch dimension if missing
-        - Supports single images and image dictionaries
+    This step handles both image and state data from a typical observation dictionary,
+    preparing it for use in a LeRobot policy.
 
-    State processing:
-        - Maps 'environment_state' to observation.environment_state
-        - Maps 'agent_pos' to observation.state
-        - Converts numpy arrays to tensors
-        - Adds a batch dimension if missing
+    **Image Processing:**
+    -   Converts channel-last (H, W, C), `uint8` images to channel-first (C, H, W),
+        `float32` tensors.
+    -   Normalizes pixel values from the [0, 255] range to [0, 1].
+    -   Adds a batch dimension if one is not already present.
+    -   Recognizes a single image under the key `"pixels"` and maps it to
+        `"observation.image"`.
+    -   Recognizes a dictionary of images under the key `"pixels"` and maps them
+        to `"observation.images.{camera_name}"`.
+
+    **State Processing:**
+    -   Maps the `"environment_state"` key to `"observation.environment_state"`.
+    -   Maps the `"agent_pos"` key to `"observation.state"`.
+    -   Converts NumPy arrays to PyTorch tensors.
+    -   Adds a batch dimension if one is not already present.
     """
 
     def _process_single_image(self, img: np.ndarray) -> Tensor:
-        """Process a single image array."""
+        """
+        Processes a single NumPy image array into a channel-first, normalized tensor.
+
+        Args:
+            img: A NumPy array representing the image, expected to be in channel-last
+                 (H, W, C) format with a `uint8` dtype.
+
+        Returns:
+            A `float32` PyTorch tensor in channel-first (B, C, H, W) format, with
+            pixel values normalized to the [0, 1] range.
+
+        Raises:
+            ValueError: If the input image does not appear to be in channel-last
+                        format or is not of `uint8` dtype.
+        """
         # Convert to tensor
         img_tensor = torch.from_numpy(img)
 
@@ -108,16 +129,24 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         return self._process_observation(observation)
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        """Transforms feature keys to a standardized contract.
-        This method handles several renaming patterns:
-        - Exact matches (e.g., 'pixels' -> 'OBS_IMAGE').
-        - Prefixed exact matches (e.g., 'observation.pixels' -> 'OBS_IMAGE').
-        - Prefix matches (e.g., 'pixels.cam1' -> 'OBS_IMAGES.cam1').
-        - Prefixed prefix matches (e.g., 'observation.pixels.cam1' -> 'OBS_IMAGES.cam1').
-        - environment_state -> OBS_ENV_STATE,
-        - agent_pos -> OBS_STATE,
-        - observation.environment_state -> OBS_ENV_STATE,
-        - observation.agent_pos -> OBS_STATE
+        """
+        Transforms feature keys from the Gym standard to the LeRobot standard.
+
+        This method standardizes the feature dictionary by renaming keys according
+        to LeRobot's conventions, ensuring that policies can be constructed correctly.
+        It handles various raw key formats, including those with an "observation." prefix.
+
+        **Renaming Rules:**
+        - `pixels` or `observation.pixels` -> `observation.image`
+        - `pixels.{cam}` or `observation.pixels.{cam}` -> `observation.images.{cam}`
+        - `environment_state` or `observation.environment_state` -> `observation.environment_state`
+        - `agent_pos` or `observation.agent_pos` -> `observation.state`
+
+        Args:
+            features: The policy features dictionary with Gym-style keys.
+
+        Returns:
+            The policy features dictionary with standardized LeRobot keys.
         """
         exact_pairs = {
             "pixels": OBS_IMAGE,
