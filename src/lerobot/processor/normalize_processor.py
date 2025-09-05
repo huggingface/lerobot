@@ -412,6 +412,7 @@ def hotswap_stats(
     pipeline.
 
     Args:
+        policy_processor: The policy processor pipeline to modify.
         stats: The new dictionary of normalization statistics to apply.
 
     Returns:
