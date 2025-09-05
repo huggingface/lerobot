@@ -23,8 +23,6 @@ import pytest
 from lerobot.cameras.reachy2_camera import Reachy2Camera, Reachy2CameraConfig
 from lerobot.errors import DeviceNotConnectedError
 
-pytest.importorskip("reachy2_sdk")
-
 PARAMS = [
     ("teleop", "left"),
     ("teleop", "right"),
