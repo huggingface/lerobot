@@ -54,6 +54,7 @@ from PIL import Image
 from scipy.fft import idct
 from torch import Tensor, nn
 from transformers import AutoProcessor, AutoTokenizer, GPT2Config, GPT2LMHeadModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.cache_utils import HybridCache, StaticCache
 from transformers.models.auto import CONFIG_MAPPING
 from transformers import LogitsProcessorList
@@ -171,8 +172,11 @@ class SMOLANDFAST(nn.Module):
 
         # TODO: move tokenizers in Policy
         fast_tokenizer_path = "physical-intelligence/fast"
-        llm_path = "gpt2"
-        self.llm_tokenizer = AutoTokenizer.from_pretrained(llm_path)
+        checkpoint = "HuggingFaceTB/SmolLM2-135M"
+
+        self.llm_tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+        # for multiple GPUs install accelerate and do `model = AutoModelForCausalLM.from_pretrained(checkpoint, device_map="auto")`
+        self.llm = AutoModelForCausalLM.from_pretrained(checkpoint)
         self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
         self.fast_skip_tokens = self.config.fast_skip_tokens
         self.max_input_seq_len = self.config.max_input_seq_len
@@ -194,7 +198,7 @@ class SMOLANDFAST(nn.Module):
         self.eos_token_id = self.llm_tokenizer.eos_token_id
 
         # cfg = GPT2Config()
-        self.llm = GPT2LMHeadModel.from_pretrained(llm_path)
+        # self.llm = GPT2LMHeadModel.from_pretrained(llm_path)
 
         # change important stuff in bf16
         params_to_change_dtype = [
