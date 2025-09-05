@@ -44,12 +44,12 @@ def to_tensor(
     different input types appropriately.
 
     Args:
-        value: Input value to convert (tensor, array, scalar, sequence, etc.)
+        value: Input value to convert (tensor, array, scalar, sequence, etc.).
         dtype: Target tensor dtype. If None, preserves original dtype.
         device: Target device for the tensor.
 
     Returns:
-        PyTorch tensor.
+        A PyTorch tensor.
 
     Raises:
         TypeError: If the input type is not supported.
@@ -59,7 +59,7 @@ def to_tensor(
 
 @to_tensor.register(torch.Tensor)
 def _(value: torch.Tensor, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
-    """Handle existing PyTorch tensors."""
+    """Handle conversion for existing PyTorch tensors."""
     if dtype is not None:
         value = value.to(dtype=dtype)
     if device is not None:
@@ -75,17 +75,17 @@ def _(
     device=None,
     **kwargs,
 ) -> torch.Tensor:
-    """Handle numpy arrays."""
-    # Check for numpy scalars (0-dimensional arrays) and treat them as scalars
+    """Handle conversion for numpy arrays."""
+    # Check for numpy scalars (0-dimensional arrays) and treat them as scalars.
     if value.ndim == 0:
-        # Numpy scalars should be converted to 0-dimensional tensors
+        # Numpy scalars should be converted to 0-dimensional tensors.
         scalar_value = value.item()
         return torch.tensor(scalar_value, dtype=dtype, device=device)
 
-    # Create tensor from numpy array (torch.from_numpy handles contiguity automatically)
+    # Create tensor from numpy array.
     tensor = torch.from_numpy(value)
 
-    # Apply dtype conversion if specified
+    # Apply dtype and device conversion if specified.
     if dtype is not None:
         tensor = tensor.to(dtype=dtype)
     if device is not None:
@@ -99,20 +99,20 @@ def _(
 @to_tensor.register(np.integer)
 @to_tensor.register(np.floating)
 def _(value, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
-    """Handle scalar values including numpy scalars."""
+    """Handle conversion for scalar values including numpy scalars."""
     return torch.tensor(value, dtype=dtype, device=device)
 
 
 @to_tensor.register(list)
 @to_tensor.register(tuple)
 def _(value: Sequence, *, dtype=torch.float32, device=None, **kwargs) -> torch.Tensor:
-    """Handle sequences (lists, tuples)."""
+    """Handle conversion for sequences (lists, tuples)."""
     return torch.tensor(value, dtype=dtype, device=device)
 
 
 @to_tensor.register(dict)
 def _(value: dict, *, device=None, **kwargs) -> dict:
-    """Handle dictionaries by recursively converting values to tensors."""
+    """Handle conversion for dictionaries by recursively converting their values to tensors."""
     if not value:
         return {}
 
@@ -122,7 +122,7 @@ def _(value: dict, *, device=None, **kwargs) -> dict:
             continue
 
         if isinstance(sub_value, dict):
-            # Recursively process nested dictionaries
+            # Recursively process nested dictionaries.
             result[key] = to_tensor(
                 sub_value,
                 device=device,
@@ -130,7 +130,7 @@ def _(value: dict, *, device=None, **kwargs) -> dict:
             )
             continue
 
-        # Convert individual values to tensors
+        # Convert individual values to tensors.
         result[key] = to_tensor(
             sub_value,
             device=device,
@@ -140,17 +140,45 @@ def _(value: dict, *, device=None, **kwargs) -> dict:
 
 
 def _from_tensor(x: torch.Tensor | Any) -> np.ndarray | float | int | Any:
-    """Convert tensor to numpy/scalar if needed."""
+    """
+    Convert a PyTorch tensor to a numpy array or scalar if applicable.
+
+    If the input is not a tensor, it is returned unchanged.
+
+    Args:
+        x: The input, which can be a tensor or any other type.
+
+    Returns:
+        A numpy array, a scalar, or the original input.
+    """
     if isinstance(x, torch.Tensor):
         return x.item() if x.numel() == 1 else x.detach().cpu().numpy()
     return x
 
 
 def _is_image(arr: Any) -> bool:
+    """
+    Check if a given array is likely an image (uint8, 3D).
+
+    Args:
+        arr: The array to check.
+
+    Returns:
+        True if the array matches the image criteria, False otherwise.
+    """
     return isinstance(arr, np.ndarray) and arr.dtype == np.uint8 and arr.ndim == 3
 
 
 def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Separate an observation dictionary into state and image components.
+
+    Args:
+        obs: The observation dictionary.
+
+    Returns:
+        A tuple containing two dictionaries: one for state and one for images.
+    """
     state, images = {}, {}
     for k, v in obs.items():
         if "image" in k.lower() or _is_image(v):
@@ -160,13 +188,21 @@ def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any],
     return state, images
 
 
-# ============================================================================
 # Private Helper Functions (Common Logic)
-# ============================================================================
 
 
 def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
-    """Extract complementary data (pad flags, task, index, task_index)."""
+    """
+    Extract complementary data from a batch dictionary.
+
+    This includes padding flags, task description, and indices.
+
+    Args:
+        batch: The batch dictionary.
+
+    Returns:
+        A dictionary with the extracted complementary data.
+    """
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
     task_key = {"task": batch["task"]} if "task" in batch else {}
     index_key = {"index": batch["index"]} if "index" in batch else {}
@@ -176,7 +212,16 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
 
 
 def _merge_transitions(base: EnvTransition, other: EnvTransition) -> EnvTransition:
-    """Merge two transitions, with other taking precedence."""
+    """
+    Merge two transitions, with the second one taking precedence in case of conflicts.
+
+    Args:
+        base: The base transition.
+        other: The transition to merge, which will overwrite base values.
+
+    Returns:
+        The merged transition dictionary.
+    """
     out = deepcopy(base)
 
     for key in (
@@ -194,9 +239,7 @@ def _merge_transitions(base: EnvTransition, other: EnvTransition) -> EnvTransiti
     return out
 
 
-# ============================================================================
 # Core Conversion Functions
-# ============================================================================
 
 
 def create_transition(
@@ -208,7 +251,8 @@ def create_transition(
     info: dict[str, Any] | None = None,
     complementary_data: dict[str, Any] | None = None,
 ) -> EnvTransition:
-    """Create an EnvTransition with sensible defaults.
+    """
+    Create an `EnvTransition` dictionary with sensible defaults.
 
     Args:
         observation: Observation dictionary.
@@ -220,7 +264,7 @@ def create_transition(
         complementary_data: Complementary data dictionary.
 
     Returns:
-        Complete EnvTransition dictionary.
+        A complete `EnvTransition` dictionary.
     """
     return {
         TransitionKey.OBSERVATION: observation,
@@ -233,9 +277,19 @@ def create_transition(
     }
 
 
-def action_to_transition(action: dict[str, Any]) -> EnvTransition:  # action_to_transition
+def action_to_transition(action: dict[str, Any]) -> EnvTransition:
     """
-    Convert a raw teleop action dict into an EnvTransition under the ACTION TransitionKey.
+    Convert a raw action dictionary into a standardized `EnvTransition`.
+
+    The keys in the action dictionary are prefixed with "action." and stored under
+    the `ACTION` key in the transition. Values are converted to tensors, except for
+    special types like `Rotation`.
+
+    Args:
+        action: The raw action dictionary from a teleoperation device or controller.
+
+    Returns:
+        An `EnvTransition` containing the formatted action.
     """
     act_dict: dict[str, Any] = {}
     for k, v in action.items():
@@ -250,10 +304,19 @@ def action_to_transition(action: dict[str, Any]) -> EnvTransition:  # action_to_
     return create_transition(observation={}, action=act_dict)
 
 
-# TODO(Adil, Pepijn): Overtime we can maybe add these converters to pipeline.py itself
 def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
     """
-    Convert a raw robot observation dict into an EnvTransition under the OBSERVATION TransitionKey.
+    Convert a raw robot observation dictionary into a standardized `EnvTransition`.
+
+    The observation is split into state and image components. State keys are prefixed
+    with "observation.state." and image keys with "observation.images.". The result is
+    stored under the `OBSERVATION` key in the transition.
+
+    Args:
+        observation: The raw observation dictionary from the environment.
+
+    Returns:
+        An `EnvTransition` containing the formatted observation.
     """
     state, images = _split_obs_to_state_and_images(observation)
 
@@ -270,7 +333,16 @@ def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
 
 def transition_to_robot_action(transition: EnvTransition) -> dict[str, Any]:
     """
-    Converts a EnvTransition under the ACTION TransitionKey to a dict with keys ending in '.pos' for raw robot actions.
+    Extract a raw action dictionary for a robot from an `EnvTransition`.
+
+    This function searches for keys in the format "action.*.pos" or "action.*.vel"
+    and converts them into a flat dictionary suitable for sending to a robot controller.
+
+    Args:
+        transition: The `EnvTransition` containing the action.
+
+    Returns:
+        A dictionary representing the raw robot action.
     """
     out: dict[str, Any] = {}
     action_dict = transition.get(TransitionKey.ACTION) or {}
@@ -287,13 +359,21 @@ def transition_to_robot_action(transition: EnvTransition) -> dict[str, Any]:
 
 
 def merge_transitions(transitions: Sequence[EnvTransition] | EnvTransition) -> EnvTransition:
-    """Merge multiple transitions or return single transition.
+    """
+    Merge a sequence of transitions into a single one.
+
+    If a single transition is provided, it is returned as is. For a sequence,
+    transitions are merged sequentially, with later transitions in the sequence
+    overwriting earlier ones.
 
     Args:
-        transitions: Either a single transition or iterable of transitions.
+        transitions: A single transition or a sequence of them.
 
     Returns:
-        Merged EnvTransition.
+        A single merged `EnvTransition`.
+
+    Raises:
+        ValueError: If an empty sequence of transitions is provided.
     """
 
     if not isinstance(transitions, Sequence):  # Single transition
@@ -312,26 +392,18 @@ def merge_transitions(transitions: Sequence[EnvTransition] | EnvTransition) -> E
 def transition_to_dataset_frame(
     transitions_or_transition: EnvTransition | Sequence[EnvTransition], features: dict[str, dict]
 ) -> dict[str, Any]:
-    """Convert a single EnvTransition or an iterable of them into a flat, dataset-friendly dictionary for training or evaluation.
+    """
+    Convert one or more transitions into a flat dictionary suitable for a dataset frame.
 
-    Processes transitions according to the provided feature specification and returns
-    data in the format expected by machine learning models and datasets.
+    This function processes `EnvTransition` objects according to a feature
+    specification, producing a format ready for training or evaluation.
 
     Args:
-        transitions_or_transition: Either a single EnvTransition dict or an iterable of them
-            (which will be merged using merge_transitions).
-        features: Feature specification dictionary with the following structure:
-            - 'action': dict with 'names': list of action feature names
-            - 'observation.state': dict with 'names': list of state feature names
-            - keys starting with 'observation.images.' are passed through as-is
+        transitions_or_transition: A single `EnvTransition` or a sequence to be merged.
+        features: A feature specification dictionary.
 
     Returns:
-        Flat dictionary containing:
-        - numpy arrays for "observation.state" and "action" (vectorized from feature names)
-        - any image tensors defined in features (passed through unchanged)
-        - next.{reward,done,truncated} scalar values
-        - info dict
-        - *_is_pad flags and task from complementary_data
+        A flat dictionary representing a single frame of data for a dataset.
     """
     action_names = features.get(ACTION, {}).get("names", [])
     obs_state_names = features.get(OBS_STATE, {}).get("names", [])
@@ -342,25 +414,25 @@ def transition_to_dataset_frame(
     act = tr.get(TransitionKey.ACTION, {}) or {}
     batch: dict[str, Any] = {}
 
-    # Images passthrough
+    # Passthrough for images.
     for k in image_keys:
         if k in obs:
             batch[k] = obs[k]
 
-    # Observation.state vector
+    # Create observation.state vector.
     if obs_state_names:
         vals = [_from_tensor(obs.get(f"{OBS_STATE}.{n}", 0.0)) for n in obs_state_names]
         batch[OBS_STATE] = np.asarray(vals, dtype=np.float32)
 
-    # Action vector
+    # Create action vector.
     if action_names:
         vals = [_from_tensor(act.get(f"{ACTION}.{n}", 0.0)) for n in action_names]
         batch[ACTION] = np.asarray(vals, dtype=np.float32)
 
-    # Add transition metadata
+    # Add transition metadata.
     if tr.get(TransitionKey.REWARD) is not None:
         reward_val = _from_tensor(tr[TransitionKey.REWARD])
-        # Check if features expect array format, otherwise keep as scalar
+        # Check if features expect array format, otherwise keep as scalar.
         if REWARD in features and features[REWARD].get("shape") == (1,):
             batch[REWARD] = np.array([reward_val], dtype=np.float32)
         else:
@@ -380,14 +452,14 @@ def transition_to_dataset_frame(
         else:
             batch[TRUNCATED] = truncated_val
 
-    # Complementary data flags and task
+    # Add complementary data flags and task.
     comp = tr.get(TransitionKey.COMPLEMENTARY_DATA) or {}
     if comp:
-        # pad flags
+        # Padding flags.
         for k, v in comp.items():
             if k.endswith("_is_pad"):
                 batch[k] = v
-        # task label
+        # Task label.
         if comp.get("task") is not None:
             batch["task"] = comp["task"]
 
@@ -395,36 +467,27 @@ def transition_to_dataset_frame(
 
 
 def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
-    """Convert a batch dict coming from LeRobot replay/dataset code into an EnvTransition dictionary.
+    """
+    Convert a batch dictionary from a dataset/dataloader into an `EnvTransition`.
 
-    The function maps well known keys to the EnvTransition structure. Missing keys are
-    filled with sane defaults (None or 0.0/False).
-
-    Keys recognised (case-sensitive):
-    * "observation.*" (keys starting with "observation." are grouped into observation dict)
-    * "action"
-    * "next.reward"
-    * "next.done"
-    * "next.truncated"
-    * "info"
-    * "_is_pad" patterns (padding flags)
-    * "task", "index", "task_index" (complementary data)
-
-    Additional keys are ignored so that existing dataloaders can carry extra
-    metadata without breaking the processor.
+    This function maps recognized keys from a batch to the `EnvTransition` structure,
+    filling in missing keys with sensible defaults.
 
     Args:
-        batch: Batch dictionary from datasets or dataloaders containing the above keys.
+        batch: A batch dictionary.
 
     Returns:
-        EnvTransition dictionary with properly structured transition data.
+        An `EnvTransition` dictionary.
+
+    Raises:
+        ValueError: If the input is not a dictionary.
     """
 
-    # Validate input type
+    # Validate input type.
     if not isinstance(batch, dict):
         raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
 
-    # Extract observation keys
+    # Extract observation and complementary data keys.
     observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
     complementary_data = _extract_complementary_data(batch)
 
@@ -440,25 +503,16 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
 
 
 def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
-    """Inverse of batch_to_transition. Returns a dict with canonical field names used throughout LeRobot.
+    """
+    Convert an `EnvTransition` back to the canonical batch format used in LeRobot.
 
-    Converts an EnvTransition back to the batch format expected by datasets, dataloaders,
-    and other LeRobot components.
-
-    Output format:
-    * "action": Action data from transition
-    * "next.reward": Reward value (defaults to 0.0)
-    * "next.done": Done flag (defaults to False)
-    * "next.truncated": Truncated flag (defaults to False)
-    * "info": Info dictionary (defaults to {})
-    * Flattened observation keys (e.g., "observation.state", "observation.images.cam1")
-    * Complementary data fields ("task", "index", "task_index", padding flags)
+    This is the inverse of `batch_to_transition`.
 
     Args:
-        transition: EnvTransition dictionary to convert.
+        transition: The `EnvTransition` to convert.
 
     Returns:
-        Batch dictionary with canonical LeRobot field names suitable for dataloaders.
+        A batch dictionary with canonical LeRobot field names.
     """
     batch = {
         "action": transition.get(TransitionKey.ACTION),
@@ -468,12 +522,12 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
         "info": transition.get(TransitionKey.INFO, {}),
     }
 
-    # Add complementary data
+    # Add complementary data.
     comp_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
     if comp_data:
         batch.update(comp_data)
 
-    # Flatten observation dict
+    # Flatten observation dictionary.
     observation = transition.get(TransitionKey.OBSERVATION)
     if isinstance(observation, dict):
         batch.update(observation)
@@ -482,4 +536,15 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
 
 
 def identity_transition(tr: EnvTransition) -> EnvTransition:
+    """
+    An identity function for transitions, returning the input unchanged.
+
+    Useful as a default or placeholder in processing pipelines.
+
+    Args:
+        tr: An `EnvTransition`.
+
+    Returns:
+        The same `EnvTransition`.
+    """
     return tr
