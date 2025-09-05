@@ -70,7 +70,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
 
 def ensure_safe_goal_position(
-    goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[float]
+    goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[str, float]
 ) -> dict[str, float]:
     """Caps relative action target magnitude for safety."""
 
