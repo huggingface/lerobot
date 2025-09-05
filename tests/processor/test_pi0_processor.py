@@ -377,3 +377,71 @@ def test_pi0_newline_processor_state_dict():
     # Test get_config
     config = processor.get_config()
     assert config == {}
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_pi0_processor_bfloat16_device_float32_normalizer():
+    """Test: DeviceProcessor(bfloat16) + NormalizerProcessor(float32) → output bfloat16 via automatic adaptation"""
+    config = create_default_config()
+    stats = create_default_stats()
+    config.device = "cuda"
+
+    with patch("lerobot.policies.pi0.processor_pi0.TokenizerProcessorStep", MockTokenizerProcessorStep):
+        preprocessor, _ = make_pi0_pre_post_processors(
+            config,
+            stats,
+            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        )
+
+    # Modify the pipeline to use bfloat16 device processor with float32 normalizer
+    modified_steps = []
+    for step in preprocessor.steps:
+        if isinstance(step, DeviceProcessorStep):
+            # Device processor converts to bfloat16
+            modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="bfloat16"))
+        elif isinstance(step, NormalizerProcessorStep):
+            # Normalizer stays configured as float32 (will auto-adapt to bfloat16)
+            modified_steps.append(
+                NormalizerProcessorStep(
+                    features=step.features,
+                    norm_map=step.norm_map,
+                    stats=step.stats,
+                    device=config.device,
+                    dtype=torch.float32,  # Deliberately configured as float32
+                )
+            )
+        else:
+            modified_steps.append(step)
+    preprocessor.steps = modified_steps
+
+    # Verify initial normalizer configuration (PI0 has NormalizerProcessorStep at index 5)
+    normalizer_step = preprocessor.steps[5]  # NormalizerProcessorStep
+    assert normalizer_step.dtype == torch.float32
+
+    # Create test data with both state and visual observations
+    observation = {
+        OBS_STATE: torch.randn(10, dtype=torch.float32),  # PI0 expects size 10
+        OBS_IMAGE: torch.randn(3, 224, 224, dtype=torch.float32),
+    }
+    action = torch.randn(6, dtype=torch.float32)  # PI0 expects size 6
+    transition = create_transition(
+        observation, action, complementary_data={"task": "test bfloat16 adaptation"}
+    )
+
+    # Process through full pipeline
+    processed = preprocessor(transition)
+
+    # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
+    assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.bfloat16
+    assert (
+        processed[TransitionKey.OBSERVATION][OBS_IMAGE].dtype == torch.bfloat16
+    )  # IDENTITY normalization still gets dtype conversion
+    assert processed[TransitionKey.ACTION].dtype == torch.bfloat16
+
+    # Verify normalizer automatically adapted its internal state
+    assert normalizer_step.dtype == torch.bfloat16
+    # Check state stats (has normalization)
+    for stat_tensor in normalizer_step._tensor_stats[OBS_STATE].values():
+        assert stat_tensor.dtype == torch.bfloat16
+    # OBS_IMAGE uses IDENTITY normalization, so no stats to check

@@ -107,12 +107,14 @@ class _NormalizationMixin:
             if self.normalize_observation_keys is not None and key not in self.normalize_observation_keys:
                 continue
             if feature.type != FeatureType.ACTION and key in new_observation:
-                tensor = torch.as_tensor(new_observation[key], dtype=self.dtype)
+                # Convert to tensor but preserve original dtype for adaptation logic
+                tensor = torch.as_tensor(new_observation[key])
                 new_observation[key] = self._apply_transform(tensor, key, feature.type, inverse=inverse)
         return new_observation
 
     def _normalize_action(self, action: Any, inverse: bool) -> Tensor:
-        tensor = torch.as_tensor(action, dtype=self.dtype)
+        # Convert to tensor but preserve original dtype for adaptation logic
+        tensor = torch.as_tensor(action)
         processed_action = self._apply_transform(tensor, "action", FeatureType.ACTION, inverse=inverse)
         return processed_action
 
