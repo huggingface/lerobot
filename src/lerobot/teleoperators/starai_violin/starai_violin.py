@@ -55,6 +55,7 @@ class StaraiViolin(Teleoperator):
                 "gripper": Motor(6, "rx8-u50", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
+            default_motion_time = 1500,
         )
 
     @property

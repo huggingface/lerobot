@@ -94,6 +94,8 @@ class StaraiMotorsBus(MotorsBus):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
         protocol_version: int = DEFAULT_PROTOCOL_VERSION,
+        default_motion_time:int = DEFAULT_MOTION_TIME
+
 
     ):
         super().__init__(port, motors, calibration)
@@ -101,6 +103,7 @@ class StaraiMotorsBus(MotorsBus):
         self.apply_drive_mode = True
         # self.port_handler: PortHandler
         self.port_handler = PortHandler(port,1000000)
+        self.default_motion_time = default_motion_time
 
     @property
     def is_connected(self) -> bool:
@@ -255,7 +258,7 @@ class StaraiMotorsBus(MotorsBus):
             for motor in values_:
                 data=SyncPositionControlOptions(self.motors[motor].id,
                                                 int(((values_[motor]/4096*360)-180)*10),
-                                                DEFAULT_MOTION_TIME,
+                                                self.default_motion_time,
                                                 0,
                                                 DEFAULT_ACC_TIME,
                                                 DEFAULT_DEC_TIME)
