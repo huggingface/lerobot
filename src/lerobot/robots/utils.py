@@ -33,6 +33,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .starai_viola import StaraiViola
 
         return StaraiViola(config)
+    elif config.type == "starai_cello":
+        from .starai_cello import StaraiCello
+
+        return StaraiCello(config)
     elif config.type == "so100_follower_end_effector":
         from .so100_follower import SO100FollowerEndEffector
 

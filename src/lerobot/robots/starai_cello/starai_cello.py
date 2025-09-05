@@ -16,27 +16,29 @@
 
 import logging
 import time
+from functools import cached_property
 from typing import Any
 
+from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.starai import (
     StaraiMotorsBus,
     OperatingMode,
 )
-
-from ..teleoperator import Teleoperator
-from .config_starai_violin import StaraiViolinConfig
+from ..robot import Robot
+from ..utils import ensure_safe_goal_position
+from .config_starai_cello import StaraiCelloConfig
 
 logger = logging.getLogger(__name__)
 
 
-class StaraiViolin(Teleoperator):
+class StaraiCello(Robot):
 
-    config_class = StaraiViolinConfig
-    name = "starai_violin"
+    config_class = StaraiCelloConfig
+    name = "starai_cello"
 
-    def __init__(self, config: StaraiViolinConfig):
+    def __init__(self, config: StaraiCelloConfig):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
@@ -52,22 +54,36 @@ class StaraiViolin(Teleoperator):
                 "gripper": Motor(6, "rx8-u50", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
-            default_motion_time = 1500,
         )
+        self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
-    def action_features(self) -> dict[str, type]:
+    def _motors_ft(self) -> dict[str, type]:
         return {f"{motor}.pos": float for motor in self.bus.motors}
 
     @property
-    def feedback_features(self) -> dict[str, type]:
-        return {}
+    def _cameras_ft(self) -> dict[str, tuple]:
+        return {
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
+        }
+
+    @cached_property
+    def observation_features(self) -> dict[str, type | tuple]:
+        return {**self._motors_ft, **self._cameras_ft}
+
+    @cached_property
+    def action_features(self) -> dict[str, type]:
+        return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
-        return self.bus.is_connected
+        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     def connect(self, calibrate: bool = True) -> None:
+        """
+        We assume that at connection time, arm is in a rest position,
+        and torque can be safely disabled to run calibration.
+        """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
@@ -77,6 +93,9 @@ class StaraiViolin(Teleoperator):
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
             )
             self.calibrate()
+
+        for cam in self.cameras.values():
+            cam.connect()
         self.arm_init()
         self.configure()
         logger.info(f"{self} connected.")
@@ -87,7 +106,7 @@ class StaraiViolin(Teleoperator):
 
     def calibrate(self) -> None:
         if self.calibration:
-            # Calibration file exists, ask user whether to use it or run new calibration
+            # self.calibration is not empty here
             user_input = input(
                 f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
             )
@@ -99,7 +118,7 @@ class StaraiViolin(Teleoperator):
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         # for motor in self.bus.motors:
-        #     self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+            # self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         # input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
@@ -122,14 +141,19 @@ class StaraiViolin(Teleoperator):
 
         # self.bus.write_calibration(self.calibration)
         self._save_calibration()
-        print(f"Calibration saved to {self.calibration_fpath}")
+        print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
         pass
-        # self.bus.disable_torque()
-        # self.bus.configure_motors()
-        # for motor in self.bus.motors:
-        #     self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+    #     with self.bus.torque_disabled():
+    #         self.bus.configure_motors()
+            # for motor in self.bus.motors:
+                # self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+                # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
+                # self.bus.write("P_Coefficient", motor, 16)
+                # Set I_Coefficient and D_Coefficient to default value 0 and 32
+                # self.bus.write("I_Coefficient", motor, 0)
+                # self.bus.write("D_Coefficient", motor, 32)
 
     # def setup_motors(self) -> None:
     #     for motor in reversed(self.bus.motors):
@@ -137,36 +161,39 @@ class StaraiViolin(Teleoperator):
     #         self.bus.setup_motor(motor)
     #         print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_action(self) -> dict[str, float]:
-        start = time.perf_counter()
-        action = self.bus.sync_read("Present_Position")
-        action = {f"{motor}.pos": val for motor, val in action.items()}
-        dt_ms = (time.perf_counter() - start) * 1e3
-        logger.debug(f"{self} read action: {dt_ms:.1f}ms")
-        return action
-
-    def send_feedback(self, feedback: dict[str, float]) -> None:
-        # TODO(rcadene, aliberts): Implement force feedback
-        raise NotImplementedError
-
-    def disconnect(self) -> None:
+    def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.bus.disconnect()
-        logger.info(f"{self} disconnected.")
+        # Read arm position
+        start = time.perf_counter()
+        obs_dict = self.bus.sync_read("Present_Position")
+        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
-    def arm_init(self) -> None:
-        action = self.bus.sync_read("Present_Position")
-        action["Motor_1"] = -65.0
-        action["Motor_2"] =40.0
-        action["Motor_4"] = 15.0
-        action = {f"{motor}.pos": val for motor, val in action.items()}
-        self.send_action(action)
+        # Capture images from cameras
+        for cam_key, cam in self.cameras.items():
+            start = time.perf_counter()
+            obs_dict[cam_key] = cam.async_read()
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
+        return obs_dict
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        """Command arm to move to a target joint configuration.
 
+        The relative action magnitude may be clipped depending on the configuration parameter
+        `max_relative_target`. In this case, the action sent differs from original action.
+        Thus, this function always returns the action actually sent.
+
+        Raises:
+            RobotDeviceNotConnectedError: if robot is not connected.
+
+        Returns:
+            the action sent to the motors, potentially clipped.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -181,3 +208,25 @@ class StaraiViolin(Teleoperator):
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+
+    def disconnect(self):
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        self.bus.disconnect(self.config.disable_torque_on_disconnect)
+        for cam in self.cameras.values():
+            cam.disconnect()
+
+        logger.info(f"{self} disconnected.")
+
+    def arm_init(self) -> None:
+        self.bus.default_motion_time = 1500
+        action = self.bus.sync_read("Present_Position")
+        action["Motor_1"] = -65.0
+        action["Motor_2"] = 40.0
+        action["Motor_4"] = 15.0
+        action = {f"{motor}.pos": val for motor, val in action.items()}
+        self.send_action(action)
+        time.sleep(1.5)
+        self.bus.default_motion_time = 100
+

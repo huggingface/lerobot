@@ -86,6 +86,7 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
     starai_viola,
+    starai_cello,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,

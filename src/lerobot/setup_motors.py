@@ -35,7 +35,8 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
-    starai_viola
+    starai_viola,
+    starai_cello
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
@@ -56,6 +57,7 @@ COMPATIBLE_DEVICES = [
     "lekiwi",
     "starai_viola",
     "starai_violin",
+    "starai_cello",
 ]
 
 

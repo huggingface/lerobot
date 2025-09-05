@@ -238,7 +238,7 @@ lerobot-calibrate     --teleop.type=starai_violin --teleop.port=/dev/ttyUSB0 --t
 ```bash
 lerobot-calibrate     --robot.type=starai_viola --robot.port=/dev/ttyUSB1 --robot.id=my_awesome_staraiviola_arm
 ```
-
+lerobot-calibrate     --robot.type=starai_cello --robot.port=/dev/ttyUSB1 --robot.id=my_awesome_staraicello_arm
 
 
 ## 遥操作

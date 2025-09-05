@@ -34,9 +34,6 @@ logger = logging.getLogger(__name__)
 
 
 class StaraiViola(Robot):
-    """
-    Starai follower viola designed by TheRobotStudio and Hugging Face.
-    """
 
     config_class = StaraiViolaConfig
     name = "starai_viola"
