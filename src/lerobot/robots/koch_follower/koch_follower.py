@@ -17,7 +17,7 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any
+from typing import Any, cast
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
@@ -133,7 +133,7 @@ class KochFollower(Robot):
             f"Move all joints except {full_turn_motors} sequentially through their entire "
             "ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(cast list[str | int] unknown_range_motors)
         for motor in full_turn_motors:
             range_mins[motor] = 0
             range_maxes[motor] = 4095
@@ -143,9 +143,9 @@ class KochFollower(Robot):
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[motor],
-                range_min=range_mins[motor],
-                range_max=range_maxes[motor],
+                homing_offset=int(homing_offsets[motor]),
+                range_min=int(range_mins[motor]),
+                range_max=int(range_maxes[motor]),
             )
 
         self.bus.write_calibration(self.calibration)
