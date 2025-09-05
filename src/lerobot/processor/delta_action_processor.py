@@ -1,4 +1,4 @@
-# !/usr/bin/env python
+#!/usr/bin/env python
 
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
@@ -28,7 +28,15 @@ from .pipeline import ActionProcessorStep, ProcessorStepRegistry
 @dataclass
 class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     """
-    Map a tensor to a delta action dictionary.
+    Maps a flat action tensor from a policy to a structured delta action dictionary.
+
+    This step is typically used after a policy outputs a continuous action vector.
+    It decomposes the vector into named components for delta movements of the
+    end-effector (x, y, z) and optionally the gripper.
+
+    Attributes:
+        use_gripper: If True, assumes the 4th element of the tensor is the
+                     gripper action.
     """
 
     use_gripper: bool = True
@@ -60,28 +68,17 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
 @dataclass
 class MapDeltaActionToRobotActionStep(ActionProcessorStep):
     """
-    Map delta actions from teleoperators (gamepad, keyboard) to robot target actions
-    for use with inverse kinematics processors.
+    Maps delta actions from teleoperators to robot target actions for inverse kinematics.
 
-    Expected input ACTION keys:
-    {
-        "action.delta_x": float,
-        "action.delta_y": float,
-        "action.delta_z": float,
-        "action.gripper": float (optional),
-    }
+    This step converts a dictionary of delta movements (e.g., from a gamepad)
+    into a target action format that includes an "enabled" flag and target
+    end-effector positions. It also handles scaling and noise filtering.
 
-    Output ACTION keys:
-    {
-        "action.enabled": bool,
-        "action.target_x": float,
-        "action.target_y": float,
-        "action.target_z": float,
-        "action.target_wx": float,
-        "action.target_wy": float,
-        "action.target_wz": float,
-        "action.gripper": float,
-    }
+    Attributes:
+        position_scale: A factor to scale the delta position inputs.
+        rotation_scale: A factor to scale the delta rotation inputs (currently unused).
+        noise_threshold: The magnitude below which delta inputs are considered noise
+                         and do not trigger an "enabled" state.
     """
 
     # Scale factors for delta movements
