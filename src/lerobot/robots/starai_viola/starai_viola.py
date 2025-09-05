@@ -99,7 +99,7 @@ class StaraiViola(Robot):
 
         for cam in self.cameras.values():
             cam.connect()
-
+        self.arm_init()
         self.configure()
         logger.info(f"{self} connected.")
 
@@ -221,3 +221,15 @@ class StaraiViola(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
+
+    def arm_init(self) -> None:
+        self.bus.default_motion_time = 1500
+        action = self.bus.sync_read("Present_Position")
+        action["Motor_1"] = -65.0
+        action["Motor_2"] = 40.0
+        action["Motor_4"] = 15.0
+        action = {f"{motor}.pos": val for motor, val in action.items()}
+        self.send_action(action)
+        time.sleep(1.5)
+        self.bus.default_motion_time = 100
+
