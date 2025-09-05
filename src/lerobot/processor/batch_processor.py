@@ -1,3 +1,5 @@
+# !/usr/bin/env python
+
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +13,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""
+This script defines processor steps for adding a batch dimension to various components of an environment transition.
+
+These steps are designed to process actions, observations, and complementary data, making them suitable for batch processing by adding a leading dimension. This is a common requirement before feeding data into a neural network model.
+"""
+
 from dataclasses import dataclass, field
 
 from torch import Tensor
@@ -31,24 +40,63 @@ from .pipeline import (
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_action")
 class AddBatchDimensionActionStep(ActionProcessorStep):
-    """Process action component in-place, adding batch dimension if needed."""
+    """
+    Processor step to add a batch dimension to a 1D tensor action.
 
-    def action(self, action):
+    This is useful for creating a batch of size 1 from a single action sample.
+    """
+
+    def action(self, action: Tensor) -> Tensor:
+        """
+        Adds a batch dimension to the action if it's a 1D tensor.
+
+        Args:
+            action: The action tensor.
+
+        Returns:
+            The action tensor with an added batch dimension.
+        """
         if not isinstance(action, Tensor) or action.dim() != 1:
             return action
-
         return action.unsqueeze(0)
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """
+        Returns the input features unchanged.
+
+        Adding a batch dimension does not alter the feature definition.
+
+        Args:
+            features: A dictionary of policy features.
+
+        Returns:
+            The original dictionary of policy features.
+        """
         return features
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_observation")
 class AddBatchDimensionObservationStep(ObservationProcessorStep):
-    """Process observation component in-place, adding batch dimensions where needed."""
+    """
+    Processor step to add a batch dimension to observations.
 
-    def observation(self, observation):
+    It handles different types of observations:
+    - State vectors (1D tensors).
+    - Single images (3D tensors).
+    - Dictionaries of multiple images (3D tensors).
+    """
+
+    def observation(self, observation: dict[str, Tensor]) -> dict[str, Tensor]:
+        """
+        Adds a batch dimension to tensor-based observations in the observation dictionary.
+
+        Args:
+            observation: The observation dictionary.
+
+        Returns:
+            The observation dictionary with batch dimensions added to tensors.
+        """
         # Process state observations - add batch dim if 1D
         for state_key in [OBS_STATE, OBS_ENV_STATE]:
             if state_key in observation:
@@ -69,15 +117,41 @@ class AddBatchDimensionObservationStep(ObservationProcessorStep):
         return observation
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """
+        Returns the input features unchanged.
+
+        Adding a batch dimension does not alter the feature definition.
+
+        Args:
+            features: A dictionary of policy features.
+
+        Returns:
+            The original dictionary of policy features.
+        """
         return features
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_complementary_data")
 class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
-    """Process complementary data in-place, handling task field batching."""
+    """
+    Processor step to add a batch dimension to complementary data fields.
 
-    def complementary_data(self, complementary_data):
+    Handles specific keys like 'task', 'index', and 'task_index' to make them batched.
+    - 'task' (str) is wrapped in a list.
+    - 'index' and 'task_index' (0D tensors) get a batch dimension.
+    """
+
+    def complementary_data(self, complementary_data: dict) -> dict:
+        """
+        Adds a batch dimension to specific fields in the complementary data dictionary.
+
+        Args:
+            complementary_data: The complementary data dictionary.
+
+        Returns:
+            The complementary data dictionary with batch dimensions added.
+        """
         # Process task field - wrap string in list to add batch dimension
         if "task" in complementary_data:
             task_value = complementary_data["task"]
@@ -98,44 +172,33 @@ class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
         return complementary_data
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """
+        Returns the input features unchanged.
+
+        Adding a batch dimension does not alter the feature definition.
+
+        Args:
+            features: A dictionary of policy features.
+
+        Returns:
+            The original dictionary of policy features.
+        """
         return features
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor")
 class AddBatchDimensionProcessorStep(ProcessorStep):
-    """Processor that adds batch dimensions to observations and actions when needed.
+    """
+    A composite processor step that adds a batch dimension to the entire environment transition.
 
-    This processor ensures that observations and actions have proper batch dimensions for model processing:
+    This step combines individual processors for actions, observations, and complementary data
+    to create a batched transition (batch size 1) from a single-instance transition.
 
-    - For state observations (observation.state, observation.environment_state):
-      Adds batch dimension (unsqueeze at dim=0) if tensor is 1-dimensional
-
-    - For image observations (observation.image, observation.images.*):
-      Adds batch dimension (unsqueeze at dim=0) if tensor is 3-dimensional (H, W, C)
-
-    - For actions:
-      Adds batch dimension (unsqueeze at dim=0) if tensor is 1-dimensional
-
-    - For task field in complementary data:
-      Wraps string task in a list to add batch dimension
-      (task must be a string or list of strings)
-
-    This is useful when processing single transitions that need to be batched for
-    model inference or when converting from unbatched environment outputs to
-    batched model inputs.
-
-    The processor only modifies tensors that need batching and leaves already
-    batched tensors unchanged.
-
-    Example:
-        ```python
-        # State: (7,) -> (1, 7)
-        # Image: (224, 224, 3) -> (1, 224, 224, 3)
-        # Action: (4,) -> (1, 4)
-        # Task: "pick_cube" -> ["pick_cube"]
-        # Already batched: (1, 7) -> (1, 7) [unchanged]
-        ```
+    Attributes:
+        to_batch_action_processor: Processor for the action component.
+        to_batch_observation_processor: Processor for the observation component.
+        to_batch_complementary_data_processor: Processor for the complementary data component.
     """
 
     to_batch_action_processor: AddBatchDimensionActionStep = field(
@@ -149,11 +212,31 @@ class AddBatchDimensionProcessorStep(ProcessorStep):
     )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """
+        Applies the batching process to all relevant parts of an environment transition.
+
+        Args:
+            transition: The environment transition to process.
+
+        Returns:
+            The environment transition with a batch dimension added.
+        """
         transition = self.to_batch_action_processor(transition)
         transition = self.to_batch_observation_processor(transition)
         transition = self.to_batch_complementary_data_processor(transition)
         return transition
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """
+        Returns the input features unchanged.
+
+        Adding a batch dimension does not alter the feature definition.
+
+        Args:
+            features: A dictionary of policy features.
+
+        Returns:
+            The original dictionary of policy features.
+        """
         # NOTE: We ignore the batch dimension when transforming features
         return features
