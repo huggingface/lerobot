@@ -261,7 +261,7 @@ class StaraiMotorsBus(MotorsBus):
                                                 DEFAULT_DEC_TIME)
                 write_data[motor] = data
 
-
+            write_data["gripper"].power=1000
 
             self.port_handler.sync_write["Goal_Position"](write_data)
 
