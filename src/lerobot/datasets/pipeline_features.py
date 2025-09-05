@@ -27,14 +27,30 @@ def aggregate_pipeline_dataset_features(
     use_videos: bool = True,
     patterns: Sequence[str] | None = None,
 ) -> dict[str, dict]:
-    """
-    Aggregates the pipeline's features and returns a features dict ready for the dataset,
-    filtered to only those keys matching any of the given patterns (for action/state only).
+    """Aggregates and filters dataset features based on a data processing pipeline.
 
-    - `initial_features`: raw camera specs, e.g. {"front": (h,w,c), ...}
-    - `use_videos`: whether to treat image features as video streams
-    - `patterns`: regexes to filter action & state features; images are included
-                  whenever use_videos=True, regardless of patterns.
+    This function determines the final structure of dataset features after applying a series
+    of processing steps defined in a pipeline. It starts with an initial set of hardware
+    features (e.g., camera image shapes), transforms them using the pipeline, and then
+    filters the results.
+
+    Image features are controlled by the `use_videos` flag, while action and state features
+    can be selectively included by matching their keys against the provided regex `patterns`.
+    The final output is formatted to be compatible with Hugging Face Datasets feature dictionaries.
+
+    Args:
+        pipeline (DataProcessorPipeline): The data processing pipeline that defines all
+            feature transformations.
+        initial_features (dict[str, Any]): A dictionary of initial hardware features, where
+            keys are feature names and values are their shapes or types (e.g., camera resolutions).
+        use_videos (bool): If `True`, includes image/video features in the output. Defaults to `True`.
+        patterns (Sequence[str] | None): An optional sequence of regular expression patterns.
+            Only action and state keys that match at least one pattern will be included. If `None`,
+            all action and state keys are kept. Defaults to `None`.
+
+    Returns:
+        dict[str, dict]: A dictionary representing the final dataset features, structured for
+        use with `datasets.Features`.
     """
     import re
 
