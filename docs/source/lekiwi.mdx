@@ -302,7 +302,7 @@ Now you can record a dataset. To record episodes and upload your dataset to the 
 python -m lerobot.record \
     --robot.type=lekiwi_client \
     --robot.remote_ip="127.0.0.1" \ # <-The IP address of your machine which running host.
-    --robot.id=lekiwi_folower \
+    --robot.id=lekiwi_follower \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist.right: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
     --teleop.type=lekiwi_leader \
     --teleop.port=/dev/tty.usbserial-15140 \ # <- The port of your leader arm.
@@ -366,7 +366,7 @@ To evaluate your policy run the `record` command example, make sure to change `r
 python -m lerobot.record \
    --robot.type=lekiwi_client \
     --robot.remote_ip="127.0.0.1" \ # <-The IP address of your machine which running host.
-    --robot.id=lekiwi_folower \
+    --robot.id=lekiwi_follower \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist.right: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
     --teleop.type=lekiwi_leader \
     --teleop.port=/dev/tty.usbserial-15140 \ # <- The port of your leader arm.
