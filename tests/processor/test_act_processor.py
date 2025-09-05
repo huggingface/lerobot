@@ -87,9 +87,9 @@ def test_make_act_processor_basic():
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 4
     assert isinstance(preprocessor.steps[0], RenameProcessorStep)
-    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
-    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
-    assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
+    assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
+    assert isinstance(preprocessor.steps[2], DeviceProcessorStep)
+    assert isinstance(preprocessor.steps[3], NormalizerProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
@@ -308,6 +308,17 @@ def test_act_processor_mixed_precision():
     for step in preprocessor.steps:
         if isinstance(step, DeviceProcessorStep):
             modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="float16"))
+        elif isinstance(step, NormalizerProcessorStep):
+            # Update normalizer to use the same device as the device processor
+            modified_steps.append(
+                NormalizerProcessorStep(
+                    features=step.features,
+                    norm_map=step.norm_map,
+                    stats=step.stats,
+                    device=config.device,
+                    dtype=torch.float16,  # Match the float16 dtype
+                )
+            )
         else:
             modified_steps.append(step)
     preprocessor.steps = modified_steps

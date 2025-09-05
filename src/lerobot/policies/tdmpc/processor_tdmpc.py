@@ -42,13 +42,13 @@ def make_tdmpc_pre_post_processors(
 
     input_steps = [
         RenameProcessorStep(rename_map={}),
+        AddBatchDimensionProcessorStep(),
+        DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        AddBatchDimensionProcessorStep(),
-        DeviceProcessorStep(device=config.device),
     ]
     output_steps = [
         DeviceProcessorStep(device="cpu"),

@@ -46,11 +46,6 @@ def make_smolvla_pre_post_processors(
 
     input_steps = [
         RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
         AddBatchDimensionProcessorStep(),
         SmolVLANewLineProcessor(),
         TokenizerProcessorStep(
@@ -60,6 +55,11 @@ def make_smolvla_pre_post_processors(
             max_length=config.tokenizer_max_length,
         ),
         DeviceProcessorStep(device=config.device),
+        NormalizerProcessorStep(
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+        ),
     ]
     output_steps = [
         DeviceProcessorStep(device="cpu"),

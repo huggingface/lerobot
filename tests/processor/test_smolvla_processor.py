@@ -123,11 +123,11 @@ def test_make_smolvla_processor_basic():
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 6
     assert isinstance(preprocessor.steps[0], RenameProcessorStep)
-    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
-    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
-    assert isinstance(preprocessor.steps[3], SmolVLANewLineProcessor)
-    # Step 4 would be TokenizerProcessorStep but it's mocked
-    assert isinstance(preprocessor.steps[5], DeviceProcessorStep)
+    assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
+    assert isinstance(preprocessor.steps[2], SmolVLANewLineProcessor)
+    # Step 3 would be TokenizerProcessorStep but it's mocked
+    assert isinstance(preprocessor.steps[4], DeviceProcessorStep)
+    assert isinstance(preprocessor.steps[5], NormalizerProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
