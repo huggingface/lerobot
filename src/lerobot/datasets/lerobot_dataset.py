@@ -1063,8 +1063,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             df.to_parquet(path)
 
-        new_hf_dataset = Dataset.from_pandas(df)
-        self.hf_dataset = concatenate_datasets([self.hf_dataset, new_hf_dataset])
+        self.hf_dataset = (
+            concatenate_datasets([self.hf_dataset, ep_dataset]) if self.hf_dataset is not None else ep_dataset
+        )
+        self.hf_dataset.set_transform(hf_transform_to_torch)
 
         metadata = {
             "data/chunk_index": chunk_idx,
