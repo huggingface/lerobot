@@ -169,7 +169,7 @@ def make_policy(
     else:
         # Make a fresh policy.
         policy = policy_cls(**kwargs)
-        
+
     policy.to(cfg.device)
     assert isinstance(policy, nn.Module)
 
