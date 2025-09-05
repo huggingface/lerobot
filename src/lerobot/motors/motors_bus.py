@@ -21,6 +21,7 @@
 
 import abc
 import logging
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -81,6 +82,7 @@ class MotorNormMode(str, Enum):
     RANGE_0_100 = "range_0_100"
     RANGE_M100_100 = "range_m100_100"
     DEGREES = "degrees"
+    RADIANS = "radians"
 
 
 @dataclass
@@ -797,6 +799,10 @@ class MotorsBus(abc.ABC):
                 mid = (min_ + max_) / 2
                 max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
                 normalized_values[id_] = (val - mid) * 360 / max_res
+            elif self.motors[motor].norm_mode is MotorNormMode.RADIANS:
+                mid = (min_ + max_) / 2
+                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
+                normalized_values[id_] = (val - mid) * 2 * math.pi / max_res
             else:
                 raise NotImplementedError
 
@@ -827,6 +833,10 @@ class MotorsBus(abc.ABC):
                 mid = (min_ + max_) / 2
                 max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
                 unnormalized_values[id_] = int((val * max_res / 360) + mid)
+            elif self.motors[motor].norm_mode is MotorNormMode.RADIANS:
+                mid = (min_ + max_) / 2
+                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
+                unnormalized_values[id_] = int((val * max_res / (2 * math.pi)) + mid)
             else:
                 raise NotImplementedError
 

@@ -13,12 +13,12 @@
 # limitations under the License.
 
 import logging
+import math
 import time
 from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.constants import OBS_STATE
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
@@ -31,6 +31,24 @@ from ..utils import ensure_safe_goal_position
 from .config_viperx import ViperXConfig
 
 logger = logging.getLogger(__name__)
+
+HORN_RADIUS = 0.022
+ARM_LENGTH = 0.036
+
+
+def gripper_to_linear(gripper_pos):
+    a1 = HORN_RADIUS * math.sin(gripper_pos)
+    c = math.sqrt(pow(HORN_RADIUS, 2) - pow(a1, 2))
+    a2 = math.sqrt(pow(ARM_LENGTH, 2) - pow(c, 2))
+    return a1 + a2
+
+
+def linear_to_gripper(linear_position):
+    result = math.pi / 2.0 - math.acos(
+        (pow(HORN_RADIUS, 2) + pow(linear_position, 2) - pow(ARM_LENGTH, 2))
+        / (2 * HORN_RADIUS * linear_position)
+    )
+    return result
 
 
 class ViperX(Robot):
@@ -45,28 +63,50 @@ class ViperX(Robot):
         self,
         config: ViperXConfig,
     ):
-        raise NotImplementedError
         super().__init__(config)
+        default_calibration = {
+            "waist": MotorCalibration(id=1, drive_mode=0, homing_offset=0, range_min=0, range_max=4095),
+            "shoulder": MotorCalibration(id=2, drive_mode=1, homing_offset=0, range_min=0, range_max=4095),
+            "shoulder_shadow": MotorCalibration(
+                id=3, drive_mode=0, homing_offset=0, range_min=0, range_max=4095
+            ),
+            "elbow": MotorCalibration(id=4, drive_mode=1, homing_offset=0, range_min=0, range_max=4095),
+            "elbow_shadow": MotorCalibration(
+                id=5, drive_mode=0, homing_offset=0, range_min=0, range_max=4095
+            ),
+            "forearm_roll": MotorCalibration(
+                id=6, drive_mode=0, homing_offset=0, range_min=0, range_max=4095
+            ),
+            "wrist_angle": MotorCalibration(id=7, drive_mode=1, homing_offset=0, range_min=0, range_max=4095),
+            "wrist_rotate": MotorCalibration(
+                id=8, drive_mode=0, homing_offset=0, range_min=0, range_max=4095
+            ),
+            "gripper": MotorCalibration(id=9, drive_mode=0, homing_offset=0, range_min=0, range_max=4095),
+        }
         self.config = config
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "waist": Motor(1, "xm540-w270", MotorNormMode.RANGE_M100_100),
-                "shoulder": Motor(2, "xm540-w270", MotorNormMode.RANGE_M100_100),
-                "shoulder_shadow": Motor(3, "xm540-w270", MotorNormMode.RANGE_M100_100),
-                "elbow": Motor(4, "xm540-w270", MotorNormMode.RANGE_M100_100),
-                "elbow_shadow": Motor(5, "xm540-w270", MotorNormMode.RANGE_M100_100),
-                "forearm_roll": Motor(6, "xm540-w270", MotorNormMode.RANGE_M100_100),
-                "wrist_angle": Motor(7, "xm540-w270", MotorNormMode.RANGE_M100_100),
-                "wrist_rotate": Motor(8, "xm430-w350", MotorNormMode.RANGE_M100_100),
-                "gripper": Motor(9, "xm430-w350", MotorNormMode.RANGE_0_100),
+                "waist": Motor(1, "xm540-w270", MotorNormMode.RADIANS),
+                "shoulder": Motor(2, "xm540-w270", MotorNormMode.RADIANS),
+                "shoulder_shadow": Motor(3, "xm540-w270", MotorNormMode.RADIANS),
+                "elbow": Motor(4, "xm540-w270", MotorNormMode.RADIANS),
+                "elbow_shadow": Motor(5, "xm540-w270", MotorNormMode.RADIANS),
+                "forearm_roll": Motor(6, "xm540-w270", MotorNormMode.RADIANS),
+                "wrist_angle": Motor(7, "xm540-w270", MotorNormMode.RADIANS),
+                "wrist_rotate": Motor(8, "xm430-w350", MotorNormMode.RADIANS),
+                "gripper": Motor(9, "xm430-w350", MotorNormMode.RADIANS),
             },
+            calibration=default_calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.bus.motors}
+        motors = {f"{motor}.pos": float for motor in self.bus.motors if not motor.endswith("_shadow")}
+        motors["finger.pos"] = float  # Special case for gripper position
+        motors.pop("gripper.pos", None)  # Remove gripper position, as it is not used directly
+        return motors
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -155,7 +195,7 @@ class ViperX(Robot):
 
             # Set a velocity limit of 131 as advised by Trossen Robotics
             # TODO(aliberts): remove as it's actually useless in position control
-            self.bus.write("Velocity_Limit", 131)
+            # self.bus.write("Velocity_Limit", 131)
 
             # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
             # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling
@@ -179,8 +219,9 @@ class ViperX(Robot):
 
         # Read arm position
         start = time.perf_counter()
-        obs_dict[OBS_STATE] = self.bus.sync_read("Present_Position")
-        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        obs_dict = self.bus.sync_read("Present_Position")
+        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items() if not motor.endswith("_shadow")}
+        obs_dict["finger.pos"] = gripper_to_linear(obs_dict.pop("gripper.pos"))
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
@@ -208,6 +249,12 @@ class ViperX(Robot):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if "finger.pos" in action:
+            # Convert finger position to gripper position
+            action = action.copy()  # Avoid modifying the original action
+            action["gripper.pos"] = linear_to_gripper(action["finger.pos"])
+            del action["finger.pos"]
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
