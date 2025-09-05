@@ -1,0 +1,168 @@
+# Ned2
+
+
+## Buy a robot
+
+You can buy the Ned2 directly from our store:
+[Buy the Ned2 on Niryo’s website](https://niryo.com/fr/produit/bras-robotise-6-axes/)
+
+## Install LeRobot 🤗
+
+To install LeRobot, follow our Installation Guide.
+
+In addition to these instructions, you need to install the **Dynamixel SDK**:
+
+```bash
+pip install -e ".[dynamixel]"
+```
+You will also need to install socat in order to remap the motor bus of the robot’s Raspberry Pi to your computer via an open TCP port.
+We recommend installing it with conda:
+
+```bash
+conda install socat -c conda-forge
+```
+
+## Set up the robot for LeRobot
+
+### Hardware setup
+
+- **Required gear**:
+  - 3 Ethernet RJ45 cables
+  - 1 Ethernet router or switch
+  - 2 Ned2 robots (1 “leader” for teleoperation, 1 “follower”)
+  - The follower robot must be equipped with a custom gripper
+- **Wiring**:
+  - Connect the rear Ethernet port of the Ned2 “follower” to the router/switch
+  - Connect the rear Ethernet port of the Ned2 “leader” to the router/switch
+  - Connect the router/switch to your computer
+  - Use 3 distinct Ethernet cables (one per link)
+
+![Wiring diagram (example)](/docs/source/_static/ned2_teleop_setup.svg)
+
+_TODO: place the diagram image at `docs/source/_static/ned2_teleop_setup.svg`._
+
+### Robot side (for both robots)
+
+- **SSH connection**
+  - Use NiryoStudio (integrated terminal) or your terminal:
+
+```bash
+ssh niryo@ned2-<robot-ssid>.local
+# Default password: robotics
+```
+
+- **Verify “link-local only” mode** (low latency)
+  - Goal: minimize latency between PC and robots for real-time control (processing on PC, execution on hardware)
+  - Check the local IP address:
+
+```bash
+ip a
+```
+  - If the IP of the robot’s Ethernet interface starts with `169.254.*.*`, you’re good. Otherwise, set the network to “link-local only” via netplan:
+
+```bash
+sudo nano /etc/netplan/*.yaml
+```
+  - Adapt the interface (e.g. `eth0`) and make sure you have at least:
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: no
+      dhcp6: no
+      link-local: [ipv4]
+```
+  - Save (Ctrl+S), exit (Ctrl+X), then apply:
+
+```bash
+sudo netplan apply
+```
+
+- **Expose the motor TTL bus over TCP (ser2net)**
+
+```bash
+sudo apt update && sudo apt install -y ser2net
+```
+  - Edit the configuration (depending on your version, the file may be `/etc/ser2net.conf`):
+
+```bash
+sudo nano /etc/ser2net.conf
+```
+  - Add the following line to remap `/dev/ttyAMA0` (motors bus) to TCP port `7777` at `1000000` baud:
+
+```
+7777:1000000:8n1:none:/dev/ttyAMA0
+```
+  - Restart the service:
+
+```bash
+sudo systemctl stop ser2net
+sudo systemctl start ser2net
+```
+  - Check status:
+
+```bash
+systemctl status ser2net
+```
+  - Tip: you only need to do this once; it will persist.
+  - Tip 2: if your robot runs a "HF ready stack", you can avoid the netplan and ser2net part.
+
+  - Kill the ROS-Stack to free the motor bus. Note that this will make the power button and other Niryo services unavailable. If you want to reuse the robot normally, unplug it and let it reboot.
+
+```bash
+rosnode kill -a
+```
+
+### PC side
+
+- Ensure your PC is connected to the same local Ethernet network (the router/switch) as both robots
+- If that’s the case, you’re good to go
+- (Optional) Test connectivity by pinging both robots. The IPs should start with `169.254.*.*` when in link-local only mode:
+
+```bash
+ping <leader-ip>   # e.g., 169.254.X.Y
+ping <follower-ip> # e.g., 169.254.U.V
+```
+
+## Calibration
+
+Our robots need a calibration after each reboot. This is because they use relative encoders instead of classic absolute encoders.
+
+Run the following command to calibrate a Ned2 robot:
+
+```bash
+# Replace with the actual link-local IP of your robot (169.254.X.Y)
+lerobot-calibrate \
+    --robot.type=ned2 \
+    --robot.ip=169.254.XX.XX \
+    --robot.id=my_awesome_follower_arm #<- Give your robot a unique name
+```
+
+During calibration, you will be prompted to place the robot roughly in the middle of its motion range and press Enter. This corresponds to a "right-angle" pose with the gripper open. This safe reference pose reduces the risk of erroneous or corrupted readings from the stepper motor encoders that can occur when joints are too close to their mechanical end-stops.
+
+![Right-angle pose (example)](/docs/source/_static/ned2_right_angle_pose.svg)
+
+_TODO: place our image at `docs/source/_static/ned2_right_angle_pose.svg`._
+
+Repeat the operation for the teleoperator with its own settings (e.g., `--teleop.type=ned2_leader`, `--teleop.ip`, `--teleop.id`).
+
+## Test the teleoperation
+
+Run the following command to start teleoperation between a Ned2 leader and a Ned2 follower:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=ned2 \
+    --robot.ip=169.254.XX.XX \
+    --robot.id=my_awesome_follower_arm \
+    --teleop.type=ned2_leader \
+    --teleop.ip=169.254.UU.VV \
+    --teleop.id=my_awesome_leader_arm
+```
+
+Now take control of the leader; the follower should mirror the same movements in real time. If everything runs as expected, you’re ready to use LeRobot with a Ned2!
+
+
+
