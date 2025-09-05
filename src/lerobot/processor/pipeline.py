@@ -782,8 +782,8 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
         return transformed_transition[TransitionKey.COMPLEMENTARY_DATA]
 
 
-RobotProcessorPipeline: TypeAlias = DataProcessorPipeline
-PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline
+RobotProcessorPipeline: TypeAlias = DataProcessorPipeline[TOutput]
+PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline[TOutput]
 
 
 class ObservationProcessorStep(ProcessorStep, ABC):
