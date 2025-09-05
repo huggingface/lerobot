@@ -146,6 +146,7 @@ libero = [
     "einops",
     "thop",
     "robosuite==1.4.0",
+    "mujoco>=2.3.7,<3.0.0",
     "bddl==1.0.1",
     "matplotlib",
     "cloudpickle",
