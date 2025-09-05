@@ -162,7 +162,7 @@ class StaraiViolin(Teleoperator):
     def arm_init(self) -> None:
         action = self.bus.sync_read("Present_Position")
         action["Motor_1"] = -65.0
-        action["Motor_2"] = 60.0
+        action["Motor_2"] =40.0
         action["Motor_4"] = 15.0
         action = {f"{motor}.pos": val for motor, val in action.items()}
         self.send_action(action)
