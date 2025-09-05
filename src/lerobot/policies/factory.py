@@ -43,7 +43,22 @@ from lerobot.processor import PolicyProcessorPipeline, ProcessorKwargs
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
-    """Get the policy's class and config class given a name (matching the policy class' `name` attribute)."""
+    """
+    Retrieves a policy class by its registered name.
+
+    This function uses dynamic imports to avoid loading all policy classes into memory
+    at once, improving startup time and reducing dependencies.
+
+    Args:
+        name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
+              "vqbet", "pi0", "pi0fast", "sac", "reward_classifier", "smolvla".
+
+    Returns:
+        The policy class corresponding to the given name.
+
+    Raises:
+        NotImplementedError: If the policy name is not recognized.
+    """
     if name == "tdmpc":
         from lerobot.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 
@@ -85,6 +100,24 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
 
 def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
+    """
+    Instantiates a policy configuration object based on the policy type.
+
+    This factory function simplifies the creation of policy configuration objects by
+    mapping a string identifier to the corresponding config class.
+
+    Args:
+        policy_type: The type of the policy. Supported types include "tdmpc",
+                     "diffusion", "act", "vqbet", "pi0", "pi0fast", "sac", "smolvla",
+                     "reward_classifier".
+        **kwargs: Keyword arguments to be passed to the configuration class constructor.
+
+    Returns:
+        An instance of a `PreTrainedConfig` subclass.
+
+    Raises:
+        ValueError: If the `policy_type` is not recognized.
+    """
     if policy_type == "tdmpc":
         return TDMPCConfig(**kwargs)
     elif policy_type == "diffusion":
@@ -108,7 +141,21 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
 
 class ProcessorConfigKwargs(TypedDict, total=False):
-    """Keyword arguments for the processor config."""
+    """
+    A TypedDict defining the keyword arguments for processor configuration.
+
+    This provides type hints for the optional arguments passed to `make_pre_post_processors`,
+    improving code clarity and enabling static analysis.
+
+    Attributes:
+        preprocessor_config_filename: The filename for the preprocessor configuration.
+        postprocessor_config_filename: The filename for the postprocessor configuration.
+        preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
+        postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
+        dataset_stats: Dataset statistics for normalization.
+        preprocessor_kwargs: Additional arguments for the `PolicyProcessorPipeline`.
+        postprocessor_kwargs: Additional arguments for the `PolicyProcessorPipeline`.
+    """
 
     preprocessor_config_filename: str | None
     postprocessor_config_filename: str | None
@@ -124,22 +171,27 @@ def make_pre_post_processors(
     pretrained_path: str | None = None,
     **kwargs: Unpack[ProcessorConfigKwargs],
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Make a processor instance for a given policy type.
+    """
+    Create or load pre- and post-processor pipelines for a given policy.
 
-    This function creates the appropriate processor configuration based on the policy type.
-    Each policy type has its own processor with specific preprocessing steps.
+    This function acts as a factory. It can either load existing processor pipelines
+    from a pretrained path or create new ones from scratch based on the policy
+    configuration. Each policy type has a dedicated factory function for its
+    processors (e.g., `make_tdmpc_pre_post_processors`).
 
     Args:
-        policy_cfg: The config of the policy to create a processor for (e.g., "act", "diffusion", etc.)
-        pretrained_path: Optional path to load a pretrained processor from. If provided, loads
-            the processor from this path instead of creating a new one.
-        **kwargs: Additional keyword arguments passed to the processor creation.
+        policy_cfg: The configuration of the policy for which to create processors.
+        pretrained_path: An optional path to load pretrained processor pipelines from.
+            If provided, pipelines are loaded from this path.
+        **kwargs: Keyword arguments for processor configuration, as defined in
+            `ProcessorConfigKwargs`.
 
     Returns:
-        Tuple of (input_processor, output_processor) for the policy.
+        A tuple containing the input (pre-processor) and output (post-processor) pipelines.
 
     Raises:
-        NotImplementedError: If the policy type doesn't have a processor implemented.
+        NotImplementedError: If a processor factory is not implemented for the given
+            policy configuration type.
     """
     if pretrained_path:
         # Extract preprocessor and postprocessor kwargs
@@ -269,25 +321,29 @@ def make_policy(
     ds_meta: LeRobotDatasetMetadata | None = None,
     env_cfg: EnvConfig | None = None,
 ) -> PreTrainedPolicy:
-    """Make an instance of a policy class.
+    """
+    Instantiate a policy model.
 
-    This function exists because (for now) we need to parse features from either a dataset or an environment
-    in order to properly dimension and instantiate a policy for that dataset or environment.
+    This factory function handles the logic of creating a policy, which requires
+    determining the input and output feature shapes. These shapes can be derived
+    either from a `LeRobotDatasetMetadata` object or an `EnvConfig` object. The function
+    can either initialize a new policy from scratch or load a pretrained one.
 
     Args:
-        cfg (PreTrainedConfig): The config of the policy to make. If `pretrained_path` is set, the policy will
-            be loaded with the weights from that path.
-        ds_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata to take input/output shapes and
-            statistics to use for (un)normalization of inputs/outputs in the policy. Defaults to None.
-        env_cfg (EnvConfig | None, optional): The config of a gym environment to parse features from. Must be
-            provided if ds_meta is not. Defaults to None.
-
-    Raises:
-        ValueError: Either ds_meta or env and env_cfg must be provided.
-        NotImplementedError: if the policy.type is 'vqbet' and the policy device 'mps' (due to an incompatibility)
+        cfg: The configuration for the policy to be created. If `cfg.pretrained_path` is
+             set, the policy will be loaded with weights from that path.
+        ds_meta: Dataset metadata used to infer feature shapes and types. Also provides
+                 statistics for normalization layers.
+        env_cfg: Environment configuration used to infer feature shapes and types.
+                 One of `ds_meta` or `env_cfg` must be provided.
 
     Returns:
-        PreTrainedPolicy: _description_
+        An instantiated and device-placed policy model.
+
+    Raises:
+        ValueError: If both or neither of `ds_meta` and `env_cfg` are provided.
+        NotImplementedError: If attempting to use an unsupported policy-backend
+                             combination (e.g., VQBeT with 'mps').
     """
     if bool(ds_meta) == bool(env_cfg):
         raise ValueError("Either one of a dataset metadata or a sim env must be provided.")
