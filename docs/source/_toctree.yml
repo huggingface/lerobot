@@ -20,7 +20,7 @@
   - local: async
     title: Use Async Inference
   - local: libero
-    title: Evaluating with Libero
+    title: Using LIBERO
   title: "Tutorials"
 - sections:
   - local: smolvla
