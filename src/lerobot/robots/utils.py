@@ -65,6 +65,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
+    elif config.type == "dk1_follower":
+        from trlc_dk1.follower import DK1Follower
+
+        return DK1Follower(config)
     else:
         raise ValueError(config.type)
 

@@ -86,6 +86,9 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
+from trlc_dk1.follower import DK1Follower
+from trlc_dk1.leader import DK1Leader
+
 
 @dataclass
 class TeleoperateConfig:
