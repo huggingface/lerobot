@@ -170,13 +170,10 @@ class SMOLANDFAST(nn.Module):
         super().__init__()
         self.config = config
 
-        # TODO: move tokenizers in Policy
-        fast_tokenizer_path = "physical-intelligence/fast"
-        checkpoint = "HuggingFaceTB/SmolLM2-135M"
+        self.llm = AutoModelForCausalLM.from_pretrained(self.config.llm_checkpoint)
+        self.llm_tokenizer = AutoTokenizer.from_pretrained(self.config.llm_checkpoint)
 
-        self.llm_tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-        # for multiple GPUs install accelerate and do `model = AutoModelForCausalLM.from_pretrained(checkpoint, device_map="auto")`
-        self.llm = AutoModelForCausalLM.from_pretrained(checkpoint)
+        fast_tokenizer_path = "physical-intelligence/fast"
         self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
         self.fast_skip_tokens = self.config.fast_skip_tokens
         self.max_input_seq_len = self.config.max_input_seq_len
@@ -197,8 +194,6 @@ class SMOLANDFAST(nn.Module):
         )
         self.eos_token_id = self.llm_tokenizer.eos_token_id
 
-        # cfg = GPT2Config()
-        # self.llm = GPT2LMHeadModel.from_pretrained(llm_path)
 
         # change important stuff in bf16
         params_to_change_dtype = [
