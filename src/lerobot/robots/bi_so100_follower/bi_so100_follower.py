@@ -16,6 +16,7 @@
 
 import logging
 import time
+from collections.abc import Mapping
 from functools import cached_property
 from typing import Any
 
@@ -25,7 +26,6 @@ from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerCon
 
 from ..robot import Robot
 from .config_bi_so100_follower import BiSO100FollowerConfig
-from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 

@@ -14,8 +14,8 @@
 
 import abc
 import builtins
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import draccus
@@ -25,10 +25,13 @@ from lerobot.motors import MotorCalibration
 
 from .config import RobotConfig
 
+
 @dataclass
 class CalibrationData:
     """Dataclass to hold motor calibration data."""
+
     motors: dict[str, MotorCalibration]
+
 
 # TODO(aliberts): action/obs typing such as Generic[ObsType, ActType] similar to gym.Env ?
 # https://github.com/Farama-Foundation/Gymnasium/blob/3287c869f9a48d99454306b0d4b4ec537f0f35e3/gymnasium/core.py#L23
@@ -136,7 +139,7 @@ class Robot(abc.ABC):
         """
         fpath = self.calibration_fpath if fpath is None else fpath
         with open(fpath) as f, draccus.config_type("json"):
-            data: CalibrationData= draccus.load(CalibrationData, f)
+            data: CalibrationData = draccus.load(CalibrationData, f)
             self.calibration = data.motors
 
     def _save_calibration(self, fpath: Path | None = None) -> None:

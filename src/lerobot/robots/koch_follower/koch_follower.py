@@ -133,7 +133,9 @@ class KochFollower(Robot):
             f"Move all joints except {full_turn_motors} sequentially through their entire "
             "ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(cast (list[str | int], unknown_range_motors))
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(
+            cast(list[str | int], unknown_range_motors)
+        )
         for motor in full_turn_motors:
             range_mins[motor] = 0
             range_maxes[motor] = 4095

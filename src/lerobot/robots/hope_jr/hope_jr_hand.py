@@ -18,6 +18,7 @@ import logging
 import time
 from functools import cached_property
 from typing import Any
+
 import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
@@ -160,7 +161,7 @@ class HopeJrHand(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_observation(self) ->  dict[str, int | float | np.ndarray]:
+    def get_observation(self) -> dict[str, int | float | np.ndarray]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
