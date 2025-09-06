@@ -159,11 +159,11 @@ class HopeJrHand(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) ->  dict[str, int | float | np.ndarray]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        obs_dict = {}
+        obs_dict: dict[str, int | float | np.ndarray] = {}
 
         # Read hand position
         start = time.perf_counter()
