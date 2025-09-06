@@ -18,6 +18,7 @@ import logging
 import time
 from functools import cached_property
 from typing import Any
+import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
