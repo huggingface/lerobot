@@ -35,6 +35,8 @@
     title: Koch v1.1
   - local: lekiwi
     title: LeKiwi
+  - local: reachy2
+    title: Reachy 2
   title: "Robots"
 - sections:
   - local: notebooks

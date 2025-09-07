@@ -106,6 +106,7 @@ dynamixel = ["dynamixel-sdk>=3.7.31"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1"]
+reachy2 = ["reachy2_sdk>=1.0.14"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
@@ -141,6 +142,7 @@ all = [
     "lerobot[gamepad]",
     "lerobot[hopejr]",
     "lerobot[lekiwi]",
+    "lerobot[reachy2]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     "lerobot[pi0]",
