@@ -20,8 +20,8 @@ TODO(alexander-soare):
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
 """
 
-import warnings
 import math
+import warnings
 from collections import deque
 from collections.abc import Callable
 
@@ -474,9 +474,7 @@ class DiffusionRgbEncoder(nn.Module):
         self.backbone = nn.Sequential(*(list(backbone_model.children())[:-2]))
         if config.use_group_norm:
             if config.pretrained_backbone_weights:
-                warnings.warn(
-                    "Replacing batchNorm in a pretrained model will ruin the pre-trained weights!"
-                )
+                warnings.warn("Replacing batchNorm in a pretrained model will ruin the pre-trained weights!")
             self.backbone = _replace_submodules(
                 root_module=self.backbone,
                 predicate=lambda x: isinstance(x, nn.BatchNorm2d),
