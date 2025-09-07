@@ -64,6 +64,7 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_koch_follower,
     bi_so100_follower,
     hope_jr,
     koch_follower,
@@ -74,6 +75,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bi_koch_leader,
     bi_so100_leader,
     gamepad,
     homunculus,
@@ -100,7 +102,11 @@ class TeleoperateConfig:
 
 
 def teleop_loop(
-    teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
+    teleop: Teleoperator,
+    robot: Robot,
+    fps: int,
+    display_data: bool = False,
+    duration: float | None = None,
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()

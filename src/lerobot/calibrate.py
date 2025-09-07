@@ -42,10 +42,14 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    bi_koch_follower,
+    bi_so100_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bi_koch_leader,
+    bi_so100_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
