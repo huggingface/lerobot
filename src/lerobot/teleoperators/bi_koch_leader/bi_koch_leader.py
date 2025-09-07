@@ -17,8 +17,8 @@
 import logging
 from functools import cached_property
 
-from lerobot.teleoperators.koch_leader.koch_leader import KochLeader
 from lerobot.teleoperators.koch_leader.config_koch_leader import KochLeaderConfig
+from lerobot.teleoperators.koch_leader.koch_leader import KochLeader
 
 from ..teleoperator import Teleoperator
 from .config_bi_koch_leader import BiKochLeaderConfig
@@ -103,15 +103,11 @@ class BiKochLeader(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # Remove "left_" prefix
         left_feedback = {
-            key.removeprefix("left_"): value
-            for key, value in feedback.items()
-            if key.startswith("left_")
+            key.removeprefix("left_"): value for key, value in feedback.items() if key.startswith("left_")
         }
         # Remove "right_" prefix
         right_feedback = {
-            key.removeprefix("right_"): value
-            for key, value in feedback.items()
-            if key.startswith("right_")
+            key.removeprefix("right_"): value for key, value in feedback.items() if key.startswith("right_")
         }
 
         if left_feedback:

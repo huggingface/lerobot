@@ -47,9 +47,7 @@ class KochFollower(Robot):
     def __init__(self, config: KochFollowerConfig):
         super().__init__(config)
         self.config = config
-        norm_mode_body = (
-            MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        )
+        norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
@@ -71,8 +69,7 @@ class KochFollower(Robot):
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
         return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
-            for cam in self.cameras
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
         }
 
     @cached_property
@@ -119,9 +116,7 @@ class KochFollower(Robot):
                 f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
             )
             if user_input.strip().lower() != "c":
-                logger.info(
-                    f"Writing calibration file associated with the id {self.id} to the motors"
-                )
+                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
                 self.bus.write_calibration(self.calibration)
                 return
         logger.info(f"\nRunning calibration of {self}")
@@ -223,9 +218,7 @@ class KochFollower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        goal_pos = {
-            key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")
-        }
+        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
