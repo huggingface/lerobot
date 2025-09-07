@@ -20,10 +20,12 @@ TODO(alexander-soare):
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
 """
 
-import math
+
+import os
 from collections import deque
 from collections.abc import Callable
 
+import math
 import einops
 import numpy as np
 import torch
@@ -32,8 +34,9 @@ import torchvision
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from torch import Tensor, nn
+from transformers import AutoModel, AutoTokenizer
 
-from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE, LANG_INSTRUCTION
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -95,15 +98,17 @@ class DiffusionPolicy(PreTrainedPolicy):
             "action": deque(maxlen=self.config.n_action_steps),
         }
         if self.config.image_features:
-            self._queues["observation.images"] = deque(maxlen=self.config.n_obs_steps)
+            self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
         if self.config.env_state_feature:
-            self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
+            self._queues[OBS_ENV_STATE] = deque(maxlen=self.config.n_obs_steps)
+        if self.config.language_conditioned:
+            self._queues[LANG_INSTRUCTION] = deque(maxlen=1)
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         # stack n latest observations from the queue
-        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        batch = {k: torch.stack(list(self._queues[k]), dim=1) if k != LANG_INSTRUCTION else self._queues[k][0] for k in batch if k in self._queues}
         actions = self.diffusion.generate_actions(batch)
 
         # TODO(rcadene): make above methods return output dictionary?
@@ -194,6 +199,9 @@ class DiffusionModel(nn.Module):
                 global_cond_dim += self.rgb_encoder.feature_dim * num_images
         if self.config.env_state_feature:
             global_cond_dim += self.config.env_state_feature.shape[0]
+        if self.config.language_conditioned:
+            self.lang_encoder = LanguageEncoder(config)
+            global_cond_dim += self.lang_encoder.feature_dim
 
         self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
 
@@ -276,6 +284,11 @@ class DiffusionModel(nn.Module):
 
         if self.config.env_state_feature:
             global_cond_feats.append(batch[OBS_ENV_STATE])
+
+        if self.config.language_conditioned:
+            assert LANG_INSTRUCTION in batch
+            lang_emb = self.lang_encoder(batch[LANG_INSTRUCTION]).detach()
+            global_cond_feats.append(lang_emb.unsqueeze(1).expand(-1, self.config.n_obs_steps, -1))
 
         # Concatenate features then flatten to (B, global_cond_dim).
         return torch.cat(global_cond_feats, dim=-1).flatten(start_dim=1)
@@ -518,6 +531,42 @@ class DiffusionRgbEncoder(nn.Module):
         # Final linear layer with non-linearity.
         x = self.relu(self.out(x))
         return x
+
+
+class LanguageEncoder(nn.Module):
+    """Encodes an RGB image into a 1D feature vector.
+
+    Includes the ability to normalize and crop the image first.
+    """
+
+    def __init__(self, config: DiffusionConfig):
+        super().__init__()
+        os.environ["TOKENIZERS_PARALLELISM"] = "true" # needed to suppress warning about potential deadlock
+        if config.tokenizer is None:
+            tokenizer = "distilbert-base-uncased"
+        else:
+            tokenizer = config.tokenizer
+        self.lang_emb_model = AutoModel.from_pretrained(tokenizer, torch_dtype=torch.float16).eval()
+        self.tz = AutoTokenizer.from_pretrained(tokenizer, TOKENIZERS_PARALLELISM=True)
+        self.tokenizer_max_length = config.tokenizer_max_length
+        self.feature_dim = self.forward("DUMMY INPUT").shape[-1]
+
+    def forward(self, lang):
+        device = get_device_from_parameters(self.lang_emb_model)
+        if isinstance(lang, str):
+            lang = [lang]
+        tokens = self.tz(
+            text=lang,
+            add_special_tokens=True,
+            max_length=self.tokenizer_max_length,
+            padding="max_length",
+            truncation=True,
+            return_attention_mask=True,
+            return_tensors="pt",
+        )
+        tokens = {k: v.to(device) for k, v in tokens.items()}
+        lang_emb = self.lang_emb_model(**tokens).last_hidden_state.sum(1)
+        return lang_emb
 
 
 def _replace_submodules(

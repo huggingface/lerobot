@@ -129,6 +129,10 @@ class DiffusionConfig(PreTrainedConfig):
     use_group_norm: bool = True
     spatial_softmax_num_keypoints: int = 32
     use_separate_rgb_encoder_per_camera: bool = False
+    # Language conditioning.
+    language_conditioned: bool = False
+    tokenizer: str = "distilbert-base-uncased"
+    tokenizer_max_length: int = 48
     # Unet.
     down_dims: tuple[int, ...] = (512, 1024, 2048)
     kernel_size: int = 5
