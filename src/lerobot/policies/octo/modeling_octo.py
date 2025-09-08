@@ -39,7 +39,8 @@ lerobot-train \
 """
 
 from collections import deque
-from typing import Dict, Optional, Sequence
+from typing import Dict, Optional
+from collections.abc import Sequence
 
 import torch
 import torch.nn as nn
@@ -216,7 +217,7 @@ class OctoPolicy(PreTrainedPolicy):
         return super().from_pretrained(*args, **kwargs)
 
     def _prepare_batch(
-        self, batch: dict[str, Tensor], raw_tasks: Optional[Sequence[str]] = None
+        self, batch: dict[str, Tensor], raw_tasks: Sequence[str] | None = None
     ) -> dict[str, Tensor]:
         """
         Prepare batch for model input.
@@ -330,9 +331,9 @@ class OctoPolicy(PreTrainedPolicy):
 
     def create_tasks(
         self,
-        goals: Optional[Dict[str, torch.Tensor]] = None,
-        texts: Optional[Sequence[str]] = None,
-        device: Optional[torch.device] = None,
+        goals: dict[str, torch.Tensor] | None = None,
+        texts: Sequence[str] | None = None,
+        device: torch.device | None = None,
     ):
         """Creates tasks dict from goals and texts."""
         assert goals is not None or texts is not None
@@ -401,7 +402,7 @@ class OctoPolicy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], tasks: Optional[Sequence[str]] = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], tasks: Sequence[str] | None = None) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
@@ -499,10 +500,10 @@ class OctoDiffusion(nn.Module):
 
     def forward(
         self,
-        observations: Dict[str, torch.Tensor],
-        tasks: Dict[str, torch.Tensor],
+        observations: dict[str, torch.Tensor],
+        tasks: dict[str, torch.Tensor],
         timestep_pad_mask: torch.Tensor,
-        embodiment_action_dim: Optional[int] = None,
+        embodiment_action_dim: int | None = None,
     ) -> torch.Tensor:
         transformer_outputs = self.octo_transformer(observations, tasks, timestep_pad_mask)
         actions = self.head.predict_action(

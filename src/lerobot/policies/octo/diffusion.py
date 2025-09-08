@@ -82,7 +82,7 @@ class MLPResNetBlock(nn.Module):
     """Implementation of MLPResNetBlock."""
 
     def __init__(
-        self, features: int, activation, dropout_rate: Optional[float] = None, use_layer_norm: bool = False
+        self, features: int, activation, dropout_rate: float | None = None, use_layer_norm: bool = False
     ):
         super().__init__()
         self.features = features
@@ -173,7 +173,7 @@ class MLPResNet(nn.Module):
         num_blocks: int,
         out_dim: int,
         in_dim: int,
-        dropout_rate: Optional[float] = None,
+        dropout_rate: float | None = None,
         use_layer_norm: bool = False,
         hidden_dim: int = 256,
         activation=nn.SiLU,
@@ -280,9 +280,9 @@ class DiffusionActionHead(nn.Module):
 
     def forward(
         self,
-        transformer_outputs: Dict[str, TokenGroup],
-        time: Optional[torch.Tensor] = None,
-        noisy_actions: Optional[torch.Tensor] = None,
+        transformer_outputs: dict[str, TokenGroup],
+        time: torch.Tensor | None = None,
+        noisy_actions: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Performs a single forward pass through the diffusion model."""
 
@@ -336,8 +336,8 @@ class DiffusionActionHead(nn.Module):
 
     def predict_action(
         self,
-        transformer_outputs: Dict[str, TokenGroup],
-        embodiment_action_dim: Optional[int] = None,
+        transformer_outputs: dict[str, TokenGroup],
+        embodiment_action_dim: int | None = None,
         sample_shape: tuple = (),
     ) -> torch.Tensor:
         """Convenience method for predicting actions for the final timestep."""

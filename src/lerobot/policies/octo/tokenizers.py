@@ -15,7 +15,8 @@
 # limitations under the License.
 
 import re
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 import torch
@@ -112,10 +113,10 @@ class SmallStem(nn.Module):
         self,
         use_film: bool = False,
         patch_size: int = 32,
-        kernel_sizes: Tuple[int, ...] = (3, 3, 3, 3),
-        strides: Tuple[int, ...] = (2, 2, 2, 2),
-        features: Tuple[int, ...] = (32, 96, 192, 384),
-        padding: Tuple[int, ...] = (1, 1, 1, 1),
+        kernel_sizes: tuple[int, ...] = (3, 3, 3, 3),
+        strides: tuple[int, ...] = (2, 2, 2, 2),
+        features: tuple[int, ...] = (32, 96, 192, 384),
+        padding: tuple[int, ...] = (1, 1, 1, 1),
         num_features: int = 512,
         img_norm_type: str = "default",
     ):
@@ -167,7 +168,7 @@ class SmallStem(nn.Module):
         self.film = FilmConditioning() if use_film else None
 
     def forward(
-        self, observations: torch.Tensor, train: bool = True, cond_var: Optional[torch.Tensor] = None
+        self, observations: torch.Tensor, train: bool = True, cond_var: torch.Tensor | None = None
     ):
         """
         Args:
@@ -212,10 +213,10 @@ class SmallStem16(SmallStem):
     def __init__(
         self,
         use_film: bool = False,
-        kernel_sizes: Tuple[int, ...] = (3, 3, 3, 3),
-        strides: Tuple[int, ...] = (2, 2, 2, 2),
-        features: Tuple[int, ...] = (32, 96, 192, 384),
-        padding: Tuple[int, ...] = (1, 1, 1, 1),
+        kernel_sizes: tuple[int, ...] = (3, 3, 3, 3),
+        strides: tuple[int, ...] = (2, 2, 2, 2),
+        features: tuple[int, ...] = (32, 96, 192, 384),
+        padding: tuple[int, ...] = (1, 1, 1, 1),
         num_features: int = 512,
         img_norm_type: str = "default",
     ):
@@ -243,7 +244,7 @@ def regex_filter(regex_keys, xs):
 
 def generate_proper_pad_mask(
     tokens: torch.Tensor,
-    pad_mask_dict: Optional[Dict[str, torch.Tensor]],
+    pad_mask_dict: dict[str, torch.Tensor] | None,
     keys: Sequence[str],
 ) -> torch.Tensor:
     """Generate proper padding mask for tokens."""
@@ -286,8 +287,8 @@ class ImageTokenizer(nn.Module):
 
     def forward(
         self,
-        observations: Dict[str, torch.Tensor],
-        tasks: Optional[Dict[str, torch.Tensor]] = None,
+        observations: dict[str, torch.Tensor],
+        tasks: dict[str, torch.Tensor] | None = None,
     ):
         """Forward pass through image tokenizer."""
 
@@ -382,7 +383,7 @@ class LanguageTokenizer(nn.Module):
             for param in self.t5_encoder.parameters():
                 param.requires_grad = False
 
-    def forward(self, language_input: Dict[str, torch.Tensor], tasks=None) -> TokenGroup:
+    def forward(self, language_input: dict[str, torch.Tensor], tasks=None) -> TokenGroup:
         outputs = self.t5_encoder(
             input_ids=language_input["input_ids"], attention_mask=language_input["attention_mask"]
         )
@@ -411,7 +412,7 @@ class LanguageTokenizer(nn.Module):
 class TextProcessor:
     """HF Tokenizer wrapper."""
 
-    def __init__(self, tokenizer_name: str = "t5-base", tokenizer_kwargs: Optional[Dict] = None):
+    def __init__(self, tokenizer_name: str = "t5-base", tokenizer_kwargs: dict | None = None):
         if tokenizer_kwargs is None:
             tokenizer_kwargs = {
                 "max_length": 16,
@@ -423,6 +424,6 @@ class TextProcessor:
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.tokenizer_kwargs = tokenizer_kwargs
 
-    def encode(self, strings: List[str]) -> Dict[str, torch.Tensor]:
+    def encode(self, strings: list[str]) -> dict[str, torch.Tensor]:
         """Encode strings to token IDs and attention masks."""
         return self.tokenizer(strings, **self.tokenizer_kwargs)

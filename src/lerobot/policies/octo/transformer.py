@@ -35,7 +35,7 @@ class MLPBlock(nn.Module):
         self,
         mlp_dim: int,
         dtype: torch.dtype = torch.float32,
-        out_dim: Optional[int] = None,
+        out_dim: int | None = None,
         dropout_rate: float = 0.1,
     ):
         super().__init__()
@@ -102,7 +102,7 @@ class Encoder1DBlock(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(dropout_rate)
 
-    def forward(self, inputs: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, inputs: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
         assert inputs.dim() == 3, f"Expected (batch, seq, hidden) got {inputs.shape}"
 
         # Attention block
@@ -183,7 +183,7 @@ class Transformer(nn.Module):
         # Final layer norm
         self.encoder_norm = nn.LayerNorm(d_model, eps=1e-6)
 
-    def forward(self, x: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
         assert x.dim() == 3, f"Expected (batch, len, emb) got {x.shape}"
 
         # Apply encoder blocks
@@ -200,7 +200,7 @@ class BlockTransformer(nn.Module):
     """A transformer that acts on multiple groups of tokens, which may attend to each other
     (in complex patterns)."""
 
-    def __init__(self, transformer_kwargs: Dict[str, Any], enforce_causal: bool = True):
+    def __init__(self, transformer_kwargs: dict[str, Any], enforce_causal: bool = True):
         super().__init__()
         self.transformer_kwargs = transformer_kwargs
         self.enforce_causal = enforce_causal
@@ -209,8 +209,8 @@ class BlockTransformer(nn.Module):
         self.transformer = Transformer(**transformer_kwargs)
 
     def forward(
-        self, prefix_groups: List[PrefixGroup], timestep_groups: List[TimestepGroup]
-    ) -> Tuple[List[PrefixGroup], List[TimestepGroup]]:
+        self, prefix_groups: list[PrefixGroup], timestep_groups: list[TimestepGroup]
+    ) -> tuple[list[PrefixGroup], list[TimestepGroup]]:
         horizon = timestep_groups[0].tokens.shape[1]
         assert all(group.tokens.shape[1] == horizon for group in timestep_groups)
 
@@ -233,7 +233,7 @@ class BlockTransformer(nn.Module):
         return prefix_outputs, timestep_outputs
 
     def _assemble_input_tokens(
-        self, prefix_groups: List[PrefixGroup], timestep_groups: List[TimestepGroup]
+        self, prefix_groups: list[PrefixGroup], timestep_groups: list[TimestepGroup]
     ) -> torch.Tensor:
         """Assemble input tokens from prefix and timestep groups."""
         batch_size = timestep_groups[0].tokens.shape[0]
@@ -263,9 +263,9 @@ class BlockTransformer(nn.Module):
     def _split_output_tokens(
         self,
         output_tokens: torch.Tensor,
-        prefix_groups: List[PrefixGroup],
-        timestep_groups: List[TimestepGroup],
-    ) -> Tuple[List[PrefixGroup], List[TimestepGroup]]:
+        prefix_groups: list[PrefixGroup],
+        timestep_groups: list[TimestepGroup],
+    ) -> tuple[list[PrefixGroup], list[TimestepGroup]]:
         """Split output tokens back into prefix and timestep groups."""
         horizon = timestep_groups[0].tokens.shape[1]
         tokens_per_prefix_group = [group.tokens.shape[1] for group in prefix_groups]
@@ -310,7 +310,7 @@ class BlockTransformer(nn.Module):
         return all_prefix_outputs, all_timestep_outputs
 
     def _generate_attention_mask(
-        self, prefix_groups: List[PrefixGroup], timestep_groups: List[TimestepGroup]
+        self, prefix_groups: list[PrefixGroup], timestep_groups: list[TimestepGroup]
     ) -> torch.Tensor:
         """Generate attention mask based on group attention rules."""
         if self.enforce_causal:
@@ -388,7 +388,7 @@ class BlockTransformer(nn.Module):
         return attention_mask
 
     def _generate_pad_attention_mask(
-        self, prefix_groups: List[PrefixGroup], timestep_groups: List[TimestepGroup]
+        self, prefix_groups: list[PrefixGroup], timestep_groups: list[TimestepGroup]
     ) -> torch.Tensor:
         """Generate padding attention mask."""
         batch_size = timestep_groups[0].tokens.shape[0]
@@ -419,7 +419,7 @@ class BlockTransformer(nn.Module):
 
         return pad_mask
 
-    def _verify_causality(self, prefix_groups: List[PrefixGroup], timestep_groups: List[TimestepGroup]):
+    def _verify_causality(self, prefix_groups: list[PrefixGroup], timestep_groups: list[TimestepGroup]):
         """Verify that attention rules don't break causality."""
         # Simplified verification - in full implementation would check all attention rules
         pass
@@ -456,8 +456,8 @@ class OctoTransformer(nn.Module):
         )
 
     def forward(
-        self, prefix_groups: List[PrefixGroup], timestep_groups: List[TimestepGroup]
-    ) -> Tuple[List[PrefixGroup], List[TimestepGroup]]:
+        self, prefix_groups: list[PrefixGroup], timestep_groups: list[TimestepGroup]
+    ) -> tuple[list[PrefixGroup], list[TimestepGroup]]:
         """
         A simple wrapper around the BlockTransformer.
 
@@ -571,8 +571,8 @@ class OctoWithoutHead(nn.Module):
 
     def forward(
         self,
-        observations: Dict[str, torch.Tensor],
-        tasks: Dict[str, torch.Tensor],
+        observations: dict[str, torch.Tensor],
+        tasks: dict[str, torch.Tensor],
         timestep_pad_mask: torch.Tensor,
     ) -> torch.Tensor:
         """Forward pass through the model."""

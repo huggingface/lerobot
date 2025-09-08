@@ -15,7 +15,8 @@
 from dataclasses import dataclass
 from enum import Enum
 from fnmatch import fnmatch
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List
+from collections.abc import Mapping
 
 import torch
 
@@ -39,7 +40,7 @@ RULE_MAP = {
 }
 
 
-def find_match(pattern_dict: Dict[str, Any], name: str, default: Any) -> Any:
+def find_match(pattern_dict: dict[str, Any], name: str, default: Any) -> Any:
     """Find the first matching pattern in the dictionary, or return the default value."""
     for pattern, value in pattern_dict.items():
         if fnmatch(name, pattern):
@@ -62,7 +63,7 @@ class TokenGroup:
             )
 
     @classmethod
-    def concatenate(cls, group_list: List["TokenGroup"], axis: int = -2) -> "TokenGroup":
+    def concatenate(cls, group_list: list["TokenGroup"], axis: int = -2) -> "TokenGroup":
         """Concatenates a list of TokenGroups along a specified axis."""
         if not group_list:
             raise ValueError("Cannot concatenate an empty list of TokenGroups")
