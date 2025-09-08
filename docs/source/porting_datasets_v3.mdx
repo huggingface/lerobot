@@ -150,7 +150,7 @@ gsutil -m cp -r gs://gresearch/robotics/droid_100 /your/data/
 ### Step 3: Port the Dataset
 
 ```bash
-python examples/port_datasets/port_droid_rlds.py \
+python examples/port_datasets/port_droid.py \
     --raw-dir /your/data/droid/1.0.1 \
     --repo-id your_id/droid_1.0.1 \
     --push-to-hub
@@ -161,7 +161,7 @@ python examples/port_datasets/port_droid_rlds.py \
 For development, you can port a single shard:
 
 ```bash
-python examples/port_datasets/port_droid_rlds.py \
+python examples/port_datasets/port_droid.py \
     --raw-dir /your/data/droid/1.0.1 \
     --repo-id your_id/droid_1.0.1_test \
     --num-shards 2048 \
