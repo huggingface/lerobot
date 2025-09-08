@@ -316,9 +316,13 @@ class InverseKinematicsEEToJoints(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        features[FeatureType.ACTION]["gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["gripper.pos"] = PolicyFeature(
+            type=FeatureType.ACTION, shape=(1,)
+        )
         for name in self.motor_names:
-            features[FeatureType.ACTION][f"{name}.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+            features[PipelineFeatureType.ACTION][f"{name}.pos"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
 
         return features
 
@@ -395,9 +399,13 @@ class GripperVelocityToJoint(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        features[FeatureType.ACTION].pop("gripper", None)
-        features[FeatureType.ACTION]["gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[FeatureType.STATE]["gripper.pos"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
+        features[PipelineFeatureType.ACTION].pop("gripper", None)
+        features[PipelineFeatureType.ACTION]["gripper.pos"] = PolicyFeature(
+            type=FeatureType.ACTION, shape=(1,)
+        )
+        features[PipelineFeatureType.OBSERVATION]["gripper.pos"] = PolicyFeature(
+            type=FeatureType.STATE, shape=(1,)
+        )
 
         return features
 
@@ -441,7 +449,9 @@ class ForwardKinematicsJointsToEE(ObservationProcessorStep):
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
-            features[FeatureType.STATE][f"ee.{k}"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
+            features[PipelineFeatureType.OBSERVATION][f"ee.{k}"] = PolicyFeature(
+                type=FeatureType.STATE, shape=(1,)
+            )
         return features
 
 

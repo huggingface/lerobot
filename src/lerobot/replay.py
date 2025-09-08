@@ -48,7 +48,7 @@ from pprint import pformat
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor import IdentityProcessorStep, RobotProcessorPipeline
-from lerobot.processor.converters import action_to_transition, transition_to_robot_action
+from lerobot.processor.converters import action_to_transition, transition_to_action
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -97,7 +97,7 @@ def replay(cfg: ReplayConfig):
     robot_action_processor = cfg.robot_action_processor or RobotProcessorPipeline(
         steps=[IdentityProcessorStep()],
         to_transition=action_to_transition,
-        to_output=transition_to_robot_action,  # type: ignore[arg-type]
+        to_output=transition_to_action,  # type: ignore[arg-type]
     )
 
     # Reset processor
