@@ -1818,9 +1818,9 @@ class GymHilObservationProcessorWrapper(gym.ObservationWrapper):
 
         for key in prev_space:
             if "pixels" in key:
-                for k in prev_space["pixels"]:
+                for k, v in prev_space["pixels"].spaces.items():
                     new_space[f"observation.images.{k}"] = gym.spaces.Box(
-                        0.0, 255.0, shape=(3, 128, 128), dtype=np.uint8
+                        0.0, 255.0, shape=v.shape, dtype=np.uint8
                     )
 
             if key == "agent_pos":
