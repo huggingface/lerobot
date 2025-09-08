@@ -519,6 +519,9 @@ class OctoWithoutHead(nn.Module):
         self.prefix_groups = None
         self.timestep_groups = None
 
+        # Caching
+        self.cached_prefix_groups = None
+
         # Projections
         self.obs_primary_projection = nn.Linear(512, self.token_embedding_size)
         self.obs_wrist_projection = nn.Linear(512, self.token_embedding_size)
@@ -586,6 +589,53 @@ class OctoWithoutHead(nn.Module):
                         attention_rules=task_attention_rules,
                     )
                 )
+
+        # with torch.profiler.record_function("Octo/TaskTokenization"):
+        #     if self.cached_prefix_groups is not None:
+        #         # Expand cached groups to current batch size and device
+        #         prefix_groups = [
+        #             PrefixGroup(
+        #                 tokens=g.tokens.to(timestep_pad_mask.device).expand(batch_size, -1, -1),
+        #                 mask=g.mask.to(timestep_pad_mask.device).expand(batch_size, -1),
+        #                 name=g.name,
+        #                 attention_rules=g.attention_rules,
+        #             )
+        #             for g in self.cached_prefix_groups
+        #         ]
+        #     else:
+        #         prefix_groups = []
+        #         for name, tokenizer in self.task_tokenizers.items():
+        #             if name in tasks:
+        #                 token_group = tokenizer(tasks[name], tasks)
+        #                 projected_tokens = self.task_language_projection(token_group.tokens)
+
+        #                 # Add positional embedding
+        #                 pos_embedding = self.task_language_pos_embedding[:, : projected_tokens.shape[1]]
+        #                 processed_tokens = projected_tokens + pos_embedding
+
+        #                 # ✅ store only one exemplar in cache (batch = 1)
+        #                 processed_tokens = processed_tokens[:1].detach().cpu()
+        #                 token_mask = token_group.mask[:1].detach().cpu()
+
+        #                 prefix_groups.append(
+        #                     PrefixGroup(
+        #                         tokens=processed_tokens.to(timestep_pad_mask.device).expand(batch_size, -1, -1),
+        #                         mask=token_mask.to(timestep_pad_mask.device).expand(batch_size, -1),
+        #                         name=f"task_{name}",
+        #                         attention_rules=task_attention_rules,
+        #                     )
+        #                 )
+
+        #         # ✅ cache the single exemplar (not the expanded version)
+        #         self.cached_prefix_groups = [
+        #             PrefixGroup(
+        #                 tokens=g.tokens[:1].detach().cpu(),
+        #                 mask=g.mask[:1].detach().cpu(),
+        #                 name=g.name,
+        #                 attention_rules=g.attention_rules,
+        #             )
+        #             for g in prefix_groups
+        #         ]
 
         # Create timestep groups for observation tokens
         timestep_groups = []
