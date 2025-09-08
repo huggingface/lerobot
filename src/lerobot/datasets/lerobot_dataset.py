@@ -28,6 +28,9 @@ import pandas as pd
 import PIL.Image
 import torch
 import torch.utils
+from datasets import Dataset
+import pyarrow.parquet as pq
+import pyarrow as pa
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
@@ -95,6 +98,8 @@ class LeRobotDatasetMetadata:
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+        self.writer = None
+        self.latest_episode = None
 
         try:
             if force_cache_sync:
@@ -271,58 +276,52 @@ class LeRobotDatasetMetadata:
         """
         # Convert buffer into HF Dataset
         episode_dict = {key: [value] for key, value in episode_dict.items()}
-        ep_dataset = datasets.Dataset.from_dict(episode_dict)
-        ep_size_in_mb = get_hf_dataset_size_in_mb(ep_dataset)
-        df = pd.DataFrame(ep_dataset)
         num_frames = episode_dict["length"][0]
 
-        if self.episodes is None:
+        if self.latest_episode is None:
             # Initialize indices and frame count for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
-            df["meta/episodes/chunk_index"] = [chunk_idx]
-            df["meta/episodes/file_index"] = [file_idx]
-            df["dataset_from_index"] = [0]
-            df["dataset_to_index"] = [num_frames]
+            episode_dict["meta/episodes/chunk_index"] = [chunk_idx]
+            episode_dict["meta/episodes/file_index"] = [file_idx]
+            episode_dict["dataset_from_index"] = [0]
+            episode_dict["dataset_to_index"] = [num_frames]
         else:
-            # Retrieve information from the latest parquet file
-            latest_ep = self.episodes[-1]
-            chunk_idx = latest_ep["meta/episodes/chunk_index"]
-            file_idx = latest_ep["meta/episodes/file_index"]
 
-            latest_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-            latest_size_in_mb = get_parquet_file_size_in_mb(latest_path)
+            chunk_idx = self.latest_episode["meta/episodes/chunk_index"][0]
+            file_idx = self.latest_episode["meta/episodes/file_index"][0]
 
-            if latest_size_in_mb + ep_size_in_mb >= self.data_files_size_in_mb:
+            latest_path = self.writer.where
+            latest_size_in_mb = os.path.getsize(latest_path.as_posix()) / (1024 * 1024)
+            latest_num_frames = self.latest_episode['episode_index'][0] + 1
+
+            av_size_per_frame = latest_size_in_mb / latest_num_frames
+
+            if latest_size_in_mb + av_size_per_frame * 1 >= self.data_files_size_in_mb:
                 # Size limit is reached, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
-
+                self.write.close()
+                self.writer = None
             # Update the existing pandas dataframe with new row
-            df["meta/episodes/chunk_index"] = [chunk_idx]
-            df["meta/episodes/file_index"] = [file_idx]
-            df["dataset_from_index"] = [latest_ep["dataset_to_index"]]
-            df["dataset_to_index"] = [latest_ep["dataset_to_index"] + num_frames]
+            episode_dict["meta/episodes/chunk_index"] = [chunk_idx]
+            episode_dict["meta/episodes/file_index"] = [file_idx]
+            episode_dict["dataset_from_index"] = [self.latest_episode["dataset_to_index"][0]]
+            episode_dict["dataset_to_index"] = [self.latest_episode["dataset_to_index"][0] + num_frames]
 
-            if latest_size_in_mb + ep_size_in_mb < self.data_files_size_in_mb:
-                # Size limit wasnt reached, concatenate latest dataframe with new one
-                latest_df = pd.read_parquet(latest_path)
-                df = pd.concat([latest_df, df], ignore_index=True)
+        ep_dataset = Dataset.from_dict(episode_dict)
+        df = pd.DataFrame(ep_dataset)
+        num_frames = len(df)
+        table = pa.Table.from_pandas(df, preserve_index=False)
 
-                # Memort optimization
-                del latest_df
-                gc.collect()
+        if not self.writer:
+            path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
 
-        # Write the resulting dataframe from RAM to disk
-        path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(path, index=False)
+        self.writer.write_table(table, row_group_size=num_frames)
+        self.latest_episode = episode_dict
 
-        if self.episodes is not None:
-            # Remove the episodes cache directory, necessary to avoid cache bloat
-            cached_dir = get_hf_dataset_cache_dir(self.episodes)
-            if cached_dir is not None:
-                shutil.rmtree(cached_dir)
-
-        self.episodes = load_episodes(self.root)
+        del df, table, ep_dataset
+        gc.collect()
 
     def save_episode(
         self,
@@ -454,6 +453,8 @@ class LeRobotDatasetMetadata:
             raise ValueError()
         write_json(obj.info, obj.root / INFO_PATH)
         obj.revision = None
+        obj.writer = None
+        obj.latest_episode = None
         return obj
 
 
@@ -600,6 +601,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Unused attributes
         self.image_writer = None
         self.episode_buffer = None
+        self.writer = None
+        self.latest_episode = None
 
         self.root.mkdir(exist_ok=True, parents=True)
 
@@ -1098,55 +1101,49 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         # Convert buffer into HF Dataset
         ep_dict = {key: episode_buffer[key] for key in self.hf_features}
-        ep_dataset = datasets.Dataset.from_dict(ep_dict, features=self.hf_features, split="train")
-        ep_dataset = embed_images(ep_dataset)
-        ep_size_in_mb = get_hf_dataset_size_in_mb(ep_dataset)
-        ep_num_frames = len(ep_dataset)
-        df = pd.DataFrame(ep_dataset)
+        ep_num_frames = len(ep_dict['index'])
 
-        if self.meta.episodes is None:
+        ep_dataset = datasets.Dataset.from_dict(ep_dict, features=self.hf_features, split="train")
+        df = pd.DataFrame(ep_dataset)
+        table = pa.Table.from_pandas(df, preserve_index=False)
+        ep_num_frames = table.num_rows
+
+        if self.latest_episode is None:
             # Initialize indices and frame count for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
             latest_num_frames = 0
         else:
             # Retrieve information from the latest parquet file
-            latest_ep = self.meta.episodes[-1]
+            latest_ep = self.latest_episode
             chunk_idx = latest_ep["data/chunk_index"]
             file_idx = latest_ep["data/file_index"]
 
             latest_path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
-            latest_size_in_mb = get_parquet_file_size_in_mb(latest_path)
-            latest_num_frames = get_parquet_num_frames(latest_path)
+            latest_size_in_mb = os.path.getsize(latest_path.as_posix()) / (1024 * 1024)
+            latest_num_frames = latest_ep["index"][-1]
+
+            av_size_per_frame = latest_size_in_mb / latest_num_frames
 
             # Determine if a new parquet file is needed
-            if latest_size_in_mb + ep_size_in_mb >= self.meta.data_files_size_in_mb:
+            if latest_size_in_mb + av_size_per_frame * ep_num_frames >= self.meta.data_files_size_in_mb:
                 # Size limit is reached, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
                 latest_num_frames = 0
-            else:
-                # Update the existing parquet file with new rows
-                latest_df = pd.read_parquet(latest_path)
-                df = pd.concat([latest_df, df], ignore_index=True)
+                self.writer.close()
+                self.writer = None
 
-                # Memort optimization
-                del latest_df
-                gc.collect()
+        ep_dict["data/chunk_index"] = chunk_idx
+        ep_dict["data/file_index"] = file_idx
 
         # Write the resulting dataframe from RAM to disk
         path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if len(self.meta.image_keys) > 0:
-            to_parquet_with_hf_images(df, path)
-        else:
-            df.to_parquet(path)
 
-        if self.hf_dataset is not None:
-            # Remove hf dataset cache directory, necessary to avoid cache bloat
-            cached_dir = get_hf_dataset_cache_dir(self.hf_dataset)
-            if cached_dir is not None:
-                shutil.rmtree(cached_dir)
+        if not self.writer:
+            self.writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
 
-        self.hf_dataset = self.load_hf_dataset()
+        self.writer.write_table(table, row_group_size=ep_num_frames)
+        self.latest_episode = ep_dict
 
         metadata = {
             "data/chunk_index": chunk_idx,
@@ -1154,6 +1151,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             "dataset_from_index": latest_num_frames,
             "dataset_to_index": latest_num_frames + ep_num_frames,
         }
+
+        del table, df, ep_dataset
+        gc.collect()
+
         return metadata
 
     def _save_episode_video(self, video_key: str, episode_index: int):
@@ -1317,6 +1318,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.delta_timestamps = None
         obj.delta_indices = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
+        obj.writer = None
+        obj.latest_episode = None
         return obj
 
 
