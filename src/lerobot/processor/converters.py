@@ -26,7 +26,7 @@ import torch
 
 from lerobot.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 
-from .core import EnvTransition, TransitionKey
+from .core import ActionDict, EnvTransition, TransitionKey
 
 
 @singledispatch
@@ -243,7 +243,7 @@ def _merge_transitions(base: EnvTransition, other: EnvTransition) -> EnvTransiti
 
 def create_transition(
     observation: dict[str, Any] | None = None,
-    action: dict[str, Any] | None = None,
+    action: ActionDict | torch.Tensor | None = None,
     reward: float = 0.0,
     done: bool = False,
     truncated: bool = False,
@@ -265,6 +265,8 @@ def create_transition(
     Returns:
         A complete `EnvTransition` dictionary.
     """
+    if isinstance(action, torch.Tensor):
+        action = {TransitionKey.ACTION.value: action}
     return {
         TransitionKey.OBSERVATION: observation,
         TransitionKey.ACTION: action,
@@ -464,9 +466,22 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
     observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
     complementary_data = _extract_complementary_data(batch)
 
+    action = batch.get(TransitionKey.ACTION.value)
+
+    action_dict: ActionDict | Any | None = None
+    if action is not None:
+        if isinstance(action, dict):
+            # Action is already a dict, use it as is
+            action_dict = action
+        elif isinstance(action, torch.Tensor):
+            # Wrap tensor in dict with ACTION key
+            action_dict = {TransitionKey.ACTION.value: action}
+        else:
+            raise ValueError(f"Expected torch.Tensor or dict, got {type(action).__name__}")
+
     return create_transition(
         observation=observation_keys if observation_keys else None,
-        action=batch.get("action"),
+        action=action_dict,
         reward=batch.get("next.reward", 0.0),
         done=batch.get("next.done", False),
         truncated=batch.get("next.truncated", False),
@@ -487,8 +502,14 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
     Returns:
         A batch dictionary with canonical LeRobot field names.
     """
+    # Extract action tensor from ActionDict
+    action_dict = transition.get(TransitionKey.ACTION)
+    action_tensor = (
+        action_dict.get(TransitionKey.ACTION.value) if isinstance(action_dict, dict) else action_dict
+    )
+
     batch = {
-        "action": transition.get(TransitionKey.ACTION),
+        "action": action_tensor,
         "next.reward": transition.get(TransitionKey.REWARD, 0.0),
         "next.done": transition.get(TransitionKey.DONE, False),
         "next.truncated": transition.get(TransitionKey.TRUNCATED, False),

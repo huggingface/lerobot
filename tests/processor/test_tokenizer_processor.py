@@ -10,23 +10,8 @@ import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_LANGUAGE
-from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep, TransitionKey
+from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep, TransitionKey, create_transition
 from tests.utils import require_package
-
-
-def create_transition(
-    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
-):
-    """Helper function to create test transitions."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info,
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-    }
 
 
 class MockTokenizer:
@@ -414,7 +399,10 @@ def test_integration_with_robot_processor(mock_auto_tokenizer):
     assert torch.equal(
         result[TransitionKey.OBSERVATION]["state"], transition[TransitionKey.OBSERVATION]["state"]
     )
-    assert torch.equal(result[TransitionKey.ACTION], transition[TransitionKey.ACTION])
+    assert torch.equal(
+        result[TransitionKey.ACTION][TransitionKey.ACTION.value],
+        transition[TransitionKey.ACTION][TransitionKey.ACTION.value],
+    )
 
 
 @require_package("transformers")
@@ -993,7 +981,7 @@ def test_integration_with_device_processor(mock_auto_tokenizer):
 
     # All tensors should end up on CUDA (moved by DeviceProcessorStep)
     assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
-    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
 
     # Tokenized tensors should also be on CUDA
     tokens = result[TransitionKey.OBSERVATION][f"{OBS_LANGUAGE}.tokens"]

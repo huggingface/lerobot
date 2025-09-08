@@ -32,7 +32,7 @@ from safetensors.torch import load_file, save_file
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
-from .core import EnvTransition, TransitionKey
+from .core import ActionDict, EnvTransition, TransitionKey
 
 # Type variable for generic processor output type
 TOutput = TypeVar("TOutput")
@@ -859,7 +859,7 @@ class ActionProcessorStep(ProcessorStep, ABC):
     """
 
     @abstractmethod
-    def action(self, action) -> Any | torch.Tensor:
+    def action(self, action: ActionDict) -> ActionDict:
         """Process the action component.
 
         Args:
@@ -874,7 +874,7 @@ class ActionProcessorStep(ProcessorStep, ABC):
         self._current_transition = transition.copy()
         new_transition = self._current_transition
 
-        action = new_transition.get(TransitionKey.ACTION)
+        action: ActionDict | None = new_transition.get(TransitionKey.ACTION)
         if action is None:
             return new_transition
 

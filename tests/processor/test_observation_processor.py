@@ -20,23 +20,8 @@ import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
-from lerobot.processor import TransitionKey, VanillaObservationProcessorStep
+from lerobot.processor import TransitionKey, VanillaObservationProcessorStep, create_transition
 from tests.conftest import assert_contract_is_typed
-
-
-def create_transition(
-    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info,
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-    }
 
 
 def test_process_single_image():

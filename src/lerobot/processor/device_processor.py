@@ -131,7 +131,6 @@ class DeviceProcessorStep(ProcessorStep):
         new_transition = transition.copy()
 
         simple_tensor_keys = [
-            TransitionKey.ACTION,
             TransitionKey.REWARD,
             TransitionKey.DONE,
             TransitionKey.TRUNCATED,
@@ -140,6 +139,7 @@ class DeviceProcessorStep(ProcessorStep):
         dict_tensor_keys = [
             TransitionKey.OBSERVATION,
             TransitionKey.COMPLEMENTARY_DATA,
+            TransitionKey.ACTION,
         ]
 
         # Process simple, top-level tensors

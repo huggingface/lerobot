@@ -21,13 +21,14 @@ These steps are designed to process actions, observations, and complementary dat
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from torch import Tensor
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
-from .core import EnvTransition
+from .core import ActionDict, EnvTransition, TransitionKey
 from .pipeline import (
     ActionProcessorStep,
     ComplementaryDataProcessorStep,
@@ -56,9 +57,14 @@ class AddBatchDimensionActionStep(ActionProcessorStep):
         Returns:
             The action tensor with an added batch dimension.
         """
-        if not isinstance(action, Tensor) or action.dim() != 1:
+
+    def action(self, action: ActionDict | dict[str, Any]) -> ActionDict | dict[str, Any]:
+        # Handle ActionDict format
+        action_tensor: Tensor | None = action.get(TransitionKey.ACTION.value)
+        if action_tensor is None or not isinstance(action_tensor, Tensor) or action_tensor.dim() != 1:
             return action
-        return action.unsqueeze(0)
+
+        return {TransitionKey.ACTION.value: action_tensor.unsqueeze(0)}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

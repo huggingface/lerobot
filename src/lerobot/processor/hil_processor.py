@@ -446,9 +446,18 @@ class InterventionActionProcessorStep(ProcessorStep):
                 action_list = teleop_action.tolist()
             else:
                 action_list = teleop_action
+            action_tensor = action.get(TransitionKey.ACTION.value)
 
-            teleop_action_tensor = torch.tensor(action_list, dtype=action.dtype, device=action.device)
-            new_transition[TransitionKey.ACTION] = teleop_action_tensor
+            if action_tensor is None:
+                raise ValueError("Action tensor is None")
+
+            if not isinstance(action_tensor, torch.Tensor):
+                raise ValueError("Action tensor is not a torch.Tensor")
+
+            teleop_action_tensor = torch.tensor(
+                action_list, dtype=action_tensor.dtype, device=action_tensor.device
+            )
+            new_transition[TransitionKey.ACTION] = {TransitionKey.ACTION.value: teleop_action_tensor}
 
         # Handle episode termination
         new_transition[TransitionKey.DONE] = bool(terminate_episode) or (

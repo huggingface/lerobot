@@ -22,6 +22,7 @@ import torch
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import to_tensor
+from .core import ActionDict, TransitionKey
 from .pipeline import ActionProcessorStep, ProcessorStepRegistry
 
 
@@ -42,14 +43,15 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
 
     squeeze_batch_dim: bool = True
 
-    def action(self, action: torch.Tensor) -> np.ndarray:
-        if not isinstance(action, torch.Tensor):
+    def action(self, action: ActionDict) -> ActionDict:
+        action_tensor = action.get(TransitionKey.ACTION.value)
+        if not isinstance(action_tensor, torch.Tensor):
             raise TypeError(
-                f"Expected torch.Tensor or None, got {type(action).__name__}. "
+                f"Expected torch.Tensor or None, got {type(action_tensor).__name__} for {TransitionKey.ACTION.value} key. "
                 "Use appropriate processor for non-tensor actions."
             )
 
-        numpy_action = action.detach().cpu().numpy()
+        numpy_action = action_tensor.detach().cpu().numpy()
 
         # Remove batch dimensions but preserve action dimensions.
         # Only squeeze if there's a batch dimension (first dim == 1).
@@ -61,7 +63,7 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
         ):
             numpy_action = numpy_action.squeeze(0)
 
-        return numpy_action
+        return {TransitionKey.ACTION.value: numpy_action}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -80,14 +82,15 @@ class Numpy2TorchActionProcessorStep(ActionProcessorStep):
     by a policy or model.
     """
 
-    def action(self, action: np.ndarray) -> torch.Tensor:
-        if not isinstance(action, np.ndarray):
+    def action(self, action: ActionDict) -> ActionDict:
+        action_tensor = action.get(TransitionKey.ACTION.value)
+        if not isinstance(action_tensor, np.ndarray):
             raise TypeError(
-                f"Expected np.ndarray or None, got {type(action).__name__}. "
+                f"Expected np.ndarray or None, got {type(action_tensor).__name__} for {TransitionKey.ACTION.value} key. "
                 "Use appropriate processor for non-tensor actions."
             )
-        torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
-        return torch_action
+        torch_action = to_tensor(action_tensor, dtype=None)  # Preserve original dtype
+        return {TransitionKey.ACTION.value: torch_action}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

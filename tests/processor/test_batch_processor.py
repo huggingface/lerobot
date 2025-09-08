@@ -27,22 +27,8 @@ from lerobot.processor import (
     DataProcessorPipeline,
     ProcessorStepRegistry,
     TransitionKey,
+    create_transition,
 )
-
-
-def create_transition(
-    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info,
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-    }
 
 
 def test_state_1d_to_2d():
@@ -382,6 +368,7 @@ def test_processor_preserves_other_transition_keys():
     processor = AddBatchDimensionProcessorStep()
 
     action = torch.randn(5)
+    action_dict = {TransitionKey.ACTION.value: action}
     reward = 1.5
     done = True
     truncated = False
@@ -392,7 +379,7 @@ def test_processor_preserves_other_transition_keys():
 
     transition = create_transition(
         observation=observation,
-        action=action,
+        action=action_dict,
         reward=reward,
         done=done,
         truncated=truncated,
@@ -402,8 +389,9 @@ def test_processor_preserves_other_transition_keys():
 
     result = processor(transition)
 
-    # Check that non-observation keys are preserved
-    assert torch.allclose(result[TransitionKey.ACTION], action)
+    # Check that non-observation keys are preserved - extract tensor from ActionDict
+    result_action = result[TransitionKey.ACTION][TransitionKey.ACTION.value]
+    assert torch.allclose(result_action, action)
     assert result[TransitionKey.REWARD] == reward
     assert result[TransitionKey.DONE] == done
     assert result[TransitionKey.TRUNCATED] == truncated
@@ -440,15 +428,17 @@ def test_action_1d_to_2d():
     """Test that 1D action tensors get batch dimension added."""
     processor = AddBatchDimensionProcessorStep()
 
-    # Create 1D action tensor
+    # Create 1D action tensor and wrap in ActionDict format
     action_1d = torch.randn(4)
-    transition = create_transition(action=action_1d)
+    action_dict = {TransitionKey.ACTION.value: action_1d}
+    transition = create_transition(action=action_dict)
 
     result = processor(transition)
 
-    # Should add batch dimension
-    assert result[TransitionKey.ACTION].shape == (1, 4)
-    assert torch.equal(result[TransitionKey.ACTION][0], action_1d)
+    # Should add batch dimension - extract tensor from ActionDict
+    result_tensor = result[TransitionKey.ACTION][TransitionKey.ACTION.value]
+    assert result_tensor.shape == (1, 4)
+    assert torch.equal(result_tensor[0], action_1d)
 
 
 def test_action_already_batched():
@@ -460,14 +450,14 @@ def test_action_already_batched():
     action_batched_5 = torch.randn(5, 4)
 
     # Single batch
-    transition = create_transition(action=action_batched_1)
+    transition = create_transition(action={TransitionKey.ACTION.value: action_batched_1})
     result = processor(transition)
-    assert torch.equal(result[TransitionKey.ACTION], action_batched_1)
+    assert torch.equal(result[TransitionKey.ACTION][TransitionKey.ACTION.value], action_batched_1)
 
     # Multiple batch
-    transition = create_transition(action=action_batched_5)
+    transition = create_transition(action={TransitionKey.ACTION.value: action_batched_5})
     result = processor(transition)
-    assert torch.equal(result[TransitionKey.ACTION], action_batched_5)
+    assert torch.equal(result[TransitionKey.ACTION][TransitionKey.ACTION.value], action_batched_5)
 
 
 def test_action_higher_dimensional():
@@ -476,15 +466,15 @@ def test_action_higher_dimensional():
 
     # 3D action tensor (e.g., sequence of actions)
     action_3d = torch.randn(2, 4, 3)
-    transition = create_transition(action=action_3d)
+    transition = create_transition(action={TransitionKey.ACTION.value: action_3d})
     result = processor(transition)
-    assert torch.equal(result[TransitionKey.ACTION], action_3d)
+    assert torch.equal(result[TransitionKey.ACTION][TransitionKey.ACTION.value], action_3d)
 
     # 4D action tensor
     action_4d = torch.randn(2, 10, 4, 3)
-    transition = create_transition(action=action_4d)
+    transition = create_transition(action={TransitionKey.ACTION.value: action_4d})
     result = processor(transition)
-    assert torch.equal(result[TransitionKey.ACTION], action_4d)
+    assert torch.equal(result[TransitionKey.ACTION][TransitionKey.ACTION.value], action_4d)
 
 
 def test_action_scalar_tensor():
@@ -492,12 +482,12 @@ def test_action_scalar_tensor():
     processor = AddBatchDimensionProcessorStep()
 
     action_scalar = torch.tensor(1.5)
-    transition = create_transition(action=action_scalar)
+    transition = create_transition(action={TransitionKey.ACTION.value: action_scalar})
     result = processor(transition)
 
     # Should remain scalar
-    assert result[TransitionKey.ACTION].dim() == 0
-    assert torch.equal(result[TransitionKey.ACTION], action_scalar)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dim() == 0
+    assert torch.equal(result[TransitionKey.ACTION][TransitionKey.ACTION.value], action_scalar)
 
 
 def test_action_non_tensor():
@@ -506,21 +496,24 @@ def test_action_non_tensor():
 
     # List action
     action_list = [0.1, 0.2, 0.3, 0.4]
-    transition = create_transition(action=action_list)
+    action_list_dict = {TransitionKey.ACTION.value: action_list}
+    transition = create_transition(action=action_list_dict)
     result = processor(transition)
-    assert result[TransitionKey.ACTION] == action_list
+    assert result[TransitionKey.ACTION] == action_list_dict
 
     # Numpy array action (as Python object, not converted)
     action_numpy = np.array([1, 2, 3, 4])
-    transition = create_transition(action=action_numpy)
+    action_numpy_dict = {TransitionKey.ACTION.value: action_numpy}
+    transition = create_transition(action=action_numpy_dict)
     result = processor(transition)
-    assert np.array_equal(result[TransitionKey.ACTION], action_numpy)
+    assert np.array_equal(result[TransitionKey.ACTION][TransitionKey.ACTION.value], action_numpy)
 
     # String action (edge case)
     action_string = "forward"
-    transition = create_transition(action=action_string)
+    action_string_dict = {TransitionKey.ACTION.value: action_string}
+    transition = create_transition(action=action_string_dict)
     result = processor(transition)
-    assert result[TransitionKey.ACTION] == action_string
+    assert result[TransitionKey.ACTION] == action_string_dict
 
     # Dict action (structured action)
     action_dict = {"linear": [0.5, 0.0], "angular": 0.2}
@@ -549,13 +542,13 @@ def test_action_with_observation():
     }
     action = torch.randn(4)
 
-    transition = create_transition(observation=observation, action=action)
+    transition = create_transition(observation=observation, action={TransitionKey.ACTION.value: action})
     result = processor(transition)
 
     # Both should be batched
     assert result[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 7)
     assert result[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (1, 64, 64, 3)
-    assert result[TransitionKey.ACTION].shape == (1, 4)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
 
 
 def test_action_different_sizes():
@@ -567,11 +560,11 @@ def test_action_different_sizes():
 
     for size in action_sizes:
         action = torch.randn(size)
-        transition = create_transition(action=action)
+        transition = create_transition(action={TransitionKey.ACTION.value: action})
         result = processor(transition)
 
-        assert result[TransitionKey.ACTION].shape == (1, size)
-        assert torch.equal(result[TransitionKey.ACTION][0], action)
+        assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, size)
+        assert torch.equal(result[TransitionKey.ACTION][TransitionKey.ACTION.value][0], action)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -581,19 +574,19 @@ def test_action_device_compatibility():
 
     # CUDA action
     action_cuda = torch.randn(4, device="cuda")
-    transition = create_transition(action=action_cuda)
+    transition = create_transition(action={TransitionKey.ACTION.value: action_cuda})
     result = processor(transition)
 
-    assert result[TransitionKey.ACTION].shape == (1, 4)
-    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
 
     # CPU action
     action_cpu = torch.randn(4, device="cpu")
-    transition = create_transition(action=action_cpu)
+    transition = create_transition(action={TransitionKey.ACTION.value: action_cpu})
     result = processor(transition)
 
-    assert result[TransitionKey.ACTION].shape == (1, 4)
-    assert result[TransitionKey.ACTION].device.type == "cpu"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cpu"
 
 
 def test_action_dtype_preservation():
@@ -605,11 +598,11 @@ def test_action_dtype_preservation():
 
     for dtype in dtypes:
         action = torch.randn(4).to(dtype)
-        transition = create_transition(action=action)
+        transition = create_transition(action={TransitionKey.ACTION.value: action})
         result = processor(transition)
 
-        assert result[TransitionKey.ACTION].dtype == dtype
-        assert result[TransitionKey.ACTION].shape == (1, 4)
+        assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == dtype
+        assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
 
 
 def test_empty_action_tensor():
@@ -618,19 +611,19 @@ def test_empty_action_tensor():
 
     # Empty 1D tensor
     action_empty = torch.tensor([])
-    transition = create_transition(action=action_empty)
+    transition = create_transition(action={TransitionKey.ACTION.value: action_empty})
     result = processor(transition)
 
     # Should add batch dimension even to empty tensor
-    assert result[TransitionKey.ACTION].shape == (1, 0)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 0)
 
     # Empty 2D tensor (already batched)
     action_empty_2d = torch.randn(1, 0)
-    transition = create_transition(action=action_empty_2d)
+    transition = create_transition(action={TransitionKey.ACTION.value: action_empty_2d})
     result = processor(transition)
 
     # Should remain unchanged
-    assert result[TransitionKey.ACTION].shape == (1, 0)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 0)
 
 
 # Task-specific tests
@@ -703,7 +696,8 @@ def test_complementary_data_none():
     transition = create_transition(complementary_data=None)
     result = processor(transition)
 
-    assert result[TransitionKey.COMPLEMENTARY_DATA] is None
+    # create_transition converts None complementary_data to empty dict
+    assert result[TransitionKey.COMPLEMENTARY_DATA] == {}
 
 
 def test_complementary_data_empty():
@@ -774,7 +768,9 @@ def test_task_with_observation_and_action():
     complementary_data = {"task": "navigate_to_goal"}
 
     transition = create_transition(
-        observation=observation, action=action, complementary_data=complementary_data
+        observation=observation,
+        action={TransitionKey.ACTION.value: action},
+        complementary_data=complementary_data,
     )
 
     result = processor(transition)
@@ -782,7 +778,7 @@ def test_task_with_observation_and_action():
     # All should be batched
     assert result[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 5)
     assert result[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (1, 32, 32, 3)
-    assert result[TransitionKey.ACTION].shape == (1, 4)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
     assert result[TransitionKey.COMPLEMENTARY_DATA]["task"] == ["navigate_to_goal"]
 
 
@@ -1037,7 +1033,7 @@ def test_index_with_full_transition():
 
     transition = create_transition(
         observation=observation,
-        action=action,
+        action={TransitionKey.ACTION.value: action},
         reward=0.5,
         done=False,
         complementary_data=complementary_data,
@@ -1048,7 +1044,7 @@ def test_index_with_full_transition():
     # Check all components are processed correctly
     assert result[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 7)
     assert result[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (1, 64, 64, 3)
-    assert result[TransitionKey.ACTION].shape == (1, 4)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
 
     processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
     assert processed_comp_data["task"] == ["navigate_to_goal"]
@@ -1104,7 +1100,7 @@ def test_action_processing_creates_new_transition():
     processor = AddBatchDimensionProcessorStep()
 
     action = torch.randn(4)
-    transition = create_transition(action=action)
+    transition = create_transition(action={TransitionKey.ACTION.value: action})
 
     # Store reference to original transition
     original_transition = transition
@@ -1115,10 +1111,10 @@ def test_action_processing_creates_new_transition():
     # Should be a different object (functional design, not in-place mutation)
     assert result is not original_transition
     # Original transition should remain unchanged
-    assert original_transition[TransitionKey.ACTION].shape == (4,)
+    assert original_transition[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (4,)
     # Result should have correctly processed action with batch dimension
-    assert result[TransitionKey.ACTION].shape == (1, 4)
-    assert torch.equal(result[TransitionKey.ACTION][0], action)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
+    assert torch.equal(result[TransitionKey.ACTION][TransitionKey.ACTION.value][0], action)
 
 
 def test_task_processing_creates_new_transition():

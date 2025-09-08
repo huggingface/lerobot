@@ -32,20 +32,8 @@ from lerobot.processor import (
     RenameObservationsProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
+    create_transition,
 )
-
-
-def create_transition(observation=None, action=None, **kwargs):
-    """Helper function to create a transition dictionary."""
-    transition = {}
-    if observation is not None:
-        transition[TransitionKey.OBSERVATION] = observation
-    if action is not None:
-        transition[TransitionKey.ACTION] = action
-    for key, value in kwargs.items():
-        if hasattr(TransitionKey, key.upper()):
-            transition[getattr(TransitionKey, key.upper())] = value
-    return transition
 
 
 def create_default_config():
@@ -112,21 +100,22 @@ def test_act_processor_normalization():
     # Create test data
     observation = {OBS_STATE: torch.randn(7)}
     action = torch.randn(4)
-    transition = create_transition(observation, action)
+    action_dict = {TransitionKey.ACTION.value: action}
+    transition = create_transition(observation, action_dict)
 
     # Process through preprocessor
     processed = preprocessor(transition)
 
     # Check that data is normalized and batched
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 7)
-    assert processed[TransitionKey.ACTION].shape == (1, 4)
+    assert processed[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
 
     # Process action through postprocessor
     action_transition = create_transition(action=processed[TransitionKey.ACTION])
     postprocessed = postprocessor(action_transition)
 
     # Check that action is unnormalized
-    assert postprocessed[TransitionKey.ACTION].shape == (1, 4)
+    assert postprocessed[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -153,14 +142,14 @@ def test_act_processor_cuda():
 
     # Check that data is on CUDA
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
-    assert processed[TransitionKey.ACTION].device.type == "cuda"
+    assert processed[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
 
     # Process through postprocessor
     action_transition = create_transition(action=processed[TransitionKey.ACTION])
     postprocessed = postprocessor(action_transition)
 
     # Check that action is back on CPU
-    assert postprocessed[TransitionKey.ACTION].device.type == "cpu"
+    assert postprocessed[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cpu"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -188,7 +177,7 @@ def test_act_processor_accelerate_scenario():
 
     # Check that data stays on same GPU (not moved unnecessarily)
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed[TransitionKey.ACTION][TransitionKey.ACTION.value].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -211,7 +200,7 @@ def test_act_processor_multi_gpu():
 
     # Check that data stays on cuda:1 (not moved to cuda:0)
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed[TransitionKey.ACTION][TransitionKey.ACTION.value].device == device
 
 
 def test_act_processor_without_stats():
@@ -257,11 +246,12 @@ def test_act_processor_save_and_load():
         # Test that loaded processor works
         observation = {OBS_STATE: torch.randn(7)}
         action = torch.randn(4)
-        transition = create_transition(observation, action)
+        action_dict = {TransitionKey.ACTION.value: action}
+        transition = create_transition(observation, action_dict)
 
         processed = loaded_preprocessor(transition)
         assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 7)
-        assert processed[TransitionKey.ACTION].shape == (1, 4)
+        assert processed[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 4)
 
 
 def test_act_processor_device_placement_preservation():
@@ -285,7 +275,7 @@ def test_act_processor_device_placement_preservation():
 
     processed = preprocessor(transition)
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cpu"
-    assert processed[TransitionKey.ACTION].device.type == "cpu"
+    assert processed[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cpu"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -333,7 +323,7 @@ def test_act_processor_mixed_precision():
 
     # Check that data is converted to float16
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.float16
-    assert processed[TransitionKey.ACTION].dtype == torch.float16
+    assert processed[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.float16
 
 
 def test_act_processor_batch_consistency():
@@ -363,7 +353,7 @@ def test_act_processor_batch_consistency():
 
     processed_batched = preprocessor(transition_batched)
     assert processed_batched[TransitionKey.OBSERVATION][OBS_STATE].shape[0] == 8
-    assert processed_batched[TransitionKey.ACTION].shape[0] == 8
+    assert processed_batched[TransitionKey.ACTION][TransitionKey.ACTION.value].shape[0] == 8
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -414,7 +404,7 @@ def test_act_processor_bfloat16_device_float32_normalizer():
 
     # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.bfloat16
-    assert processed[TransitionKey.ACTION].dtype == torch.bfloat16
+    assert processed[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.bfloat16
 
     # Verify normalizer automatically adapted its internal state
     assert normalizer_step.dtype == torch.bfloat16

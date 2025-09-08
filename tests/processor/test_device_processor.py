@@ -64,7 +64,7 @@ def test_basic_functionality():
     # Check that all tensors are on CPU
     assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cpu"
     assert result[TransitionKey.OBSERVATION]["observation.image"].device.type == "cpu"
-    assert result[TransitionKey.ACTION].device.type == "cpu"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cpu"
     assert result[TransitionKey.REWARD].device.type == "cpu"
     assert result[TransitionKey.DONE].device.type == "cpu"
     assert result[TransitionKey.TRUNCATED].device.type == "cpu"
@@ -91,7 +91,7 @@ def test_cuda_functionality():
     # Check that all tensors are on CUDA
     assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
     assert result[TransitionKey.OBSERVATION]["observation.image"].device.type == "cuda"
-    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
     assert result[TransitionKey.REWARD].device.type == "cuda"
     assert result[TransitionKey.DONE].device.type == "cuda"
     assert result[TransitionKey.TRUNCATED].device.type == "cuda"
@@ -110,8 +110,8 @@ def test_specific_cuda_device():
 
     assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
     assert result[TransitionKey.OBSERVATION]["observation.state"].device.index == 0
-    assert result[TransitionKey.ACTION].device.type == "cuda"
-    assert result[TransitionKey.ACTION].device.index == 0
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.index == 0
 
 
 def test_non_tensor_values():
@@ -132,7 +132,7 @@ def test_non_tensor_values():
 
     # Check tensors are processed
     assert isinstance(result[TransitionKey.OBSERVATION]["observation.state"], torch.Tensor)
-    assert isinstance(result[TransitionKey.ACTION], torch.Tensor)
+    assert isinstance(result[TransitionKey.ACTION][TransitionKey.ACTION.value], torch.Tensor)
 
     # Check non-tensor values are preserved
     assert result[TransitionKey.OBSERVATION]["observation.metadata"] == {"key": "value"}
@@ -147,14 +147,14 @@ def test_none_values():
     # Test with None observation
     transition = create_transition(observation=None, action=torch.randn(5))
     result = processor(transition)
-    assert TransitionKey.OBSERVATION not in result
-    assert result[TransitionKey.ACTION].device.type == "cpu"
+    assert result[TransitionKey.OBSERVATION] is None
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cpu"
 
     # Test with None action
     transition = create_transition(observation={"observation.state": torch.randn(10)}, action=None)
     result = processor(transition)
     assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cpu"
-    assert TransitionKey.ACTION not in result
+    assert result[TransitionKey.ACTION] is None
 
 
 def test_empty_observation():
@@ -165,7 +165,7 @@ def test_empty_observation():
     result = processor(transition)
 
     assert result[TransitionKey.OBSERVATION] == {}
-    assert result[TransitionKey.ACTION].device.type == "cpu"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cpu"
 
 
 def test_scalar_tensors():
@@ -181,7 +181,7 @@ def test_scalar_tensors():
     result = processor(transition)
 
     assert result[TransitionKey.OBSERVATION]["observation.scalar"].item() == 1.5
-    assert result[TransitionKey.ACTION].item() == 2.0
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].item() == 2.0
     assert result[TransitionKey.REWARD].item() == 0.5
 
 
@@ -204,7 +204,7 @@ def test_dtype_preservation():
     assert result[TransitionKey.OBSERVATION]["observation.float64"].dtype == torch.float64
     assert result[TransitionKey.OBSERVATION]["observation.int32"].dtype == torch.int32
     assert result[TransitionKey.OBSERVATION]["observation.bool"].dtype == torch.bool
-    assert result[TransitionKey.ACTION].dtype == torch.float16
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.float16
 
 
 def test_shape_preservation():
@@ -226,7 +226,7 @@ def test_shape_preservation():
     assert result[TransitionKey.OBSERVATION]["observation.2d"].shape == (5, 10)
     assert result[TransitionKey.OBSERVATION]["observation.3d"].shape == (3, 224, 224)
     assert result[TransitionKey.OBSERVATION]["observation.4d"].shape == (2, 3, 224, 224)
-    assert result[TransitionKey.ACTION].shape == (2, 5, 3)
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (2, 5, 3)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -247,7 +247,7 @@ def test_mixed_devices():
     # All should be on CUDA
     assert result[TransitionKey.OBSERVATION]["observation.cpu"].device.type == "cuda"
     assert result[TransitionKey.OBSERVATION]["observation.cuda"].device.type == "cuda"
-    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
 
 
 def test_non_blocking_flag():
@@ -322,16 +322,17 @@ def test_integration_with_robot_processor():
     # Create test data
     observation = {OBS_STATE: torch.randn(10)}
     action = torch.randn(5)
+    action_dict = {TransitionKey.ACTION.value: action}
 
-    transition = create_transition(observation=observation, action=action)
+    transition = create_transition(observation=observation, action=action_dict)
     result = processor(transition)
 
     # Check that tensors are batched and on correct device
     # The result has TransitionKey.OBSERVATION as the key, with observation.state inside
     assert result[TransitionKey.OBSERVATION][OBS_STATE].shape[0] == 1  # Batched
     assert result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cpu"
-    assert result[TransitionKey.ACTION].shape[0] == 1  # Batched
-    assert result[TransitionKey.ACTION].device.type == "cpu"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape[0] == 1  # Batched
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cpu"
 
 
 def test_save_and_load_pretrained():
@@ -386,7 +387,7 @@ def test_performance_with_large_tensors():
     # Verify all tensors are on CUDA
     assert result[TransitionKey.OBSERVATION]["observation.large_image"].device.type == "cuda"
     assert result[TransitionKey.OBSERVATION]["observation.features"].device.type == "cuda"
-    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
 
 
 def test_reward_done_truncated_types():
@@ -476,7 +477,7 @@ def test_float_dtype_conversion():
     # Check that float tensors are converted to float16
     assert result[TransitionKey.OBSERVATION]["observation.float32"].dtype == torch.float16
     assert result[TransitionKey.OBSERVATION]["observation.float64"].dtype == torch.float16
-    assert result[TransitionKey.ACTION].dtype == torch.float16
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.float16
     assert result[TransitionKey.REWARD].dtype == torch.float16
 
     # Check that non-float tensors are preserved
@@ -503,7 +504,7 @@ def test_float_dtype_none():
     assert result[TransitionKey.OBSERVATION]["observation.float32"].dtype == torch.float32
     assert result[TransitionKey.OBSERVATION]["observation.float64"].dtype == torch.float64
     assert result[TransitionKey.OBSERVATION]["observation.int32"].dtype == torch.int32
-    assert result[TransitionKey.ACTION].dtype == torch.float64
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.float64
 
 
 def test_float_dtype_bfloat16():
@@ -517,7 +518,7 @@ def test_float_dtype_bfloat16():
     result = processor(transition)
 
     assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.bfloat16
-    assert result[TransitionKey.ACTION].dtype == torch.bfloat16
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.bfloat16
 
 
 def test_float_dtype_float64():
@@ -531,7 +532,7 @@ def test_float_dtype_float64():
     result = processor(transition)
 
     assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.float64
-    assert result[TransitionKey.ACTION].dtype == torch.float64
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.float64
 
 
 def test_float_dtype_invalid():
@@ -575,7 +576,7 @@ def test_float_dtype_with_mixed_tensors():
     assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.float32  # Converted
     assert result[TransitionKey.OBSERVATION]["observation.mask"].dtype == torch.bool  # Unchanged
     assert result[TransitionKey.OBSERVATION]["observation.indices"].dtype == torch.long  # Unchanged
-    assert result[TransitionKey.ACTION].dtype == torch.float32  # Converted
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.float32  # Converted
 
 
 def test_float_dtype_serialization():
@@ -615,8 +616,8 @@ def test_float_dtype_with_cuda():
     assert result[TransitionKey.OBSERVATION]["observation.int64"].device.type == "cuda"
     assert result[TransitionKey.OBSERVATION]["observation.int64"].dtype == torch.int64  # Unchanged
 
-    assert result[TransitionKey.ACTION].device.type == "cuda"
-    assert result[TransitionKey.ACTION].dtype == torch.float16
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.float16
 
 
 def test_complementary_data_index_fields():
@@ -777,7 +778,7 @@ def test_complementary_data_full_pipeline_cuda():
 
     # Check all components moved to CUDA
     assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
-    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
     assert result[TransitionKey.REWARD].device.type == "cuda"
     assert result[TransitionKey.DONE].device.type == "cuda"
 
@@ -788,7 +789,7 @@ def test_complementary_data_full_pipeline_cuda():
 
     # Check float conversion happened for float tensors
     assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.float16
-    assert result[TransitionKey.ACTION].dtype == torch.float16
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].dtype == torch.float16
     assert result[TransitionKey.REWARD].dtype == torch.float16
 
     # Check int tensors kept their dtype
@@ -822,8 +823,7 @@ def test_complementary_data_none():
 
     result = processor(transition)
 
-    # Complementary data should not be in the result (same as input)
-    assert TransitionKey.COMPLEMENTARY_DATA not in result
+    assert result[TransitionKey.COMPLEMENTARY_DATA] == {}
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -844,7 +844,7 @@ def test_preserves_gpu_placement():
     # Check that tensors remain on their original GPU
     assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
     assert result[TransitionKey.OBSERVATION]["observation.image"].device.type == "cuda"
-    assert result[TransitionKey.ACTION].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
 
     # Verify no unnecessary copies were made (same data pointer)
     assert torch.equal(
@@ -872,7 +872,7 @@ def test_multi_gpu_preservation():
     # Check that tensors remain on cuda:1 (not moved to cuda:0)
     assert result[TransitionKey.OBSERVATION]["observation.state"].device == cuda1_device
     assert result[TransitionKey.OBSERVATION]["observation.image"].device == cuda1_device
-    assert result[TransitionKey.ACTION].device == cuda1_device
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device == cuda1_device
 
     # Test 2: GPU-to-CPU should move to CPU (not preserve GPU)
     processor_cpu = DeviceProcessorStep(device="cpu")
@@ -884,7 +884,7 @@ def test_multi_gpu_preservation():
 
     # Check that tensors are moved to CPU
     assert result_cpu[TransitionKey.OBSERVATION]["observation.state"].device.type == "cpu"
-    assert result_cpu[TransitionKey.ACTION].device.type == "cpu"
+    assert result_cpu[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cpu"
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -907,8 +907,8 @@ def test_multi_gpu_with_cpu_tensors():
     # CPU tensor should move to configured device (cuda:1)
     assert result[TransitionKey.OBSERVATION]["observation.cpu"].device.type == "cuda"
     assert result[TransitionKey.OBSERVATION]["observation.cpu"].device.index == 1
-    assert result[TransitionKey.ACTION].device.type == "cuda"
-    assert result[TransitionKey.ACTION].device.index == 1
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
+    assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.index == 1
 
     # GPU tensors should stay on their original devices
     assert result[TransitionKey.OBSERVATION]["observation.gpu0"].device.index == 0
@@ -960,7 +960,7 @@ def test_simulated_accelerate_scenario():
 
         # Verify data stays on the GPU where Accelerate placed it
         assert result[TransitionKey.OBSERVATION]["observation.state"].device == device
-        assert result[TransitionKey.ACTION].device == device
+        assert result[TransitionKey.ACTION][TransitionKey.ACTION.value].device == device
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -1013,7 +1013,8 @@ def test_policy_processor_integration():
     # Test data on CPU
     observation = {OBS_STATE: torch.randn(10)}
     action = torch.randn(5)
-    transition = create_transition(observation=observation, action=action)
+    action_dict = {TransitionKey.ACTION.value: action}
+    transition = create_transition(observation=observation, action=action_dict)
 
     # Process through input processor
     input_result = input_processor(transition)
@@ -1022,15 +1023,16 @@ def test_policy_processor_integration():
     # The result has TransitionKey.OBSERVATION as the key, with observation.state inside
     assert input_result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
     assert input_result[TransitionKey.OBSERVATION][OBS_STATE].shape[0] == 1
-    assert input_result[TransitionKey.ACTION].device.type == "cuda"
-    assert input_result[TransitionKey.ACTION].shape[0] == 1
+    assert input_result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cuda"
+    assert input_result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape[0] == 1
 
     # Simulate model output on GPU
-    model_output = create_transition(action=torch.randn(1, 5).cuda())
+    model_action_dict = {TransitionKey.ACTION.value: torch.randn(1, 5).cuda()}
+    model_output = create_transition(action=model_action_dict)
 
     # Process through output processor
     output_result = output_processor(model_output)
 
     # Verify action is back on CPU and unnormalized
-    assert output_result[TransitionKey.ACTION].device.type == "cpu"
-    assert output_result[TransitionKey.ACTION].shape == (1, 5)
+    assert output_result[TransitionKey.ACTION][TransitionKey.ACTION.value].device.type == "cpu"
+    assert output_result[TransitionKey.ACTION][TransitionKey.ACTION.value].shape == (1, 5)

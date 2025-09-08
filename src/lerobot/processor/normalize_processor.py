@@ -28,7 +28,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatur
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from .converters import from_tensor_to_numpy, to_tensor
-from .core import EnvTransition, TransitionKey
+from .core import ActionDict, EnvTransition, TransitionKey
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 
@@ -209,7 +209,7 @@ class _NormalizationMixin:
                 new_observation[key] = self._apply_transform(tensor, key, feature.type, inverse=inverse)
         return new_observation
 
-    def _normalize_action(self, action: Any, inverse: bool) -> Tensor:
+    def _normalize_action(self, action: ActionDict, inverse: bool) -> ActionDict:
         # Convert to tensor but preserve original dtype for adaptation logic
         """
         Applies (un)normalization to an action tensor.
@@ -221,9 +221,15 @@ class _NormalizationMixin:
         Returns:
             The transformed action tensor.
         """
-        tensor = torch.as_tensor(action)
-        processed_action = self._apply_transform(tensor, "action", FeatureType.ACTION, inverse=inverse)
-        return processed_action
+        action_tensor: Tensor | None = action.get(TransitionKey.ACTION.value)
+        if action_tensor is None:
+            return action
+        tensor = torch.as_tensor(action_tensor)
+        processed_action = self._apply_transform(
+            tensor, TransitionKey.ACTION.value, FeatureType.ACTION, inverse=inverse
+        )
+        action[TransitionKey.ACTION.value] = processed_action
+        return action
 
     def _apply_transform(
         self, tensor: Tensor, key: str, feature_type: FeatureType, *, inverse: bool = False
@@ -434,7 +440,8 @@ def hotswap_stats(
     rp = deepcopy(policy_processor)
     for step in rp.steps:
         if isinstance(step, _NormalizationMixin):
-            step.stats = stats
-            # Re-initialize tensor_stats on the correct device.
-            step._tensor_stats = to_tensor(stats, device=step.device, dtype=step.dtype)
+            # Deep copy the stats to avoid any shared references
+            step.stats = deepcopy(stats)
+            # Re-initialize tensor_stats on the correct device using the copied stats
+            step._tensor_stats = to_tensor(step.stats, device=step.device, dtype=step.dtype)
     return rp

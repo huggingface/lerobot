@@ -22,6 +22,7 @@ from typing import Any, TypedDict
 import torch
 
 
+# NOTE: When upgrading to Python 3.11, use StrEnum instead of Enum
 class TransitionKey(str, Enum):
     """Keys for accessing EnvTransition dictionary components."""
 
@@ -35,11 +36,15 @@ class TransitionKey(str, Enum):
     COMPLEMENTARY_DATA = "complementary_data"
 
 
+TensorActionDict = TypedDict("TensorActionDict", {TransitionKey.ACTION.value: torch.Tensor | None})
+ActionDict = dict[str, Any] | TensorActionDict
+
+
 EnvTransition = TypedDict(
     "EnvTransition",
     {
         TransitionKey.OBSERVATION.value: dict[str, Any] | None,
-        TransitionKey.ACTION.value: Any | torch.Tensor | None,
+        TransitionKey.ACTION.value: ActionDict | None,
         TransitionKey.REWARD.value: float | torch.Tensor | None,
         TransitionKey.DONE.value: bool | torch.Tensor | None,
         TransitionKey.TRUNCATED.value: bool | torch.Tensor | None,

@@ -195,10 +195,11 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         # Fallback to checking the action tensor
         action = transition.get(TransitionKey.ACTION)
-        if isinstance(action, torch.Tensor):
-            return action.device
-
-        return None  # No tensors found, default will be CPU
+        if action is not None:
+            action_tensor = action.get(TransitionKey.ACTION.value)
+            if isinstance(action_tensor, torch.Tensor):
+                return action_tensor.device
+        return None  # No tensors found, keep on CPU
 
     def _tokenize_text(self, text: str | list[str]) -> dict[str, torch.Tensor]:
         """

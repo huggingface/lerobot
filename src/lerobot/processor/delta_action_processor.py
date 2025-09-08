@@ -20,6 +20,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 
+from .core import ActionDict, TransitionKey
 from .pipeline import ActionProcessorStep, ProcessorStepRegistry
 
 
@@ -40,18 +41,21 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
 
     use_gripper: bool = True
 
-    def action(self, action: Tensor) -> dict:
-        if action.dim() > 1:
-            action = action.squeeze(0)
+    def action(self, action: ActionDict) -> ActionDict:
+        action_tensor = action.get(TransitionKey.ACTION.value)
+        if action_tensor is None:
+            return action
+        if isinstance(action_tensor, Tensor) and action_tensor.dim() > 1:
+            action_tensor = action_tensor.squeeze(0)
 
         # TODO (maractingi): add rotation
         delta_action = {
-            "delta_x": action[0],
-            "delta_y": action[1],
-            "delta_z": action[2],
+            "delta_x": action_tensor[0],
+            "delta_y": action_tensor[1],
+            "delta_z": action_tensor[2],
         }
         if self.use_gripper:
-            delta_action["gripper"] = action[3]
+            delta_action["gripper"] = action_tensor[3]
         return delta_action
 
     def transform_features(
@@ -89,13 +93,35 @@ class MapDeltaActionToRobotActionStep(ActionProcessorStep):
     rotation_scale: float = 0.0  # No rotation deltas for gamepad/keyboard
     noise_threshold: float = 1e-3  # 1 mm threshold to filter out noise
 
-    def action(self, action: dict) -> dict:
+    def action(self, action: ActionDict) -> ActionDict:
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
         # TODO (maractingi): changing this target_xyz naming convention from the teleop_devices
         delta_x = action.pop("delta_x", 0.0)
         delta_y = action.pop("delta_y", 0.0)
         delta_z = action.pop("delta_z", 0.0)
         gripper = action.pop("gripper", 1.0)  # Default to "stay" (1.0)
+
+        if None in (delta_x, delta_y, delta_z, gripper):
+            raise ValueError("delta_x, delta_y, delta_z, and gripper must not be None")
+
+        if (
+            not isinstance(delta_x, float)
+            or not isinstance(delta_y, float)
+            or not isinstance(delta_z, float)
+            or not isinstance(gripper, float)
+        ):
+            raise ValueError("delta_x, delta_y, delta_z, and gripper must be floats")
+
+        if None in (delta_x, delta_y, delta_z, gripper):
+            raise ValueError("delta_x, delta_y, delta_z, and gripper must not be None")
+
+        if (
+            not isinstance(delta_x, float)
+            or not isinstance(delta_y, float)
+            or not isinstance(delta_z, float)
+            or not isinstance(gripper, float)
+        ):
+            raise ValueError("delta_x, delta_y, delta_z, and gripper must be floats")
 
         # Determine if the teleoperator is actively providing input
         # Consider enabled if any significant movement delta is detected

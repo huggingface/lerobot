@@ -33,23 +33,9 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     TransitionKey,
+    create_transition,
 )
 from tests.conftest import assert_contract_is_typed
-
-
-def create_transition(
-    observation=None, action=None, reward=0.0, done=False, truncated=False, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info if info is not None else {},
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data if complementary_data is not None else {},
-    }
 
 
 @dataclass
