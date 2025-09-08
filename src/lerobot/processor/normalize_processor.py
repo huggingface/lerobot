@@ -295,7 +295,7 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
     def from_lerobot_dataset(
         cls,
         dataset: LeRobotDataset,
-        features: dict[FeatureType, dict[str, PolicyFeature]],
+        features: dict[str, PolicyFeature],
         norm_map: dict[FeatureType, NormalizationMode],
         *,
         normalize_observation_keys: set[str] | None = None,
