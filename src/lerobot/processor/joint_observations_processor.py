@@ -106,6 +106,18 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """
+        Updates the `observation.state` feature to reflect the added velocities.
+
+        This method doubles the size of the first dimension of the `observation.state`
+        shape to account for the concatenation of position and velocity vectors.
+
+        Args:
+            features: The policy features dictionary.
+
+        Returns:
+            The updated policy features dictionary.
+        """
         if OBS_STATE in features[PipelineFeatureType.OBSERVATION]:
             original_feature = features[PipelineFeatureType.OBSERVATION][OBS_STATE]
             # Double the shape to account for positions + velocities
@@ -172,6 +184,18 @@ class MotorCurrentProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """
+        Updates the `observation.state` feature to reflect the added motor currents.
+
+        This method increases the size of the first dimension of the `observation.state`
+        shape by the number of motors in the robot.
+
+        Args:
+            features: The policy features dictionary.
+
+        Returns:
+            The updated policy features dictionary.
+        """
         if OBS_STATE in features[PipelineFeatureType.OBSERVATION] and self.robot is not None:
             original_feature = features[PipelineFeatureType.OBSERVATION][OBS_STATE]
             # Add motor current dimensions to the original state shape
