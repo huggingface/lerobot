@@ -175,6 +175,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         if self.config.use_torch_compile:
             self.critic_ensemble = torch.compile(self.critic_ensemble)
             self.critic_ensemble_target = torch.compile(self.critic_ensemble_target)
+            self.consistency_policy = torch.compile(self.consistency_policy)
 
     def _encode_state(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
         """Encode observations into state representation using VLA"""
