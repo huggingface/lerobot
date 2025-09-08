@@ -2040,6 +2040,7 @@ class AddObservationStateFeatures(ProcessorStep):
         return features
 
 
+# TODO: Update aggregate tests
 def test_aggregate_joint_action_only():
     rp = DataProcessorPipeline([AddActionEEAndJointFeatures()])
     initial = {PipelineFeatureType.ACTION: {"front": (480, 640, 3)}}

@@ -16,7 +16,7 @@
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
+from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
@@ -91,7 +91,7 @@ robot_joints_to_ee_pose_processor = RobotProcessorPipeline(
 # Build dataset action and gripper features
 action_ee_and_gripper = aggregate_pipeline_dataset_features(
     pipeline=robot_ee_to_joints_processor,
-    initial_features={},
+    initial_features=create_initial_features(),
     use_videos=True,
     patterns=["action.ee", "action.gripper.pos", "observation.state.gripper.pos"],
 )  # Get all ee action features + gripper pos action features
@@ -99,7 +99,7 @@ action_ee_and_gripper = aggregate_pipeline_dataset_features(
 # Build dataset observation features
 obs_ee = aggregate_pipeline_dataset_features(
     pipeline=robot_joints_to_ee_pose_processor,
-    initial_features=robot.observation_features,
+    initial_features=create_initial_features(observation=robot.observation_features),
     use_videos=True,
     patterns=["observation.state.ee"],
 )  # Get all ee observation features
