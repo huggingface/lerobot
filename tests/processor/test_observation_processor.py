@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.configs.types import FeatureType
+from lerobot.configs.types import FeatureType, PipelineFeatureType
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.processor import TransitionKey, VanillaObservationProcessorStep
 from tests.conftest import assert_contract_is_typed
@@ -412,92 +412,105 @@ def test_equivalent_with_image_dict():
 def test_image_processor_features_pixels_to_image(policy_feature_factory):
     processor = VanillaObservationProcessorStep()
     features = {
-        FeatureType.VISUAL: {"pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64))},
-        FeatureType.ENV: {"keep": policy_feature_factory(FeatureType.ENV, (1,))},
+        PipelineFeatureType.OBSERVATION: {
+            "pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
+            "keep": policy_feature_factory(FeatureType.ENV, (1,)),
+        },
     }
     out = processor.transform_features(features.copy())
 
     assert (
-        OBS_IMAGE in out[FeatureType.VISUAL]
-        and out[FeatureType.VISUAL][OBS_IMAGE] == features[FeatureType.VISUAL]["pixels"]
+        OBS_IMAGE in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION][OBS_IMAGE]
+        == features[PipelineFeatureType.OBSERVATION]["pixels"]
     )
-    assert "pixels" not in out[FeatureType.VISUAL]
-    assert out[FeatureType.ENV]["keep"] == features[FeatureType.ENV]["keep"]
+    assert "pixels" not in out[PipelineFeatureType.OBSERVATION]
+    assert out[PipelineFeatureType.OBSERVATION]["keep"] == features[PipelineFeatureType.OBSERVATION]["keep"]
     assert_contract_is_typed(out)
 
 
 def test_image_processor_features_observation_pixels_to_image(policy_feature_factory):
     processor = VanillaObservationProcessorStep()
     features = {
-        FeatureType.VISUAL: {"observation.pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64))},
-        FeatureType.ENV: {"keep": policy_feature_factory(FeatureType.ENV, (1,))},
+        PipelineFeatureType.OBSERVATION: {
+            "observation.pixels": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
+            "keep": policy_feature_factory(FeatureType.ENV, (1,)),
+        },
     }
     out = processor.transform_features(features.copy())
 
     assert (
-        OBS_IMAGE in out[FeatureType.VISUAL]
-        and out[FeatureType.VISUAL][OBS_IMAGE] == features[FeatureType.VISUAL]["observation.pixels"]
+        OBS_IMAGE in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION][OBS_IMAGE]
+        == features[PipelineFeatureType.OBSERVATION]["observation.pixels"]
     )
-    assert "observation.pixels" not in out[FeatureType.VISUAL]
-    assert out[FeatureType.ENV]["keep"] == features[FeatureType.ENV]["keep"]
+    assert "observation.pixels" not in out[PipelineFeatureType.OBSERVATION]
+    assert out[PipelineFeatureType.OBSERVATION]["keep"] == features[PipelineFeatureType.OBSERVATION]["keep"]
     assert_contract_is_typed(out)
 
 
 def test_image_processor_features_multi_camera_and_prefixed(policy_feature_factory):
     processor = VanillaObservationProcessorStep()
     features = {
-        FeatureType.VISUAL: {
+        PipelineFeatureType.OBSERVATION: {
             "pixels.front": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
             "pixels.wrist": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
             "observation.pixels.rear": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
+            "keep": policy_feature_factory(FeatureType.ENV, (7,)),
         },
-        FeatureType.ENV: {"keep": policy_feature_factory(FeatureType.ENV, (7,))},
     }
     out = processor.transform_features(features.copy())
 
     assert (
-        f"{OBS_IMAGES}.front" in out[FeatureType.VISUAL]
-        and out[FeatureType.VISUAL][f"{OBS_IMAGES}.front"] == features[FeatureType.VISUAL]["pixels.front"]
+        f"{OBS_IMAGES}.front" in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION][f"{OBS_IMAGES}.front"]
+        == features[PipelineFeatureType.OBSERVATION]["pixels.front"]
     )
     assert (
-        f"{OBS_IMAGES}.wrist" in out[FeatureType.VISUAL]
-        and out[FeatureType.VISUAL][f"{OBS_IMAGES}.wrist"] == features[FeatureType.VISUAL]["pixels.wrist"]
+        f"{OBS_IMAGES}.wrist" in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION][f"{OBS_IMAGES}.wrist"]
+        == features[PipelineFeatureType.OBSERVATION]["pixels.wrist"]
     )
     assert (
-        f"{OBS_IMAGES}.rear" in out[FeatureType.VISUAL]
-        and out[FeatureType.VISUAL][f"{OBS_IMAGES}.rear"]
-        == features[FeatureType.VISUAL]["observation.pixels.rear"]
+        f"{OBS_IMAGES}.rear" in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION][f"{OBS_IMAGES}.rear"]
+        == features[PipelineFeatureType.OBSERVATION]["observation.pixels.rear"]
     )
     assert (
-        "pixels.front" not in out[FeatureType.VISUAL]
-        and "pixels.wrist" not in out[FeatureType.VISUAL]
-        and "observation.pixels.rear" not in out[FeatureType.VISUAL]
+        "pixels.front" not in out[PipelineFeatureType.OBSERVATION]
+        and "pixels.wrist" not in out[PipelineFeatureType.OBSERVATION]
+        and "observation.pixels.rear" not in out[PipelineFeatureType.OBSERVATION]
     )
-    assert out[FeatureType.ENV]["keep"] == features[FeatureType.ENV]["keep"]
+    assert out[PipelineFeatureType.OBSERVATION]["keep"] == features[PipelineFeatureType.OBSERVATION]["keep"]
     assert_contract_is_typed(out)
 
 
 def test_state_processor_features_environment_and_agent_pos(policy_feature_factory):
     processor = VanillaObservationProcessorStep()
     features = {
-        FeatureType.STATE: {
+        PipelineFeatureType.OBSERVATION: {
             "environment_state": policy_feature_factory(FeatureType.STATE, (3,)),
             "agent_pos": policy_feature_factory(FeatureType.STATE, (7,)),
+            "keep": policy_feature_factory(FeatureType.ENV, (1,)),
         },
-        FeatureType.ENV: {"keep": policy_feature_factory(FeatureType.ENV, (1,))},
     }
     out = processor.transform_features(features.copy())
 
     assert (
-        OBS_ENV_STATE in out[FeatureType.STATE]
-        and out[FeatureType.STATE][OBS_ENV_STATE] == features[FeatureType.STATE]["environment_state"]
+        OBS_ENV_STATE in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION][OBS_ENV_STATE]
+        == features[PipelineFeatureType.OBSERVATION]["environment_state"]
     )
     assert (
-        OBS_STATE in out[FeatureType.STATE]
-        and out[FeatureType.STATE][OBS_STATE] == features[FeatureType.STATE]["agent_pos"]
+        OBS_STATE in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION][OBS_STATE]
+        == features[PipelineFeatureType.OBSERVATION]["agent_pos"]
     )
-    assert "environment_state" not in out[FeatureType.STATE] and "agent_pos" not in out[FeatureType.STATE]
-    assert out[FeatureType.ENV]["keep"] == features[FeatureType.ENV]["keep"]
+    assert (
+        "environment_state" not in out[PipelineFeatureType.OBSERVATION]
+        and "agent_pos" not in out[PipelineFeatureType.OBSERVATION]
+    )
+    assert out[PipelineFeatureType.OBSERVATION]["keep"] == features[PipelineFeatureType.OBSERVATION]["keep"]
     assert_contract_is_typed(out)
 
 
@@ -505,7 +518,7 @@ def test_state_processor_features_environment_and_agent_pos(policy_feature_facto
 def test_state_processor_features_prefixed_inputs(policy_feature_factory):
     proc = VanillaObservationProcessorStep()
     features = {
-        FeatureType.STATE: {
+        PipelineFeatureType.OBSERVATION: {
             "observation.environment_state": policy_feature_factory(FeatureType.STATE, (2,)),
             "observation.agent_pos": policy_feature_factory(FeatureType.STATE, (4,)),
         },
@@ -513,13 +526,17 @@ def test_state_processor_features_prefixed_inputs(policy_feature_factory):
     out = proc.transform_features(features.copy())
 
     assert (
-        OBS_ENV_STATE in out[FeatureType.STATE]
-        and out[FeatureType.STATE][OBS_ENV_STATE]
-        == features[FeatureType.STATE]["observation.environment_state"]
+        OBS_ENV_STATE in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION][OBS_ENV_STATE]
+        == features[PipelineFeatureType.OBSERVATION]["observation.environment_state"]
     )
     assert (
-        OBS_STATE in out[FeatureType.STATE]
-        and out[FeatureType.STATE][OBS_STATE] == features[FeatureType.STATE]["observation.agent_pos"]
+        OBS_STATE in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION][OBS_STATE]
+        == features[PipelineFeatureType.OBSERVATION]["observation.agent_pos"]
     )
-    assert "environment_state" not in out[FeatureType.STATE] and "agent_pos" not in out[FeatureType.STATE]
+    assert (
+        "environment_state" not in out[PipelineFeatureType.OBSERVATION]
+        and "agent_pos" not in out[PipelineFeatureType.OBSERVATION]
+    )
     assert_contract_is_typed(out)

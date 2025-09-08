@@ -20,7 +20,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.processor_smolvla import (
@@ -400,7 +400,7 @@ def test_smolvla_newline_processor_transform_features():
 
     # Test transform_features
     features = {
-        FeatureType.STATE: {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
+        PipelineFeatureType.OBSERVATION: {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
     }
     result = processor.transform_features(features)
     assert result == features  # Should return unchanged

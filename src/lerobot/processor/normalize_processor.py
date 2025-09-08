@@ -24,7 +24,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from .converters import to_tensor
@@ -343,8 +343,8 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
         return new_transition
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -399,8 +399,8 @@ class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
         return new_transition
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 

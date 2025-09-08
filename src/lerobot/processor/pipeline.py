@@ -29,7 +29,7 @@ import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
 from safetensors.torch import load_file, save_file
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
 from .core import EnvTransition, TransitionKey
@@ -170,8 +170,8 @@ class ProcessorStep(ABC):
 
     @abstractmethod
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -737,13 +737,13 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
                 raise TypeError(f"Step {i} ({type(step).__name__}) must inherit from ProcessorStep")
 
     def transform_features(
-        self, initial_features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, initial_features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Apply ALL steps in order. Only if a step has a features method, it will be called.
         We aggregate the dataset features of all steps.
         """
-        features: dict[FeatureType, dict[str, PolicyFeature]] = deepcopy(initial_features)
+        features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = deepcopy(initial_features)
 
         for _, step in enumerate(self.steps):
             out = step.transform_features(features)
@@ -1119,6 +1119,6 @@ class IdentityProcessorStep(ProcessorStep):
         return transition
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features

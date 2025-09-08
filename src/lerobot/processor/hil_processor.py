@@ -24,7 +24,7 @@ import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import ACTION
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
@@ -122,8 +122,8 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
         return new_complementary_data
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -164,8 +164,8 @@ class AddTeleopEventsAsInfoStep(InfoProcessorStep):
         return new_info
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -237,8 +237,8 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
         }
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Updates the image feature shapes in the policy features dictionary if resizing is applied.
 
@@ -250,10 +250,11 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
         """
         if self.resize_size is None:
             return features
-        # TODO(Steven, Michel): This will blow up
-        for key in features:
+        for key in features[PipelineFeatureType.OBSERVATION]:
             if "image" in key:
-                features[key] = PolicyFeature(type=features[key].type, shape=self.resize_size)
+                features[PipelineFeatureType.OBSERVATION][key] = PolicyFeature(
+                    type=features[key].type, shape=self.resize_size
+                )
         return features
 
 
@@ -303,8 +304,8 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
         self.current_step = 0
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -378,8 +379,8 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
         pass
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -480,8 +481,8 @@ class InterventionActionProcessorStep(ProcessorStep):
         }
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -584,6 +585,6 @@ class RewardClassifierProcessorStep(ProcessorStep):
         }
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features

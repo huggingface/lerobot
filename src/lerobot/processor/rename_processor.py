@@ -17,7 +17,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
@@ -54,15 +54,15 @@ class RenameCameraProcessorStep(ObservationProcessorStep):
         return {"rename_map": self.rename_map}
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """Transforms:
         - Each key in the observation that appears in `rename_map` is renamed to its value.
         - Keys not in `rename_map` remain unchanged.
         """
-        new_features = features.copy()
-        new_features[FeatureType.VISUAL] = {
-            self.rename_map.get(k, k): v for k, v in features[FeatureType.VISUAL].items()
+        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = features.copy()
+        new_features[PipelineFeatureType.OBSERVATION] = {
+            self.rename_map.get(k, k): v for k, v in features[PipelineFeatureType.OBSERVATION].items()
         }
         return new_features
 

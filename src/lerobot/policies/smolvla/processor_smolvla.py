@@ -16,7 +16,7 @@
 
 import torch
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
@@ -138,6 +138,6 @@ class SmolVLANewLineProcessor(ComplementaryDataProcessorStep):
         return new_complementary_data
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features

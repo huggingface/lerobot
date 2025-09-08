@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 from torch import Tensor
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
 from .core import EnvTransition
@@ -61,8 +61,8 @@ class AddBatchDimensionActionStep(ActionProcessorStep):
         return action.unsqueeze(0)
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Returns the input features unchanged.
 
@@ -119,8 +119,8 @@ class AddBatchDimensionObservationStep(ObservationProcessorStep):
         return observation
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Returns the input features unchanged.
 
@@ -176,8 +176,8 @@ class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
         return complementary_data
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Returns the input features unchanged.
 
@@ -233,8 +233,8 @@ class AddBatchDimensionProcessorStep(ProcessorStep):
         return transition
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Returns the input features unchanged.
 

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_STATE
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
@@ -150,22 +150,22 @@ class EEReferenceAndDelta(ActionProcessorStep):
         self._command_when_disabled = None
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
-        features[FeatureType.ACTION].pop("enabled", None)
-        features[FeatureType.ACTION].pop("target_x", None)
-        features[FeatureType.ACTION].pop("target_y", None)
-        features[FeatureType.ACTION].pop("target_z", None)
-        features[FeatureType.ACTION].pop("target_wx", None)
-        features[FeatureType.ACTION].pop("target_wy", None)
-        features[FeatureType.ACTION].pop("target_wz", None)
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        features[PipelineFeatureType.ACTION].pop("enabled", None)
+        features[PipelineFeatureType.ACTION].pop("target_x", None)
+        features[PipelineFeatureType.ACTION].pop("target_y", None)
+        features[PipelineFeatureType.ACTION].pop("target_z", None)
+        features[PipelineFeatureType.ACTION].pop("target_wx", None)
+        features[PipelineFeatureType.ACTION].pop("target_wy", None)
+        features[PipelineFeatureType.ACTION].pop("target_wz", None)
 
-        features[FeatureType.ACTION]["ee.x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[FeatureType.ACTION]["ee.y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[FeatureType.ACTION]["ee.z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[FeatureType.ACTION]["ee.wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[FeatureType.ACTION]["ee.wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[FeatureType.ACTION]["ee.wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["ee.x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["ee.y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["ee.z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["ee.wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["ee.wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["ee.wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         return features
 
 
@@ -236,8 +236,8 @@ class EEBoundsAndSafety(ActionProcessorStep):
         self._last_twist = None
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -314,8 +314,8 @@ class InverseKinematicsEEToJoints(ProcessorStep):
         return new_transition
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         features[FeatureType.ACTION]["gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         for name in self.motor_names:
             features[FeatureType.ACTION][f"{name}.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
@@ -393,8 +393,8 @@ class GripperVelocityToJoint(ProcessorStep):
         return new_transition
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         features[FeatureType.ACTION].pop("gripper", None)
         features[FeatureType.ACTION]["gripper.pos"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         features[FeatureType.STATE]["gripper.pos"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
@@ -437,8 +437,8 @@ class ForwardKinematicsJointsToEE(ObservationProcessorStep):
         return obs
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
             features[FeatureType.STATE][f"ee.{k}"] = PolicyFeature(type=FeatureType.STATE, shape=(1,))
@@ -475,6 +475,6 @@ class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessorStep):
         return new_comp
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features

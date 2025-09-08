@@ -20,7 +20,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
@@ -129,8 +129,8 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         return self._process_observation(observation)
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Transforms feature keys from the Gym standard to the LeRobot standard.
 
@@ -152,7 +152,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         """
         # Build a new features mapping keyed by the same FeatureType buckets
         # We assume callers already placed features in the correct FeatureType.
-        new_features: dict[FeatureType, dict[str, PolicyFeature]] = {ft: {} for ft in features.keys()}
+        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {ft: {} for ft in features.keys()}
 
         exact_pairs = {
             "pixels": OBS_IMAGE,

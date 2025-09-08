@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from lerobot.configs.types import FeatureType
+from lerobot.configs.types import FeatureType, PipelineFeatureType
 from lerobot.processor import (
     DataProcessorPipeline,
     ProcessorStepRegistry,
@@ -425,7 +425,7 @@ def test_value_types_preserved():
 def test_features_basic_renaming(policy_feature_factory):
     processor = RenameCameraProcessorStep(rename_map={"a": "x", "b": "y"})
     features = {
-        FeatureType.VISUAL: {
+        PipelineFeatureType.OBSERVATION: {
             "a": policy_feature_factory(FeatureType.VISUAL, (2,)),
             "b": policy_feature_factory(FeatureType.VISUAL, (3,)),
             "c": policy_feature_factory(FeatureType.VISUAL, (1,)),
@@ -435,29 +435,33 @@ def test_features_basic_renaming(policy_feature_factory):
     out = processor.transform_features(features.copy())
 
     # Values preserved and typed
-    assert out[FeatureType.VISUAL]["x"] == features[FeatureType.VISUAL]["a"]
-    assert out[FeatureType.VISUAL]["y"] == features[FeatureType.VISUAL]["b"]
-    assert out[FeatureType.VISUAL]["c"] == features[FeatureType.VISUAL]["c"]
+    assert out[PipelineFeatureType.OBSERVATION]["x"] == features[PipelineFeatureType.OBSERVATION]["a"]
+    assert out[PipelineFeatureType.OBSERVATION]["y"] == features[PipelineFeatureType.OBSERVATION]["b"]
+    assert out[PipelineFeatureType.OBSERVATION]["c"] == features[PipelineFeatureType.OBSERVATION]["c"]
 
     assert_contract_is_typed(out)
     # Input not mutated
-    assert set(features[FeatureType.VISUAL]) == {"a", "b", "c"}
+    assert set(features[PipelineFeatureType.OBSERVATION]) == {"a", "b", "c"}
 
 
 def test_features_overlapping_keys(policy_feature_factory):
     # Overlapping renames: both 'a' and 'b' exist. 'a'->'b', 'b'->'c'
     processor = RenameCameraProcessorStep(rename_map={"a": "b", "b": "c"})
     features = {
-        FeatureType.VISUAL: {
+        PipelineFeatureType.OBSERVATION: {
             "a": policy_feature_factory(FeatureType.VISUAL, (1,)),
             "b": policy_feature_factory(FeatureType.VISUAL, (2,)),
         },
     }
     out = processor.transform_features(features)
 
-    assert set(out[FeatureType.VISUAL]) == {"b", "c"}
-    assert out[FeatureType.VISUAL]["b"] == features[FeatureType.VISUAL]["a"]  # 'a' renamed to'b'
-    assert out[FeatureType.VISUAL]["c"] == features[FeatureType.VISUAL]["b"]  # 'b' renamed to 'c'
+    assert set(out[PipelineFeatureType.OBSERVATION]) == {"b", "c"}
+    assert (
+        out[PipelineFeatureType.OBSERVATION]["b"] == features[PipelineFeatureType.OBSERVATION]["a"]
+    )  # 'a' renamed to'b'
+    assert (
+        out[PipelineFeatureType.OBSERVATION]["c"] == features[PipelineFeatureType.OBSERVATION]["b"]
+    )  # 'b' renamed to 'c'
     assert_contract_is_typed(out)
 
 
@@ -470,7 +474,7 @@ def test_features_chained_processors(policy_feature_factory):
     pipeline = DataProcessorPipeline([processor1, processor2])
 
     spec = {
-        FeatureType.VISUAL: {
+        PipelineFeatureType.OBSERVATION: {
             "pos": policy_feature_factory(FeatureType.VISUAL, (7,)),
             "img": policy_feature_factory(FeatureType.VISUAL, (3, 64, 64)),
             "extra": policy_feature_factory(FeatureType.VISUAL, (1,)),
@@ -478,10 +482,16 @@ def test_features_chained_processors(policy_feature_factory):
     }
     out = pipeline.transform_features(initial_features=spec)
 
-    assert set(out[FeatureType.VISUAL]) == {"observation.state", "observation.image", "extra"}
-    assert out[FeatureType.VISUAL]["observation.state"] == spec[FeatureType.VISUAL]["pos"]
-    assert out[FeatureType.VISUAL]["observation.image"] == spec[FeatureType.VISUAL]["img"]
-    assert out[FeatureType.VISUAL]["extra"] == spec[FeatureType.VISUAL]["extra"]
+    assert set(out[PipelineFeatureType.OBSERVATION]) == {"observation.state", "observation.image", "extra"}
+    assert (
+        out[PipelineFeatureType.OBSERVATION]["observation.state"]
+        == spec[PipelineFeatureType.OBSERVATION]["pos"]
+    )
+    assert (
+        out[PipelineFeatureType.OBSERVATION]["observation.image"]
+        == spec[PipelineFeatureType.OBSERVATION]["img"]
+    )
+    assert out[PipelineFeatureType.OBSERVATION]["extra"] == spec[PipelineFeatureType.OBSERVATION]["extra"]
     assert_contract_is_typed(out)
 
 

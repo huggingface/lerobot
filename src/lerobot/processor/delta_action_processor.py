@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from torch import Tensor
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 
 from .pipeline import ActionProcessorStep, ProcessorStepRegistry
 
@@ -55,13 +55,15 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
         return delta_action
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
-        features[FeatureType.ACTION]["delta_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[FeatureType.ACTION]["delta_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[FeatureType.ACTION]["delta_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        features[PipelineFeatureType.ACTION]["delta_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["delta_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["delta_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         if self.use_gripper:
-            features[FeatureType.ACTION]["gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+            features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
         return features
 
 
@@ -126,8 +128,8 @@ class MapDeltaActionToRobotActionStep(ActionProcessorStep):
         return action
 
     def transform_features(
-        self, features: dict[FeatureType, dict[str, PolicyFeature]]
-    ) -> dict[FeatureType, dict[str, PolicyFeature]]:
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """Transform features to match output format."""
         features[FeatureType.ACTION].pop("delta_x", None)
         features[FeatureType.ACTION].pop("delta_y", None)
