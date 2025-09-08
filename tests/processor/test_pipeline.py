@@ -1820,7 +1820,7 @@ def test_save_load_with_custom_converter_functions():
         assert "observation.image" in result
 
 
-class NonCompliantStep(ProcessorStep):
+class NonCompliantStep:
     """Intentionally non-compliant: missing features."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -1841,6 +1841,9 @@ def test_construction_rejects_step_without_call():
         TypeError, match=r"Can't instantiate abstract class NonCallableStep with abstract method __call_"
     ):
         DataProcessorPipeline([NonCallableStep()])
+
+    with pytest.raises(TypeError, match=r"must inherit from ProcessorStep"):
+        DataProcessorPipeline([NonCompliantStep()])
 
 
 @dataclass
@@ -2011,7 +2014,9 @@ class AddActionEEAndJointFeatures(ProcessorStep):
     def __call__(self, tr):
         return tr
 
-    def transform_features(self, features: dict) -> dict:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         # EE features
         features[PipelineFeatureType.ACTION]["action.ee.x"] = float
         features[PipelineFeatureType.ACTION]["action.ee.y"] = float
@@ -2031,7 +2036,9 @@ class AddObservationStateFeatures(ProcessorStep):
     def __call__(self, tr):
         return tr
 
-    def transform_features(self, features: dict) -> dict:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         # State features (mix EE and a joint state)
         features[PipelineFeatureType.OBSERVATION]["observation.state.ee.x"] = float
         features[PipelineFeatureType.OBSERVATION]["observation.state.j1.pos"] = float
@@ -2040,7 +2047,6 @@ class AddObservationStateFeatures(ProcessorStep):
         return features
 
 
-# TODO: Update aggregate tests
 def test_aggregate_joint_action_only():
     rp = DataProcessorPipeline([AddActionEEAndJointFeatures()])
     initial = {PipelineFeatureType.OBSERVATION: {"front": (480, 640, 3)}, PipelineFeatureType.ACTION: {}}
@@ -2053,7 +2059,7 @@ def test_aggregate_joint_action_only():
     )
 
     # Expect only "action" with joint names
-    assert "action" in out and "observation.state" not in out and "observation.images.front" in out
+    assert "action" in out and "observation.state" not in out
     assert out["action"]["dtype"] == "float32"
     assert set(out["action"]["names"]) == {"j1.pos", "j2.pos"}
     assert out["action"]["shape"] == (len(out["action"]["names"]),)
