@@ -107,7 +107,7 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         if OBS_STATE in features[PipelineFeatureType.OBSERVATION]:
-            original_feature = features[OBS_STATE]
+            original_feature = features[PipelineFeatureType.OBSERVATION][OBS_STATE]
             # Double the shape to account for positions + velocities
             new_shape = (original_feature.shape[0] * 2,) + original_feature.shape[1:]
 

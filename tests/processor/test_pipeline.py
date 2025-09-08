@@ -1913,14 +1913,14 @@ def test_features_orders_and_merges(policy_feature_factory):
         [
             FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
             FeatureContractMutateStep("a", lambda v: PolicyFeature(type=v.type, shape=(3,))),
-            FeatureContractAddStep("b", policy_feature_factory(FeatureType.STATE, (2,))),
+            FeatureContractAddStep("b", policy_feature_factory(FeatureType.ENV, (2,))),
         ]
     )
     out = p.transform_features({PipelineFeatureType.OBSERVATION: {}})
     assert out[PipelineFeatureType.OBSERVATION]["a"].type == FeatureType.STATE and out[
         PipelineFeatureType.OBSERVATION
     ]["a"].shape == (3,)
-    assert out[PipelineFeatureType.OBSERVATION]["b"].type == FeatureType.STATE and out[
+    assert out[PipelineFeatureType.OBSERVATION]["b"].type == FeatureType.ENV and out[
         PipelineFeatureType.OBSERVATION
     ]["b"].shape == (2,)
     assert_contract_is_typed(out)
@@ -1930,7 +1930,7 @@ def test_features_respects_initial_without_mutation(policy_feature_factory):
     initial = {
         PipelineFeatureType.OBSERVATION: {
             "seed": policy_feature_factory(FeatureType.STATE, (7,)),
-            "nested": policy_feature_factory(FeatureType.STATE, (0,)),
+            "nested": policy_feature_factory(FeatureType.ENV, (0,)),
         }
     }
     p = DataProcessorPipeline(
@@ -1952,7 +1952,6 @@ def test_features_respects_initial_without_mutation(policy_feature_factory):
     assert_contract_is_typed(out)
 
 
-# TODO(Steven): Update this will blow up
 def test_features_execution_order_tracking():
     class Track(ProcessorStep):
         def __init__(self, label):
@@ -1965,12 +1964,18 @@ def test_features_execution_order_tracking():
             self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
         ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
             code = {"A": 1, "B": 2, "C": 3}[self.label]
-            pf = features.get("order", PolicyFeature(type=FeatureType.ENV, shape=()))
-            features["order"] = PolicyFeature(type=pf.type, shape=pf.shape + (code,))
+            pf = features[PipelineFeatureType.OBSERVATION].get(
+                "order", PolicyFeature(type=FeatureType.ENV, shape=())
+            )
+            features[PipelineFeatureType.OBSERVATION]["order"] = PolicyFeature(
+                type=pf.type, shape=pf.shape + (code,)
+            )
             return features
 
-    out = DataProcessorPipeline([Track("A"), Track("B"), Track("C")]).transform_features({})
-    assert out["order"].shape == (1, 2, 3)
+    out = DataProcessorPipeline([Track("A"), Track("B"), Track("C")]).transform_features(
+        initial_features={PipelineFeatureType.OBSERVATION: {}}
+    )
+    assert out[PipelineFeatureType.OBSERVATION]["order"].shape == (1, 2, 3)
 
 
 def test_features_remove_key(policy_feature_factory):

@@ -514,7 +514,6 @@ def test_state_processor_features_environment_and_agent_pos(policy_feature_facto
     assert_contract_is_typed(out)
 
 
-# TODO(Steven): Update this
 def test_state_processor_features_prefixed_inputs(policy_feature_factory):
     proc = VanillaObservationProcessorStep()
     features = {

@@ -32,7 +32,6 @@ from .core import EnvTransition, TransitionKey
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 
-# TODO(Steven): Update this for features to now be: dict[FeatureType, dict[str, PolicyFeature]]
 @dataclass
 class _NormalizationMixin:
     """

@@ -271,10 +271,10 @@ def test_save_and_load_pretrained():
 def test_registry_functionality():
     """Test that RenameProcessorStep is properly registered."""
     # Check that it's registered
-    assert "rename_camera_processor" in ProcessorStepRegistry.list()
+    assert "rename_observations_processor" in ProcessorStepRegistry.list()
 
     # Get from registry
-    retrieved_class = ProcessorStepRegistry.get("rename_camera_processor")
+    retrieved_class = ProcessorStepRegistry.get("rename_observations_processor")
     assert retrieved_class is RenameObservationsProcessorStep
 
     # Create instance from registry
@@ -299,7 +299,7 @@ def test_registry_based_save_load():
             config = json.load(f)
 
         assert "registry_name" in config["steps"][0]
-        assert config["steps"][0]["registry_name"] == "rename_camera_processor"
+        assert config["steps"][0]["registry_name"] == "rename_observations_processor"
         assert "class" not in config["steps"][0]  # Should use registry, not module path
 
         # Load should work
