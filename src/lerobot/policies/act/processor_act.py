@@ -23,7 +23,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     ProcessorKwargs,
-    RenameProcessorStep,
+    RenameCameraProcessorStep,
     UnnormalizerProcessorStep,
 )
 
@@ -58,7 +58,7 @@ def make_act_pre_post_processors(
         postprocessor_kwargs = {}
 
     input_steps = [
-        RenameProcessorStep(rename_map={}),
+        RenameCameraProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(

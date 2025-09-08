@@ -54,7 +54,7 @@ from .pipeline import (
     RobotProcessorPipeline,
     TruncatedProcessorStep,
 )
-from .rename_processor import RenameProcessorStep
+from .rename_processor import RenameCameraProcessorStep
 from .tokenizer_processor import TokenizerProcessorStep
 
 __all__ = [
@@ -85,7 +85,7 @@ __all__ = [
     "ProcessorKwargs",
     "ProcessorStep",
     "ProcessorStepRegistry",
-    "RenameProcessorStep",
+    "RenameCameraProcessorStep",
     "RewardClassifierProcessorStep",
     "RewardProcessorStep",
     "DataProcessorPipeline",

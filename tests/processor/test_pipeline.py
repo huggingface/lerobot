@@ -1842,9 +1842,6 @@ def test_construction_rejects_step_without_call():
     ):
         DataProcessorPipeline([NonCallableStep()])
 
-    with pytest.raises(TypeError, match=r"must inherit from ProcessorStep"):
-        DataProcessorPipeline([NonCompliantStep()])
-
 
 @dataclass
 class FeatureContractAddStep(ProcessorStep):

@@ -23,8 +23,8 @@ from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="rename_processor")
-class RenameProcessorStep(ObservationProcessorStep):
+@ProcessorStepRegistry.register(name="rename_camera_processor")
+class RenameCameraProcessorStep(ObservationProcessorStep):
     """
     A processor step that renames keys in an observation dictionary.
 
@@ -56,12 +56,15 @@ class RenameProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[FeatureType, dict[str, PolicyFeature]]
     ) -> dict[FeatureType, dict[str, PolicyFeature]]:
-        # TODO(Steven): This will blow up
         """Transforms:
         - Each key in the observation that appears in `rename_map` is renamed to its value.
         - Keys not in `rename_map` remain unchanged.
         """
-        return {self.rename_map.get(k, k): v for k, v in features.items()}
+        new_features = features.copy()
+        new_features[FeatureType.VISUAL] = {
+            self.rename_map.get(k, k): v for k, v in features[FeatureType.VISUAL].items()
+        }
+        return new_features
 
 
 def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -> dict[str, dict[str, Any]]:

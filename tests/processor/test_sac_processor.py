@@ -29,7 +29,7 @@ from lerobot.processor import (
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessorStep,
-    RenameProcessorStep,
+    RenameCameraProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
 )
@@ -91,7 +91,7 @@ def test_make_sac_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 4
-    assert isinstance(preprocessor.steps[0], RenameProcessorStep)
+    assert isinstance(preprocessor.steps[0], RenameCameraProcessorStep)
     assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[2], DeviceProcessorStep)
     assert isinstance(preprocessor.steps[3], NormalizerProcessorStep)

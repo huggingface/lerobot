@@ -30,7 +30,7 @@ from lerobot.processor import (
     EnvTransition,
     NormalizerProcessorStep,
     ProcessorStep,
-    RenameProcessorStep,
+    RenameCameraProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
 )
@@ -115,7 +115,7 @@ def test_make_pi0_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 6
-    assert isinstance(preprocessor.steps[0], RenameProcessorStep)
+    assert isinstance(preprocessor.steps[0], RenameCameraProcessorStep)
     assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[2], Pi0NewLineProcessor)
     # Step 3 would be TokenizerProcessorStep but it's mocked

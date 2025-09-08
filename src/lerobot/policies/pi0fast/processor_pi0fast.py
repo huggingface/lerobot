@@ -24,7 +24,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     ProcessorKwargs,
-    RenameProcessorStep,
+    RenameCameraProcessorStep,
     UnnormalizerProcessorStep,
 )
 
@@ -63,7 +63,7 @@ def make_pi0fast_pre_post_processors(
         postprocessor_kwargs = {}
 
     input_steps = [
-        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameCameraProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(

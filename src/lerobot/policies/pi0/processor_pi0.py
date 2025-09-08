@@ -29,7 +29,7 @@ from lerobot.processor import (
     ProcessorKwargs,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenameProcessorStep,
+    RenameCameraProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -129,7 +129,7 @@ def make_pi0_pre_post_processors(
 
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
-        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameCameraProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
         TokenizerProcessorStep(
