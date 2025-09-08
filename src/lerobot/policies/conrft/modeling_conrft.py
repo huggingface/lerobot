@@ -370,10 +370,10 @@ class ConRFTPolicy(PreTrainedPolicy):
             raise NotImplementedError
 
         # Vectorized: sample num_random actions in one call using the repeat axis
-        policy_actions, _ = self.consistency_policy(observations, repeat=num_random)
+        policy_actions, _ = self.consistency_policy(observations, action_embeddings=action_embeddings, repeat=num_random)
         # policy_actions: [B, num_random, action_dim]
 
-        next_actions_cql, _ = self.consistency_policy(next_observations, repeat=num_random)
+        next_actions_cql, _ = self.consistency_policy(next_observations, action_embeddings=next_action_embeddings, repeat=num_random)
         # next_actions_cql: [B, num_random, action_dim]
 
         # Combine all sampled actions [random, current, next]
