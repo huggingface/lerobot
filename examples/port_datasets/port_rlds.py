@@ -50,7 +50,7 @@ def determine_dataset_info(raw_dir: Path):
     return dataset_name, version, data_dir
 
 
-def generate_features_from_builder(builder: tfds.core.DatasetBuilder, dataset_name: str) -> dict[str, Any]:
+def generate_features_from_builder(builder, dataset_name: str) -> dict[str, Any]:
     """Generate LeRobot features schema from TFDS builder and dataset config."""
 
     # Generate state names based on encoding type
