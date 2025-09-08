@@ -14,12 +14,17 @@
 
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 
-from lerobot.policies.octo.base import AttentionRule, PrefixGroup, TimestepGroup, TokenMetadata
+from lerobot.policies.octo.base import (
+    RULE_MAP,
+    AttentionRule,
+    PrefixGroup,
+    TimestepGroup,
+    find_match,
+)
 from lerobot.policies.octo.tokenizers import ImageTokenizer, LanguageTokenizer, SmallStem16
 
 
@@ -311,61 +316,72 @@ class BlockTransformer(nn.Module):
         if self.enforce_causal:
             self._verify_causality(prefix_groups, timestep_groups)
 
-        def _get_position(i, tokens_per_elem):
-            return np.searchsorted(np.cumsum(tokens_per_elem), i, side="right")
-
+        device = timestep_groups[0].tokens.device
         horizon = timestep_groups[0].tokens.shape[1]
-        tokens_per_prefix_group = [group.tokens.shape[1] for group in prefix_groups]
-        tokens_per_timestep_group = [group.tokens.shape[2] for group in timestep_groups]
 
-        tokens_for_prefix = sum(tokens_per_prefix_group)
-        tokens_per_time_step = sum(tokens_per_timestep_group)
+        all_groups = prefix_groups + timestep_groups
+        num_groups = len(all_groups)
+
+        prefix_token_counts = [g.tokens.shape[1] for g in prefix_groups]
+        timestep_token_counts = [g.tokens.shape[2] for g in timestep_groups]
+
+        tokens_for_prefix = sum(prefix_token_counts)
+        tokens_per_time_step = sum(timestep_token_counts)
         total_tokens = tokens_for_prefix + tokens_per_time_step * horizon
 
-        # Create attention mask using numpy for compatibility with JAX implementation
-        attention_mask = np.zeros((total_tokens, total_tokens), dtype=int)
+        group_ids = torch.zeros(total_tokens, dtype=torch.long, device=device)
+        timesteps = torch.full((total_tokens,), -1, dtype=torch.long, device=device)
 
-        def get_token_metadata(i):
-            if i < tokens_for_prefix:
-                position = _get_position(i, tokens_per_prefix_group)
-                return TokenMetadata.create(prefix_groups[position], timestep=-1)
+        current_pos = 0
+        for i, count in enumerate(prefix_token_counts):
+            group_ids[current_pos : current_pos + count] = i
+            current_pos += count
 
-            i -= tokens_for_prefix
-            timestep, i = divmod(i, tokens_per_time_step)
-            position = _get_position(i, tokens_per_timestep_group)
-            return TokenMetadata.create(timestep_groups[position], timestep)
+        timestep_group_ids_per_step = []
+        for i, count in enumerate(timestep_token_counts):
+            timestep_group_ids_per_step.append(
+                torch.full(
+                    (count,),
+                    len(prefix_groups) + i,
+                    dtype=torch.long,
+                    device=device,
+                )
+            )
+        timestep_group_ids_per_step = torch.cat(timestep_group_ids_per_step)
 
-        # Apply attention rules
-        for i in range(total_tokens):  # Token attending
-            for j in range(total_tokens):  # Token being attended to
-                metadata_i = get_token_metadata(i)
-                metadata_j = get_token_metadata(j)
-                mask = int(metadata_i.should_attend_to(metadata_j))
-                attention_mask[i, j] = mask
+        start_pos = tokens_for_prefix
+        for t in range(horizon):
+            end_pos = start_pos + tokens_per_time_step
+            group_ids[start_pos:end_pos] = timestep_group_ids_per_step
+            timesteps[start_pos:end_pos] = t
+            start_pos = end_pos
 
-        # Convert to torch tensor and move to correct device
-        device = timestep_groups[0].tokens.device
-        attention_mask = torch.from_numpy(attention_mask).bool().to(device)
+        rules_table = torch.zeros(num_groups, num_groups, dtype=torch.long, device=device)
+        for i, group_i in enumerate(all_groups):
+            for j, group_j in enumerate(all_groups):
+                rule = find_match(group_i.attention_rules, group_j.name, AttentionRule.NEVER)
+                rules_table[i, j] = RULE_MAP[rule]
+
+        attending_rules = rules_table[group_ids[:, None], group_ids[None, :]]
+
+        timesteps_i = timesteps[:, None]
+        timesteps_j = timesteps[None, :]
+
+        mask = torch.zeros(total_tokens, total_tokens, dtype=torch.bool, device=device)
+        mask |= (attending_rules == RULE_MAP[AttentionRule.CAUSAL]) & (timesteps_j <= timesteps_i)
+        mask |= (attending_rules == RULE_MAP[AttentionRule.CURRENT]) & (timesteps_j == timesteps_i)
+        mask |= (attending_rules == RULE_MAP[AttentionRule.STRICT_PAST]) & (timesteps_j < timesteps_i)
+        mask |= attending_rules == RULE_MAP[AttentionRule.ALL]
 
         # Combine with padding mask
         pad_attention_mask = self._generate_pad_attention_mask(prefix_groups, timestep_groups)
-
-        # The attention mask from rules is (total_tokens, total_tokens)
-        # The padding mask is (batch, total_tokens, total_tokens)
-        # We need to combine them properly
         batch_size = pad_attention_mask.shape[0]
-        attention_mask = attention_mask.unsqueeze(0).expand(
-            batch_size, -1, -1
-        )  # (batch, total_tokens, total_tokens)
-        # attention_mask = attention_mask.unsqueeze(1)  # (batch, 1, total_tokens, total_tokens)
 
-        # Combine with padding mask using logical AND
-        attention_mask = attention_mask & pad_attention_mask
+        attention_mask = mask.unsqueeze(0) & pad_attention_mask
 
         num_attention_heads = self.transformer_kwargs["num_attention_heads"]
-
         attention_mask = attention_mask.unsqueeze(1).expand(
-            batch_size, self.transformer_kwargs["num_attention_heads"], total_tokens, total_tokens
+            batch_size, num_attention_heads, total_tokens, total_tokens
         )
         attention_mask = attention_mask.reshape(batch_size * num_attention_heads, total_tokens, total_tokens)
 

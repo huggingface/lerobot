@@ -15,7 +15,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from fnmatch import fnmatch
-from typing import Any, Dict, List, Mapping, Union
+from typing import Any, Dict, List, Mapping
 
 import torch
 
@@ -30,45 +30,21 @@ class AttentionRule(Enum):
     ALL = "all"
 
 
+RULE_MAP = {
+    AttentionRule.NEVER: 0,
+    AttentionRule.CAUSAL: 1,
+    AttentionRule.CURRENT: 2,
+    AttentionRule.STRICT_PAST: 3,
+    AttentionRule.ALL: 4,
+}
+
+
 def find_match(pattern_dict: Dict[str, Any], name: str, default: Any) -> Any:
     """Find the first matching pattern in the dictionary, or return the default value."""
     for pattern, value in pattern_dict.items():
         if fnmatch(name, pattern):
             return value
     return default
-
-
-@dataclass
-class TokenMetadata:
-    """Attention mask logic supported by AttentionRule."""
-
-    name: str
-    timestep: int  # -1 for prefix tokens
-    attention_rules: Mapping[str, AttentionRule]
-
-    @classmethod
-    def create(cls, group: Union["PrefixGroup", "TimestepGroup"], timestep: int):
-        return cls(
-            timestep=timestep,
-            name=group.name,
-            attention_rules=group.attention_rules,
-        )
-
-    def should_attend_to(self, other_metadata: "TokenMetadata") -> bool:
-        attention_rule = find_match(self.attention_rules, other_metadata.name, AttentionRule.NEVER)
-
-        if attention_rule == AttentionRule.CAUSAL:
-            return other_metadata.timestep <= self.timestep
-        elif attention_rule == AttentionRule.CURRENT:
-            return other_metadata.timestep == self.timestep
-        elif attention_rule == AttentionRule.STRICT_PAST:
-            return other_metadata.timestep < self.timestep
-        elif attention_rule == AttentionRule.ALL:
-            return True
-        elif attention_rule == AttentionRule.NEVER:
-            return False
-        else:
-            raise ValueError(f"Invalid attention rule: {attention_rule}")
 
 
 @dataclass
