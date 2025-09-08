@@ -102,6 +102,12 @@ def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
     return hf_ds.data.nbytes // (1024**2)
 
 
+def get_hf_dataset_cache_dir(hf_ds: Dataset) -> Path | None:
+    if hf_ds.cache_files is None or len(hf_ds.cache_files) == 0:
+        return None
+    return Path(hf_ds.cache_files[0]["filename"]).parents[2]
+
+
 def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -> tuple[int, int]:
     if file_idx == chunks_size - 1:
         file_idx = 0
