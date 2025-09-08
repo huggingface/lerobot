@@ -403,7 +403,7 @@ class GripperVelocityToJoint(ProcessorStep):
         features[PipelineFeatureType.ACTION]["gripper.pos"] = PolicyFeature(
             type=FeatureType.ACTION, shape=(1,)
         )
-        features[PipelineFeatureType.OBSERVATION]["gripper.pos"] = PolicyFeature(
+        features[PipelineFeatureType.OBSERVATION][f"{OBS_STATE}.gripper.pos"] = PolicyFeature(
             type=FeatureType.STATE, shape=(1,)
         )
 
@@ -449,7 +449,7 @@ class ForwardKinematicsJointsToEE(ObservationProcessorStep):
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
-            features[PipelineFeatureType.OBSERVATION][f"ee.{k}"] = PolicyFeature(
+            features[PipelineFeatureType.OBSERVATION][f"{OBS_STATE}.ee.{k}"] = PolicyFeature(
                 type=FeatureType.STATE, shape=(1,)
             )
         return features
