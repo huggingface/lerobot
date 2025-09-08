@@ -20,7 +20,7 @@ from pathlib import Path
 from datatrove.executor import LocalPipelineExecutor
 from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
-from port_datasets.droid_rlds.port_droid import DROID_SHARDS
+from port_droid import DROID_SHARDS
 
 
 class PortDroidShards(PipelineStep):
@@ -35,7 +35,7 @@ class PortDroidShards(PipelineStep):
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         from datasets.utils.tqdm import disable_progress_bars
-        from port_datasets.droid_rlds.port_droid import port_droid, validate_dataset
+        from port_droid import port_droid, validate_dataset
 
         from lerobot.utils.utils import init_logging
 
@@ -75,7 +75,7 @@ class PortRLDSShards(PipelineStep):
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         from datasets.utils.tqdm import disable_progress_bars
-        from port_datasets.port_rlds import port_rlds, validate_dataset
+        from port_rlds import port_rlds, validate_dataset
 
         from lerobot.utils.utils import init_logging
 
@@ -171,7 +171,8 @@ def main():
     parser.add_argument(
         "--logs-dir",
         type=Path,
-        help="Path to logs directory for `datatrove`.",
+        default=Path("./logs"),
+        help="Path to logs directory for `datatrove` (default: ./logs).",
     )
     parser.add_argument(
         "--dataset-type",
