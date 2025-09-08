@@ -20,12 +20,11 @@ TODO(alexander-soare):
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
 """
 
-
+import math
 import os
 from collections import deque
 from collections.abc import Callable
 
-import math
 import einops
 import numpy as np
 import torch
@@ -36,7 +35,7 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from torch import Tensor, nn
 from transformers import AutoModel, AutoTokenizer
 
-from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE, LANG_INSTRUCTION
+from lerobot.constants import ACTION, LANG_INSTRUCTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -108,7 +107,11 @@ class DiffusionPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         # stack n latest observations from the queue
-        batch = {k: torch.stack(list(self._queues[k]), dim=1) if k != LANG_INSTRUCTION else self._queues[k][0] for k in batch if k in self._queues}
+        batch = {
+            k: torch.stack(list(self._queues[k]), dim=1) if k != LANG_INSTRUCTION else self._queues[k][0]
+            for k in batch
+            if k in self._queues
+        }
         actions = self.diffusion.generate_actions(batch)
 
         # TODO(rcadene): make above methods return output dictionary?
@@ -541,7 +544,7 @@ class LanguageEncoder(nn.Module):
 
     def __init__(self, config: DiffusionConfig):
         super().__init__()
-        os.environ["TOKENIZERS_PARALLELISM"] = "true" # needed to suppress warning about potential deadlock
+        os.environ["TOKENIZERS_PARALLELISM"] = "true"  # needed to suppress warning about potential deadlock
         if config.tokenizer is None:
             tokenizer = "distilbert-base-uncased"
         else:
