@@ -121,6 +121,21 @@ def teleop_loop(
     robot_action_processor: RobotProcessorPipeline[dict[str, Any]] | None = None,
     robot_observation_processor: RobotProcessorPipeline[EnvTransition] | None = None,
 ):
+    """
+    This function continuously reads actions from a teleoperation device, processes them through optional
+    pipelines, sends them to a robot, and optionally displays the robot's state. The loop runs at a
+    specified frequency until a set duration is reached or it is manually interrupted.
+
+    Args:
+        teleop: The teleoperator device instance providing control actions.
+        robot: The robot instance being controlled.
+        fps: The target frequency for the control loop in frames per second.
+        display_data: If True, fetches robot observations and displays them in the console and Rerun.
+        duration: The maximum duration of the teleoperation loop in seconds. If None, the loop runs indefinitely.
+        teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
+        robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
+        robot_observation_processor: An optional pipeline to process raw observations from the robot.
+    """
     # Initialize processors with defaults if not provided
     teleop_action_processor: RobotProcessorPipeline[EnvTransition] = (
         teleop_action_processor
