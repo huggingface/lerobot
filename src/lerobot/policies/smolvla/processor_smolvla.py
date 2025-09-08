@@ -39,6 +39,30 @@ def make_smolvla_pre_post_processors(
     preprocessor_kwargs: ProcessorKwargs | None = None,
     postprocessor_kwargs: ProcessorKwargs | None = None,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """
+    Constructs pre-processor and post-processor pipelines for the SmolVLA policy.
+
+    The pre-processing pipeline prepares input data for the model by:
+    1.  Renaming features to match pretrained configurations.
+    2.  Normalizing input and output features based on dataset statistics.
+    3.  Adding a batch dimension.
+    4.  Ensuring the language task description ends with a newline character.
+    5.  Tokenizing the language task description.
+    6.  Moving all data to the specified device.
+
+    The post-processing pipeline handles the model's output by:
+    1.  Moving data to the CPU.
+    2.  Unnormalizing the output actions to their original scale.
+
+    Args:
+        config: The configuration object for the SmolVLA policy.
+        dataset_stats: A dictionary of statistics for normalization.
+        preprocessor_kwargs: Additional arguments for the pre-processor pipeline.
+        postprocessor_kwargs: Additional arguments for the post-processor pipeline.
+
+    Returns:
+        A tuple containing the configured pre-processor and post-processor pipelines.
+    """
     if preprocessor_kwargs is None:
         preprocessor_kwargs = {}
     if postprocessor_kwargs is None:
@@ -83,7 +107,13 @@ def make_smolvla_pre_post_processors(
 
 @ProcessorStepRegistry.register(name="smolvla_new_line_processor")
 class SmolVLANewLineProcessor(ComplementaryDataProcessorStep):
-    """Add a new line to the end of the task if it doesn't have one."""
+    """
+    A processor step that ensures the 'task' description ends with a newline character.
+
+    This step is necessary for certain tokenizers (e.g., PaliGemma) that expect a
+    newline at the end of the prompt. It handles both single string tasks and lists
+    of string tasks.
+    """
 
     def complementary_data(self, complementary_data):
         if "task" not in complementary_data:

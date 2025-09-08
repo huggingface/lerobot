@@ -25,7 +25,18 @@ from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 @dataclass
 @ProcessorStepRegistry.register(name="rename_processor")
 class RenameProcessorStep(ObservationProcessorStep):
-    """Rename processor that renames keys in the observation."""
+    """
+    A processor step that renames keys in an observation dictionary.
+
+    This step is useful for creating a standardized data interface by mapping keys
+    from an environment's format to the format expected by a LeRobot policy or
+    other downstream components.
+
+    Attributes:
+        rename_map: A dictionary mapping from old key names to new key names.
+                    Keys present in an observation that are not in this map will
+                    be kept with their original names.
+    """
 
     rename_map: dict[str, str] = field(default_factory=dict)
 
@@ -51,7 +62,22 @@ class RenameProcessorStep(ObservationProcessorStep):
 
 
 def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -> dict[str, dict[str, Any]]:
-    """Rename keys in the stats dictionary according to rename_map (defensive copy)."""
+    """
+    Renames the top-level keys in a statistics dictionary using a provided mapping.
+
+    This is a helper function typically used to keep normalization statistics
+    consistent with renamed observation or action features. It performs a defensive
+    deep copy to avoid modifying the original `stats` dictionary.
+
+    Args:
+        stats: A nested dictionary of statistics, where top-level keys are
+               feature names (e.g., `{"observation.state": {"mean": 0.5}}`).
+        rename_map: A dictionary mapping old feature names to new feature names.
+
+    Returns:
+        A new statistics dictionary with its top-level keys renamed. Returns an
+        empty dictionary if the input `stats` is empty.
+    """
     if not stats:
         return {}
     renamed: dict[str, dict[str, Any]] = {}

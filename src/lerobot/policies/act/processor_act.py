@@ -34,6 +34,24 @@ def make_act_pre_post_processors(
     preprocessor_kwargs: ProcessorKwargs | None = None,
     postprocessor_kwargs: ProcessorKwargs | None = None,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Creates the pre- and post-processing pipelines for the ACT policy.
+
+    The pre-processing pipeline handles normalization, batching, and device placement for the model inputs.
+    The post-processing pipeline handles unnormalization and moves the model outputs back to the CPU.
+
+    Args:
+        config (ACTConfig): The ACT policy configuration object.
+        dataset_stats (dict[str, dict[str, torch.Tensor]] | None): A dictionary containing dataset
+            statistics (e.g., mean and std) used for normalization. Defaults to None.
+        preprocessor_kwargs (ProcessorKwargs | None): Extra keyword arguments to pass to the
+            preprocessor pipeline's constructor. Defaults to None.
+        postprocessor_kwargs (ProcessorKwargs | None): Extra keyword arguments to pass to the
+            postprocessor pipeline's constructor. Defaults to None.
+
+    Returns:
+        tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]: A tuple containing the
+        pre-processor pipeline and the post-processor pipeline.
+    """
     if preprocessor_kwargs is None:
         preprocessor_kwargs = {}
     if postprocessor_kwargs is None:

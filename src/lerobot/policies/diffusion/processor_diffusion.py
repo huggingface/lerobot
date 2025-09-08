@@ -35,6 +35,32 @@ def make_diffusion_pre_post_processors(
     preprocessor_kwargs: ProcessorKwargs | None = None,
     postprocessor_kwargs: ProcessorKwargs | None = None,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """
+    Constructs pre-processor and post-processor pipelines for a diffusion policy.
+
+    The pre-processing pipeline prepares the input data for the model by:
+    1. Renaming features (if a `rename_map` is provided in `preprocessor_kwargs`).
+    2. Normalizing the input and output features based on dataset statistics.
+    3. Adding a batch dimension.
+    4. Moving the data to the specified device.
+
+    The post-processing pipeline handles the model's output by:
+    1. Moving the data to the CPU.
+    2. Unnormalizing the output features to their original scale.
+
+    Args:
+        config: The configuration object for the diffusion policy,
+            containing feature definitions, normalization mappings, and device information.
+        dataset_stats: A dictionary of statistics used for normalization.
+            Defaults to None.
+        preprocessor_kwargs: Additional keyword arguments
+            for the pre-processor pipeline. Defaults to an empty dictionary.
+        postprocessor_kwargs: Additional keyword arguments
+            for the post-processor pipeline. Defaults to an empty dictionary.
+
+    Returns:
+        A tuple containing the configured pre-processor and post-processor pipelines.
+    """
     if preprocessor_kwargs is None:
         preprocessor_kwargs = {}
     if postprocessor_kwargs is None:

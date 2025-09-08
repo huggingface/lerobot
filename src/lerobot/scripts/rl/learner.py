@@ -103,11 +103,6 @@ from lerobot.utils.wandb_utils import WandBLogger
 LOG_PREFIX = "[LEARNER]"
 
 
-#################################################
-# MAIN ENTRY POINTS AND CORE ALGORITHM FUNCTIONS #
-#################################################
-
-
 @parser.wrap()
 def train_cli(cfg: TrainRLServerPipelineConfig):
     if not use_threads(cfg):
@@ -250,9 +245,7 @@ def start_learner_threads(
     logging.info("[LEARNER] queues closed")
 
 
-#################################################
-# Core algorithm functions #
-#################################################
+# Core algorithm functions
 
 
 def add_actor_information_and_train(
@@ -820,9 +813,7 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
     return optimizers, lr_scheduler
 
 
-#################################################
-# Training setup functions #
-#################################################
+# Training setup functions
 
 
 def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipelineConfig:
@@ -1023,9 +1014,7 @@ def initialize_offline_replay_buffer(
     return offline_replay_buffer
 
 
-#################################################
-# Utilities/Helpers functions #
-#################################################
+# Utilities/Helpers functions
 
 
 def get_observation_features(

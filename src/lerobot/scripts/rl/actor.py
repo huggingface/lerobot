@@ -98,9 +98,7 @@ from lerobot.utils.utils import (
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
-#################################################
-# Main entry point #
-#################################################
+# Main entry point
 
 
 @parser.wrap()
@@ -207,9 +205,7 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     logging.info("[ACTOR] queues closed")
 
 
-#################################################
-# Core algorithm functions #
-#################################################
+# Core algorithm functions
 
 
 def act_with_policy(
@@ -406,9 +402,7 @@ def act_with_policy(
             busy_wait(1 / cfg.env.fps - dt_time)
 
 
-#################################################
-#  Communication Functions - Group all gRPC/messaging functions  #
-#################################################
+#  Communication Functions - Group all gRPC/messaging functions
 
 
 def establish_learner_connection(
@@ -653,9 +647,7 @@ def interactions_stream(
     return services_pb2.Empty()
 
 
-#################################################
-#  Policy functions #
-#################################################
+#  Policy functions
 
 
 def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
@@ -687,9 +679,7 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
             logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
 
 
-#################################################
-#  Utilities functions #
-#################################################
+#  Utilities functions
 
 
 def push_transitions_to_transport_queue(transitions: list, transitions_queue):

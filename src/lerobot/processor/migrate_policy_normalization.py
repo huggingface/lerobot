@@ -15,16 +15,22 @@
 # limitations under the License.
 
 """
-Generic script to migrate any policy model with normalization layers to the new pipeline-based system.
+A generic script to migrate LeRobot policies with built-in normalization layers to the new
+pipeline-based processor system.
 
-This script:
-1. Loads an existing pretrained policy model
-2. Extracts normalization statistics from the model
-3. Creates both preprocessor and postprocessor:
-   - Preprocessor: normalizes both inputs (observations) and outputs (actions) for training
-   - Postprocessor: unnormalizes outputs (actions) for inference
-4. Removes normalization layers from the model state_dict
-5. Saves the new model and both processors
+This script performs the following steps:
+1.  Loads a pretrained policy model and its configuration from a local path or the
+    Hugging Face Hub.
+2.  Scans the model's state dictionary to extract normalization statistics (e.g., mean,
+    std, min, max) for all features.
+3.  Creates two new processor pipelines:
+    - A preprocessor that normalizes inputs (observations) and outputs (actions).
+    - A postprocessor that unnormalizes outputs (actions) for inference.
+4.  Removes the original normalization layers from the model's state dictionary,
+    creating a "clean" model.
+5.  Saves the new clean model, the preprocessor, the postprocessor, and a generated
+    model card to a new directory.
+6.  Optionally pushes all the new artifacts to the Hugging Face Hub.
 
 Usage:
     python src/lerobot/processor/migrate_policy_normalization.py \
@@ -68,7 +74,21 @@ POLICY_CLASSES = {
 
 
 def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str, dict[str, torch.Tensor]]:
-    """Extract normalization statistics from model state_dict."""
+    """
+    Scans a model's state_dict to find and extract normalization statistics.
+
+    This function identifies keys corresponding to normalization layers (e.g., those
+    for mean, std, min, max) based on a set of predefined patterns and organizes
+    them into a nested dictionary.
+
+    Args:
+        state_dict: The state dictionary of a pretrained policy model.
+
+    Returns:
+        A nested dictionary where outer keys are feature names (e.g.,
+        'observation.state') and inner keys are statistic types ('mean', 'std'),
+        mapping to their corresponding tensor values.
+    """
     stats = {}
 
     # Define patterns to match and their prefixes to remove
@@ -112,7 +132,25 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
 def detect_features_and_norm_modes(
     config: dict[str, Any], stats: dict[str, dict[str, torch.Tensor]]
 ) -> tuple[dict[str, PolicyFeature], dict[FeatureType, NormalizationMode]]:
-    """Detect features and normalization modes from config and stats."""
+    """
+    Infers policy features and normalization modes from the model config and stats.
+
+    This function first attempts to find feature definitions and normalization
+    mappings directly from the policy's configuration file. If this information is
+    not present, it infers it from the extracted normalization statistics, using
+    tensor shapes to determine feature shapes and the presence of specific stat
+    keys (e.g., 'mean'/'std' vs 'min'/'max') to determine the normalization mode.
+    It applies sensible defaults if inference is not possible.
+
+    Args:
+        config: The policy's configuration dictionary from `config.json`.
+        stats: The normalization statistics extracted from the model's state_dict.
+
+    Returns:
+        A tuple containing:
+        - A dictionary mapping feature names to `PolicyFeature` objects.
+        - A dictionary mapping `FeatureType` enums to `NormalizationMode` enums.
+    """
     features = {}
     norm_modes = {}
 
@@ -204,7 +242,19 @@ def detect_features_and_norm_modes(
 
 
 def remove_normalization_layers(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    """Remove normalization layers from state_dict."""
+    """
+    Creates a new state_dict with all normalization-related layers removed.
+
+    This function filters the original state dictionary, excluding any keys that
+    match a set of predefined patterns associated with normalization modules.
+
+    Args:
+        state_dict: The original model state dictionary.
+
+    Returns:
+        A new state dictionary containing only the core model weights, without
+        any normalization parameters.
+    """
     new_state_dict = {}
 
     # Patterns to remove
@@ -228,7 +278,16 @@ def remove_normalization_layers(state_dict: dict[str, torch.Tensor]) -> dict[str
 
 
 def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[str, PolicyFeature]:
-    """Convert features from old format to PolicyFeature objects."""
+    """
+    Converts a feature dictionary from the old config format to the new `PolicyFeature` format.
+
+    Args:
+        features_dict: The feature dictionary in the old format, where values are
+                       simple dictionaries (e.g., `{"shape": [7]}`).
+
+    Returns:
+        A dictionary mapping feature names to `PolicyFeature` dataclass objects.
+    """
     converted_features = {}
 
     for key, feature_dict in features_dict.items():
@@ -254,8 +313,18 @@ def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[
 def load_model_from_hub(
     repo_id: str, revision: str = None
 ) -> tuple[dict[str, torch.Tensor], dict[str, Any], dict[str, Any]]:
-    """Load model state_dict and config from hub."""
-    # Download files
+    """
+    Downloads and loads a model's state_dict and configs from the Hugging Face Hub.
+
+    Args:
+        repo_id: The repository ID on the Hub (e.g., 'lerobot/aloha').
+        revision: The specific git revision (branch, tag, or commit hash) to use.
+
+    Returns:
+        A tuple containing the model's state dictionary, the policy configuration,
+        and the training configuration.
+    """
+    # Download files.
     safetensors_path = hf_hub_download(repo_id=repo_id, filename="model.safetensors", revision=revision)
 
     config_path = hf_hub_download(repo_id=repo_id, filename="config.json", revision=revision)

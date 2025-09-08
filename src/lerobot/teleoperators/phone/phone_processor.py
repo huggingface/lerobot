@@ -26,28 +26,35 @@ from lerobot.teleoperators.phone.config_phone import PhoneOS
 @dataclass
 class MapPhoneActionToRobotAction(ActionProcessorStep):
     """
-    Map calibrated phone pose (actions) to the inputs for robot actions
+    Maps calibrated phone pose actions to standardized robot action inputs.
 
-    Expected input ACTION keys:
-    {
-        "action.phone.enabled": bool,
-        "action.phone.pos": np.ndarray,
-        "action.phone.rot": Rotation,
-        "action.phone.raw_inputs": dict,
-    }
+    This processor step acts as a bridge between the phone teleoperator's output
+    and the robot's expected action format. It remaps the phone's 6-DoF pose
+    (position and rotation) to the robot's target end-effector pose, applying
+    necessary axis inversions and swaps. It also interprets platform-specific
+    button presses to generate a gripper command.
 
-    Output ACTION keys:
-    {
-        "action.enabled": bool,
-        "action.ee.{x,y,z,wx,wy,wz}" : float
-        "action.gripper": float,
-    }
+    Attributes:
+        platform: The operating system of the phone (iOS or Android), used
+            to determine the correct button mappings for the gripper.
     """
 
     platform: PhoneOS
     _enabled_prev: bool = field(default=False, init=False, repr=False)
 
     def action(self, act: dict) -> dict:
+        """
+        Processes the phone action dictionary to create a robot action dictionary.
+
+        Args:
+            act: The input action dictionary from the phone teleoperator.
+
+        Returns:
+            A new action dictionary formatted for the robot controller.
+
+        Raises:
+            ValueError: If 'pos' or 'rot' keys are missing from the input action.
+        """
         # Pop them from the action
         enabled = bool(act.pop(f"{ACTION}.phone.enabled", 0))
         pos = act.pop(f"{ACTION}.phone.pos", None)

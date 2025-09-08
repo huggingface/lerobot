@@ -1,4 +1,4 @@
-# !/usr/bin/env python
+#!/usr/bin/env python
 
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
@@ -38,18 +38,27 @@ from lerobot.utils.rotation import Rotation
 @dataclass
 class EEReferenceAndDelta(ActionProcessorStep):
     """
-    Compute the desired end-effector pose from the target pose and the current pose.
+    Computes a target end-effector pose from a relative delta command.
 
-    Input ACTION keys:
-    {
-        "action.ee.{x,y,z,wx,wy,wz}" : float
-        "complementary_data.raw_joint_positions": dict,
-    }
+    This step takes a desired change in position and orientation (`target_*`) and applies it to a
+    reference end-effector pose to calculate an absolute target pose. The reference pose is derived
+    from the current robot joint positions using forward kinematics.
 
-    Output ACTION keys:
-    {
-        "action.ee.{x,y,z,wx,wy,wz}" : float
-    }
+    The processor can operate in two modes:
+    1.  `use_latched_reference=True`: The reference pose is "latched" or saved at the moment the action
+        is first enabled. Subsequent commands are relative to this fixed reference.
+    2.  `use_latched_reference=False`: The reference pose is updated to the robot's current pose at
+        every step.
+
+    Attributes:
+        kinematics: The robot's kinematic model for forward kinematics.
+        end_effector_step_sizes: A dictionary scaling the input delta commands.
+        motor_names: A list of motor names required for forward kinematics.
+        use_latched_reference: If True, latch the reference pose on enable; otherwise, always use the
+            current pose as the reference.
+        reference_ee_pose: Internal state storing the latched reference pose.
+        _prev_enabled: Internal state to detect the rising edge of the enable signal.
+        _command_when_disabled: Internal state to hold the last command while disabled.
     """
 
     kinematics: RobotKinematics
@@ -135,6 +144,7 @@ class EEReferenceAndDelta(ActionProcessorStep):
         return new_action
 
     def reset(self):
+        """Resets the internal state of the processor."""
         self._prev_enabled = False
         self.reference_ee_pose = None
         self._command_when_disabled = None
@@ -161,17 +171,17 @@ class EEReferenceAndDelta(ActionProcessorStep):
 @dataclass
 class EEBoundsAndSafety(ActionProcessorStep):
     """
-    Clip the end-effector pose to the bounds and check for jumps.
+    Clips the end-effector pose to predefined bounds and checks for unsafe jumps.
 
-    Input ACTION keys:
-    {
-        "action.ee.{x,y,z,wx,wy,wz}" : float
-    }
+    This step ensures that the target end-effector pose remains within a safe operational workspace.
+    It also moderates the command to prevent large, sudden movements between consecutive steps.
 
-    Output ACTION keys:
-    {
-        "action.ee.{x,y,z,wx,wy,wz}" : float
-    }
+    Attributes:
+        end_effector_bounds: A dictionary with "min" and "max" keys for position clipping.
+        max_ee_step_m: The maximum allowed change in position (in meters) between steps.
+        max_ee_twist_step_rad: The maximum allowed change in orientation (in radians) between steps.
+        _last_pos: Internal state storing the last commanded position.
+        _last_twist: Internal state storing the last commanded orientation.
     """
 
     end_effector_bounds: dict
@@ -219,6 +229,7 @@ class EEBoundsAndSafety(ActionProcessorStep):
         return act
 
     def reset(self):
+        """Resets the last known position and orientation."""
         self._last_pos = None
         self._last_twist = None
 
@@ -232,21 +243,17 @@ class EEBoundsAndSafety(ActionProcessorStep):
 @dataclass
 class InverseKinematicsEEToJoints(ProcessorStep):
     """
-    Compute the desired joint positions from the desired end-effector pose.
+    Computes desired joint positions from a target end-effector pose using inverse kinematics (IK).
 
-    Input ACTION keys:
-    {
-        "action.ee.{x,y,z,wx,wy,wz}" : float
-        "complementary_data.raw_joint_positions": dict,
-    }
+    This step translates a Cartesian command (position and orientation of the end-effector) into
+    the corresponding joint-space commands for each motor.
 
-    Output ACTION keys:
-    {
-        "action.joint_name_1.pos": float,
-        "action.joint_name_2.pos": float,
-        ...
-        "action.joint_name_n.pos": float,
-    }
+    Attributes:
+        kinematics: The robot's kinematic model for inverse kinematics.
+        motor_names: A list of motor names for which to compute joint positions.
+        q_curr: Internal state storing the last joint positions, used as an initial guess for the IK solver.
+        initial_guess_current_joints: If True, use the robot's current joint state as the IK guess.
+            If False, use the solution from the previous step.
     """
 
     kinematics: RobotKinematics
@@ -312,6 +319,7 @@ class InverseKinematicsEEToJoints(ProcessorStep):
         return features
 
     def reset(self):
+        """Resets the initial guess for the IK solver."""
         self.q_curr = None
 
 
@@ -319,17 +327,18 @@ class InverseKinematicsEEToJoints(ProcessorStep):
 @dataclass
 class GripperVelocityToJoint(ProcessorStep):
     """
-    Convert the gripper velocity to a joint velocity.
+    Converts a gripper velocity command into a target gripper joint position.
 
-    Input ACTION keys:
-    {
-        "action.gripper": float,
-    }
+    This step integrates a normalized velocity command over time to produce a position command,
+    taking the current gripper position as a starting point. It also supports a discrete mode
+    where integer actions map to open, close, or no-op.
 
-    Output ACTION keys:
-    {
-        "action.gripper.pos": float,
-    }
+    Attributes:
+        motor_names: A list of motor names, which must include 'gripper'.
+        speed_factor: A scaling factor to convert the normalized velocity command to a position change.
+        clip_min: The minimum allowed gripper joint position.
+        clip_max: The maximum allowed gripper joint position.
+        discrete_gripper: If True, treat the input action as discrete (0: open, 1: close, 2: stay).
     """
 
     motor_names: list[str]
@@ -365,7 +374,7 @@ class GripperVelocityToJoint(ProcessorStep):
         raw = comp.get("raw_joint_positions") or {}
         curr_pos = float(raw.get("gripper"))
 
-        # Compute desired gripper velocity
+        # Compute desired gripper position
         u = float(act.get(f"{ACTION}.gripper", 0.0))
         delta = u * float(self.speed_factor)
         gripper_pos = float(np.clip(curr_pos + delta, self.clip_min, self.clip_max))
@@ -391,17 +400,14 @@ class GripperVelocityToJoint(ProcessorStep):
 @dataclass
 class ForwardKinematicsJointsToEE(ObservationProcessorStep):
     """
-    Compute the end-effector pose from the joint positions.
+    Computes the end-effector pose from joint positions using forward kinematics (FK).
 
-    Input OBSERVATION keys:
-    {
-        "observation.state.{joint_name_1,joint_name_2,...,joint_name_n}.pos": float,
-    }
+    This step is typically used to add the robot's Cartesian pose to the observation space,
+    which can be useful for visualization or as an input to a policy.
 
-    Output OBSERVATION keys:
-    {
-        "observation.state.ee.{x,y,z,wx,wy,wz}" : float
-    }
+    Attributes:
+        kinematics: The robot's kinematic model.
+        motor_names: A list of motor names whose joint positions are used for FK.
     """
 
     kinematics: RobotKinematics
@@ -435,10 +441,14 @@ class ForwardKinematicsJointsToEE(ObservationProcessorStep):
 @dataclass
 class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessorStep):
     """
-    Read the robot's current observation and insert it into the transition as complementary data.
+    Reads the robot's current observation and adds it to the transition's complementary data.
 
-    - Joint positions are added under complementary_data["raw_joint_positions"] as a dict:
-        { "<motor_name>": <float position>, ... }
+    This step acts as a bridge to the physical robot, injecting its real-time sensor readings
+    (like raw joint positions) into the data processing pipeline. This data is then available
+    for other processing steps.
+
+    Attributes:
+        robot: An instance of a `Robot` class used to get observations from hardware.
     """
 
     robot: Robot

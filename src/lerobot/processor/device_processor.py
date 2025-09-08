@@ -13,6 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""
+This script defines a processor step for moving environment transition data to a specific torch device and casting
+its floating-point precision.
+"""
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,12 +34,16 @@ from .pipeline import ProcessorStep, ProcessorStepRegistry
 @ProcessorStepRegistry.register("device_processor")
 @dataclass
 class DeviceProcessorStep(ProcessorStep):
-    """Processes transitions by moving tensors to the specified device and optionally converting float dtypes.
+    """
+    Processor step to move all tensors within an `EnvTransition` to a specified device and optionally cast their
+    floating-point data type.
 
-    This processor ensures that all tensors in the transition are moved to the
-    specified device (CPU or GPU) before they are returned. It can also convert
-    floating-point tensors to a specified dtype while preserving non-float types
-    (int, long, bool, etc.).
+    This is crucial for preparing data for model training or inference on hardware like GPUs.
+
+    Attributes:
+        device: The target device for tensors (e.g., "cpu", "cuda", "cuda:0").
+        float_dtype: The target floating-point dtype as a string (e.g., "float32", "float16", "bfloat16").
+                     If None, the dtype is not changed.
     """
 
     device: str = "cpu"
@@ -50,8 +60,15 @@ class DeviceProcessorStep(ProcessorStep):
     }
 
     def __post_init__(self):
+        """
+        Initializes the processor by converting string configurations to torch objects.
+
+        This method sets up the `torch.device`, determines if transfers can be non-blocking, and validates the
+        `float_dtype` string, converting it to a `torch.dtype` object.
+        """
         self.tensor_device: torch.device = get_safe_torch_device(self.device)
-        self.device = self.tensor_device.type  # cuda might have changed to cuda:1
+        # Update device string in case a specific GPU was selected (e.g., "cuda" -> "cuda:0")
+        self.device = self.tensor_device.type
         self.non_blocking = "cuda" in str(self.device)
 
         # Validate and convert float_dtype string to torch dtype
@@ -60,27 +77,32 @@ class DeviceProcessorStep(ProcessorStep):
                 raise ValueError(
                     f"Invalid float_dtype '{self.float_dtype}'. Available options: {list(self.DTYPE_MAPPING.keys())}"
                 )
-
             self._target_float_dtype = self.DTYPE_MAPPING[self.float_dtype]
         else:
             self._target_float_dtype = None
 
     def _process_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Process a tensor by moving to device and optionally converting float dtype.
+        """
+        Moves a single tensor to the target device and casts its dtype.
 
-        If the tensor is already on a GPU and we're configured for a GPU, it preserves
-        that GPU placement (useful for multi-GPU training with Accelerate).
-        Otherwise, it moves to the configured device.
+        Handles multi-GPU scenarios by not moving a tensor if it's already on a different CUDA device than
+        the target, which is useful when using frameworks like Accelerate.
+
+        Args:
+            tensor: The input torch.Tensor.
+
+        Returns:
+            The processed tensor on the correct device and with the correct dtype.
         """
         # Determine target device
         if tensor.is_cuda and self.tensor_device.type == "cuda":
-            # Both tensor and target are on GPU - preserve tensor's GPU placement
+            # Both tensor and target are on GPU - preserve tensor's GPU placement.
             # This handles multi-GPU scenarios where Accelerate has already placed
-            # tensors on the correct GPU for each process
+            # tensors on the correct GPU for each process.
             target_device = tensor.device
         else:
-            # Either tensor is on CPU, or we're configured for CPU
-            # In both cases, use the configured device
+            # Either tensor is on CPU, or we're configured for CPU.
+            # In both cases, use the configured device.
             target_device = self.tensor_device
 
         # Only move if necessary
@@ -94,6 +116,18 @@ class DeviceProcessorStep(ProcessorStep):
         return tensor
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """
+        Applies device and dtype conversion to all tensors in an environment transition.
+
+        It iterates through the transition, finds all `torch.Tensor` objects (including those nested in
+        dictionaries like `observation`), and processes them.
+
+        Args:
+            transition: The input `EnvTransition` object.
+
+        Returns:
+            A new `EnvTransition` object with all tensors moved to the target device and dtype.
+        """
         new_transition = transition.copy()
 
         simple_tensor_keys = [
@@ -108,13 +142,13 @@ class DeviceProcessorStep(ProcessorStep):
             TransitionKey.COMPLEMENTARY_DATA,
         ]
 
-        # Process simple tensors
+        # Process simple, top-level tensors
         for key in simple_tensor_keys:
             value = transition.get(key)
             if isinstance(value, torch.Tensor):
                 new_transition[key] = self._process_tensor(value)
 
-        # Process dictionary-like tensors
+        # Process tensors nested within dictionaries
         for key in dict_tensor_keys:
             data_dict = transition.get(key)
             if data_dict is not None:
@@ -127,8 +161,24 @@ class DeviceProcessorStep(ProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
-        """Return configuration for serialization."""
+        """
+        Returns the serializable configuration of the processor.
+
+        Returns:
+            A dictionary containing the device and float_dtype settings.
+        """
         return {"device": self.device, "float_dtype": self.float_dtype}
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        """
+        Returns the input features unchanged.
+
+        Device and dtype transformations do not alter the fundamental definition of the features (e.g., shape).
+
+        Args:
+            features: A dictionary of policy features.
+
+        Returns:
+            The original dictionary of policy features.
+        """
         return features

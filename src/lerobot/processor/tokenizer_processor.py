@@ -1,5 +1,24 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
-Tokenizer processor for handling text tokenization in robot transitions.
+This script defines a processor for tokenizing natural language instructions from an environment transition.
+
+It uses a tokenizer from the Hugging Face `transformers` library to convert task descriptions (text) into
+token IDs and attention masks, which are then added to the observation dictionary.
 """
 
 from __future__ import annotations
@@ -16,6 +35,7 @@ from lerobot.utils.import_utils import _transformers_available
 from .core import EnvTransition, TransitionKey
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
+# Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
 else:
@@ -25,54 +45,48 @@ else:
 @dataclass
 @ProcessorStepRegistry.register(name="tokenizer_processor")
 class TokenizerProcessorStep(ObservationProcessorStep):
-    """Tokenizes text tasks in complementary data using a huggingface tokenizer.
+    """
+    Processor step to tokenize a natural language task description.
 
-    This processor handles tokenization of task strings found in the complementary_data
-    using a specified pretrained tokenizer from Hugging Face. It adds tokenized versions
-    to the observation data for model processing while preserving the original task string.
+    This step extracts a task string from the `complementary_data` of an `EnvTransition`,
+    tokenizes it using a Hugging Face `transformers` tokenizer, and adds the resulting
+    token IDs and attention mask to the `observation` dictionary.
 
-    The processor supports both single strings and lists of strings as task inputs.
+    Requires the `transformers` library to be installed.
 
-    Args:
-        tokenizer_name: Name of the pretrained tokenizer to load from Hugging Face Hub
-            (e.g., "bert-base-uncased", "microsoft/DialoGPT-medium"). This will be used
-            with AutoTokenizer.from_pretrained(). If tokenizer is provided, this is ignored.
-        tokenizer: A tokenizer object (e.g., from transformers library) that implements
-            the __call__ method. If provided, tokenizer_name is ignored. This parameter
-            is not serialized and must be provided via overrides when loading.
-        max_length: Maximum sequence length for tokenization. Defaults to 512.
-        task_key: Key in complementary_data containing the task text. Defaults to "task".
-        padding: Padding strategy for tokenization. Defaults to "max_length".
-        truncation: Whether to truncate sequences longer than max_length. Defaults to True.
-
-    Examples:
-        Using tokenizer name (auto-loaded):
-        ```python
-        processor = TokenizerProcessorStep(tokenizer_name="bert-base-uncased", max_length=128)
-        ```
-
-        Using custom tokenizer object:
-        ```python
-        from transformers import AutoTokenizer
-
-        custom_tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        processor = TokenizerProcessorStep(tokenizer=custom_tokenizer, max_length=128)
-        ```
+    Attributes:
+        tokenizer_name: The name of a pretrained tokenizer from the Hugging Face Hub (e.g., "bert-base-uncased").
+        tokenizer: A pre-initialized tokenizer object. If provided, `tokenizer_name` is ignored.
+        max_length: The maximum length to pad or truncate sequences to.
+        task_key: The key in `complementary_data` where the task string is stored.
+        padding_side: The side to pad on ('left' or 'right').
+        padding: The padding strategy ('max_length', 'longest', etc.).
+        truncation: Whether to truncate sequences longer than `max_length`.
+        input_tokenizer: The internal tokenizer instance, loaded during initialization.
     """
 
     tokenizer_name: str | None = None
-    tokenizer: Any | None = None  # Otherwise transformers is not available in the core dependencies
+    tokenizer: Any | None = None  # Use `Any` for compatibility without a hard dependency
     max_length: int = 512
     task_key: str = "task"
     padding_side: str = "right"
     padding: str = "max_length"
     truncation: bool = True
 
-    # Internal tokenizer instance (not serialized)
+    # Internal tokenizer instance (not part of the config)
     input_tokenizer: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
-        """Initialize the tokenizer from the provided tokenizer or tokenizer name."""
+        """
+        Initializes the tokenizer after the dataclass is created.
+
+        It checks for the availability of the `transformers` library and loads the tokenizer
+        either from a provided object or by name from the Hugging Face Hub.
+
+        Raises:
+            ImportError: If the `transformers` library is not installed.
+            ValueError: If neither `tokenizer` nor `tokenizer_name` is provided.
+        """
         if not _transformers_available:
             raise ImportError(
                 "The 'transformers' library is not installed. "
@@ -93,13 +107,14 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             )
 
     def get_task(self, transition: EnvTransition) -> list[str] | None:
-        """Extract and normalize task from complementary data.
+        """
+        Extracts the task description(s) from the transition's complementary data.
 
         Args:
-            transition: Input transition containing complementary_data.
+            transition: The environment transition.
 
         Returns:
-            List of task strings if task is present, None otherwise.
+            A list of task strings, or None if the task key is not found or the value is None.
         """
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
         if complementary_data is None:
@@ -112,7 +127,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         if task is None:
             return None
 
-        # Convert to list of strings
+        # Standardize to a list of strings for the tokenizer
         if isinstance(task, str):
             return [task]
         elif isinstance(task, list) and all(isinstance(t, str) for t in task):
@@ -120,78 +135,80 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         return None
 
-    def observation(self, observation):
-        """Process the transition by tokenizing the task text.
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        """
+        Tokenizes the task description and adds it to the observation dictionary.
+
+        This method retrieves the task, tokenizes it, moves the resulting tensors to the
+        same device as other data in the transition, and updates the observation.
 
         Args:
-            transition: Input transition containing complementary_data with task text.
+            observation: The original observation dictionary.
 
         Returns:
-            Modified transition with tokenized task added to observation.
-
-        Raises:
-            ValueError: If tokenizer initialization failed.
+            The updated observation dictionary including token IDs and an attention mask.
         """
         task = self.get_task(self.transition)
         if task is None:
             return observation
 
-        # Tokenize the task (creates CPU tensors)
+        # Tokenize the task (this will create CPU tensors)
         tokenized_prompt = self._tokenize_text(task)
 
-        # Detect device from existing tensors in the transition
+        # Detect the device from existing tensors in the transition to ensure consistency
         target_device = self._detect_device(self.transition)
 
-        # Move tokenized tensors to match the device of other data
+        # Move new tokenized tensors to the detected device
         if target_device is not None:
             tokenized_prompt = {
                 k: v.to(target_device) if isinstance(v, torch.Tensor) else v
                 for k, v in tokenized_prompt.items()
             }
 
-        # Get or create observation dict
+        # Create a new observation dict to avoid modifying the original in place
         new_observation = dict(observation)
 
-        # Add tokenized data to observation
+        # Add tokenized data to the observation
         new_observation[OBS_LANGUAGE_TOKENS] = tokenized_prompt["input_ids"]
         new_observation[OBS_LANGUAGE_ATTENTION_MASK] = tokenized_prompt["attention_mask"].to(dtype=torch.bool)
 
         return new_observation
 
     def _detect_device(self, transition: EnvTransition) -> torch.device | None:
-        """Detect device from existing tensors in the transition.
+        """
+        Detects the torch.device from existing tensors in the transition.
 
-        This allows the tokenized tensors to match the device of other data,
-        which is especially important for multi-GPU training with Accelerate.
+        It checks tensors in the observation dictionary first, then the action tensor.
 
         Args:
-            transition: The transition to search for existing tensors.
+            transition: The environment transition.
 
         Returns:
-            The device of the first tensor found, or None if no tensors exist.
+            The detected `torch.device`, or None if no tensors are found.
         """
-        # Check observation tensors first (most likely to exist)
+        # Check observation tensors first (most likely place to find tensors)
         observation = transition.get(TransitionKey.OBSERVATION)
         if observation:
             for value in observation.values():
                 if isinstance(value, torch.Tensor):
                     return value.device
 
-        # Check action tensor
+        # Fallback to checking the action tensor
         action = transition.get(TransitionKey.ACTION)
         if isinstance(action, torch.Tensor):
             return action.device
 
-        return None  # No tensors found, keep on CPU
+        return None  # No tensors found, default will be CPU
 
     def _tokenize_text(self, text: str | list[str]) -> dict[str, torch.Tensor]:
-        """Tokenize text using the configured tokenizer.
+        """
+        A wrapper around the tokenizer call.
 
         Args:
-            text: Text string or list of strings to tokenize.
+            text: A string or list of strings to tokenize.
 
         Returns:
-            Dictionary containing tokenized output with keys like 'input_ids', 'attention_mask'.
+            A dictionary containing tokenized 'input_ids' and 'attention_mask' as PyTorch tensors.
         """
         return self.input_tokenizer(
             text,
@@ -203,10 +220,14 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         )
 
     def get_config(self) -> dict[str, Any]:
-        """Return configuration for serialization.
+        """
+        Returns the serializable configuration of the processor.
 
-        Note: Only tokenizer_name is saved, not the tokenizer object itself.
-        When loading, provide the tokenizer via overrides if needed.
+        Note: The tokenizer object itself is not serialized. If the processor was initialized
+        with a tokenizer name, that name will be included in the config.
+
+        Returns:
+            A dictionary with the processor's configuration parameters.
         """
         config = {
             "max_length": self.max_length,
@@ -216,28 +237,30 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             "truncation": self.truncation,
         }
 
-        # Only include tokenizer_name if it was used (not when tokenizer object was provided)
-        # TODO(steven): Consider saving the name of the _tokenizer if it was loaded
+        # Only save tokenizer_name if it was used to create the tokenizer
         if self.tokenizer_name is not None and self.tokenizer is None:
             config["tokenizer_name"] = self.tokenizer_name
 
         return config
 
     def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        """Add tokenized task features to the feature contract.
+        """
+        Adds feature definitions for the language tokens and attention mask.
+
+        This updates the policy features dictionary to include the new data added to the
+        observation, ensuring downstream components are aware of their shape and type.
 
         Args:
-            features: Input feature dictionary.
+            features: The dictionary of existing policy features.
 
         Returns:
-            Updated feature dictionary with tokenized task features added.
+            The updated dictionary of policy features.
         """
-        # Add features for tokenized output if they don't exist
-        # Standard tokenizer output includes tokens and attention_mask
-
+        # Add a feature for the token IDs if it doesn't already exist
         if OBS_LANGUAGE_TOKENS not in features:
             features[OBS_LANGUAGE_TOKENS] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
 
+        # Add a feature for the attention mask if it doesn't already exist
         if OBS_LANGUAGE_ATTENTION_MASK not in features:
             features[OBS_LANGUAGE_ATTENTION_MASK] = PolicyFeature(
                 type=FeatureType.LANGUAGE, shape=(self.max_length,)
