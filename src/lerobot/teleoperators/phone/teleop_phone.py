@@ -108,7 +108,17 @@ class IOSPhone(BasePhone, Teleoperator):
         print("Calibration done\n")
 
     def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
-        """Wait trigger for calibration: iOS: B1. Android: 'move'."""
+        """
+        Blocks execution until the calibration trigger is detected from the iOS device.
+
+        This method enters a loop, continuously reading the phone's state. It waits for the user to press
+        and hold the 'B1' button in the HEBI Mobile I/O app. Once B1 is pressed, the loop breaks and
+        returns the phone's pose at that exact moment.
+
+        Returns:
+            A tuple containing the position (np.ndarray) and rotation (Rotation) of the phone at the
+            moment the trigger was activated.
+        """
         while True:
             has_pose, position, rotation, fb_pose = self._read_current_pose()
             if not has_pose:
@@ -126,6 +136,21 @@ class IOSPhone(BasePhone, Teleoperator):
             time.sleep(0.01)
 
     def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None, object | None]:
+        """
+        Reads the instantaneous 6-DoF pose from the connected iOS device via the HEBI SDK.
+
+        This method fetches the latest feedback packet from the HEBI group, extracts the ARKit
+        position and orientation, and converts them into a standard format. It also applies a
+        configured camera offset to adjust the pose from the camera's frame to the phone's
+        physical frame.
+
+        Returns:
+            A tuple containing:
+            - A boolean indicating if a valid pose was successfully read.
+            - The 3D position as a NumPy array, or None if not available.
+            - The orientation as a `Rotation` object, or None if not available.
+            - The raw HEBI feedback object for accessing other data like button presses.
+        """
         fbk = self._group.get_next_feedback()
         pose = fbk[0]
         ar_pos = getattr(pose, "ar_position", None)
@@ -228,7 +253,18 @@ class AndroidPhone(BasePhone, Teleoperator):
         print("Calibration done\n")
 
     def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
-        """Wait trigger for calibration: iOS: B1. Android: 'move'."""
+        """
+        Blocks execution until the calibration trigger is detected from the Android device.
+
+        This method enters a loop, continuously checking the latest message received from the WebXR
+        session. It waits for the user to touch and move their finger on the screen, which generates
+        a `move` event. Once this event is detected, the loop breaks and returns the phone's current
+        pose.
+
+        Returns:
+            A tuple containing the position (np.ndarray) and rotation (Rotation) of the phone at the
+            moment the trigger was activated.
+        """
         while True:
             with self._android_lock:
                 msg = self._latest_message or {}
@@ -241,6 +277,20 @@ class AndroidPhone(BasePhone, Teleoperator):
             time.sleep(0.01)
 
     def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None, object | None]:
+        """
+        Reads the latest 6-DoF pose received from the Android device's WebXR session.
+
+        This method accesses the most recent pose data stored by the `_android_callback`. It uses a
+        thread lock to safely read the shared `_latest_pose` variable. The pose, a 4x4 matrix, is
+        then decomposed into position and rotation, and the configured camera offset is applied.
+
+        Returns:
+            A tuple containing:
+            - A boolean indicating if a valid pose was available.
+            - The 3D position as a NumPy array, or None if no pose has been received yet.
+            - The orientation as a `Rotation` object, or None if no pose has been received.
+            - The raw 4x4 pose matrix as received from the teleop stream.
+        """
         with self._android_lock:
             if self._latest_pose is None:
                 return False, None, None, None
@@ -251,6 +301,19 @@ class AndroidPhone(BasePhone, Teleoperator):
         return True, pos, rot, pose
 
     def _android_callback(self, pose: np.ndarray, message: dict) -> None:
+        """
+        Callback function to handle incoming data from the Android teleop stream.
+
+        This method is executed by the `teleop` package's subscriber thread whenever a new
+        pose and message are received from the WebXR session on the Android phone. It updates
+        the internal state (`_latest_pose` and `_latest_message`) with the new data.
+        A thread lock is used to ensure that these shared variables are updated atomically,
+        preventing race conditions with the main thread that reads them.
+
+        Args:
+            pose: A 4x4 NumPy array representing the phone's transformation matrix.
+            message: A dictionary containing additional data, such as button presses or touch events.
+        """
         with self._android_lock:
             self._latest_pose = pose
             self._latest_message = message
