@@ -33,7 +33,7 @@ from lerobot.processor import (
     EnvTransition,
     NormalizerProcessorStep,
     ProcessorStep,
-    RenameCameraProcessorStep,
+    RenameObservationsProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
 )
@@ -122,7 +122,7 @@ def test_make_smolvla_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 6
-    assert isinstance(preprocessor.steps[0], RenameCameraProcessorStep)
+    assert isinstance(preprocessor.steps[0], RenameObservationsProcessorStep)
     assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[2], SmolVLANewLineProcessor)
     # Step 3 would be TokenizerProcessorStep but it's mocked

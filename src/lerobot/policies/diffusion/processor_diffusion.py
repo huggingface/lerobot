@@ -24,7 +24,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     ProcessorKwargs,
-    RenameCameraProcessorStep,
+    RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
 )
 
@@ -67,7 +67,7 @@ def make_diffusion_pre_post_processors(
         postprocessor_kwargs = {}
 
     input_steps = [
-        RenameCameraProcessorStep(rename_map={}),
+        RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(

@@ -24,7 +24,7 @@ from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
 @dataclass
 @ProcessorStepRegistry.register(name="rename_camera_processor")
-class RenameCameraProcessorStep(ObservationProcessorStep):
+class RenameObservationsProcessorStep(ObservationProcessorStep):
     """
     A processor step that renames keys in an observation dictionary.
 

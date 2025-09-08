@@ -27,7 +27,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorKwargs,
     ProcessorStepRegistry,
-    RenameCameraProcessorStep,
+    RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -69,7 +69,7 @@ def make_smolvla_pre_post_processors(
         postprocessor_kwargs = {}
 
     input_steps = [
-        RenameCameraProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
         SmolVLANewLineProcessor(),
         TokenizerProcessorStep(

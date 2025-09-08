@@ -57,7 +57,7 @@ from .batch_processor import AddBatchDimensionProcessorStep
 from .device_processor import DeviceProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 from .pipeline import PolicyProcessorPipeline
-from .rename_processor import RenameCameraProcessorStep
+from .rename_processor import RenameObservationsProcessorStep
 
 # Policy type to class mapping
 POLICY_CLASSES = {
@@ -482,7 +482,7 @@ def main():
 
     # Create preprocessor with two normalizers (following the pattern from processor factories)
     preprocessor_steps = [
-        RenameCameraProcessorStep(rename_map={}),
+        RenameObservationsProcessorStep(rename_map={}),
         NormalizerProcessorStep(
             features={**input_features, **output_features},
             norm_map=norm_map,
