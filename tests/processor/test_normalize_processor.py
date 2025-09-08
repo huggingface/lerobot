@@ -1497,3 +1497,92 @@ def test_roundtrip_normalize_unnormalize_non_identity():
         out[TransitionKey.OBSERVATION]["observation.state"], obs["observation.state"], atol=1e-5
     )
     assert torch.allclose(out[TransitionKey.ACTION], act, atol=1e-5)
+
+
+def test_dtype_adaptation_bfloat16_input_float32_normalizer():
+    """Test automatic dtype adaptation: NormalizerProcessor(float32) adapts to bfloat16 input → bfloat16 output"""
+    features = {"observation.state": PolicyFeature(FeatureType.STATE, (5,))}
+    norm_map = {FeatureType.STATE: NormalizationMode.MEAN_STD}
+    stats = {
+        "observation.state": {
+            "mean": np.array([0.0, 0.0, 0.0, 0.0, 0.0]),
+            "std": np.array([1.0, 1.0, 1.0, 1.0, 1.0]),
+        }
+    }
+
+    # Create normalizer configured with float32 dtype
+    normalizer = NormalizerProcessorStep(
+        features=features, norm_map=norm_map, stats=stats, dtype=torch.float32
+    )
+
+    # Verify initial configuration
+    assert normalizer.dtype == torch.float32
+    for stat_tensor in normalizer._tensor_stats["observation.state"].values():
+        assert stat_tensor.dtype == torch.float32
+
+    # Create bfloat16 input tensor
+    observation = {"observation.state": torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0], dtype=torch.bfloat16)}
+    transition = create_transition(observation=observation)
+
+    # Process the transition
+    result = normalizer(transition)
+
+    # Verify that:
+    # 1. Stats were automatically adapted to bfloat16
+    assert normalizer.dtype == torch.bfloat16
+    for stat_tensor in normalizer._tensor_stats["observation.state"].values():
+        assert stat_tensor.dtype == torch.bfloat16
+
+    # 2. Output is in bfloat16
+    output_tensor = result[TransitionKey.OBSERVATION]["observation.state"]
+    assert output_tensor.dtype == torch.bfloat16
+
+    # 3. Normalization was applied correctly (mean should be close to original - mean) / std
+    expected = (
+        torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0], dtype=torch.bfloat16)
+        - torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.bfloat16)
+    ) / torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0], dtype=torch.bfloat16)
+    assert torch.allclose(output_tensor, expected, atol=1e-2)  # bfloat16 has lower precision
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_dtype_adaptation_device_processor_bfloat16_normalizer_float32():
+    """Test policy pipeline scenario: DeviceProcessor(bfloat16) + NormalizerProcessor(float32) → bfloat16 output"""
+    from lerobot.processor import DeviceProcessorStep
+
+    features = {"observation.state": PolicyFeature(FeatureType.STATE, (3,))}
+    norm_map = {FeatureType.STATE: NormalizationMode.MEAN_STD}
+    stats = {"observation.state": {"mean": np.array([0.0, 0.0, 0.0]), "std": np.array([1.0, 1.0, 1.0])}}
+
+    # Create pipeline: DeviceProcessor(bfloat16) → NormalizerProcessor(float32)
+    device_processor = DeviceProcessorStep(device="cuda", float_dtype="bfloat16")
+    normalizer = NormalizerProcessorStep(
+        features=features, norm_map=norm_map, stats=stats, dtype=torch.float32
+    )
+
+    # Verify initial normalizer configuration
+    assert normalizer.dtype == torch.float32
+
+    # Create CPU input
+    observation = {"observation.state": torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)}
+    transition = create_transition(observation=observation)
+
+    # Step 1: DeviceProcessor converts to bfloat16 + moves to CUDA
+    processed_1 = device_processor(transition)
+    intermediate_tensor = processed_1[TransitionKey.OBSERVATION]["observation.state"]
+    assert intermediate_tensor.dtype == torch.bfloat16
+    assert intermediate_tensor.device.type == "cuda"
+
+    # Step 2: NormalizerProcessor receives bfloat16 input and adapts
+    final_result = normalizer(processed_1)
+    final_tensor = final_result[TransitionKey.OBSERVATION]["observation.state"]
+
+    # Verify final output is bfloat16 (automatic adaptation worked)
+    assert final_tensor.dtype == torch.bfloat16
+    assert final_tensor.device.type == "cuda"
+
+    # Verify normalizer adapted its internal state
+    assert normalizer.dtype == torch.bfloat16
+    for stat_tensor in normalizer._tensor_stats["observation.state"].values():
+        assert stat_tensor.dtype == torch.bfloat16
+        assert stat_tensor.device.type == "cuda"

@@ -29,6 +29,7 @@ class _NormalizationMixin:
     norm_map: dict[FeatureType, NormalizationMode]
     stats: dict[str, dict[str, Any]] | None = None
     device: torch.device | str | None = None
+    dtype: torch.dtype | None = None
     eps: float = 1e-8
     normalize_observation_keys: set[str] | None = None
 
@@ -56,12 +57,20 @@ class _NormalizationMixin:
 
         # Convert stats to tensors and move to the target device once during initialization.
         self.stats = self.stats or {}
-        self._tensor_stats = to_tensor(self.stats, device=self.device)
+        if self.dtype is None:
+            self.dtype = torch.float32
 
-    def to(self, device: torch.device | str) -> _NormalizationMixin:
+        self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
+
+    def to(
+        self, device: torch.device | str | None = None, dtype: torch.dtype | None = None
+    ) -> _NormalizationMixin:
         """Moves the processor's normalization stats to the specified device and returns self."""
-        self.device = device
-        self._tensor_stats = to_tensor(self.stats, device=self.device)
+        if device is not None:
+            self.device = device
+        if dtype is not None:
+            self.dtype = dtype
+        self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
         return self
 
     def state_dict(self) -> dict[str, Tensor]:
@@ -98,12 +107,14 @@ class _NormalizationMixin:
             if self.normalize_observation_keys is not None and key not in self.normalize_observation_keys:
                 continue
             if feature.type != FeatureType.ACTION and key in new_observation:
-                tensor = torch.as_tensor(new_observation[key], dtype=torch.float32)
+                # Convert to tensor but preserve original dtype for adaptation logic
+                tensor = torch.as_tensor(new_observation[key])
                 new_observation[key] = self._apply_transform(tensor, key, feature.type, inverse=inverse)
         return new_observation
 
     def _normalize_action(self, action: Any, inverse: bool) -> Tensor:
-        tensor = torch.as_tensor(action, dtype=torch.float32)
+        # Convert to tensor but preserve original dtype for adaptation logic
+        tensor = torch.as_tensor(action)
         processed_action = self._apply_transform(tensor, "action", FeatureType.ACTION, inverse=inverse)
         return processed_action
 
@@ -118,19 +129,13 @@ class _NormalizationMixin:
         if norm_mode not in (NormalizationMode.MEAN_STD, NormalizationMode.MIN_MAX):
             raise ValueError(f"Unsupported normalization mode: {norm_mode}")
 
-        # Ensure input tensor is on the same device as the stats.
-        if self.device and tensor.device != self.device:
-            tensor = tensor.to(self.device)
+        # For Accelerate compatibility: Ensure stats are on the same device and dtype as the input tensor
+        if self._tensor_stats and key in self._tensor_stats:
+            first_stat = next(iter(self._tensor_stats[key].values()))
+            if first_stat.device != tensor.device or first_stat.dtype != tensor.dtype:
+                self.to(device=tensor.device, dtype=tensor.dtype)
 
-        # For Accelerate compatibility: move stats to match input tensor device
-        input_device = tensor.device
         stats = self._tensor_stats[key]
-        tensor = tensor.to(dtype=torch.float32)
-
-        # Move stats to input device if needed
-        stats_device = next(iter(stats.values())).device
-        if stats_device != input_device:
-            stats = to_tensor({key: self._tensor_stats[key]}, device=input_device)[key]
 
         if norm_mode == NormalizationMode.MEAN_STD and "mean" in stats and "std" in stats:
             mean, std = stats["mean"], stats["std"]
@@ -147,7 +152,7 @@ class _NormalizationMixin:
             # to prevent division by zero. This consistently maps an input equal to
             # min_val to -1, ensuring a stable transformation.
             denom = torch.where(
-                denom == 0, torch.tensor(self.eps, device=input_device, dtype=torch.float32), denom
+                denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
             )
             if inverse:
                 # Map from [-1, 1] back to [min, max]
@@ -268,5 +273,5 @@ def hotswap_stats(
         if isinstance(step, _NormalizationMixin):
             step.stats = stats
             # Re-initialize tensor_stats on the correct device.
-            step._tensor_stats = to_tensor(stats, device=step.device)
+            step._tensor_stats = to_tensor(stats, device=step.device, dtype=step.dtype)
     return rp

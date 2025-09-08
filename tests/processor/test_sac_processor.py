@@ -92,9 +92,9 @@ def test_make_sac_processor_basic():
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 4
     assert isinstance(preprocessor.steps[0], RenameProcessorStep)
-    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
-    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
-    assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
+    assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
+    assert isinstance(preprocessor.steps[2], DeviceProcessorStep)
+    assert isinstance(preprocessor.steps[3], NormalizerProcessorStep)
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
@@ -307,9 +307,24 @@ def test_sac_processor_mixed_precision():
     )
 
     # Replace DeviceProcessorStep with one that uses float16
-    for i, step in enumerate(preprocessor.steps):
+    modified_steps = []
+    for step in preprocessor.steps:
         if isinstance(step, DeviceProcessorStep):
-            preprocessor.steps[i] = DeviceProcessorStep(device=config.device, float_dtype="float16")
+            modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="float16"))
+        elif isinstance(step, NormalizerProcessorStep):
+            # Update normalizer to use the same device as the device processor
+            modified_steps.append(
+                NormalizerProcessorStep(
+                    features=step.features,
+                    norm_map=step.norm_map,
+                    stats=step.stats,
+                    device=config.device,
+                    dtype=torch.float16,  # Match the float16 dtype
+                )
+            )
+        else:
+            modified_steps.append(step)
+    preprocessor.steps = modified_steps
 
     # Create test data
     observation = {OBS_STATE: torch.randn(10, dtype=torch.float32)}
@@ -374,3 +389,60 @@ def test_sac_processor_edge_cases():
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 10)
     # When action is None, it may still be present with None value
     assert TransitionKey.ACTION not in processed or processed[TransitionKey.ACTION] is None
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_sac_processor_bfloat16_device_float32_normalizer():
+    """Test: DeviceProcessor(bfloat16) + NormalizerProcessor(float32) → output bfloat16 via automatic adaptation"""
+    config = create_default_config()
+    config.device = "cuda"
+    stats = create_default_stats()
+
+    preprocessor, _ = make_sac_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
+
+    # Modify the pipeline to use bfloat16 device processor with float32 normalizer
+    modified_steps = []
+    for step in preprocessor.steps:
+        if isinstance(step, DeviceProcessorStep):
+            # Device processor converts to bfloat16
+            modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="bfloat16"))
+        elif isinstance(step, NormalizerProcessorStep):
+            # Normalizer stays configured as float32 (will auto-adapt to bfloat16)
+            modified_steps.append(
+                NormalizerProcessorStep(
+                    features=step.features,
+                    norm_map=step.norm_map,
+                    stats=step.stats,
+                    device=config.device,
+                    dtype=torch.float32,  # Deliberately configured as float32
+                )
+            )
+        else:
+            modified_steps.append(step)
+    preprocessor.steps = modified_steps
+
+    # Verify initial normalizer configuration
+    normalizer_step = preprocessor.steps[3]  # NormalizerProcessorStep
+    assert normalizer_step.dtype == torch.float32
+
+    # Create test data
+    observation = {OBS_STATE: torch.randn(10, dtype=torch.float32)}  # Start with float32
+    action = torch.randn(5, dtype=torch.float32)
+    transition = create_transition(observation, action)
+
+    # Process through full pipeline
+    processed = preprocessor(transition)
+
+    # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
+    assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.bfloat16
+    assert processed[TransitionKey.ACTION].dtype == torch.bfloat16
+
+    # Verify normalizer automatically adapted its internal state
+    assert normalizer_step.dtype == torch.bfloat16
+    for stat_tensor in normalizer_step._tensor_stats[OBS_STATE].values():
+        assert stat_tensor.dtype == torch.bfloat16
