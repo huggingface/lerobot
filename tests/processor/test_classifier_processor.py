@@ -191,7 +191,12 @@ def test_classifier_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_classifier_processor(config, stats)
+    preprocessor, postprocessor = make_classifier_processor(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Simulate data on different GPU
     device = torch.device("cuda:1")
