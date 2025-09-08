@@ -29,10 +29,10 @@ class BiSO100FollowerConfig(RobotConfig):
 
     # Optional
     left_arm_disable_torque_on_disconnect: bool = True
-    left_arm_max_relative_target: int | None = None
+    left_arm_max_relative_target: float | dict[str, float] | None = None
     left_arm_use_degrees: bool = False
     right_arm_disable_torque_on_disconnect: bool = True
-    right_arm_max_relative_target: int | None = None
+    right_arm_max_relative_target: float | dict[str, float] | None = None
     right_arm_use_degrees: bool = False
 
     # cameras (shared between both arms)
