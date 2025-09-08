@@ -4,109 +4,11 @@ import torch
 
 from lerobot.processor import TransitionKey
 from lerobot.processor.converters import (
-    action_to_transition,
     batch_to_transition,
-    observation_to_transition,
     to_tensor,
-    transition_to_action,
     transition_to_batch,
     transition_to_dataset_frame,
 )
-
-
-def test_to_transition_teleop_action_prefix_and_tensor_conversion():
-    # Scalars, arrays, and uint8 arrays are all converted to tensors
-    img = np.zeros((8, 12, 3), dtype=np.uint8)
-    act = {
-        "ee.x": 0.5,  # scalar to torch tensor
-        "delta": np.array([1.0, 2.0]),  # ndarray to torch tensor
-        "raw_img": img,  # uint8 HWC to torch tensor
-    }
-
-    tr = action_to_transition(act)
-
-    # Should be an EnvTransition-like dict with ACTION populated
-    assert isinstance(tr, dict)
-    assert TransitionKey.ACTION in tr
-    assert "ee.x" in tr[TransitionKey.ACTION]
-    assert "delta" in tr[TransitionKey.ACTION]
-    assert "raw_img" in tr[TransitionKey.ACTION]
-
-    # Types: all values -> torch tensor
-    assert isinstance(tr[TransitionKey.ACTION]["ee.x"], torch.Tensor)
-    assert tr[TransitionKey.ACTION]["ee.x"].item() == pytest.approx(0.5)
-
-    assert isinstance(tr[TransitionKey.ACTION]["delta"], torch.Tensor)
-    assert tr[TransitionKey.ACTION]["delta"].shape == (2,)
-    assert torch.allclose(tr[TransitionKey.ACTION]["delta"], torch.tensor([1.0, 2.0]))
-
-    assert isinstance(tr[TransitionKey.ACTION]["raw_img"], torch.Tensor)
-    assert tr[TransitionKey.ACTION]["raw_img"].dtype == torch.float32  # converted from uint8
-    assert tr[TransitionKey.ACTION]["raw_img"].shape == (8, 12, 3)
-
-    # Observation is created as empty dict by make_transition
-    assert TransitionKey.OBSERVATION in tr
-    assert isinstance(tr[TransitionKey.OBSERVATION], dict)
-    assert tr[TransitionKey.OBSERVATION] == {}
-
-
-def test_to_transition_robot_observation_state_vs_images_split():
-    # Create an observation with mixed content
-    img = np.full((10, 20, 3), 255, dtype=np.uint8)  # image (uint8 HWC)
-    obs = {
-        "j1.pos": 10.0,  # scalar to state to torch tensor
-        "j2.pos": np.float32(20.0),  # scalar np to state to torch tensor
-        "image_front": img,  # to images passthrough
-        "flag": np.int32(7),  # scalar to state to torch tensor
-        "arr": np.array([1.5, 2.5]),  # vector to state to torch tensor
-    }
-
-    tr = observation_to_transition(obs)
-    assert isinstance(tr, dict)
-    assert TransitionKey.OBSERVATION in tr
-
-    out = tr[TransitionKey.OBSERVATION]
-    # Check state keys are present and converted to tensors
-    for k in ("j1.pos", "j2.pos", "flag", "arr"):
-        key = f"{k}"
-        assert key in out
-        v = out[key]
-        if k != "arr":
-            assert isinstance(v, torch.Tensor) and v.ndim == 0
-        else:
-            assert isinstance(v, torch.Tensor) and v.ndim == 1 and v.shape == (2,)
-
-    # Check image present as is
-    assert "observation.images.image_front" in out
-    assert isinstance(out["observation.images.image_front"], np.ndarray)
-    assert out["observation.images.image_front"].dtype == np.uint8
-    assert out["observation.images.image_front"].shape == (10, 20, 3)
-
-    # ACTION should be empty dict by make_transition
-    assert TransitionKey.ACTION in tr
-    assert isinstance(tr[TransitionKey.ACTION], dict)
-    assert tr[TransitionKey.ACTION] == {}
-
-
-def test_to_output_robot_action_strips_prefix_and_filters_pos_keys_only():
-    # Build a transition with mixed action keys
-    tr = {
-        TransitionKey.ACTION: {
-            "j1.pos": 11.0,  # keep "j1.pos"
-            "gripper.pos": torch.tensor(33.0),  # keep: tensor accepted
-            "ee.x": 0.5,  # ignore (doesn't end with .pos)
-            "misc": "ignore_me",  # ignore (no 'action.' prefix)
-        }
-    }
-
-    out = transition_to_action(tr)
-    # Only ".pos" keys with "action." prefix are retained and stripped to base names
-    assert set(out.keys()) == {"j1.pos", "gripper.pos"}
-    # Values converted to float
-    assert isinstance(out["j1.pos"], float)
-    assert isinstance(out["gripper.pos"], float)
-    assert out["j1.pos"] == pytest.approx(11.0)
-    assert out["gripper.pos"] == pytest.approx(33.0)
 
 
 def test_transition_to_dataset_frame_merge_and_pack_vectors_and_metadata():
