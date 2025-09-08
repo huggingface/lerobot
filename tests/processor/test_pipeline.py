@@ -1837,6 +1837,7 @@ class NonCallableStep(ProcessorStep):
 
 
 def test_construction_rejects_step_without_call():
+    """Test that DataProcessorPipeline rejects steps that don't inherit from ProcessorStep."""
     with pytest.raises(
         TypeError, match=r"Can't instantiate abstract class NonCallableStep with abstract method __call_"
     ):
