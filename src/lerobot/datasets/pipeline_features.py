@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -25,10 +26,14 @@ def create_initial_features(
     action: dict[str, Any] | None, observation: dict[str, Any] | None
 ) -> dict[PipelineFeatureType, dict[str, Any]]:
     """
-    Creates the initial features dict for the dataset from the action and observation specs.
+    Creates the initial features dict for the dataset from action and observation specs.
 
-    - `action`: dict of action feature names to their types/shapes
-    - `observation`: dict of observation feature names to their types/shapes
+    Args:
+        action: A dictionary of action feature names to their types/shapes.
+        observation: A dictionary of observation feature names to their types/shapes.
+
+    Returns:
+        The initial features dictionary structured by PipelineFeatureType.
     """
     features = {PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: {}}
     if action:
@@ -38,6 +43,27 @@ def create_initial_features(
     return features
 
 
+# Helper to filter state/action keys based on regex patterns.
+def should_keep(key: str, patterns: tuple[str]) -> bool:
+    if patterns is None:
+        return True
+    return any(re.search(pat, key) for pat in patterns)
+
+
+def strip_prefix(key: str, prefixes_to_strip: tuple[str]) -> str:
+    for prefix in prefixes_to_strip:
+        if key.startswith(prefix):
+            return key[len(prefix) :]
+    return key
+
+
+# Define prefixes to strip from feature keys for clean names.
+# Handles both fully qualified (e.g., "action.state") and short (e.g., "state") forms.
+PREFIXES_TO_STRIP = tuple(
+    f"{token}." for const in (ACTION, OBS_STATE, OBS_IMAGES) for token in (const, const.split(".")[-1])
+)
+
+
 def aggregate_pipeline_dataset_features(
     pipeline: DataProcessorPipeline,
     initial_features: dict[PipelineFeatureType, dict[str, Any]],
@@ -45,113 +71,71 @@ def aggregate_pipeline_dataset_features(
     use_videos: bool = True,
     patterns: Sequence[str] | None = None,
 ) -> dict[str, dict]:
-    """Aggregates and filters dataset features based on a data processing pipeline.
+    """
+    Aggregates and filters pipeline features to create a dataset-ready features dictionary.
 
-    This function determines the final structure of dataset features after applying a series
-    of processing steps defined in a pipeline. It starts with an initial set of hardware
-    features (e.g., camera image shapes), transforms them using the pipeline, and then
-    filters the results.
-
-    Image features are controlled by the `use_videos` flag, while action and state features
-    can be selectively included by matching their keys against the provided regex `patterns`.
-    The final output is formatted to be compatible with Hugging Face Datasets feature dictionaries.
+    This function transforms initial features using the pipeline, categorizes them as action or observations
+    (image or state), filters them based on `use_videos` and `patterns`, and finally
+    formats them for use with a Hugging Face LeRobot Dataset.
 
     Args:
-        pipeline (DataProcessorPipeline): The data processing pipeline that defines all
-            feature transformations.
-        initial_features (dict[str, Any]): A dictionary of initial hardware features, where
-            keys are feature names and values are their shapes or types (e.g., camera resolutions).
-        use_videos (bool): If `True`, includes image/video features in the output. Defaults to `True`.
-        patterns (Sequence[str] | None): An optional sequence of regular expression patterns.
-            Only action and state keys that match at least one pattern will be included. If `None`,
-            all action and state keys are kept. Defaults to `None`.
+        pipeline: The DataProcessorPipeline to apply.
+        initial_features: A dictionary of raw feature specs for actions and observations.
+        use_videos: If False, image features are excluded.
+        patterns: A sequence of regex patterns to filter action and state features.
+                  Image features are not affected by this filter.
 
     Returns:
-        dict[str, dict]: A dictionary representing the final dataset features, structured for
-        use with `datasets.Features`.
+        A dictionary of features formatted for a Hugging Face LeRobot Dataset.
     """
-    import re
-
     all_features = pipeline.transform_features(initial_features)
 
-    def keep(key: str) -> bool:
-        if patterns is None:
-            return True
-        return any(re.search(pat, key) for pat in patterns)
-
-    hw: dict[str, dict[str, Any]] = {}
-    obs_initial = initial_features.get(PipelineFeatureType.OBSERVATION, {})
-    if use_videos:
-        cams = {
-            name: shape for name, shape in obs_initial.items() if isinstance(shape, tuple) and len(shape) == 3
-        }
-        if cams:
-            hw["observation"] = dict(cams)
-
-    # Known prefix tokens to strip if present in keys.
+    # Intermediate storage for categorized and filtered features.
+    processed_features: dict[str, dict[str, Any]] = {
+        "action": {},
+        "observation": {},
+    }
     images_token = OBS_IMAGES.split(".")[-1]
-    state_token = OBS_STATE.split(".")[-1]
-    action_token = ACTION.split(".")[-1]
 
-    def strip_known_prefix(key: str) -> str:
-        # remove any of the known prefixes if present
-        for prefix in (
-            f"{ACTION}.",
-            f"{OBS_STATE}.",
-            f"{OBS_IMAGES}.",
-            f"{action_token}.",
-            f"{state_token}.",
-            f"{images_token}.",
-        ):
-            if key.startswith(prefix):
-                return key[len(prefix) :]
-        return key
-
-    # all_features is by PipelineFeatureType now; iterate buckets and merge.
+    # Iterate through all features transformed by the pipeline.
     for ptype, feats in all_features.items():
-        # feats: dict[str, Any]
-        for key, ty in feats.items():
-            # Normalize whether the feature key included a prefix or not.
-            # For pattern matching, recreate a full-key with the appropriate prefix
-            # so existing regexes keep working.
-            if ptype == PipelineFeatureType.ACTION:
-                # patterns (if any) are applied directly to the feature key
-                if not keep(key):
-                    continue
-                name = strip_known_prefix(key)
-                hw.setdefault(ACTION, {})[name] = ty
+        if ptype not in [PipelineFeatureType.ACTION, PipelineFeatureType.OBSERVATION]:
+            continue
 
-            elif ptype == PipelineFeatureType.OBSERVATION:
-                # Decide whether this observation feature is images vs state.
-                is_image = (
+        for key, value in feats.items():
+            # 1. Categorize the feature.
+            is_action = ptype == PipelineFeatureType.ACTION
+            # Observations are classified as images if their key matches image-related tokens or if the shape of the feature is 3.
+            # All other observations are treated as state.
+            is_image = not is_action and (
+                (isinstance(value, tuple) and len(value) == 3)
+                or (
                     key.startswith(f"{OBS_IMAGES}.")
                     or key.startswith(f"{images_token}.")
                     or f".{images_token}." in key
                 )
-                # note: anything not detected as image is treated as state-like
+            )
 
-                if is_image:
-                    # images obey ONLY the use_videos flag, not patterns
-                    if not use_videos:
-                        continue
-                    name = strip_known_prefix(key)
-                    hw.setdefault("observation", {})[name] = ty
-                    continue
-
-                # Treat anything not explicitly images as state-like and apply patterns
-                if not keep(key):
-                    continue
-                name = strip_known_prefix(key)
-                hw.setdefault("observation", {})[name] = ty
-
-            else:
-                # ignore other pipeline feature buckets
+            # 2. Apply filtering rules.
+            if is_image and not use_videos:
+                continue
+            if not is_image and not should_keep(key, patterns):
                 continue
 
-    out: dict[str, dict] = {}
-    if ACTION in hw:
-        out.update(hw_to_dataset_features(hw[ACTION], ACTION, use_videos))
-    if "observation" in hw:
-        out.update(hw_to_dataset_features(hw["observation"], "observation", use_videos))
+            # 3. Add the feature to the appropriate group with a clean name.
+            name = strip_prefix(key, PREFIXES_TO_STRIP)
+            if is_action:
+                processed_features["action"][name] = value
+            else:
+                processed_features["observation"][name] = value
 
-    return out
+    # Convert the processed features into the final dataset format.
+    dataset_features = {}
+    if processed_features["action"]:
+        dataset_features.update(hw_to_dataset_features(processed_features["action"], ACTION, use_videos))
+    if processed_features["observation"]:
+        dataset_features.update(
+            hw_to_dataset_features(processed_features["observation"], "observation", use_videos)
+        )
+
+    return dataset_features

@@ -2043,7 +2043,7 @@ class AddObservationStateFeatures(ProcessorStep):
 # TODO: Update aggregate tests
 def test_aggregate_joint_action_only():
     rp = DataProcessorPipeline([AddActionEEAndJointFeatures()])
-    initial = {PipelineFeatureType.ACTION: {"front": (480, 640, 3)}}
+    initial = {PipelineFeatureType.OBSERVATION: {"front": (480, 640, 3)}, PipelineFeatureType.ACTION: {}}
 
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
@@ -2053,7 +2053,7 @@ def test_aggregate_joint_action_only():
     )
 
     # Expect only "action" with joint names
-    assert "action" in out and "observation.state" not in out
+    assert "action" in out and "observation.state" not in out and "observation.images.front" in out
     assert out["action"]["dtype"] == "float32"
     assert set(out["action"]["names"]) == {"j1.pos", "j2.pos"}
     assert out["action"]["shape"] == (len(out["action"]["names"]),)
@@ -2065,7 +2065,7 @@ def test_aggregate_ee_action_and_observation_with_videos():
 
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
-        initial_features=initial,
+        initial_features={PipelineFeatureType.OBSERVATION: initial, PipelineFeatureType.ACTION: {}},
         use_videos=True,
         patterns=["action.ee", "observation.state"],
     )
@@ -2093,7 +2093,7 @@ def test_aggregate_both_action_types():
     rp = DataProcessorPipeline([AddActionEEAndJointFeatures()])
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
-        initial_features={},
+        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: {}},
         use_videos=True,
         patterns=["action.ee", "action.j1", "action.j2.pos"],
     )
@@ -2110,7 +2110,7 @@ def test_aggregate_images_when_use_videos_false():
 
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
-        initial_features=initial,
+        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
         use_videos=False,  # expect "image" dtype
         patterns=None,
     )
@@ -2127,7 +2127,7 @@ def test_aggregate_images_when_use_videos_true():
 
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
-        initial_features=initial,
+        initial_features={PipelineFeatureType.OBSERVATION: initial, PipelineFeatureType.ACTION: {}},
         use_videos=True,
         patterns=None,
     )
@@ -2151,7 +2151,7 @@ def test_initial_camera_not_overridden_by_step_image():
 
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
-        initial_features=initial,
+        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
         use_videos=True,
         patterns=["observation.images.front"],
     )
