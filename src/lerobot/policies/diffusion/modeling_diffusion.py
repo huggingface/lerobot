@@ -534,9 +534,10 @@ class DiffusionRgbEncoder(nn.Module):
 
 
 class LanguageEncoder(nn.Module):
-    """Encodes an RGB image into a 1D feature vector.
+    """Encodes an language instruction into a 1D feature vector.
 
-    Includes the ability to normalize and crop the image first.
+    Utilizes a pre-trained transformer model (e.g., DistilBERT) to convert text
+    into a language embedding vector.
     """
 
     def __init__(self, config: DiffusionConfig):
