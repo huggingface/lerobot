@@ -131,6 +131,7 @@ def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dic
     elif hasattr(env.envs[0], "task"):
         observation["task"] = env.call("task")
     else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
+        print(f"{observation.keys()}")
         num_envs = observation[list(observation.keys())[0]].shape[0]
         observation["task"] = ["" for _ in range(num_envs)]
     return observation
