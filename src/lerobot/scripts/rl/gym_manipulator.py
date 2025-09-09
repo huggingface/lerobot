@@ -2088,7 +2088,7 @@ def record_dataset(env, policy, cfg):
         # Track success state collection
         success_detected = False
         success_steps_collected = 0
-        trajectory = [] # To store transitions for MC returns calculation
+        trajectory = []  # To store transitions for MC returns calculation
 
         # Run episode steps
         while time.perf_counter() - start_episode_t < cfg.wrapper.control_time_s:
@@ -2108,7 +2108,11 @@ def record_dataset(env, policy, cfg):
                 break
 
             # For teleop, get action from intervention
-            recorded_action = info["action_intervention"].cpu().squeeze(0).float() if cfg.pretrained_policy_name_or_path is None else action
+            recorded_action = (
+                info["action_intervention"].cpu().squeeze(0).float()
+                if cfg.pretrained_policy_name_or_path is None
+                else action
+            )
 
             # Process observation for dataset
             obs_processed = {}
@@ -2191,7 +2195,9 @@ def record_dataset(env, policy, cfg):
                 "complementary_info.discrete_penalty": torch.tensor(
                     [transition["complementary_info"].get("discrete_penalty", 0.0)], dtype=torch.float32
                 ),
-                "complementary_info.mc_returns": np.array([transition["mc_returns"]], dtype=np.float32) if transition["mc_returns"] is not None else np.array([0.0], dtype=np.float32),
+                "complementary_info.mc_returns": np.array([transition["mc_returns"]], dtype=np.float32)
+                if transition["mc_returns"] is not None
+                else np.array([0.0], dtype=np.float32),
             }
             dataset.add_frame(frame, task=cfg.task)
 

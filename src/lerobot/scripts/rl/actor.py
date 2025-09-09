@@ -267,7 +267,7 @@ def act_with_policy(
     # Add counters for intervention rate calculation
     episode_intervention_steps = 0
     episode_total_steps = 0
-    trajectory = [] # To store transitions for MC returns calculation
+    trajectory = []  # To store transitions for MC returns calculation
 
     policy_timer = TimerManager("Policy inference", log=False)
 
@@ -339,7 +339,7 @@ def act_with_policy(
                     transitions=trajectory,
                     transitions_queue=transitions_queue,
                 )
-                trajectory = [] # Clear trajectory after sending
+                trajectory = []  # Clear trajectory after sending
 
             stats = get_frequency_stats(policy_timer)
             policy_timer.reset()
