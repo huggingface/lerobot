@@ -14,9 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-import os
 import gc
 import logging
+import os
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -27,11 +27,11 @@ import numpy as np
 import packaging.version
 import pandas as pd
 import PIL.Image
+import pyarrow as pa
+import pyarrow.parquet as pq
 import torch
 import torch.utils
 from datasets import Dataset
-import pyarrow.parquet as pq
-import pyarrow as pa
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
@@ -52,11 +52,7 @@ from lerobot.datasets.utils import (
     embed_images,
     flatten_dict,
     get_delta_indices,
-    get_hf_dataset_cache_dir,
-    get_hf_dataset_size_in_mb,
     get_hf_features_from_features,
-    get_parquet_file_size_in_mb,
-    get_parquet_num_frames,
     get_safe_version,
     get_video_size_in_mb,
     hf_transform_to_torch,
@@ -114,13 +110,18 @@ class LeRobotDatasetMetadata:
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
 
-    def __del__(self):
-
-        """
-            Trust the user to call .finalise() but as an added safety check call the parquet writer to stop when calling the destructor
-        """
-        if (writer := getattr(self, "writer", None)):
+    def _close_writer(self) -> None:
+        """Close and cleanup the parquet writer if it exists."""
+        writer = getattr(self, "writer", None)
+        if writer is not None:
             writer.close()
+            self.writer = None
+
+    def __del__(self):
+        """
+        Trust the user to call .finalize() but as an added safety check call the parquet writer to stop when calling the destructor
+        """
+        self._close_writer()
 
     def load_metadata(self):
         self.info = load_info(self.root)
@@ -295,21 +296,19 @@ class LeRobotDatasetMetadata:
             episode_dict["dataset_from_index"] = [0]
             episode_dict["dataset_to_index"] = [num_frames]
         else:
-
             chunk_idx = self.latest_episode["meta/episodes/chunk_index"][0]
             file_idx = self.latest_episode["meta/episodes/file_index"][0]
 
             latest_path = self.writer.where
             latest_size_in_mb = os.path.getsize(latest_path.as_posix()) / (1024 * 1024)
-            latest_num_frames = self.latest_episode['episode_index'][0] + 1
+            latest_num_frames = self.latest_episode["episode_index"][0] + 1
 
             av_size_per_frame = latest_size_in_mb / latest_num_frames
 
             if latest_size_in_mb + av_size_per_frame * 1 >= self.data_files_size_in_mb:
                 # Size limit is reached, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
-                self.write.close()
-                self.writer = None
+                self._close_writer()
             # Update the existing pandas dataframe with new row
             episode_dict["meta/episodes/chunk_index"] = [chunk_idx]
             episode_dict["meta/episodes/file_index"] = [file_idx]
@@ -324,7 +323,9 @@ class LeRobotDatasetMetadata:
         if not self.writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
             path.parent.mkdir(parents=True, exist_ok=True)
-            self.writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
+            self.writer = pq.ParquetWriter(
+                path, schema=table.schema, compression="snappy", use_dictionary=True
+            )
 
         self.writer.write_table(table, row_group_size=num_frames)
         self.latest_episode = episode_dict
@@ -638,13 +639,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
             check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
-    def __del__(self):
-
-        """
-            Trust the user to call .finalise() but as an added safety check call the parquet writer to stop when calling the destructor
-        """
-        if (writer := getattr(self, "writer", None)):
+    def _close_writer(self) -> None:
+        """Close and cleanup the parquet writer if it exists."""
+        writer = getattr(self, "writer", None)
+        if writer is not None:
             writer.close()
+            self.writer = None
+
+    def __del__(self):
+        """
+        Trust the user to call .finalize() but as an added safety check call the parquet writer to stop when calling the destructor
+        """
+        self._close_writer()
 
     def push_to_hub(
         self,
@@ -913,20 +919,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
             "})',\n"
         )
 
-    def finalise(self):
-
+    def finalize(self):
         """
-            Close the parquet writers. This function needs to be called after data collection/conversion, else footer metadata won't be written to the parquet files.
-            The dataset won't be valid and can't be loaded as ds = LeRobotDataset(repo_id=repo, root=HF_LEROBOT_HOME.joinpath(repo))
+        Close the parquet writers. This function needs to be called after data collection/conversion, else footer metadata won't be written to the parquet files.
+        The dataset won't be valid and can't be loaded as ds = LeRobotDataset(repo_id=repo, root=HF_LEROBOT_HOME.joinpath(repo))
         """
-
-        if (writer := getattr(self, "writer", None)):
-            writer.close()
-            writer = None
-
-        if (writer := getattr(self.meta, "writer", None)):
-            writer.close()
-            writer = None
+        self._close_writer()
+        self.meta._close_writer()
 
     def create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self.meta.total_episodes if episode_index is None else episode_index
@@ -1133,12 +1132,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         # Convert buffer into HF Dataset
         ep_dict = {key: episode_buffer[key] for key in self.hf_features}
-        ep_num_frames = len(ep_dict['index'])
-
         ep_dataset = datasets.Dataset.from_dict(ep_dict, features=self.hf_features, split="train")
+        ep_dataset = embed_images(ep_dataset)
+        ep_num_frames = len(ep_dataset)
         df = pd.DataFrame(ep_dataset)
-        table = pa.Table.from_pandas(df, preserve_index=False)
-        ep_num_frames = table.num_rows
+
+        has_images = any(key in self.meta.image_keys for key in ep_dict.keys())
 
         if self.latest_episode is None:
             # Initialize indices and frame count for a new dataset made of the first episode data
@@ -1161,8 +1160,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 # Size limit is reached, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
                 latest_num_frames = 0
-                self.writer.close()
-                self.writer = None
+                self._close_writer()
 
         ep_dict["data/chunk_index"] = chunk_idx
         ep_dict["data/file_index"] = file_idx
@@ -1171,10 +1169,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
         path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        if not self.writer:
-            self.writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
+        if has_images:
+            # For images, use the special HF images parquet writer
+            to_parquet_with_hf_images(df, path)
+        else:
+            # For non-image data, use standard PyArrow parquet writer
+            table = pa.Table.from_pandas(df, preserve_index=False)
+            if not self.writer:
+                self.writer = pq.ParquetWriter(
+                    path, schema=table.schema, compression="snappy", use_dictionary=True
+                )
+            self.writer.write_table(table, row_group_size=ep_num_frames)
+            del table
 
-        self.writer.write_table(table, row_group_size=ep_num_frames)
+        # self.writer.write_table(table, row_group_size=ep_num_frames)
         self.latest_episode = ep_dict
 
         metadata = {
@@ -1184,7 +1192,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             "dataset_to_index": latest_num_frames + ep_num_frames,
         }
 
-        del table, df, ep_dataset
+        del df, ep_dataset
         gc.collect()
 
         return metadata
