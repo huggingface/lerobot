@@ -113,6 +113,14 @@ class LeRobotDatasetMetadata:
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
 
+    def __del__(self):
+
+        """
+            Trust the user to call .finalise() but as an added safety check call the parquet writer to stop when calling the destructor
+        """
+        if (writer := getattr(self, "writer", None)):
+            writer.close()
+
     def load_metadata(self):
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
@@ -629,6 +637,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
+    def __del__(self):
+
+        """
+            Trust the user to call .finalise() but as an added safety check call the parquet writer to stop when calling the destructor
+        """
+        if (writer := getattr(self, "writer", None)):
+            writer.close()
+
     def push_to_hub(
         self,
         branch: str | None = None,
@@ -895,6 +911,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"    Features: '{feature_keys}',\n"
             "})',\n"
         )
+
+    def finalise(self):
+
+        """
+            Close the parquet writers. This function needs to be called after data collection/conversion, else footer metadata won't be written to the parquet files.
+            The dataset won't be valid and can't be loaded as ds = LeRobotDataset(repo_id=repo, root=HF_LEROBOT_HOME.joinpath(repo))
+        """
+
+        if (writer := getattr(self, "writer", None)):
+            writer.close()
+            writer = None
+
+        if (writer := getattr(self.meta, "writer", None)):
+            writer.close()
+            writer = None
 
     def create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self.meta.total_episodes if episode_index is None else episode_index
