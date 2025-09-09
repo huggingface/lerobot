@@ -110,8 +110,9 @@ class BiStaraiFollower(Robot):
         self.right_arm.configure()
 
     def setup_motors(self) -> None:
-        self.left_arm.setup_motors()
-        self.right_arm.setup_motors()
+        return
+        # self.left_arm.setup_motors()
+        # self.right_arm.setup_motors()
 
     def get_observation(self) -> dict[str, Any]:
         obs_dict = {}
