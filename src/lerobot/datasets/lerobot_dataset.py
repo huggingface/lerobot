@@ -66,6 +66,7 @@ from lerobot.datasets.utils import (
     write_json,
 )
 from lerobot.datasets.video_utils import (
+    VideoEncodingManager,
     VideoFrame,
     decode_video_frames,
     encode_video_frames,
@@ -863,7 +864,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         use_batched_encoding = self.batch_encoding_size > 1
 
         if has_video_keys and not use_batched_encoding:
-            self.encode_episode_videos(episode_index)
+            with VideoEncodingManager(self):
+                self.encode_episode_videos(episode_index)
 
         # `meta.save_episode` should be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
@@ -877,7 +879,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 logging.info(
                     f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
                 )
-                self.batch_encode_videos(start_ep, end_ep)
+                with VideoEncodingManager(self):
+                    self.batch_encode_videos(start_ep, end_ep)
                 self.episodes_since_last_encoding = 0
 
         # Episode data index and timestamp checking
