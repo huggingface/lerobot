@@ -91,7 +91,7 @@ class ServoDebugUI:
             ports = [f'COM{i}' for i in range(1, 10)]
 
         # Remove duplicates and sort
-        ports = sorted(list(set(ports)))
+        ports = sorted(set(ports))
 
         # If no ports found, provide some defaults
         if not ports:
@@ -351,7 +351,7 @@ class ServoDebugUI:
         ]
 
         # Initially populate with default values
-        for addr, name, reg_key, area, access in self.control_registers:
+        for addr, name, _reg_key, area, access in self.control_registers:
             self.control_table.insert("", "end", values=(addr, name, "---", area, access))
 
     def toggle_connection(self):
@@ -540,7 +540,7 @@ class ServoDebugUI:
             # Read actual values from the selected motor
             items = list(self.control_table.get_children())
 
-            for i, (addr, name, reg_key, area, access) in enumerate(self.control_registers):
+            for i, (_addr, _name, reg_key, _area, _access) in enumerate(self.control_registers):
                 try:
                     # Read the register value using motor name
                     value = self.motor_bus.read(reg_key, motor_name, normalize=False)
@@ -928,7 +928,7 @@ class ServoDebugUI:
 
 def main():
     root = tk.Tk()
-    app = ServoDebugUI(root)
+    ServoDebugUI(root)
     root.mainloop()
 
 
