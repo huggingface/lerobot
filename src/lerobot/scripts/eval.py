@@ -57,6 +57,7 @@ from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
 from typing import Any
+from typing import Any
 
 import einops
 import gymnasium as gym
@@ -71,7 +72,9 @@ from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env
 from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
 from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import get_device_from_parameters
 from lerobot.processor.core import TransitionKey
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 from lerobot.utils.io_utils import write_video
@@ -86,6 +89,8 @@ from lerobot.utils.utils import (
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[dict[str, Any]],
     seeds: list[int] | None = None,
@@ -151,6 +156,7 @@ def rollout(
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
+        observation = preprocessor(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
 
@@ -161,8 +167,10 @@ def rollout(
         with torch.inference_mode():
             action = policy.select_action(observation)
         action: torch.Tensor = postprocessor({TransitionKey.ACTION: action})[TransitionKey.ACTION]
+        action: torch.Tensor = postprocessor({TransitionKey.ACTION: action})[TransitionKey.ACTION]
 
         # Convert to CPU / numpy.
+        action: np.ndarray = action.to("cpu").numpy()
         action: np.ndarray = action.to("cpu").numpy()
         assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
@@ -220,6 +228,8 @@ def rollout(
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
     n_episodes: int,
@@ -298,6 +308,10 @@ def eval_policy(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
         rollout_data = rollout(
+            env=env,
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
             env=env,
             policy=policy,
             preprocessor=preprocessor,
@@ -484,13 +498,22 @@ def eval_main(cfg: EvalPipelineConfig):
         env_cfg=cfg.env,
     )
 
+
     policy.eval()
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path
+    )
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path
     )
 
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy(
+            env=env,
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            n_episodes=cfg.eval.n_episodes,
             env=env,
             policy=policy,
             preprocessor=preprocessor,
