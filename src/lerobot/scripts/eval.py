@@ -74,7 +74,6 @@ from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types, pr
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import get_device_from_parameters
 from lerobot.processor.core import TransitionKey
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 from lerobot.utils.io_utils import write_video
