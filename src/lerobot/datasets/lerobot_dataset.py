@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-import gc
 import logging
 import os
 import shutil
@@ -330,9 +329,6 @@ class LeRobotDatasetMetadata:
         self.writer.write_table(table, row_group_size=num_frames)
         self.latest_episode = episode_dict
 
-        del df, table, ep_dataset
-        gc.collect()
-
     def save_episode(
         self,
         episode_index: int,
@@ -614,6 +610,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.writer = None
         self.latest_episode = None
 
+        # Track dataset state for efficient incremental writing
+        self._lazy_loading = False
+        self._recorded_frames = 0
+
         self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
@@ -794,7 +794,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
-        return len(self.hf_dataset) if self.hf_dataset is not None else self.meta.total_frames
+        # During recording, use tracked frames for efficiency
+        if self._recorded_frames > 0 and not self._lazy_loading:
+            return self._recorded_frames
+        # For reading existing datasets, load lazily if needed
+        if self.hf_dataset is not None or not self._lazy_loading:
+            self._ensure_hf_dataset_loaded()
+            return len(self.hf_dataset)
+        return self.meta.total_frames
 
     @property
     def num_episodes(self) -> int:
@@ -877,10 +884,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item[key] = torch.BoolTensor(val)
         return item
 
+    def _ensure_hf_dataset_loaded(self):
+        """Lazy load the HF dataset only when needed for reading."""
+        if self._lazy_loading or self.hf_dataset is None:
+            self.hf_dataset = self.load_hf_dataset()
+            self._lazy_loading = False
+
     def __len__(self):
+        # During recording, use tracked frames for efficiency
+        if self._recorded_frames > 0 and not self._lazy_loading:
+            return self._recorded_frames
+        # Otherwise use the standard approach
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
+        # Ensure dataset is loaded when we actually need to read from it
+        self._ensure_hf_dataset_loaded()
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
@@ -1180,7 +1199,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     path, schema=table.schema, compression="snappy", use_dictionary=True
                 )
             self.writer.write_table(table, row_group_size=ep_num_frames)
-            del table
+            # Close the writer to ensure the file is properly finalized before reading
+            self._close_writer()
 
         # self.writer.write_table(table, row_group_size=ep_num_frames)
         self.latest_episode = ep_dict
@@ -1192,8 +1212,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             "dataset_to_index": latest_num_frames + ep_num_frames,
         }
 
-        del df, ep_dataset
-        gc.collect()
+        # Mark that the HF dataset needs reloading (lazy loading approach)
+        # This avoids expensive reloading during sequential recording
+        self._lazy_loading = True
+        # Update recorded frames count for efficient length tracking
+        self._recorded_frames += ep_num_frames
 
         return metadata
 
@@ -1360,6 +1383,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         obj.writer = None
         obj.latest_episode = None
+        # Initialize tracking for incremental recording
+        obj._lazy_loading = False
+        obj._recorded_frames = 0
         return obj
 
 
