@@ -56,7 +56,6 @@ import math
 import os
 import re
 from collections import deque
-from functools import partial
 from venv import logger
 
 import safetensors
@@ -925,11 +924,16 @@ class VLAFlowMatching(nn.Module):
 
             logger.info(f"[SMOLVLA] expanded_time shape: {expanded_time.shape}")
 
-            denoise_step_partial_call = partial(
-                self.denoise_step,
+            # Partial call of the function, I used `partial` package at the beginning
+            # but it was not working as expected, so I used a lambda function instead
+            # I want to pass `x_t` as positionan argument to the partial call, because
+            # it could have different naming in different models, and the rest of parameters
+            # as named arguments
+            denoise_step_partial_call = lambda input_x_t: self.denoise_step(  # noqa: E731
+                x_t=input_x_t,
                 prefix_pad_masks=prefix_pad_masks,
                 past_key_values=past_key_values,
-                timestep=expanded_time,
+                timestep=expanded_time,  # noqa: B023
             )
 
             logger.info("[SMOLVLA] starting denoise step")
@@ -948,7 +952,7 @@ class VLAFlowMatching(nn.Module):
                     execution_horizon=execution_horizon,
                 )
             else:
-                v_t = denoise_step_partial_call(x_t=x_t)
+                v_t = denoise_step_partial_call(x_t)
 
             logger.info("[SMOLVLA] denoise step completed")
 

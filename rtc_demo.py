@@ -68,12 +68,21 @@ class RobotWrapper:
         with self.lock:
             self.robot.send_action(action)
 
+    def observation_features(self) -> list[str]:
+        with self.lock:
+            return self.robot.observation_features
+
+    def action_features(self) -> list[str]:
+        with self.lock:
+            return self.robot.action_features
+
 
 class ActionQueue:
-    def __init__(self):
+    def __init__(self, cfg: RTCConfig):
         self.queue = None
         self.lock = Lock()
         self.last_index = 0
+        self.cfg = cfg
 
     def get(self, timeout: float = 0.1) -> Tensor | None:
         with self.lock:
@@ -114,26 +123,45 @@ class ActionQueue:
         self, predicted_actions: Tensor, real_delay: int, action_index_before_inference: int | None = 0
     ):
         with self.lock:
-            current_index = self.last_index
+            self._check_delays(real_delay, action_index_before_inference)
 
-            if action_index_before_inference is not None:
-                indexes_diff = action_index_before_inference - current_index
-                if indexes_diff != real_delay:
-                    # Let's check that action index difference (real delay calculated based on action queue)
-                    # is the same as dealy calculated based on inference latency
-                    logger.warning(
-                        f"[ACTION_QUEUE] Indexes diff is not equal to real delay. Indexes diff: {indexes_diff}, real delay: {real_delay}"
-                    )
+            if self.cfg.enabled:
+                self._replace_actions_queue(predicted_actions, real_delay)
+                return
 
+            self._append_actions_queue(predicted_actions)
+
+    def _replace_actions_queue(self, predicted_actions: Tensor, real_delay: int):
+        self.queue = predicted_actions.clone()
+
+        logger.info(f"predicted_actions shape: {predicted_actions.shape}")
+        logger.info(f"real_delay: {real_delay}")
+        logger.info(f"self.queue shape: {self.queue.shape}")
+
+        # First real_delay actions are already executed
+        self.queue = self.queue[real_delay:]
+        self.last_index = 0
+
+    def _append_actions_queue(self, predicted_actions: Tensor):
+        if self.queue is None:
             self.queue = predicted_actions.clone()
+            return
 
-            logger.info(f"predicted_actions shape: {predicted_actions.shape}")
-            logger.info(f"real_delay: {real_delay}")
-            logger.info(f"self.queue shape: {self.queue.shape}")
+        self.queue = torch.cat([self.queue, predicted_actions.clone()])
+        self.queue = self.queue[self.last_index :]
+        self.last_index = 0
 
-            # First real_delay actions are already executed
-            self.queue = self.queue[real_delay:]
-            self.last_index = 0
+    def _check_delays(self, real_delay: int, action_index_before_inference: int | None = None):
+        if action_index_before_inference is None:
+            return
+
+        indexes_diff = action_index_before_inference - self.last_index
+        if indexes_diff != real_delay:
+            # Let's check that action index difference (real delay calculated based on action queue)
+            # is the same as dealy calculated based on inference latency
+            logger.warning(
+                f"[ACTION_QUEUE] Indexes diff is not equal to real delay. Indexes diff: {indexes_diff}, real delay: {real_delay}"
+            )
 
 
 @dataclass
@@ -211,7 +239,7 @@ def get_actions(
     latency_tracker = LatencyTracker()  # Track latency of action chunks
     fps = cfg.fps
 
-    dataset_features = hw_to_dataset_features(robot.observation_features, "observation")
+    dataset_features = hw_to_dataset_features(robot.observation_features(), "observation")
     policy_device = policy.config.device
 
     while not shutdown_event.is_set():
@@ -302,7 +330,7 @@ def actor_control(
 
         if action is not None:
             action = action.cpu()
-            action = {key: action[i].item() for i, key in enumerate(robot.action_features)}
+            action = {key: action[i].item() for i, key in enumerate(robot.action_features())}
             robot.send_action(action)
 
             action_count += 1
@@ -311,8 +339,8 @@ def actor_control(
         # Wait for the next action time
         elapsed = time.time() - start_time
         time.sleep(1)
-        # if elapsed < action_interval:
-        #     busy_wait(action_interval - elapsed)
+        if elapsed < action_interval:
+            time.sleep(action_interval - elapsed)
 
     logger.info(f"[ACTOR] Actor thread shutting down. Total actions executed: {action_count}")
 
@@ -361,13 +389,15 @@ def demo_cli(cfg: RTCDemoConfig):
     robot = make_robot_from_config(cfg.robot)
     robot.connect()
 
+    robot_wrapper = RobotWrapper(robot)
+
     # Create action queue for communication between threads
-    action_queue = ActionQueue()
+    action_queue = ActionQueue(cfg.rtc)
 
     # Start chunk requester thread
     get_actions_thread = Thread(
         target=get_actions,
-        args=(policy, robot, action_queue, shutdown_event, cfg),
+        args=(policy, robot_wrapper, action_queue, shutdown_event, cfg),
         daemon=True,
         name="GetActions",
     )
@@ -376,7 +406,10 @@ def demo_cli(cfg: RTCDemoConfig):
 
     # Start action executor thread
     actor_thread = Thread(
-        target=actor_control, args=(robot, action_queue, shutdown_event, cfg), daemon=True, name="Actor"
+        target=actor_control,
+        args=(robot_wrapper, action_queue, shutdown_event, cfg),
+        daemon=True,
+        name="Actor",
     )
     actor_thread.start()
     logger.info("Started actor thread")

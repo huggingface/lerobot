@@ -105,7 +105,7 @@ class RTCProcessor:
 
         if prev_chunk_left_over is None:
             # First step, no guidance
-            return original_denoise_step_partial(x_t=x_t)
+            return original_denoise_step_partial(x_t)
 
         squeezed = False
         if len(x_t.shape) < 3:
@@ -120,22 +120,23 @@ class RTCProcessor:
         if execution_horizon is None:
             execution_horizon = self.rtc_config.execution_horizon
 
+        # If the previous action chunk is to short then it doesn't make sense to use long execution horizon
+        # because there is nothing to merge
+        if execution_horizon > prev_chunk_left_over.shape[1]:
+            execution_horizon = prev_chunk_left_over.shape[1]
+
         batch_size = x_t.shape[0]
         action_chunk_size = x_t.shape[1]
         action_dim = x_t.shape[2]
 
-        if prev_chunk_left_over.shape[1] < action_chunk_size:
+        if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
             # We need to pad the left over chunk with zeros
-            pad = torch.zeros(batch_size, action_chunk_size - prev_chunk_left_over.shape[1], action_dim)
-            prev_chunk_left_over = torch.cat([prev_chunk_left_over, pad], dim=1)
+            padded = torch.zeros(batch_size, action_chunk_size, action_dim)
+            padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
+            prev_chunk_left_over = padded
 
-        if prev_chunk_left_over.shape[2] < action_dim:
-            # We need to pad the left over chunk with zeros
-            pad = torch.zeros(batch_size, action_chunk_size, action_dim - prev_chunk_left_over.shape[2])
-            prev_chunk_left_over = torch.cat([prev_chunk_left_over, pad], dim=2)
-
-        assert prev_chunk_left_over.shape[1] == action_chunk_size, (
-            "The padded previous chunk must be the same size as the action chunk size"
+        assert prev_chunk_left_over.shape == x_t.shape, (
+            "The padded previous chunk must be the same size as the input tensor"
         )
         weights = self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
 
@@ -144,7 +145,7 @@ class RTCProcessor:
         weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
 
         with torch.enable_grad():
-            v_t = original_denoise_step_partial(x_t=x_t)
+            v_t = original_denoise_step_partial(x_t)
 
             # In the original implementation, the time goes from 0 to 1 and x_1t calculates
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
