@@ -130,7 +130,7 @@ For Ubuntu X86:
 
     ```bash
     cd ~/lerobot && pip install -e ".[dynamixel]"
-    pip install fashionstar-uart-sdk==1.3.1
+    pip install fashionstar-uart-sdk
     ```
 6. 检查 Pytorch 和 Torchvision
 
@@ -238,8 +238,6 @@ lerobot-calibrate     --teleop.type=starai_violin --teleop.port=/dev/ttyUSB0 --t
 ```bash
 lerobot-calibrate     --robot.type=starai_viola --robot.port=/dev/ttyUSB1 --robot.id=my_awesome_staraiviola_arm
 ```
-lerobot-calibrate     --robot.type=starai_cello --robot.port=/dev/ttyUSB1 --robot.id=my_awesome_staraicello_arm
-
 
 ## 遥操作
 
