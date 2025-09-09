@@ -1293,6 +1293,12 @@ def process_transitions(
                 logging.warning("[LEARNER] NaN detected in transition, skipping")
                 continue
 
+            mc_returns = transition.pop("mc_returns", None)
+            if mc_returns is not None:
+                if transition.get("complementary_info") is None:
+                    transition["complementary_info"] = {}
+                transition["complementary_info"]["mc_returns"] = mc_returns
+
             replay_buffer.add(**transition)
 
             # Add to offline buffer if it's an intervention
@@ -1425,11 +1431,8 @@ def run_conrft_offline_training(
                 "next_observation_feature": next_observation_features,
                 "action_embeddings": action_embedding,
                 "next_action_embeddings": next_action_embeddings,
+                "complementary_info": batch.get("complementary_info"),
             }
-
-            # Add MC returns if available (for Cal-QL)
-            if "mc_returns" in batch:
-                forward_batch["mc_returns"] = batch["mc_returns"]
 
             # Critic update with Cal-QL loss
             critic_output = policy.forward(forward_batch, model="cal_ql")
@@ -1480,8 +1483,9 @@ def run_conrft_offline_training(
             "next_action_embeddings": next_action_embeddings,
         }
 
-        if "mc_returns" in batch:
-            forward_batch["mc_returns"] = batch["mc_returns"]
+        if "complementary_info" in batch and batch["complementary_info"] is not None:
+            if "mc_returns" in batch["complementary_info"]:
+                forward_batch["mc_returns"] = batch["complementary_info"]["mc_returns"]
 
         # Critic update
         critic_output = policy.forward(forward_batch, model="cal_ql")
@@ -1725,7 +1729,6 @@ def run_conrft_online_training(
                 "done": done,
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
-                "complementary_info": batch["complementary_info"],
             }
             if observation_features is not None:
                 forward_batch["observation_features"] = observation_features
@@ -1775,7 +1778,6 @@ def run_conrft_online_training(
             "done": done,
             "observation_feature": observation_features,
             "next_observation_feature": next_observation_features,
-            "complementary_info": batch["complementary_info"],
         }
         if observation_features is not None:
             forward_batch["observation_features"] = observation_features

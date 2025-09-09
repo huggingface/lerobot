@@ -309,12 +309,19 @@ class ConRFTPolicy(PreTrainedPolicy):
         actions = batch["action"]
         rewards = batch["reward"]
         dones = batch["done"]
-        mc_returns = batch.get("mc_returns", rewards)  # Use MC returns if available
         next_observations = batch["next_state"]
         observation_features = batch.get("observation_feature")
         next_observation_features = batch.get("next_observation_feature")
         action_embeddings = batch.get("action_embeddings")
         next_action_embeddings = batch.get("next_action_embeddings")
+
+        complementary_info = batch.get("complementary_info")
+        mc_returns = None
+        if complementary_info is not None:
+            mc_returns = complementary_info.get("mc_returns")
+
+        if mc_returns is None:
+            raise ValueError("MC returns not found in complementary_info. Ensure use_mc_returns=True in config.")
 
         batch_size = actions.shape[0]
 

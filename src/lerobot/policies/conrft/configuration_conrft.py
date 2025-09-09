@@ -161,6 +161,13 @@ class ConRFTConfig(PreTrainedConfig):
     cql_clip_diff_min: float = -np.inf
     cql_clip_diff_max: float = np.inf
 
+    # Monte Carlo Returns
+    use_mc_returns: bool = False
+    reward_neg: float = 0.0
+    reward_scale: float = 1.0
+    reward_bias: float = 0.0
+    is_sparse_reward: bool = False
+
     # stage weights
     bc_weight_offline: float = 1.0
     q_weight_offline: float = 1.0

@@ -39,6 +39,8 @@ Example:
 import logging
 import time
 from collections import deque
+
+import lerobot.policies  # noqa: F401
 from collections.abc import Sequence
 from threading import Lock
 from typing import Annotated, Any
@@ -65,6 +67,7 @@ from lerobot.teleoperators import (
     so101_leader,  # noqa: F401
 )
 from lerobot.teleoperators.gamepad.teleop_gamepad import GamepadTeleop
+from lerobot.scripts.rl.data_util import add_mc_returns_to_trajectory, add_next_embeddings_to_trajectory
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
@@ -2048,6 +2051,11 @@ def record_dataset(env, policy, cfg):
             "shape": (1,),
             "names": ["discrete_penalty"],
         },
+        "complementary_info.mc_returns": {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": ["mc_returns"],
+        },
     }
 
     # Add image features
@@ -2072,7 +2080,6 @@ def record_dataset(env, policy, cfg):
 
     # Record episodes
     episode_index = 0
-    recorded_action = None
     while episode_index < cfg.num_episodes:
         obs, _ = env.reset()
         start_episode_t = time.perf_counter()
@@ -2081,6 +2088,7 @@ def record_dataset(env, policy, cfg):
         # Track success state collection
         success_detected = False
         success_steps_collected = 0
+        trajectory = [] # To store transitions for MC returns calculation
 
         # Run episode steps
         while time.perf_counter() - start_episode_t < cfg.wrapper.control_time_s:
@@ -2089,47 +2097,58 @@ def record_dataset(env, policy, cfg):
             # Get action from policy if available
             if cfg.pretrained_policy_name_or_path is not None:
                 action = policy.select_action(obs)
+            else:
+                action = env.action_space.sample() * 0.0  # Default to zero action for teleop
 
             # Step environment
-            obs, reward, terminated, truncated, info = env.step(action)
+            next_obs, reward, terminated, truncated, info = env.step(action)
 
             # Check if episode needs to be rerecorded
             if info.get("rerecord_episode", False):
                 break
 
             # For teleop, get action from intervention
-            recorded_action = {
-                "action": info["action_intervention"].cpu().squeeze(0).float() if policy is None else action
-            }
+            recorded_action = info["action_intervention"].cpu().squeeze(0).float() if cfg.pretrained_policy_name_or_path is None else action
 
             # Process observation for dataset
-            obs_processed = {k: v.cpu().squeeze(0).float() for k, v in obs.items()}
+            obs_processed = {}
+            for k, v in obs.items():
+                v_cpu = v.cpu().squeeze(0)
+                if "image" in k:
+                    obs_processed[k] = v_cpu.permute(1, 2, 0)
+                else:
+                    obs_processed[k] = v_cpu.float()
+
+            next_obs_processed = {}
+            for k, v in next_obs.items():
+                v_cpu = v.cpu().squeeze(0)
+                if "image" in k:
+                    next_obs_processed[k] = v_cpu.permute(1, 2, 0)
+                else:
+                    next_obs_processed[k] = v_cpu.float()
+
+            # obs_processed = {k: v.cpu().squeeze(0).float() for k, v in obs.items()}
+            # next_obs_processed = {k: v.cpu().squeeze(0).float() for k, v in next_obs.items()}
 
             # Check if we've just detected success
             if reward == 1.0 and not success_detected:
                 success_detected = True
                 logging.info("Success detected! Collecting additional success states.")
 
-            # Add frame to dataset - continue marking as success even during extra collection steps
-            frame = {**obs_processed, **recorded_action}
+            # Create a temporary transition to store for MC returns calculation
+            temp_transition = {
+                "state": obs_processed,
+                "action": recorded_action,
+                "reward": reward,
+                "next_state": next_obs_processed,
+                "done": terminated,
+                "truncated": truncated,
+                "complementary_info": info,
+                "mc_returns": None,
+            }
+            trajectory.append(temp_transition)
 
-            # If we're in the success collection phase, keep marking rewards as 1.0
-            if success_detected:
-                frame["next.reward"] = np.array([1.0], dtype=np.float32)
-            else:
-                frame["next.reward"] = np.array([reward], dtype=np.float32)
-
-            # Only mark as done if we're truly done (reached end or collected enough success states)
-            really_done = terminated or truncated
-            if success_detected:
-                success_steps_collected += 1
-                really_done = success_steps_collected >= cfg.number_of_steps_after_success
-
-            frame["next.done"] = np.array([really_done], dtype=bool)
-            frame["complementary_info.discrete_penalty"] = torch.tensor(
-                [info.get("discrete_penalty", 0.0)], dtype=torch.float32
-            )
-            dataset.add_frame(frame, task=cfg.task)
+            obs = next_obs  # Update observation for next step
 
             # Maintain consistent timing
             if cfg.fps:
@@ -2150,6 +2169,31 @@ def record_dataset(env, policy, cfg):
             dataset.clear_episode_buffer()
             logging.info(f"Re-recording episode {episode_index}")
             continue
+
+        # Calculate MC returns for the completed trajectory
+        if cfg.policy.use_mc_returns:
+            trajectory = add_mc_returns_to_trajectory(
+                trajectory,
+                gamma=cfg.policy.discount,
+                reward_scale=cfg.policy.reward_scale,
+                reward_bias=cfg.policy.reward_bias,
+                reward_neg=cfg.policy.reward_neg,
+                is_sparse_reward=cfg.policy.is_sparse_reward,
+            )
+
+        # Add processed transitions to dataset
+        for transition in trajectory:
+            frame = {
+                **transition["state"],
+                "action": transition["action"],
+                "next.reward": np.array([transition["reward"]], dtype=np.float32),
+                "next.done": np.array([transition["done"]], dtype=bool),
+                "complementary_info.discrete_penalty": torch.tensor(
+                    [transition["complementary_info"].get("discrete_penalty", 0.0)], dtype=torch.float32
+                ),
+                "complementary_info.mc_returns": np.array([transition["mc_returns"]], dtype=np.float32) if transition["mc_returns"] is not None else np.array([0.0], dtype=np.float32),
+            }
+            dataset.add_frame(frame, task=cfg.task)
 
         dataset.save_episode()
         episode_index += 1

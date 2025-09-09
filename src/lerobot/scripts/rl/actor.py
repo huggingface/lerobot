@@ -79,6 +79,7 @@ from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.queue import get_last_item_from_queue
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import busy_wait
+from lerobot.scripts.rl.data_util import add_mc_returns_to_trajectory, add_next_embeddings_to_trajectory
 from lerobot.utils.transition import (
     Transition,
     move_state_dict_to_device,
@@ -261,11 +262,12 @@ def act_with_policy(
 
     # NOTE: For the moment we will solely handle the case of a single environment
     sum_reward_episode = 0
-    list_transition_to_send_to_learner = []
+    # list_transition_to_send_to_learner = []
     episode_intervention = False
     # Add counters for intervention rate calculation
     episode_intervention_steps = 0
     episode_total_steps = 0
+    trajectory = [] # To store transitions for MC returns calculation
 
     policy_timer = TimerManager("Policy inference", log=False)
 
@@ -301,31 +303,43 @@ def act_with_policy(
             # Increment intervention steps counter
             episode_intervention_steps += 1
 
-        list_transition_to_send_to_learner.append(
-            Transition(
-                state=obs,
-                action=action,
-                reward=reward,
-                next_state=next_obs,
-                done=done,
-                truncated=truncated,  # TODO: (azouitine) Handle truncation properly
-                complementary_info=info,
-            )
+        transition = Transition(
+            state=obs,
+            action=action,
+            reward=reward,
+            next_state=next_obs,
+            done=done,
+            truncated=truncated,  # TODO: (azouitine) Handle truncation properly
+            complementary_info=info,
+            mc_returns=None,
         )
+        trajectory.append(transition)
         # assign obs to the next obs and continue the rollout
         obs = next_obs
 
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
+            # Calculate MC returns and next action embeddings for the completed trajectory
+            if cfg.policy.use_mc_returns:
+                trajectory = add_mc_returns_to_trajectory(
+                    trajectory,
+                    gamma=cfg.policy.discount,
+                    reward_scale=cfg.policy.reward_scale,
+                    reward_bias=cfg.policy.reward_bias,
+                    reward_neg=cfg.policy.reward_neg,
+                    is_sparse_reward=cfg.policy.is_sparse_reward,
+                )
+            # trajectory = add_next_embeddings_to_trajectory(trajectory)
+
             update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
-            if len(list_transition_to_send_to_learner) > 0:
+            if len(trajectory) > 0:
                 push_transitions_to_transport_queue(
-                    transitions=list_transition_to_send_to_learner,
+                    transitions=trajectory,
                     transitions_queue=transitions_queue,
                 )
-                list_transition_to_send_to_learner = []
+                trajectory = [] # Clear trajectory after sending
 
             stats = get_frequency_stats(policy_timer)
             policy_timer.reset()

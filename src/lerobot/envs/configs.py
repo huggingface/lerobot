@@ -18,6 +18,7 @@ from typing import Any
 
 import draccus
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.robots import RobotConfig
@@ -260,6 +261,7 @@ class HILEnvConfig(EnvConfig):
     device: str = "cuda"
     push_to_hub: bool = True
     pretrained_policy_name_or_path: str | None = None
+    policy: PreTrainedConfig | None = None
     # For the reward classifier, to record more positive examples after a success
     number_of_steps_after_success: int = 0
     ############################
