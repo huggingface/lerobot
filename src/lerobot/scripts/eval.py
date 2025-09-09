@@ -151,14 +151,13 @@ def rollout(
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
-        observation = preprocessor(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
 
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
-
+        observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
         action: torch.Tensor = postprocessor({TransitionKey.ACTION: action})[TransitionKey.ACTION]
