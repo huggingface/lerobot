@@ -39,8 +39,6 @@ Example:
 import logging
 import time
 from collections import deque
-
-import lerobot.policies  # noqa: F401
 from collections.abc import Sequence
 from threading import Lock
 from typing import Annotated, Any
@@ -50,6 +48,7 @@ import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
+import lerobot.policies  # noqa: F401
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.envs.configs import EnvConfig
@@ -60,6 +59,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
 )
+from lerobot.scripts.rl.data_util import add_mc_returns_to_trajectory
 from lerobot.teleoperators import (
     gamepad,  # noqa: F401
     keyboard,  # noqa: F401
@@ -67,7 +67,6 @@ from lerobot.teleoperators import (
     so101_leader,  # noqa: F401
 )
 from lerobot.teleoperators.gamepad.teleop_gamepad import GamepadTeleop
-from lerobot.scripts.rl.data_util import add_mc_returns_to_trajectory, add_next_embeddings_to_trajectory
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say

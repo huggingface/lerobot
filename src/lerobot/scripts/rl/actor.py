@@ -64,6 +64,7 @@ from lerobot.policies.conrft.modeling_conrft import ConRFTPolicy
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.robots import so100_follower  # noqa: F401
+from lerobot.scripts.rl.data_util import add_mc_returns_to_trajectory
 from lerobot.scripts.rl.gym_manipulator import make_robot_env
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.transport import services_pb2, services_pb2_grpc
@@ -79,7 +80,6 @@ from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.queue import get_last_item_from_queue
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import busy_wait
-from lerobot.scripts.rl.data_util import add_mc_returns_to_trajectory, add_next_embeddings_to_trajectory
 from lerobot.utils.transition import (
     Transition,
     move_state_dict_to_device,
