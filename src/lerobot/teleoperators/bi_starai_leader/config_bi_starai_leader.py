@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("bi_so100_leader")
+@TeleoperatorConfig.register_subclass("bi_starai_leader")
 @dataclass
-class BiSTARAILeaderConfig(TeleoperatorConfig):
+class BiStaraiLeaderConfig(TeleoperatorConfig):
     left_arm_port: str
     right_arm_port: str

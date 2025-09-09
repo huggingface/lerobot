@@ -59,6 +59,7 @@ from lerobot.robots import (  # noqa: F401
     so101_follower,
     starai_viola,
     starai_cello,
+    bi_starai_follower
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (

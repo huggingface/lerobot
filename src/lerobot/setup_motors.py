@@ -36,7 +36,8 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
     starai_viola,
-    starai_cello
+    starai_cello,
+    bi_starai_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
@@ -44,7 +45,8 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
-    starai_violin
+    starai_violin,
+    bi_starai_leader
 )
 
 COMPATIBLE_DEVICES = [

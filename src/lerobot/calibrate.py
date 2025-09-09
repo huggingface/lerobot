@@ -44,6 +44,7 @@ from lerobot.robots import (  # noqa: F401
     so101_follower,
     starai_viola,
     starai_cello,
+    bi_starai_follower
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -54,6 +55,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so100_leader,
     so101_leader,
     starai_violin,
+    bi_starai_leader
 )
 from lerobot.utils.utils import init_logging
 

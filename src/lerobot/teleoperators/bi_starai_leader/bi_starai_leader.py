@@ -22,20 +22,20 @@ from lerobot.teleoperators.starai_violin.config_starai_violin import StaraiVioli
 from lerobot.teleoperators.starai_violin.starai_violin import StaraiViolin as STARAILeader
 
 from ..teleoperator import Teleoperator
-from .config_bi_starai_leader import BiSTARAILeaderConfig
+from .config_bi_starai_leader import BiStaraiLeaderConfig
 
 logger = logging.getLogger(__name__)
 
 
-class BiSTARAILeader(Teleoperator):
+class BiStaraiLeader(Teleoperator):
     """
     [Bimanual StarAi Leader Arms]
     """
 
-    config_class = BiSTARAILeaderConfig
+    config_class = BiStaraiLeaderConfig
     name = "bi_so100_leader"
 
-    def __init__(self, config: BiSTARAILeaderConfig):
+    def __init__(self, config: BiStaraiLeaderConfig):
         super().__init__(config)
         self.config = config
 

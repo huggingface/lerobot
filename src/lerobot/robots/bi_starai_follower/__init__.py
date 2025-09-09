@@ -14,5 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .bi_starai_follower import BistaraiFollower
+from .bi_starai_follower import BiStaraiFollower
 from .config_bi_starai_follower import BiStaraiFollowerConfig

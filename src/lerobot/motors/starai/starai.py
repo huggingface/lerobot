@@ -13,16 +13,7 @@ from fashionstar_uart_sdk import *
 
 from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address,MotorNormMode
 from .tables import (
-#     FIRMWARE_MAJOR_VERSION,
-#     FIRMWARE_MINOR_VERSION,
-#     MODEL_BAUDRATE_TABLE,
-    # MODEL_CONTROL_TABLE,
-#     MODEL_ENCODING_TABLE,
-#     MODEL_NUMBER,
     MODEL_NUMBER_TABLE,
-#     MODEL_PROTOCOL,
-#     MODEL_RESOLUTION,
-#     SCAN_BAUDRATES,
 )
 
 DEFAULT_PROTOCOL_VERSION = 0
@@ -264,7 +255,10 @@ class StaraiMotorsBus(MotorsBus):
                                                 DEFAULT_DEC_TIME)
                 write_data[motor] = data
 
-            write_data["gripper"].power=1000
+            if self.motors["gripper"].model == "rx8-u50":
+                write_data["gripper"].power=50
+            else:
+                write_data["gripper"].power=1000
 
             self.port_handler.sync_write["Goal_Position"](write_data)
 

@@ -45,13 +45,13 @@ class StaraiViola(Robot):
         self.bus = StaraiMotorsBus(
             port=self.config.port,
             motors={
-                "Motor_0": Motor(0, "rx8-u50", norm_mode_body),
-                "Motor_1": Motor(1, "rx8-u50", norm_mode_body),
-                "Motor_2": Motor(2, "rx8-u50", norm_mode_body),
-                "Motor_3": Motor(3, "rx8-u50", norm_mode_body),
-                "Motor_4": Motor(4, "rx8-u50", norm_mode_body),
-                "Motor_5": Motor(5, "rx8-u50", norm_mode_body),
-                "gripper": Motor(6, "rx8-u50", MotorNormMode.RANGE_0_100),
+                "Motor_0": Motor(0, "ra8-u25", norm_mode_body),
+                "Motor_1": Motor(1, "ra8-u25", norm_mode_body),
+                "Motor_2": Motor(2, "ra8-u25", norm_mode_body),
+                "Motor_3": Motor(3, "ra8-u25", norm_mode_body),
+                "Motor_4": Motor(4, "ra8-u25", norm_mode_body),
+                "Motor_5": Motor(5, "ra8-u25", norm_mode_body),
+                "gripper": Motor(6, "ra8-u25", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )

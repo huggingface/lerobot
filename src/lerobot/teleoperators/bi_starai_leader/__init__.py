@@ -14,5 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .bi_starai_leader import BiSO100Leader
-from .config_bi_starai_leader import BiSO100LeaderConfig
+from .bi_starai_leader import BiStaraiLeader
+from .config_bi_starai_leader import BiStaraiLeaderConfig
