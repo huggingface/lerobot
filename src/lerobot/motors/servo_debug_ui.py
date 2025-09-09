@@ -11,7 +11,6 @@ import time
 import tkinter as tk
 from collections import deque
 from tkinter import messagebox, ttk
-from typing import List
 
 from lerobot.motors.feetech import FeetechMotorsBus
 from lerobot.motors.motors_bus import Motor, MotorNormMode
@@ -32,29 +31,29 @@ class ServoDebugUI:
 
         # Data for plotting
         self.plot_data = {
-            'position': deque(maxlen=100),
-            'torque': deque(maxlen=100),
-            'speed': deque(maxlen=100),
-            'current': deque(maxlen=100),
-            'temperature': deque(maxlen=100),
-            'voltage': deque(maxlen=100)
+            "position": deque(maxlen=100),
+            "torque": deque(maxlen=100),
+            "speed": deque(maxlen=100),
+            "current": deque(maxlen=100),
+            "temperature": deque(maxlen=100),
+            "voltage": deque(maxlen=100),
         }
 
         # Plot settings
         self.plot_colors = {
-            'position': '#0066CC',
-            'torque': '#FF6600',
-            'speed': '#009900',
-            'current': '#CC0066',
-            'temperature': '#FF0000',
-            'voltage': '#9900CC'
+            "position": "#0066CC",
+            "torque": "#FF6600",
+            "speed": "#009900",
+            "current": "#CC0066",
+            "temperature": "#FF0000",
+            "voltage": "#9900CC",
         }
 
         self.setup_ui()
 
     def get_motor_name_from_id(self, motor_id: int) -> str | None:
         """Get the motor name key from motor ID."""
-        if not hasattr(self, 'discovered_motors') or not self.discovered_motors:
+        if not hasattr(self, "discovered_motors") or not self.discovered_motors:
             return None
 
         for name, motor in self.discovered_motors.items():
@@ -62,7 +61,7 @@ class ServoDebugUI:
                 return name
         return None
 
-    def get_usb_serial_ports(self) -> List[str]:
+    def get_usb_serial_ports(self) -> list[str]:
         """
         Detect available USB serial ports on the system.
         Returns a list of port paths.
@@ -70,37 +69,37 @@ class ServoDebugUI:
         ports = []
 
         # For macOS and Linux
-        if platform.system() in ['Darwin', 'Linux']:
+        if platform.system() in ["Darwin", "Linux"]:
             # Look for USB serial devices
             patterns = [
-                '/dev/ttyUSB*',      # Linux USB-to-serial
-                '/dev/ttyACM*',      # Linux CDC ACM devices
-                '/dev/tty.usbserial*',  # macOS USB-to-serial
-                '/dev/tty.usbmodem*',   # macOS USB modem devices
-                '/dev/cu.usbserial*',   # macOS USB-to-serial (callout)
-                '/dev/cu.usbmodem*'     # macOS USB modem (callout)
+                "/dev/ttyUSB*",  # Linux USB-to-serial
+                "/dev/ttyACM*",  # Linux CDC ACM devices
+                "/dev/tty.usbserial*",  # macOS USB-to-serial
+                "/dev/tty.usbmodem*",  # macOS USB modem devices
+                "/dev/cu.usbserial*",  # macOS USB-to-serial (callout)
+                "/dev/cu.usbmodem*",  # macOS USB modem (callout)
             ]
 
             for pattern in patterns:
                 ports.extend(glob.glob(pattern))
 
         # For Windows (if needed in future)
-        elif platform.system() == 'Windows':
+        elif platform.system() == "Windows":
             # Windows COM ports would be handled differently
             # For now, just return common Windows ports
-            ports = [f'COM{i}' for i in range(1, 10)]
+            ports = [f"COM{i}" for i in range(1, 10)]
 
         # Remove duplicates and sort
         ports = sorted(set(ports))
 
         # If no ports found, provide some defaults
         if not ports:
-            if platform.system() == 'Darwin':
-                ports = ['/dev/tty.usbmodem1', '/dev/tty.usbserial1']
-            elif platform.system() == 'Linux':
-                ports = ['/dev/ttyUSB0', '/dev/ttyUSB1']
+            if platform.system() == "Darwin":
+                ports = ["/dev/tty.usbmodem1", "/dev/tty.usbserial1"]
+            elif platform.system() == "Linux":
+                ports = ["/dev/ttyUSB0", "/dev/ttyUSB1"]
             else:
-                ports = ['COM1', 'COM2']
+                ports = ["COM1", "COM2"]
 
         return ports
 
@@ -127,13 +126,15 @@ class ServoDebugUI:
         self.refresh_com_ports()
 
         # Add refresh button for COM ports
-        ttk.Button(conn_frame, text="↻", width=3, command=self.refresh_com_ports).grid(row=0, column=3, padx=(0, 5))
+        ttk.Button(conn_frame, text="↻", width=3, command=self.refresh_com_ports).grid(
+            row=0, column=3, padx=(0, 5)
+        )
 
         ttk.Label(conn_frame, text="BaudR:").grid(row=1, column=0, sticky="w", padx=(0, 5))
         self.baudrate = ttk.Combobox(conn_frame, width=20)
         self.baudrate.grid(row=1, column=1, columnspan=2, padx=(0, 5))
         self.baudrate.set("1000000")
-        self.baudrate['values'] = ['9600', '57600', '115200', '1000000', '2000000', '3000000', '4000000']
+        self.baudrate["values"] = ["9600", "57600", "115200", "1000000", "2000000", "3000000", "4000000"]
 
         ttk.Label(conn_frame, text="Timeout:").grid(row=2, column=0, sticky="w", padx=(0, 5))
         self.timeout = ttk.Entry(conn_frame, width=22)
@@ -151,14 +152,14 @@ class ServoDebugUI:
         self.search_btn.pack(fill="x", pady=(0, 5))
 
         # Motor list with columns
-        columns = ('ID', 'Module')
-        self.motor_tree = ttk.Treeview(motor_frame, columns=columns, height=10, show='headings')
-        self.motor_tree.heading('ID', text='ID')
-        self.motor_tree.heading('Module', text='Module')
-        self.motor_tree.column('ID', width=50)
-        self.motor_tree.column('Module', width=100)
+        columns = ("ID", "Module")
+        self.motor_tree = ttk.Treeview(motor_frame, columns=columns, height=10, show="headings")
+        self.motor_tree.heading("ID", text="ID")
+        self.motor_tree.heading("Module", text="Module")
+        self.motor_tree.column("ID", width=50)
+        self.motor_tree.column("Module", width=100)
         self.motor_tree.pack(fill="both", expand=True)
-        self.motor_tree.bind('<<TreeviewSelect>>', self.on_motor_select)
+        self.motor_tree.bind("<<TreeviewSelect>>", self.on_motor_select)
 
         # Right panel - Tabbed interface
         right_panel = ttk.Notebook(main_frame)
@@ -190,8 +191,8 @@ class ServoDebugUI:
         ttk.Button(btn_frame, text="Recovery", command=self.recovery).pack(side="left", padx=2)
 
         # Control table
-        columns = ('Address', 'Memory', 'Value', 'Area', 'R/W')
-        self.control_table = ttk.Treeview(table_frame, columns=columns, height=20, show='headings')
+        columns = ("Address", "Memory", "Value", "Area", "R/W")
+        self.control_table = ttk.Treeview(table_frame, columns=columns, height=20, show="headings")
 
         for col in columns:
             self.control_table.heading(col, text=col)
@@ -237,8 +238,8 @@ class ServoDebugUI:
         check_frame.pack(fill="x", pady=5)
 
         self.plot_vars = {}
-        for name in ['Position', 'Torque', 'Speed', 'Current', 'Temperature', 'Voltage']:
-            var = tk.BooleanVar(value=(name in ['Position', 'Torque']))
+        for name in ["Position", "Torque", "Speed", "Current", "Temperature", "Voltage"]:
+            var = tk.BooleanVar(value=(name in ["Position", "Torque"]))
             self.plot_vars[name.lower()] = var
             ttk.Checkbutton(check_frame, text=name, variable=var).pack(side="left", padx=5)
 
@@ -252,8 +253,9 @@ class ServoDebugUI:
         ttk.Radiobutton(control_frame, text="Reg Write", value="reg").grid(row=0, column=2)
 
         self.torque_enable = tk.BooleanVar()
-        ttk.Checkbutton(control_frame, text="Torque Enable", variable=self.torque_enable,
-                       command=self.toggle_torque).grid(row=0, column=3)
+        ttk.Checkbutton(
+            control_frame, text="Torque Enable", variable=self.torque_enable, command=self.toggle_torque
+        ).grid(row=0, column=3)
 
         # Position control slider
         ttk.Label(control_frame, text="Position:").grid(row=1, column=0)
@@ -273,10 +275,14 @@ class ServoDebugUI:
 
         self.feedback_labels = {}
         feedback_items = [
-            ('Voltage', '0.0V'), ('Torque', '0'),
-            ('Current', '0'), ('Speed', '0'),
-            ('Temperature', '0'), ('Position', '0'),
-            ('Moving', '0'), ('Goal', '0')
+            ("Voltage", "0.0V"),
+            ("Torque", "0"),
+            ("Current", "0"),
+            ("Speed", "0"),
+            ("Temperature", "0"),
+            ("Position", "0"),
+            ("Moving", "0"),
+            ("Goal", "0"),
         ]
 
         for i, (name, default) in enumerate(feedback_items):
@@ -284,7 +290,7 @@ class ServoDebugUI:
             col = (i % 2) * 2
             ttk.Label(feedback_frame, text=f"{name}:").grid(row=row, column=col, sticky="w", padx=5)
             label = ttk.Label(feedback_frame, text=default)
-            label.grid(row=row, column=col+1, sticky="w", padx=5)
+            label.grid(row=row, column=col + 1, sticky="w", padx=5)
             self.feedback_labels[name.lower()] = label
 
         # Auto debug controls
@@ -312,7 +318,7 @@ class ServoDebugUI:
     def refresh_com_ports(self):
         """Refresh the list of available COM ports."""
         ports = self.get_usb_serial_ports()
-        self.com_port['values'] = ports
+        self.com_port["values"] = ports
 
         # If current selection is not in the list, select the first port
         if self.com_port.get() not in ports:
@@ -375,7 +381,7 @@ class ServoDebugUI:
             self.motor_bus.connect(handshake=False)  # Skip handshake for discovery
 
             # Set the baudrate
-            if hasattr(self.motor_bus.port_handler, 'setBaudRate'):
+            if hasattr(self.motor_bus.port_handler, "setBaudRate"):
                 self.motor_bus.port_handler.setBaudRate(baudrate)
 
             self.connected = True
@@ -427,7 +433,7 @@ class ServoDebugUI:
             if motors_found:
                 # Map model numbers to model names (common Feetech models)
                 model_map = {
-                    777: "sts3215",   # Your motors are STS3215 with model number 777
+                    777: "sts3215",  # Your motors are STS3215 with model number 777
                     # Add more model mappings as needed
                 }
 
@@ -452,19 +458,26 @@ class ServoDebugUI:
                             motor_obj = Motor(
                                 id=motor_id,
                                 model=model_name,
-                                norm_mode=MotorNormMode.DEGREES  # Use degrees mode for debug interface
+                                norm_mode=MotorNormMode.DEGREES,  # Use degrees mode for debug interface
                             )
                             self.discovered_motors[motor_key] = motor_obj
                             print(f"Debug: Successfully created and stored motor {motor_key}")
-                            print(f"Debug: discovered_motors now has {len(self.discovered_motors)} motors: {list(self.discovered_motors.keys())}")
+                            print(
+                                f"Debug: discovered_motors now has {len(self.discovered_motors)} motors: {list(self.discovered_motors.keys())}"
+                            )
                         except Exception as motor_creation_error:
-                            print(f"Debug: Error creating Motor object for {motor_id}: {motor_creation_error}")
-                            print(f"Debug: Motor args: id={motor_id}, model='{model_name}', norm_mode=MotorNormMode.NONE")
+                            print(
+                                f"Debug: Error creating Motor object for {motor_id}: {motor_creation_error}"
+                            )
+                            print(
+                                f"Debug: Motor args: id={motor_id}, model='{model_name}', norm_mode=MotorNormMode.NONE"
+                            )
                             print(f"Debug: Available MotorNormMode values: {list(MotorNormMode)}")
                             # Still continue with next motor
                     except Exception as motor_error:
                         print(f"Debug: Error processing motor {motor_id}: {motor_error}")
                         import traceback
+
                         traceback.print_exc()
                         # Continue with next motor instead of failing completely
 
@@ -486,11 +499,13 @@ class ServoDebugUI:
                     self.motor_bus.connect(handshake=False)
 
                     # Set baudrate
-                    if hasattr(self.motor_bus.port_handler, 'setBaudRate'):
+                    if hasattr(self.motor_bus.port_handler, "setBaudRate"):
                         self.motor_bus.port_handler.setBaudRate(baudrate)
 
                     print("Debug: Successfully recreated motor bus with discovered motors")
-                    print(f"Debug: Motor bus now has motors: {list(self.motor_bus.motors.keys()) if hasattr(self.motor_bus, 'motors') else 'No motors attr'}")
+                    print(
+                        f"Debug: Motor bus now has motors: {list(self.motor_bus.motors.keys()) if hasattr(self.motor_bus, 'motors') else 'No motors attr'}"
+                    )
                 except Exception as e:
                     print(f"Debug: Failed to recreate motor bus: {e}")
 
@@ -509,18 +524,20 @@ class ServoDebugUI:
         selection = self.motor_tree.selection()
         if selection:
             item = self.motor_tree.item(selection[0])
-            self.selected_motor_id = item['values'][0]
+            self.selected_motor_id = item["values"][0]
             self.edit_id.delete(0, tk.END)
             self.edit_id.insert(0, str(self.selected_motor_id))
             self.update_control_table()
 
             # Start feedback monitoring if not already running
-            if not hasattr(self, '_feedback_running'):
+            if not hasattr(self, "_feedback_running"):
                 print(f"Debug: Starting feedback monitoring for motor ID {self.selected_motor_id}")
                 self._feedback_running = True
                 self.start_feedback_monitoring()
             else:
-                print(f"Debug: Feedback monitoring already running, selected motor ID {self.selected_motor_id}")
+                print(
+                    f"Debug: Feedback monitoring already running, selected motor ID {self.selected_motor_id}"
+                )
 
     def update_control_table(self):
         if not self.connected or self.motor_bus is None or not self.selected_motor_id:
@@ -533,7 +550,7 @@ class ServoDebugUI:
             # Show placeholder if no motor found
             items = list(self.control_table.get_children())
             for i in range(len(items)):
-                self.control_table.set(items[i], 'Value', "---")
+                self.control_table.set(items[i], "Value", "---")
             return
 
         try:
@@ -546,18 +563,18 @@ class ServoDebugUI:
                     value = self.motor_bus.read(reg_key, motor_name, normalize=False)
                     # Update the control table display
                     if i < len(items):
-                        self.control_table.set(items[i], 'Value', str(value))
+                        self.control_table.set(items[i], "Value", str(value))
                 except Exception:
                     # If read fails, show error indicator
                     if i < len(items):
-                        self.control_table.set(items[i], 'Value', "ERR")
+                        self.control_table.set(items[i], "Value", "ERR")
 
         except Exception as e:
             print(f"Error updating control table: {e}")
             # Show ERR for all items if something goes wrong
             items = list(self.control_table.get_children())
             for i in range(len(items)):
-                self.control_table.set(items[i], 'Value', "ERR")
+                self.control_table.set(items[i], "Value", "ERR")
 
     def on_table_double_click(self, event):
         """Handle double-click on control table for direct editing."""
@@ -572,7 +589,7 @@ class ServoDebugUI:
 
         # Get the column that was clicked
         column = self.control_table.identify_column(event.x)
-        if column != '#3':  # Only allow editing the 'Value' column (column 3)
+        if column != "#3":  # Only allow editing the 'Value' column (column 3)
             return
 
         # Get the register info
@@ -583,18 +600,18 @@ class ServoDebugUI:
         addr, name, reg_key, area, access = self.control_registers[item_index]
 
         # Check if register is writable
-        if 'W' not in access:
+        if "W" not in access:
             messagebox.showinfo("Info", f"Register '{name}' is read-only")
             return
 
         # Get current value
-        current_value = self.control_table.item(item_id)['values'][2]  # Value column
+        current_value = self.control_table.item(item_id)["values"][2]  # Value column
 
         # Create a simple input dialog
         new_value = tk.simpledialog.askstring(
             "Edit Value",
             f"Edit {name}:\nAddress: {addr}\nCurrent value: {current_value}",
-            initialvalue=str(current_value)
+            initialvalue=str(current_value),
         )
 
         if new_value is not None:
@@ -648,7 +665,7 @@ class ServoDebugUI:
                 addr, name, reg_key, area, access = self.control_registers[item_index]
 
                 # Check if register is writable
-                if 'W' not in access:
+                if "W" not in access:
                     messagebox.showwarning("Warning", f"Register '{name}' is read-only")
                     return
 
@@ -782,14 +799,14 @@ class ServoDebugUI:
         try:
             # Read feedback values from motor
             feedback_registers = {
-                'voltage': 'Present_Voltage',
-                'torque': 'Present_Load',
-                'current': 'Present_Load',  # Same as torque for Feetech
-                'speed': 'Present_Velocity',
-                'temperature': 'Present_Temperature',
-                'position': 'Present_Position',
-                'moving': 'Moving',
-                'goal': 'Goal_Position'
+                "voltage": "Present_Voltage",
+                "torque": "Present_Load",
+                "current": "Present_Load",  # Same as torque for Feetech
+                "speed": "Present_Velocity",
+                "temperature": "Present_Temperature",
+                "position": "Present_Position",
+                "moving": "Moving",
+                "goal": "Goal_Position",
             }
 
             for display_name, reg_key in feedback_registers.items():
@@ -799,11 +816,11 @@ class ServoDebugUI:
                     print(f"Debug: Got value {value} for {display_name}")
 
                     # Format the value appropriately
-                    if display_name == 'voltage':
-                        formatted_value = f"{value/10:.1f}V"  # Voltage is in 0.1V units
-                    elif display_name == 'temperature':
+                    if display_name == "voltage":
+                        formatted_value = f"{value / 10:.1f}V"  # Voltage is in 0.1V units
+                    elif display_name == "temperature":
                         formatted_value = f"{value}°C"
-                    elif display_name == 'moving':
+                    elif display_name == "moving":
                         formatted_value = "Yes" if value else "No"
                     else:
                         formatted_value = str(value)
@@ -839,7 +856,7 @@ class ServoDebugUI:
 
     def update_plot(self):
         """Update the canvas plot with current data."""
-        if not hasattr(self, 'canvas') or not self.canvas:
+        if not hasattr(self, "canvas") or not self.canvas:
             return
 
         # Clear the canvas
@@ -867,14 +884,19 @@ class ServoDebugUI:
 
         # Draw axes
         # X-axis (time)
-        self.canvas.create_line(margin_left, canvas_height - margin_bottom,
-                               canvas_width - margin_right, canvas_height - margin_bottom,
-                               fill="black", width=2)
+        self.canvas.create_line(
+            margin_left,
+            canvas_height - margin_bottom,
+            canvas_width - margin_right,
+            canvas_height - margin_bottom,
+            fill="black",
+            width=2,
+        )
 
         # Y-axis (values)
-        self.canvas.create_line(margin_left, margin_top,
-                               margin_left, canvas_height - margin_bottom,
-                               fill="black", width=2)
+        self.canvas.create_line(
+            margin_left, margin_top, margin_left, canvas_height - margin_bottom, fill="black", width=2
+        )
 
         # Plot selected data series
         for data_name, var in self.plot_vars.items():
@@ -905,11 +927,21 @@ class ServoDebugUI:
 
                     # Add legend
                     legend_y = margin_top + list(self.plot_vars.keys()).index(data_name) * 20
-                    self.canvas.create_line(canvas_width - margin_right - 30, legend_y,
-                                          canvas_width - margin_right - 10, legend_y,
-                                          fill=color, width=3)
-                    self.canvas.create_text(canvas_width - margin_right - 35, legend_y,
-                                          text=data_name.capitalize(), anchor="e", fill=color)
+                    self.canvas.create_line(
+                        canvas_width - margin_right - 30,
+                        legend_y,
+                        canvas_width - margin_right - 10,
+                        legend_y,
+                        fill=color,
+                        width=3,
+                    )
+                    self.canvas.create_text(
+                        canvas_width - margin_right - 35,
+                        legend_y,
+                        text=data_name.capitalize(),
+                        anchor="e",
+                        fill=color,
+                    )
 
     def save_config(self):
         messagebox.showinfo("Info", "Save configuration - to be implemented")
