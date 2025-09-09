@@ -72,7 +72,6 @@ from lerobot.envs.factory import make_env
 from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import get_device_from_parameters
 from lerobot.processor.core import TransitionKey
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 from lerobot.utils.io_utils import write_video
@@ -125,7 +124,6 @@ def rollout(
         The dictionary described above.
     """
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
-    device = get_device_from_parameters(policy)
 
     # Reset the policy and environments.
     policy.reset()
@@ -156,10 +154,6 @@ def rollout(
         observation = preprocessor(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
-
-        observation = {
-            key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
-        }
 
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
