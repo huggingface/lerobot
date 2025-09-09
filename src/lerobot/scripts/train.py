@@ -298,9 +298,11 @@ def train(cfg: TrainPipelineConfig):
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
             ):
                 eval_info = eval_policy(
-                    eval_env,
-                    policy,
-                    cfg.eval.n_episodes,
+                    env=eval_env,
+                    policy=policy,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    n_episodes=cfg.eval.n_episodes,
                     videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
