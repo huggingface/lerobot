@@ -60,9 +60,11 @@ from torch.multiprocessing import Event, Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.policies.conrft.modeling_conrft import ConRFTPolicy
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.robots import so100_follower  # noqa: F401
+from lerobot.scripts.rl.data_util import add_mc_returns_to_trajectory
 from lerobot.scripts.rl.gym_manipulator import make_robot_env
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.transport import services_pb2, services_pb2_grpc
@@ -247,9 +249,9 @@ def act_with_policy(
     logging.info("make_policy")
 
     ### Instantiate the policy in both the actor and learner processes
-    ### To avoid sending a SACPolicy object through the port, we create a policy instance
+    ### To avoid sending a SACPolicy/ConRFTPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
-    policy: SACPolicy = make_policy(
+    policy: SACPolicy | ConRFTPolicy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
@@ -260,11 +262,12 @@ def act_with_policy(
 
     # NOTE: For the moment we will solely handle the case of a single environment
     sum_reward_episode = 0
-    list_transition_to_send_to_learner = []
+    # list_transition_to_send_to_learner = []
     episode_intervention = False
     # Add counters for intervention rate calculation
     episode_intervention_steps = 0
     episode_total_steps = 0
+    trajectory = []  # To store transitions for MC returns calculation
 
     policy_timer = TimerManager("Policy inference", log=False)
 
@@ -300,31 +303,43 @@ def act_with_policy(
             # Increment intervention steps counter
             episode_intervention_steps += 1
 
-        list_transition_to_send_to_learner.append(
-            Transition(
-                state=obs,
-                action=action,
-                reward=reward,
-                next_state=next_obs,
-                done=done,
-                truncated=truncated,  # TODO: (azouitine) Handle truncation properly
-                complementary_info=info,
-            )
+        transition = Transition(
+            state=obs,
+            action=action,
+            reward=reward,
+            next_state=next_obs,
+            done=done,
+            truncated=truncated,  # TODO: (azouitine) Handle truncation properly
+            complementary_info=info,
+            mc_returns=None,
         )
+        trajectory.append(transition)
         # assign obs to the next obs and continue the rollout
         obs = next_obs
 
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
+            # Calculate MC returns and next action embeddings for the completed trajectory
+            if cfg.policy.use_mc_returns:
+                trajectory = add_mc_returns_to_trajectory(
+                    trajectory,
+                    gamma=cfg.policy.discount,
+                    reward_scale=cfg.policy.reward_scale,
+                    reward_bias=cfg.policy.reward_bias,
+                    reward_neg=cfg.policy.reward_neg,
+                    is_sparse_reward=cfg.policy.is_sparse_reward,
+                )
+            # trajectory = add_next_embeddings_to_trajectory(trajectory)
+
             update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
-            if len(list_transition_to_send_to_learner) > 0:
+            if len(trajectory) > 0:
                 push_transitions_to_transport_queue(
-                    transitions=list_transition_to_send_to_learner,
+                    transitions=trajectory,
                     transitions_queue=transitions_queue,
                 )
-                list_transition_to_send_to_learner = []
+                trajectory = []  # Clear trajectory after sending
 
             stats = get_frequency_stats(policy_timer)
             policy_timer.reset()
@@ -611,7 +626,7 @@ def interactions_stream(
 #################################################
 
 
-def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
+def update_policy_parameters(policy: SACPolicy | ConRFTPolicy, parameters_queue: Queue, device):
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
@@ -627,9 +642,16 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
         # - Skip encoder params entirely when freeze_vision_encoder=True
         # - Ensure discrete_critic gets correct encoder state (currently uses encoder_critic)
 
-        # Load actor state dict
-        actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        policy.actor.load_state_dict(actor_state_dict)
+        # Load policy state dict - handle both SAC and ConRFT policies
+        policy_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
+
+        if isinstance(policy, ConRFTPolicy):
+            # The encoder is not sent by the learner, so we load with strict=False.
+            policy.consistency_policy.load_state_dict(policy_state_dict, strict=False)
+            logging.info("[ACTOR] Loaded ConRFT consistency policy parameters from Learner.")
+        else:
+            policy.actor.load_state_dict(policy_state_dict)
+            logging.info("[ACTOR] Loaded SAC actor parameters from Learner.")
 
         # Load discrete critic if present
         if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:

@@ -70,6 +70,7 @@ from lerobot.constants import (
 )
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies.conrft.modeling_conrft import ConRFTPolicy
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.robots import so100_follower  # noqa: F401
@@ -194,6 +195,27 @@ def start_learner_threads(
         wandb_logger (WandBLogger | None): Logger for metrics
         shutdown_event: Event to signal shutdown
     """
+    # Check if this is offline-only ConRFT training (no gRPC server needed)
+    is_conrft_offline_only = (
+        cfg.policy.type == "conrft"
+        and cfg.policy.offline_steps > 0
+        and cfg.policy.online_steps == 0
+        and cfg.dataset is not None
+    )
+
+    if is_conrft_offline_only:
+        # For offline-only training, skip gRPC server and go directly to training
+        logging.info("Offline-only ConRFT training detected, skipping gRPC server setup")
+        add_actor_information_and_train(
+            cfg=cfg,
+            wandb_logger=wandb_logger,
+            shutdown_event=shutdown_event,
+            transition_queue=Queue(),  # Empty queue for offline training
+            interaction_message_queue=Queue(),  # Empty queue for offline training
+            parameters_queue=Queue(),  # Empty queue for offline training
+        )
+        return
+
     # Create multiprocessing queues
     transition_queue = Queue()
     interaction_message_queue = Queue()
@@ -312,7 +334,7 @@ def add_actor_information_and_train(
 
     logging.info("Initializing policy")
 
-    policy: SACPolicy = make_policy(
+    policy: SACPolicy | ConRFTPolicy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
@@ -344,6 +366,13 @@ def add_actor_information_and_train(
         )
         batch_size: int = batch_size // 2  # We will sample from both replay buffer
 
+    # TODO(lilkm): check make_policy function it doesn't work when ds_meta and env_cfg co-exist (problem with action dim 4 in dataset while it is 3 in the cfg_env) DON'T REMOVE this
+    # policy: SACPolicy | ConRFTPolicy = make_policy(
+    #     cfg=cfg.policy,
+    #     ds_meta=offline_dataset.meta if offline_dataset is not None else None,
+    #     env_cfg=cfg.env if offline_dataset is None else None,
+    # )
+
     logging.info("Starting learner thread")
     interaction_message = None
     optimization_step = resume_optimization_step if resume_optimization_step is not None else 0
@@ -357,7 +386,50 @@ def add_actor_information_and_train(
     online_iterator = None
     offline_iterator = None
 
-    # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER
+    # Check if this is ConRFT training
+    is_conrft = isinstance(policy, ConRFTPolicy)
+
+    # Check if this is ConRFT offline-only training
+    is_conrft_offline_only = (
+        is_conrft
+        and cfg.policy.offline_steps > 0
+        and cfg.policy.online_steps == 0
+        and offline_replay_buffer is not None
+    )
+
+    if is_conrft_offline_only:
+        logging.info(colored("Starting ConRFT offline-only training (Cal-ConRFT)", "green", attrs=["bold"]))
+        # Run offline-only training loop (no gRPC server needed)
+        run_conrft_offline_training(
+            cfg=cfg,
+            policy=policy,
+            optimizers=optimizers,
+            offline_replay_buffer=offline_replay_buffer,
+            wandb_logger=wandb_logger,
+            device=device,
+            optimization_step=optimization_step,
+            shutdown_event=shutdown_event,
+        )
+        return
+    elif is_conrft:
+        logging.info(colored("Starting ConRFT online training (HIL-ConRFT)", "green", attrs=["bold"]))
+        run_conrft_online_training(
+            cfg=cfg,
+            policy=policy,
+            optimizers=optimizers,
+            replay_buffer=replay_buffer,
+            offline_replay_buffer=offline_replay_buffer,
+            wandb_logger=wandb_logger,
+            device=device,
+            optimization_step=optimization_step,
+            shutdown_event=shutdown_event,
+            transition_queue=transition_queue,
+            interaction_message_queue=interaction_message_queue,
+            parameters_queue=parameters_queue,
+        )
+        return
+
+    # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER (for online/mixed training)
     while True:
         # Exit the training loop if shutdown is requested
         if shutdown_event is not None and shutdown_event.is_set():
@@ -747,11 +819,14 @@ def save_training_checkpoint(
     if os.path.exists(dataset_dir) and os.path.isdir(dataset_dir):
         shutil.rmtree(dataset_dir)
 
-    # Save dataset
+    # Save dataset only if replay buffer is not empty
     # NOTE: Handle the case where the dataset repo id is not specified in the config
     # eg. RL training without demonstrations data
-    repo_id_buffer_save = cfg.env.task if dataset_repo_id is None else dataset_repo_id
-    replay_buffer.to_lerobot_dataset(repo_id=repo_id_buffer_save, fps=fps, root=dataset_dir)
+    if len(replay_buffer) > 0:
+        repo_id_buffer_save = cfg.env.task if dataset_repo_id is None else dataset_repo_id
+        replay_buffer.to_lerobot_dataset(repo_id=repo_id_buffer_save, fps=fps, root=dataset_dir)
+    else:
+        logging.info("Skipping empty replay buffer dataset save")
 
     if offline_replay_buffer is not None:
         dataset_offline_dir = os.path.join(cfg.output_dir, "dataset_offline")
@@ -793,6 +868,14 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
         - `lr_scheduler`: Currently set to `None` but can be extended to support learning rate scheduling.
 
     """
+    if isinstance(policy, ConRFTPolicy):
+        optimizers = {
+            "actor": torch.optim.Adam(policy.consistency_policy.parameters(), lr=cfg.policy.actor_lr),
+            "critic": torch.optim.Adam(policy.critic_ensemble.parameters(), lr=cfg.policy.critic_lr),
+        }
+        lr_scheduler = None
+        return optimizers, lr_scheduler
+
     optimizer_actor = torch.optim.Adam(
         params=[
             p
@@ -1027,8 +1110,25 @@ def initialize_offline_replay_buffer(
 #################################################
 
 
+def get_action_embeddings(
+    policy: ConRFTPolicy, observations: torch.Tensor, next_observations: torch.Tensor
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    # TODO(lilkm): implement caching
+    if not policy.config.freeze_base_vla:
+        return None, None
+
+    # Cache actor embeddings if Octo model is frozen
+    with torch.no_grad():
+        action_embeddings = policy.encoder_actor.get_cached_action_embeddings(observations, normalize=False)
+        next_action_embeddings = policy.encoder_actor.get_cached_action_embeddings(
+            next_observations, normalize=False
+        )
+
+    return action_embeddings, next_action_embeddings
+
+
 def get_observation_features(
-    policy: SACPolicy, observations: torch.Tensor, next_observations: torch.Tensor
+    policy: SACPolicy | ConRFTPolicy, observations: torch.Tensor, next_observations: torch.Tensor
 ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     """
     Get observation features from the policy encoder. It act as cache for the observation features.
@@ -1043,6 +1143,22 @@ def get_observation_features(
     Returns:
         tuple: observation_features, next_observation_features
     """
+
+    # TODO(lilkm): implement caching
+    if isinstance(policy, ConRFTPolicy):
+        if policy.config.vision_encoder_name is None or not policy.config.freeze_vision_encoder:
+            return None, None
+
+        # Cache critic image features
+        with torch.no_grad():
+            observation_features = policy.encoder_critic.get_cached_image_features(
+                observations, normalize=False
+            )
+            next_observation_features = policy.encoder_critic.get_cached_image_features(
+                next_observations, normalize=False
+            )
+
+        return observation_features, next_observation_features
 
     if policy.config.vision_encoder_name is None or not policy.config.freeze_vision_encoder:
         return None, None
@@ -1110,7 +1226,18 @@ def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
     logging.debug("[LEARNER] Pushing actor policy to the queue")
 
     # Create a dictionary to hold all the state dicts
-    state_dicts = {"policy": move_state_dict_to_device(policy.actor.state_dict(), device="cpu")}
+    if hasattr(policy, "consistency_policy"):
+        # Do not send the encoder since it's frozen and large.
+        consistency_policy_state_dict = {
+            "network": policy.consistency_policy.network.state_dict(),
+            "t_network": policy.consistency_policy.t_network.state_dict(),
+            "action_head": policy.consistency_policy.action_head.state_dict(),
+        }
+        state_dicts = {
+            "policy": move_state_dict_to_device(consistency_policy_state_dict, device="cpu"),
+        }
+    else:
+        state_dicts = {"policy": move_state_dict_to_device(policy.actor.state_dict(), device="cpu")}
 
     # Add discrete critic if it exists
     if hasattr(policy, "discrete_critic") and policy.discrete_critic is not None:
@@ -1172,6 +1299,12 @@ def process_transitions(
                 logging.warning("[LEARNER] NaN detected in transition, skipping")
                 continue
 
+            mc_returns = transition.pop("mc_returns", None)
+            if mc_returns is not None:
+                if transition.get("complementary_info") is None:
+                    transition["complementary_info"] = {}
+                transition["complementary_info"]["mc_returns"] = mc_returns
+
             replay_buffer.add(**transition)
 
             # Add to offline buffer if it's an intervention
@@ -1208,6 +1341,544 @@ def process_interaction_messages(
         )
 
     return last_message
+
+
+def run_conrft_offline_training(
+    cfg: TrainRLServerPipelineConfig,
+    policy: ConRFTPolicy,
+    optimizers: dict[str, torch.optim.Optimizer],
+    offline_replay_buffer: ReplayBuffer,
+    wandb_logger: WandBLogger | None,
+    device: str,
+    optimization_step: int,
+    shutdown_event: any,
+) -> None:
+    """
+    Run ConRFT offline-only training (Cal-ConRFT phase).
+
+    This function implements the offline pretraining phase similar to the JAX implementation,
+    where the model is trained purely on demonstration data using Cal-QL loss.
+
+    Args:
+        cfg: Training configuration
+        policy: ConRFT policy instance
+        optimizers: Dictionary of optimizers
+        offline_replay_buffer: Replay buffer containing demonstration data
+        wandb_logger: Logger for metrics
+        device: Device for training
+        optimization_step: Starting optimization step
+        shutdown_event: Event to signal shutdown
+    """
+    # Set policy to offline training stage
+    policy.set_training_stage("offline")
+
+    # Extract configuration variables
+    offline_steps = cfg.policy.offline_steps
+    batch_size = cfg.batch_size
+    log_freq = cfg.log_freq
+    save_freq = cfg.save_freq
+    clip_grad_norm_value = cfg.policy.grad_clip_norm
+    policy_update_freq = cfg.policy.policy_update_freq
+    utd_ratio = cfg.policy.utd_ratio
+
+    logging.info(f"Starting ConRFT offline training for {offline_steps} steps")
+    logging.info(f"Offline replay buffer size: {len(offline_replay_buffer)}")
+
+    # Initialize iterator for offline data
+    offline_iterator = offline_replay_buffer.get_iterator(
+        batch_size=batch_size, async_prefetch=cfg.policy.async_prefetch, queue_size=2
+    )
+
+    # Training loop
+    for step in range(optimization_step, offline_steps):
+        # Exit if shutdown requested
+        if shutdown_event is not None and shutdown_event.is_set():
+            logging.info("[LEARNER] Shutdown signal received during offline training. Exiting...")
+            break
+
+        time_for_one_optimization_step = time.time()
+
+        # UTD ratio - 1 critic-only updates
+        for _ in range(utd_ratio - 1):
+            batch = next(offline_iterator)
+
+            # Prepare batch for forward pass
+            actions = batch["action"]
+            rewards = batch["reward"]
+            observations = batch["state"]
+            next_observations = batch["next_state"]
+            done = batch["done"]
+
+            # Check for NaN values
+            if check_nan_in_transition(
+                observations=observations, actions=actions, next_state=next_observations
+            ):
+                logging.warning("[LEARNER] NaN detected in offline batch, skipping")
+                continue
+
+            # Get cached observation features for performance
+            observation_features, next_observation_features = get_observation_features(
+                policy=policy, observations=observations, next_observations=next_observations
+            )
+
+            # Get cached action embeddings for performance
+            action_embedding, next_action_embeddings = get_action_embeddings(
+                policy=policy, observations=observations, next_observations=next_observations
+            )
+
+            # Create forward batch
+            forward_batch = {
+                "action": actions,
+                "reward": rewards,
+                "state": observations,
+                "next_state": next_observations,
+                "done": done,
+                "observation_feature": observation_features,
+                "next_observation_feature": next_observation_features,
+                "action_embeddings": action_embedding,
+                "next_action_embeddings": next_action_embeddings,
+                "complementary_info": batch.get("complementary_info"),
+            }
+
+            # Critic update with Cal-QL loss
+            critic_output = policy.forward(forward_batch, model="cal_ql")
+            loss_critic = critic_output["loss_critic"]
+
+            optimizers["critic"].zero_grad()
+            loss_critic.backward()
+            torch.nn.utils.clip_grad_norm_(
+                parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+            )
+            optimizers["critic"].step()
+
+            # Update target networks
+            policy.update_target_networks()
+
+        # Final update with both critic and actor
+        batch = next(offline_iterator)
+
+        actions = batch["action"]
+        rewards = batch["reward"]
+        observations = batch["state"]
+        next_observations = batch["next_state"]
+        done = batch["done"]
+
+        if check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations):
+            logging.warning("[LEARNER] NaN detected in offline batch, skipping")
+            continue
+
+        # Get cached observation features for performance
+        observation_features, next_observation_features = get_observation_features(
+            policy=policy, observations=observations, next_observations=next_observations
+        )
+
+        # Get cached action embeddings for performance
+        action_embedding, next_action_embeddings = get_action_embeddings(
+            policy=policy, observations=observations, next_observations=next_observations
+        )
+
+        forward_batch = {
+            "action": actions,
+            "reward": rewards,
+            "state": observations,
+            "next_state": next_observations,
+            "done": done,
+            "observation_feature": observation_features,
+            "next_observation_feature": next_observation_features,
+            "action_embeddings": action_embedding,
+            "next_action_embeddings": next_action_embeddings,
+        }
+
+        if "complementary_info" in batch and batch["complementary_info"] is not None:
+            if "mc_returns" in batch["complementary_info"]:
+                forward_batch["mc_returns"] = batch["complementary_info"]["mc_returns"]
+
+        # Critic update
+        critic_output = policy.forward(forward_batch, model="cal_ql")
+        loss_critic = critic_output["loss_critic"]
+
+        optimizers["critic"].zero_grad()
+        loss_critic.backward()
+        critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+            parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+        ).item()
+        optimizers["critic"].step()
+
+        # Initialize training info
+        training_infos = {
+            "loss_critic": loss_critic.item(),
+            "critic_grad_norm": critic_grad_norm,
+        }
+
+        # Add Cal-QL specific metrics
+        if "td_loss" in critic_output:
+            training_infos["td_loss"] = critic_output["td_loss"].item()
+        if "cql_loss" in critic_output:
+            training_infos["cql_loss"] = critic_output["cql_loss"].item()
+        if "cql_alpha" in critic_output:
+            training_infos["cql_alpha"] = critic_output["cql_alpha"]
+        if "calql_bound_rate" in critic_output:
+            training_infos["calql_bound_rate"] = critic_output["calql_bound_rate"]
+
+        # Actor update (at specified frequency)
+        if step % policy_update_freq == 0:
+            actor_output = policy.forward(forward_batch, model="actor")
+            loss_actor = actor_output["loss_actor"]
+
+            optimizers["actor"].zero_grad()
+            loss_actor.backward()
+            actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                parameters=policy.consistency_policy.parameters(), max_norm=clip_grad_norm_value
+            ).item()
+            optimizers["actor"].step()
+
+            # Add actor metrics
+            training_infos["loss_actor"] = loss_actor.item()
+            training_infos["actor_grad_norm"] = actor_grad_norm
+
+            # Add BC and Q loss components if available
+            if "bc_loss" in actor_output:
+                training_infos["bc_loss"] = actor_output["bc_loss"].item()
+            if "q_loss" in actor_output:
+                training_infos["q_loss"] = actor_output["q_loss"]
+            if "bc_weight" in actor_output:
+                training_infos["bc_weight"] = actor_output["bc_weight"]
+            if "q_weight" in actor_output:
+                training_infos["q_weight"] = actor_output["q_weight"]
+
+        # Update target networks
+        policy.update_target_networks()
+
+        # Calculate and log optimization frequency
+        time_for_one_optimization_step = time.time() - time_for_one_optimization_step
+        frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)
+
+        logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {frequency_for_one_optimization_step}")
+
+        # Log optimization frequency
+        if wandb_logger:
+            wandb_logger.log_dict(
+                {
+                    "Optimization frequency loop [Hz]": frequency_for_one_optimization_step,
+                    "Optimization step": step,
+                },
+                mode="train",
+                custom_step_key="Optimization step",
+            )
+
+        # Logging
+        if step % log_freq == 0:
+            training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
+            training_infos["Optimization step"] = step
+            training_infos["training_stage"] = "offline"
+
+            logging.info(
+                f"[LEARNER] Offline step {step}/{offline_steps}, "
+                f"Critic loss: {training_infos['loss_critic']:.4f}"
+            )
+
+            if wandb_logger:
+                wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
+
+        # Save checkpoint
+        if cfg.save_checkpoint and (step % save_freq == 0 or step == offline_steps - 1):
+            save_training_checkpoint(
+                cfg=cfg,
+                optimization_step=step,
+                online_steps=offline_steps,  # Use offline_steps as total for offline training
+                interaction_message=None,  # No interaction messages in offline training
+                policy=policy,
+                optimizers=optimizers,
+                replay_buffer=ReplayBuffer(  # Create empty online buffer for checkpoint
+                    capacity=1000,
+                    device=device,
+                    state_keys=cfg.policy.input_features.keys(),
+                    storage_device=cfg.policy.storage_device,
+                    optimize_memory=True,
+                ),
+                offline_replay_buffer=offline_replay_buffer,
+                dataset_repo_id=cfg.dataset.repo_id if cfg.dataset else None,
+                fps=cfg.env.fps,
+            )
+
+    logging.info(colored("ConRFT offline training completed!", "green", attrs=["bold"]))
+    logging.info(f"Final step: {step}")
+
+
+def run_conrft_online_training(
+    cfg: TrainRLServerPipelineConfig,
+    policy: ConRFTPolicy,
+    optimizers: dict[str, torch.optim.Optimizer],
+    replay_buffer: ReplayBuffer,
+    offline_replay_buffer: ReplayBuffer | None,
+    wandb_logger: WandBLogger | None,
+    device: str,
+    optimization_step: int,
+    shutdown_event: any,
+    transition_queue: Queue,
+    interaction_message_queue: Queue,
+    parameters_queue: Queue,
+) -> None:
+    """
+    Run ConRFT online training (HIL-ConRFT phase).
+
+    This function implements the online training phase of ConRFT,
+    where the model continues training with human-in-the-loop interactions while maintaining
+    consistency with the offline-trained policy.
+
+    Args:
+        cfg: Training configuration
+        policy: ConRFT policy instance
+        optimizers: Dictionary of optimizers
+        replay_buffer: Online replay buffer for new interactions
+        offline_replay_buffer: Optional offline replay buffer with demonstration data
+        wandb_logger: Logger for metrics
+        device: Device for training
+        optimization_step: Starting optimization step
+        shutdown_event: Event to signal shutdown
+        transition_queue: Queue for receiving transitions from actor
+        interaction_message_queue: Queue for receiving interaction messages
+        parameters_queue: Queue for sending policy parameters to actor
+    """
+    import time
+
+    # Set policy to online training stage
+    policy.set_training_stage("online")
+
+    online_steps = cfg.policy.online_steps
+    batch_size = cfg.batch_size // 2 if offline_replay_buffer is not None else cfg.batch_size
+    log_freq = cfg.log_freq
+    save_freq = cfg.save_freq
+    clip_grad_norm_value = cfg.policy.grad_clip_norm
+    policy_update_freq = cfg.policy.policy_update_freq
+    utd_ratio = cfg.policy.utd_ratio
+    online_step_before_learning = cfg.policy.online_step_before_learning
+    async_prefetch = cfg.policy.async_prefetch
+    dataset_repo_id = cfg.dataset.repo_id if cfg.dataset else None
+    policy_parameters_push_frequency = cfg.policy.actor_learner_config.policy_parameters_push_frequency
+
+    logging.info(f"Starting ConRFT online training for {online_steps} steps")
+    logging.info(f"Online replay buffer size: {len(replay_buffer)}")
+    if offline_replay_buffer is not None:
+        logging.info(f"Offline replay buffer size: {len(offline_replay_buffer)}")
+
+    online_iterator = None
+    offline_iterator = None
+    last_time_policy_pushed = time.time()
+    interaction_message = None
+
+    while optimization_step < online_steps:
+        if shutdown_event is not None and shutdown_event.is_set():
+            logging.info("[LEARNER] Shutdown signal received during online training. Exiting...")
+            break
+
+        process_transitions(
+            transition_queue=transition_queue,
+            replay_buffer=replay_buffer,
+            offline_replay_buffer=offline_replay_buffer,
+            device=device,
+            dataset_repo_id=dataset_repo_id,
+            shutdown_event=shutdown_event,
+        )
+
+        interaction_message = process_interaction_messages(
+            interaction_message_queue=interaction_message_queue,
+            interaction_step_shift=0,  # No shift needed for online training
+            wandb_logger=wandb_logger,
+            shutdown_event=shutdown_event,
+        )
+
+        if len(replay_buffer) < online_step_before_learning:
+            continue
+
+        if online_iterator is None:
+            online_iterator = replay_buffer.get_iterator(
+                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
+            )
+
+        if offline_replay_buffer is not None and offline_iterator is None:
+            offline_iterator = offline_replay_buffer.get_iterator(
+                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
+            )
+
+        for _ in range(utd_ratio - 1):
+            batch = next(online_iterator)
+
+            if offline_iterator is not None:
+                batch_offline = next(offline_iterator)
+                batch = concatenate_batch_transitions(
+                    left_batch_transitions=batch, right_batch_transition=batch_offline
+                )
+
+            actions = batch["action"]
+            rewards = batch["reward"]
+            observations = batch["state"]
+            next_observations = batch["next_state"]
+            done = batch["done"]
+
+            if check_nan_in_transition(
+                observations=observations, actions=actions, next_state=next_observations
+            ):
+                logging.warning("[LEARNER] NaN detected in online batch, skipping")
+                continue
+
+            # TODO(lilkm): implement caching
+            observation_features, next_observation_features = get_observation_features(
+                policy=policy, observations=observations, next_observations=next_observations
+            )
+
+            forward_batch = {
+                "action": actions,
+                "reward": rewards,
+                "state": observations,
+                "next_state": next_observations,
+                "done": done,
+                "observation_feature": observation_features,
+                "next_observation_feature": next_observation_features,
+            }
+            if observation_features is not None:
+                forward_batch["observation_features"] = observation_features
+            if next_observation_features is not None:
+                forward_batch["next_observation_features"] = next_observation_features
+
+            critic_output = policy.forward(forward_batch, model="critic")
+            loss_critic = critic_output["loss_critic"]
+
+            optimizers["critic"].zero_grad()
+            loss_critic.backward()
+            torch.nn.utils.clip_grad_norm_(
+                parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+            )
+            optimizers["critic"].step()
+
+            # Update target networks
+            policy.update_target_networks()
+
+        batch = next(online_iterator)
+
+        if offline_iterator is not None:
+            batch_offline = next(offline_iterator)
+            batch = concatenate_batch_transitions(
+                left_batch_transitions=batch, right_batch_transition=batch_offline
+            )
+
+        actions = batch["action"]
+        rewards = batch["reward"]
+        observations = batch["state"]
+        next_observations = batch["next_state"]
+        done = batch["done"]
+
+        if check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations):
+            logging.warning("[LEARNER] NaN detected in online batch, skipping")
+            continue
+
+        observation_features, next_observation_features = get_observation_features(
+            policy=policy, observations=observations, next_observations=next_observations
+        )
+
+        forward_batch = {
+            "action": actions,
+            "reward": rewards,
+            "state": observations,
+            "next_state": next_observations,
+            "done": done,
+            "observation_feature": observation_features,
+            "next_observation_feature": next_observation_features,
+        }
+        if observation_features is not None:
+            forward_batch["observation_features"] = observation_features
+        if next_observation_features is not None:
+            forward_batch["next_observation_features"] = next_observation_features
+
+        critic_output = policy.forward(forward_batch, model="critic")
+        loss_critic = critic_output["loss_critic"]
+
+        optimizers["critic"].zero_grad()
+        loss_critic.backward()
+        critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+            parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+        ).item()
+        optimizers["critic"].step()
+
+        training_infos = {
+            "loss_critic": loss_critic.item(),
+            "critic_grad_norm": critic_grad_norm,
+        }
+
+        if "td_loss" in critic_output:
+            training_infos["td_loss"] = critic_output["td_loss"].item()
+        if "consistency_loss" in critic_output:
+            training_infos["consistency_loss"] = critic_output["consistency_loss"].item()
+
+        if optimization_step % policy_update_freq == 0:
+            for _ in range(policy_update_freq):
+                actor_output = policy.forward(forward_batch, model="actor")
+                loss_actor = actor_output["loss_actor"]
+
+                optimizers["actor"].zero_grad()
+                loss_actor.backward()
+                actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    parameters=policy.consistency_policy.parameters(), max_norm=clip_grad_norm_value
+                ).item()
+                optimizers["actor"].step()
+
+                training_infos["loss_actor"] = loss_actor.item()
+                training_infos["actor_grad_norm"] = actor_grad_norm
+
+                if "bc_loss" in actor_output:
+                    training_infos["bc_loss"] = actor_output["bc_loss"].item()
+                if "q_loss" in actor_output:
+                    training_infos["q_loss"] = actor_output["q_loss"]
+                if "bc_weight" in actor_output:
+                    training_infos["bc_weight"] = actor_output["bc_weight"]
+                if "q_weight" in actor_output:
+                    training_infos["q_weight"] = actor_output["q_weight"]
+                if "consistency_weight" in actor_output:
+                    training_infos["consistency_weight"] = actor_output["consistency_weight"]
+
+        if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
+            push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+            last_time_policy_pushed = time.time()
+
+        policy.update_target_networks()
+
+        # Logging
+        if optimization_step % log_freq == 0:
+            training_infos["online_replay_buffer_size"] = len(replay_buffer)
+            if offline_replay_buffer is not None:
+                training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
+            training_infos["Optimization step"] = optimization_step
+            training_infos["training_stage"] = "online"
+
+            logging.info(
+                f"[LEARNER] Online step {optimization_step}/{online_steps}, "
+                f"Critic loss: {training_infos['loss_critic']:.4f}"
+            )
+
+            if wandb_logger:
+                wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
+
+        # Save checkpoint
+        if cfg.save_checkpoint and (
+            optimization_step % save_freq == 0 or optimization_step == online_steps - 1
+        ):
+            save_training_checkpoint(
+                cfg=cfg,
+                optimization_step=optimization_step,
+                online_steps=online_steps,
+                interaction_message=interaction_message,
+                policy=policy,
+                optimizers=optimizers,
+                replay_buffer=replay_buffer,
+                offline_replay_buffer=offline_replay_buffer,
+                dataset_repo_id=dataset_repo_id,
+                fps=cfg.env.fps,
+            )
+
+        optimization_step += 1
+
+    logging.info(colored("ConRFT online training completed!", "green", attrs=["bold"]))
+    logging.info(f"Final step: {optimization_step}")
 
 
 if __name__ == "__main__":
