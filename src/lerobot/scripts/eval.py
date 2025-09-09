@@ -155,7 +155,6 @@ def rollout(
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
-        observation = preprocessor(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
 

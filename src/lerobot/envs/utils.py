@@ -151,7 +151,6 @@ def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dic
 
         observation["task"] = task_result
     else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
-        print(f"{observation.keys()}")
         num_envs = observation[list(observation.keys())[0]].shape[0]
         observation["task"] = ["" for _ in range(num_envs)]
     return observation
