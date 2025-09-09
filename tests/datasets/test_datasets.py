@@ -62,20 +62,19 @@ def image_dataset(tmp_path, empty_lerobot_dataset_factory):
     }
     return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
 
+
 @pytest.fixture
 def video_dataset(tmp_path, empty_lerobot_dataset_factory):
     features = {
         "image": {
             "dtype": "video",
             "shape": DUMMY_HWC,
-            "names": [
-                "height",
-                "width",
-                "channels"
-            ],
-            "info": None}
+            "names": ["height", "width", "channels"],
+            "info": None,
+        }
     }
     return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+
 
 def test_same_attributes_defined(tmp_path, lerobot_dataset_factory):
     """
@@ -335,6 +334,7 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
     image = np.random.rand(*DUMMY_HWC) * 255
     with pytest.raises(ValueError):
         image_array_to_pil_image(image)
+
 
 # TODO(aliberts):
 # - [ ] test various attributes & state from init and create
