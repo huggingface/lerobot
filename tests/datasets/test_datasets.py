@@ -62,6 +62,20 @@ def image_dataset(tmp_path, empty_lerobot_dataset_factory):
     }
     return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
 
+@pytest.fixture
+def video_dataset(tmp_path, empty_lerobot_dataset_factory):
+    features = {
+        "image": {
+            "dtype": "video",
+            "shape": DUMMY_HWC,
+            "names": [
+                "height",
+                "width",
+                "channels"
+            ],
+            "info": None}
+    }
+    return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
 
 def test_same_attributes_defined(tmp_path, lerobot_dataset_factory):
     """
@@ -306,11 +320,21 @@ def test_add_frame_image_pil(image_dataset):
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
 
 
+def test_add_frame_video(video_dataset):
+    dataset = video_dataset
+    image = np.random.randint(0, 256, DUMMY_HWC, dtype=np.uint8)
+    dataset.add_frame({"image": Image.fromarray(image)}, task="Dummy task")
+    dataset.save_episode()
+
+    assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)
+    assert len([str(f) for f in (dataset.root / "videos").glob("**/*.mp4")]) == 1
+    assert not (dataset.root / "images").exists()
+
+
 def test_image_array_to_pil_image_wrong_range_float_0_255():
     image = np.random.rand(*DUMMY_HWC) * 255
     with pytest.raises(ValueError):
         image_array_to_pil_image(image)
-
 
 # TODO(aliberts):
 # - [ ] test various attributes & state from init and create
