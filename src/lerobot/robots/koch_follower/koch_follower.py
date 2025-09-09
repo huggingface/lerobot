@@ -110,6 +110,7 @@ class KochFollower(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        self.bus.disable_torque()
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
@@ -120,7 +121,6 @@ class KochFollower(Robot):
                 self.bus.write_calibration(self.calibration)
                 return
         logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
