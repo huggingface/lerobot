@@ -1586,3 +1586,116 @@ def test_dtype_adaptation_device_processor_bfloat16_normalizer_float32():
     for stat_tensor in normalizer._tensor_stats["observation.state"].values():
         assert stat_tensor.dtype == torch.bfloat16
         assert stat_tensor.device.type == "cuda"
+
+
+def test_stats_reconstruction_after_load_state_dict():
+    """
+    Test that stats dict is properly reconstructed from _tensor_stats after loading.
+
+    This test ensures the bug where stats became empty after loading is fixed.
+    The bug occurred when:
+    1. Only _tensor_stats were saved via state_dict()
+    2. stats field became empty {} after loading
+    3. Calling to() method or hotswap_stats would fail because they depend on self.stats
+    """
+
+    # Create normalizer with stats
+    features = {
+        "observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96)),
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+        "action": PolicyFeature(FeatureType.ACTION, (2,)),
+    }
+    norm_map = {
+        FeatureType.VISUAL: NormalizationMode.MEAN_STD,
+        FeatureType.STATE: NormalizationMode.MIN_MAX,
+        FeatureType.ACTION: NormalizationMode.MEAN_STD,
+    }
+    stats = {
+        "observation.image": {
+            "mean": np.array([0.5, 0.5, 0.5]),
+            "std": np.array([0.2, 0.2, 0.2]),
+        },
+        "observation.state": {
+            "min": np.array([0.0, -1.0]),
+            "max": np.array([1.0, 1.0]),
+        },
+        "action": {
+            "mean": np.array([0.0, 0.0]),
+            "std": np.array([1.0, 2.0]),
+        },
+    }
+
+    original_normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    # Save state dict (simulating save/load)
+    state_dict = original_normalizer.state_dict()
+
+    # Create new normalizer with empty stats (simulating load)
+    new_normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats={})
+
+    # Before fix: this would cause stats to remain empty
+    new_normalizer.load_state_dict(state_dict)
+
+    # Verify that stats dict is properly reconstructed from _tensor_stats
+    assert new_normalizer.stats is not None
+    assert new_normalizer.stats != {}
+
+    # Check that all expected keys are present
+    assert "observation.image" in new_normalizer.stats
+    assert "observation.state" in new_normalizer.stats
+    assert "action" in new_normalizer.stats
+
+    # Check that values are correct (converted back from tensors)
+    np.testing.assert_allclose(new_normalizer.stats["observation.image"]["mean"], [0.5, 0.5, 0.5])
+    np.testing.assert_allclose(new_normalizer.stats["observation.image"]["std"], [0.2, 0.2, 0.2])
+    np.testing.assert_allclose(new_normalizer.stats["observation.state"]["min"], [0.0, -1.0])
+    np.testing.assert_allclose(new_normalizer.stats["observation.state"]["max"], [1.0, 1.0])
+    np.testing.assert_allclose(new_normalizer.stats["action"]["mean"], [0.0, 0.0])
+    np.testing.assert_allclose(new_normalizer.stats["action"]["std"], [1.0, 2.0])
+
+    # Test that methods that depend on self.stats work correctly after loading
+    # This would fail before the bug fix because self.stats was empty
+
+    # Test 1: to() method should work without crashing
+    try:
+        new_normalizer.to(device="cpu", dtype=torch.float32)
+        # If we reach here, the bug is fixed
+    except (KeyError, AttributeError) as e:
+        pytest.fail(f"to() method failed after loading state_dict: {e}")
+
+    # Test 2: hotswap_stats should work
+    new_stats = {
+        "observation.image": {"mean": [0.3, 0.3, 0.3], "std": [0.1, 0.1, 0.1]},
+        "observation.state": {"min": [-1.0, -2.0], "max": [2.0, 2.0]},
+        "action": {"mean": [0.1, 0.1], "std": [0.5, 0.5]},
+    }
+
+    pipeline = DataProcessorPipeline([new_normalizer])
+    try:
+        new_pipeline = hotswap_stats(pipeline, new_stats)
+        # If we reach here, hotswap_stats worked correctly
+        assert new_pipeline.steps[0].stats == new_stats
+    except (KeyError, AttributeError) as e:
+        pytest.fail(f"hotswap_stats failed after loading state_dict: {e}")
+
+    # Test 3: The normalizer should work functionally the same as the original
+    observation = {
+        "observation.image": torch.tensor([0.7, 0.5, 0.3]),
+        "observation.state": torch.tensor([0.5, 0.0]),
+    }
+    action = torch.tensor([1.0, -0.5])
+    transition = create_transition(observation=observation, action=action)
+
+    original_result = original_normalizer(transition)
+    new_result = new_normalizer(transition)
+
+    # Results should be identical (within floating point precision)
+    torch.testing.assert_close(
+        original_result[TransitionKey.OBSERVATION]["observation.image"],
+        new_result[TransitionKey.OBSERVATION]["observation.image"],
+    )
+    torch.testing.assert_close(
+        original_result[TransitionKey.OBSERVATION]["observation.state"],
+        new_result[TransitionKey.OBSERVATION]["observation.state"],
+    )
+    torch.testing.assert_close(original_result[TransitionKey.ACTION], new_result[TransitionKey.ACTION])

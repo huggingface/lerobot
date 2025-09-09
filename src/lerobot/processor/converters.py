@@ -139,7 +139,7 @@ def _(value: dict, *, device=None, **kwargs) -> dict:
     return result
 
 
-def _from_tensor(x: torch.Tensor | Any) -> np.ndarray | float | int | Any:
+def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | Any:
     """
     Convert a PyTorch tensor to a numpy array or scalar if applicable.
 
@@ -421,17 +421,17 @@ def transition_to_dataset_frame(
 
     # Create observation.state vector.
     if obs_state_names:
-        vals = [_from_tensor(obs.get(f"{OBS_STATE}.{n}", 0.0)) for n in obs_state_names]
+        vals = [from_tensor_to_numpy(obs.get(f"{OBS_STATE}.{n}", 0.0)) for n in obs_state_names]
         batch[OBS_STATE] = np.asarray(vals, dtype=np.float32)
 
     # Create action vector.
     if action_names:
-        vals = [_from_tensor(act.get(f"{ACTION}.{n}", 0.0)) for n in action_names]
+        vals = [from_tensor_to_numpy(act.get(f"{ACTION}.{n}", 0.0)) for n in action_names]
         batch[ACTION] = np.asarray(vals, dtype=np.float32)
 
     # Add transition metadata.
     if tr.get(TransitionKey.REWARD) is not None:
-        reward_val = _from_tensor(tr[TransitionKey.REWARD])
+        reward_val = from_tensor_to_numpy(tr[TransitionKey.REWARD])
         # Check if features expect array format, otherwise keep as scalar.
         if REWARD in features and features[REWARD].get("shape") == (1,):
             batch[REWARD] = np.array([reward_val], dtype=np.float32)
@@ -439,14 +439,14 @@ def transition_to_dataset_frame(
             batch[REWARD] = reward_val
 
     if tr.get(TransitionKey.DONE) is not None:
-        done_val = _from_tensor(tr[TransitionKey.DONE])
+        done_val = from_tensor_to_numpy(tr[TransitionKey.DONE])
         if DONE in features and features[DONE].get("shape") == (1,):
             batch[DONE] = np.array([done_val], dtype=bool)
         else:
             batch[DONE] = done_val
 
     if tr.get(TransitionKey.TRUNCATED) is not None:
-        truncated_val = _from_tensor(tr[TransitionKey.TRUNCATED])
+        truncated_val = from_tensor_to_numpy(tr[TransitionKey.TRUNCATED])
         if TRUNCATED in features and features[TRUNCATED].get("shape") == (1,):
             batch[TRUNCATED] = np.array([truncated_val], dtype=bool)
         else:

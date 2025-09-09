@@ -27,7 +27,7 @@ from torch import Tensor
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from .converters import to_tensor
+from .converters import from_tensor_to_numpy, to_tensor
 from .core import EnvTransition, TransitionKey
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
@@ -101,7 +101,6 @@ class _NormalizationMixin:
         self.stats = self.stats or {}
         if self.dtype is None:
             self.dtype = torch.float32
-
         self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
 
     def to(
@@ -157,6 +156,16 @@ class _NormalizationMixin:
             self._tensor_stats.setdefault(key, {})[stat_name] = tensor.to(
                 dtype=torch.float32, device=self.device
             )
+
+        # Reconstruct the original stats dict from tensor stats for compatibility with to() method
+        # and other functions that rely on self.stats
+
+        self.stats = {}
+        for key, tensor_dict in self._tensor_stats.items():
+            self.stats[key] = {}
+            for stat_name, tensor in tensor_dict.items():
+                # Convert tensor back to python/numpy format
+                self.stats[key][stat_name] = from_tensor_to_numpy(tensor)
 
     def get_config(self) -> dict[str, Any]:
         """
