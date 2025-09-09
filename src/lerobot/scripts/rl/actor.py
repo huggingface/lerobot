@@ -646,7 +646,8 @@ def update_policy_parameters(policy: SACPolicy | ConRFTPolicy, parameters_queue:
         policy_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
 
         if isinstance(policy, ConRFTPolicy):
-            policy.consistency_policy.load_state_dict(policy_state_dict)
+            # The encoder is not sent by the learner, so we load with strict=False.
+            policy.consistency_policy.load_state_dict(policy_state_dict, strict=False)
             logging.info("[ACTOR] Loaded ConRFT consistency policy parameters from Learner.")
         else:
             policy.actor.load_state_dict(policy_state_dict)

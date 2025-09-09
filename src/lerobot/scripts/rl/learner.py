@@ -1227,8 +1227,14 @@ def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
 
     # Create a dictionary to hold all the state dicts
     if hasattr(policy, "consistency_policy"):
+        # Do not send the encoder since it's frozen and large.
+        consistency_policy_state_dict = {
+            "network": policy.consistency_policy.network.state_dict(),
+            "t_network": policy.consistency_policy.t_network.state_dict(),
+            "action_head": policy.consistency_policy.action_head.state_dict(),
+        }
         state_dicts = {
-            "policy": move_state_dict_to_device(policy.consistency_policy.state_dict(), device="cpu")
+            "policy": move_state_dict_to_device(consistency_policy_state_dict, device="cpu"),
         }
     else:
         state_dicts = {"policy": move_state_dict_to_device(policy.actor.state_dict(), device="cpu")}
