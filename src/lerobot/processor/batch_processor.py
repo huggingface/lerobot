@@ -47,7 +47,7 @@ class AddBatchDimensionActionStep(ActionProcessorStep):
     This is useful for creating a batch of size 1 from a single action sample.
     """
 
-    def action(self, action: Tensor) -> Tensor:
+    def action(self, action: ActionDict | dict[str, Any]) -> ActionDict | dict[str, Any]:
         """
         Adds a batch dimension to the action if it's a 1D tensor.
 
@@ -57,8 +57,6 @@ class AddBatchDimensionActionStep(ActionProcessorStep):
         Returns:
             The action tensor with an added batch dimension.
         """
-
-    def action(self, action: ActionDict | dict[str, Any]) -> ActionDict | dict[str, Any]:
         # Handle ActionDict format
         action_tensor: Tensor | None = action.get(TransitionKey.ACTION.value)
         if action_tensor is None or not isinstance(action_tensor, Tensor) or action_tensor.dim() != 1:
