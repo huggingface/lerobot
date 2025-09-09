@@ -17,6 +17,7 @@ import platform
 
 from lerobot.motors.dynamixel import DynamixelMotorsBus
 from lerobot.motors.feetech import FeetechMotorsBus
+from lerobot.motors.motors_bus import Motor, MotorNormMode
 
 
 class ServoDebugUI:
@@ -42,7 +43,27 @@ class ServoDebugUI:
             'voltage': deque(maxlen=100)
         }
         
+        # Plot settings
+        self.plot_colors = {
+            'position': '#0066CC',
+            'torque': '#FF6600', 
+            'speed': '#009900',
+            'current': '#CC0066',
+            'temperature': '#FF0000',
+            'voltage': '#9900CC'
+        }
+        
         self.setup_ui()
+    
+    def get_motor_name_from_id(self, motor_id: int) -> str | None:
+        """Get the motor name key from motor ID."""
+        if not hasattr(self, 'discovered_motors') or not self.discovered_motors:
+            return None
+        
+        for name, motor in self.discovered_motors.items():
+            if motor.id == motor_id:
+                return name
+        return None
         
     def get_usb_serial_ports(self) -> List[str]:
         """
@@ -147,14 +168,14 @@ class ServoDebugUI:
         right_panel.grid(row=0, column=1, sticky="nsew")
         main_frame.columnconfigure(1, weight=1)
         
-        # Debug Tab
+        # Programming Tab (control table)
         self.debug_tab = ttk.Frame(right_panel)
-        right_panel.add(self.debug_tab, text="Debug")
+        right_panel.add(self.debug_tab, text="Programming")
         self.setup_debug_tab()
         
-        # Programming Tab
+        # Debug Tab (graphs and monitoring)
         self.prog_tab = ttk.Frame(right_panel)
-        right_panel.add(self.prog_tab, text="Programming")
+        right_panel.add(self.prog_tab, text="Debug")
         self.setup_programming_tab()
         
     def setup_debug_tab(self):
@@ -184,6 +205,9 @@ class ServoDebugUI:
         
         self.control_table.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
+        
+        # Bind double-click for direct editing
+        self.control_table.bind("<Double-1>", self.on_table_double_click)
         
         # Value edit frame
         edit_frame = ttk.Frame(table_frame)
@@ -301,30 +325,37 @@ class ServoDebugUI:
                 self.com_port.set("")
     
     def populate_control_table(self):
-        # Default control table entries based on the images
-        default_entries = [
-            (0, "Firmware Main Version NO.", 3, "EPROM", "R"),
-            (1, "Firmware Secondary Version", 9, "EPROM", "R"),
-            (3, "Servo Main Version", 9, "EPROM", "R"),
-            (4, "Servo Sub Version", 5, "EPROM", "R"),
-            (5, "ID", 2, "EPROM", "R/W"),
-            (6, "Baud Rate", 0, "EPROM", "R/W"),
-            (7, "Return Delay Time", 0, "EPROM", "R/W"),
-            (8, "Status Return Level", 1, "EPROM", "R/W"),
-            (9, "Min Position Limit", 0, "EPROM", "R/W"),
-            (11, "Max Position Limit", 4095, "EPROM", "R/W"),
-            (13, "Max Temperature Limit", 80, "EPROM", "R/W"),
-            (14, "Max Input Voltage", 100, "EPROM", "R/W"),
-            (15, "Min Input Voltage", 55, "EPROM", "R/W"),
-            (16, "Max Torque Limit", 1000, "EPROM", "R/W"),
-            (18, "Setting Byte", 12, "EPROM", "R/W"),
-            (19, "Protection Switch", 44, "EPROM", "R/W"),
-            (20, "LED Alarm Condition", 47, "EPROM", "R/W"),
-            (21, "Position P Gain", 32, "EPROM", "R/W"),
+        # Control table entries mapped to actual Feetech registers
+        self.control_registers = [
+            # (address, name, register_key, area, access)
+            (0, "Firmware Major Version", "Firmware_Major_Version", "EPROM", "R"),
+            (1, "Firmware Minor Version", "Firmware_Minor_Version", "EPROM", "R"),
+            (3, "Model Number", "Model_Number", "EPROM", "R"),
+            (5, "ID", "ID", "EPROM", "R/W"),
+            (6, "Baud Rate", "Baud_Rate", "EPROM", "R/W"),
+            (7, "Return Delay Time", "Return_Delay_Time", "EPROM", "R/W"),
+            (8, "Response Status Level", "Response_Status_Level", "EPROM", "R/W"),
+            (9, "Min Position Limit", "Min_Position_Limit", "EPROM", "R/W"),
+            (11, "Max Position Limit", "Max_Position_Limit", "EPROM", "R/W"),
+            (13, "Max Temperature Limit", "Max_Temperature_Limit", "EPROM", "R/W"),
+            (14, "Max Voltage Limit", "Max_Voltage_Limit", "EPROM", "R/W"),
+            (15, "Min Voltage Limit", "Min_Voltage_Limit", "EPROM", "R/W"),
+            (16, "Max Torque Limit", "Max_Torque_Limit", "EPROM", "R/W"),
+            (40, "Torque Enable", "Torque_Enable", "SRAM", "R/W"),
+            (42, "Goal Position", "Goal_Position", "SRAM", "R/W"),
+            (46, "Goal Velocity", "Goal_Velocity", "SRAM", "R/W"),
+            (48, "Torque Limit", "Torque_Limit", "SRAM", "R/W"),
+            (56, "Present Position", "Present_Position", "SRAM", "R"),
+            (58, "Present Velocity", "Present_Velocity", "SRAM", "R"),
+            (60, "Present Load", "Present_Load", "SRAM", "R"),
+            (62, "Present Voltage", "Present_Voltage", "SRAM", "R"),
+            (63, "Present Temperature", "Present_Temperature", "SRAM", "R"),
+            (66, "Moving", "Moving", "SRAM", "R"),
         ]
         
-        for entry in default_entries:
-            self.control_table.insert("", "end", values=entry)
+        # Initially populate with default values
+        for addr, name, reg_key, area, access in self.control_registers:
+            self.control_table.insert("", "end", values=(addr, name, "---", area, access))
     
     def toggle_connection(self):
         if not self.connected:
@@ -385,28 +416,91 @@ class ServoDebugUI:
             self.search_btn.config(text="Searching...", state="disabled")
             self.root.update()
             
-            # Broadcast ping returns dict of {motor_id: model_number}
+            # First, try broadcast_ping with the empty motor bus
+            print("Debug: About to call broadcast_ping()")
             motors_found = self.motor_bus.broadcast_ping()
+            print(f"Debug: broadcast_ping() returned: {motors_found}")
+            
+            # If broadcast_ping returns None, try with retry
+            if motors_found is None:
+                print("Debug: broadcast_ping() returned None, trying with retry...")
+                motors_found = self.motor_bus.broadcast_ping(num_retry=3)
+                print(f"Debug: broadcast_ping() with retry returned: {motors_found}")
             
             if motors_found:
                 # Map model numbers to model names (common Feetech models)
                 model_map = {
-                    3020: "STS3020",
-                    3215: "STS3215", 
-                    3032: "STS3032",
-                    1000: "SCS15",
-                    15: "SCS15",
-                    3038: "STS3038",
+                    777: "sts3215",   # Your motors are STS3215 with model number 777
                     # Add more model mappings as needed
                 }
                 
+                # Store discovered motors for later use
+                self.discovered_motors = {}
+                print(f"Debug: Processing {len(motors_found)} motors")
                 for motor_id, model_num in motors_found.items():
-                    model_name = model_map.get(model_num, f"Model_{model_num}")
-                    self.motor_tree.insert("", "end", values=(motor_id, model_name))
+                    try:
+                        print(f"Debug: Processing motor {motor_id} with model {model_num}")
+                        model_name = model_map.get(model_num, "sts3215")  # Default to sts3020
+                        display_name = model_map.get(model_num, f"Model_{model_num}").upper()
+                        print(f"Debug: Mapped to model_name='{model_name}', display_name='{display_name}'")
+                        
+                        # Add to tree view
+                        self.motor_tree.insert("", "end", values=(motor_id, display_name))
+                        print(f"Debug: Added to tree view: {motor_id}, {display_name}")
+                        
+                        # Store motor info for reading/writing
+                        motor_key = f"motor_{motor_id}"
+                        print(f"Debug: About to create Motor for {motor_key} with model='{model_name}'")
+                        try:
+                            motor_obj = Motor(
+                                id=motor_id, 
+                                model=model_name,
+                                norm_mode=MotorNormMode.DEGREES  # Use degrees mode for debug interface
+                            )
+                            self.discovered_motors[motor_key] = motor_obj
+                            print(f"Debug: Successfully created and stored motor {motor_key}")
+                            print(f"Debug: discovered_motors now has {len(self.discovered_motors)} motors: {list(self.discovered_motors.keys())}")
+                        except Exception as motor_creation_error:
+                            print(f"Debug: Error creating Motor object for {motor_id}: {motor_creation_error}")
+                            print(f"Debug: Motor args: id={motor_id}, model='{model_name}', norm_mode=MotorNormMode.NONE")
+                            print(f"Debug: Available MotorNormMode values: {list(MotorNormMode)}")
+                            # Still continue with next motor
+                    except Exception as motor_error:
+                        print(f"Debug: Error processing motor {motor_id}: {motor_error}")
+                        import traceback
+                        traceback.print_exc()
+                        # Continue with next motor instead of failing completely
+                
+                print(f"Debug: Finished processing all motors")
+                
+                # Recreate motor bus with discovered motors for proper read/write operations
+                try:
+                    port = self.com_port.get()
+                    baudrate = int(self.baudrate.get())
+                    
+                    # Disconnect current bus
+                    if self.motor_bus:
+                        self.motor_bus.disconnect()
+                    
+                    # Create new bus with discovered motors
+                    print(f"Debug: Creating new motor bus with {len(self.discovered_motors)} motors")
+                    print(f"Debug: discovered_motors contents: {list(self.discovered_motors.keys())}")
+                    self.motor_bus = FeetechMotorsBus(port=port, motors=self.discovered_motors)
+                    self.motor_bus.connect(handshake=False)
+                    
+                    # Set baudrate
+                    if hasattr(self.motor_bus.port_handler, 'setBaudRate'):
+                        self.motor_bus.port_handler.setBaudRate(baudrate)
+                    
+                    print("Debug: Successfully recreated motor bus with discovered motors")
+                    print(f"Debug: Motor bus now has motors: {list(self.motor_bus.motors.keys()) if hasattr(self.motor_bus, 'motors') else 'No motors attr'}")
+                except Exception as e:
+                    print(f"Debug: Failed to recreate motor bus: {e}")
                 
                 self.root.update()
                 messagebox.showinfo("Search Complete", f"Found {len(motors_found)} motor(s)")
             else:
+                print("Debug: motors_found is falsy (None or empty)")
                 messagebox.showwarning("Search Complete", "No motors found")
                 
         except Exception as e:
@@ -422,21 +516,118 @@ class ServoDebugUI:
             self.edit_id.delete(0, tk.END)
             self.edit_id.insert(0, str(self.selected_motor_id))
             self.update_control_table()
+            
+            # Start feedback monitoring if not already running
+            if not hasattr(self, '_feedback_running'):
+                print(f"Debug: Starting feedback monitoring for motor ID {self.selected_motor_id}")
+                self._feedback_running = True
+                self.start_feedback_monitoring()
+            else:
+                print(f"Debug: Feedback monitoring already running, selected motor ID {self.selected_motor_id}")
     
     def update_control_table(self):
-        if not self.connected or not self.selected_motor_id:
+        if not self.connected or self.motor_bus is None or not self.selected_motor_id:
             return
         
-        # In real implementation, read actual values from motor
-        # For now, just highlight the selected motor's row
-        for item in self.control_table.get_children():
-            values = self.control_table.item(item)['values']
-            if values[0] == 5:  # ID row
-                self.control_table.set(item, 'Value', self.selected_motor_id)
+        # Get motor name for selected motor
+        motor_name = self.get_motor_name_from_id(self.selected_motor_id)
+        if not motor_name:
+            print(f"Could not find motor name for ID {self.selected_motor_id}")
+            # Show placeholder if no motor found
+            items = list(self.control_table.get_children())
+            for i in range(len(items)):
+                self.control_table.set(items[i], 'Value', "---")
+            return
+            
+        try:
+            # Read actual values from the selected motor
+            items = list(self.control_table.get_children())
+            
+            for i, (addr, name, reg_key, area, access) in enumerate(self.control_registers):
+                try:
+                    # Read the register value using motor name
+                    value = self.motor_bus.read(reg_key, motor_name, normalize=False)
+                    # Update the control table display
+                    if i < len(items):
+                        self.control_table.set(items[i], 'Value', str(value))
+                except Exception as e:
+                    # If read fails, show error indicator
+                    if i < len(items):
+                        self.control_table.set(items[i], 'Value', "ERR")
+            
+        except Exception as e:
+            print(f"Error updating control table: {e}")
+            # Show ERR for all items if something goes wrong  
+            items = list(self.control_table.get_children())
+            for i in range(len(items)):
+                self.control_table.set(items[i], 'Value', "ERR")
+    
+    def on_table_double_click(self, event):
+        """Handle double-click on control table for direct editing."""
+        if not self.connected or self.motor_bus is None or not self.selected_motor_id:
+            messagebox.showwarning("Warning", "Please connect and select a motor first")
+            return
+            
+        # Get the selected item and column
+        item_id = self.control_table.selection()[0] if self.control_table.selection() else None
+        if not item_id:
+            return
+            
+        # Get the column that was clicked
+        column = self.control_table.identify_column(event.x)
+        if column != '#3':  # Only allow editing the 'Value' column (column 3)
+            return
+            
+        # Get the register info
+        item_index = self.control_table.index(item_id)
+        if item_index >= len(self.control_registers):
+            return
+            
+        addr, name, reg_key, area, access = self.control_registers[item_index]
+        
+        # Check if register is writable
+        if 'W' not in access:
+            messagebox.showinfo("Info", f"Register '{name}' is read-only")
+            return
+            
+        # Get current value
+        current_value = self.control_table.item(item_id)['values'][2]  # Value column
+        
+        # Create a simple input dialog
+        new_value = tk.simpledialog.askstring(
+            "Edit Value", 
+            f"Edit {name}:\nAddress: {addr}\nCurrent value: {current_value}",
+            initialvalue=str(current_value)
+        )
+        
+        if new_value is not None:
+            try:
+                # Convert to integer
+                int_value = int(new_value)
+                
+                # Write to motor
+                motor_name = self.get_motor_name_from_id(self.selected_motor_id)
+                if motor_name:
+                    self.motor_bus.write(reg_key, motor_name, int_value, normalize=False)
+                    messagebox.showinfo("Success", f"Value {int_value} written to {name}")
+                    
+                    # Update the control table
+                    self.update_control_table()
+                else:
+                    messagebox.showerror("Error", f"Motor ID {self.selected_motor_id} not found")
+                    
+            except ValueError:
+                messagebox.showerror("Error", "Invalid value - must be an integer")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to write value: {str(e)}")
     
     def set_value(self):
-        if not self.connected:
+        if not self.connected or self.motor_bus is None:
             messagebox.showwarning("Warning", "Please connect to motor bus first")
+            return
+        
+        if not self.selected_motor_id:
+            messagebox.showwarning("Warning", "Please select a motor first")
             return
         
         selection = self.control_table.selection()
@@ -446,37 +637,78 @@ class ServoDebugUI:
         
         try:
             value = int(self.edit_value.get())
-            # In real implementation, write to motor using motor_bus.write()
-            messagebox.showinfo("Success", f"Value {value} written successfully")
+            motor_id = int(self.edit_id.get())
+            
+            # Get motor name
+            motor_name = self.get_motor_name_from_id(motor_id)
+            if not motor_name:
+                messagebox.showerror("Error", f"Motor ID {motor_id} not found")
+                return
+            
+            # Get the selected register info
+            item_index = self.control_table.index(selection[0])
+            if item_index < len(self.control_registers):
+                addr, name, reg_key, area, access = self.control_registers[item_index]
+                
+                # Check if register is writable
+                if 'W' not in access:
+                    messagebox.showwarning("Warning", f"Register '{name}' is read-only")
+                    return
+                
+                # Write to motor using motor name
+                self.motor_bus.write(reg_key, motor_name, value, normalize=False)
+                messagebox.showinfo("Success", f"Value {value} written to {name} on motor {motor_id}")
+                
+                # Refresh the control table to show the updated value
+                self.update_control_table()
+            else:
+                messagebox.showerror("Error", "Invalid register selection")
+                
         except ValueError:
-            messagebox.showerror("Error", "Invalid value")
+            messagebox.showerror("Error", "Invalid value - must be an integer")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to write value: {str(e)}")
     
     def toggle_torque(self):
-        if not self.connected or not self.selected_motor_id:
+        if not self.connected or self.motor_bus is None or not self.selected_motor_id:
             return
         
-        if self.torque_enable.get():
-            # self.motor_bus.enable_torque([self.selected_motor_id])
-            print(f"Torque enabled for motor {self.selected_motor_id}")
-        else:
-            # self.motor_bus.disable_torque([self.selected_motor_id])
-            print(f"Torque disabled for motor {self.selected_motor_id}")
+        motor_name = self.get_motor_name_from_id(self.selected_motor_id)
+        if not motor_name:
+            return
+        
+        try:
+            if self.torque_enable.get():
+                self.motor_bus.write("Torque_Enable", motor_name, 1, normalize=False)
+                print(f"Torque enabled for motor {self.selected_motor_id}")
+            else:
+                self.motor_bus.write("Torque_Enable", motor_name, 0, normalize=False)
+                print(f"Torque disabled for motor {self.selected_motor_id}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to toggle torque: {str(e)}")
     
     def send_position(self):
-        if not self.connected or not self.selected_motor_id:
+        if not self.connected or self.motor_bus is None or not self.selected_motor_id:
             messagebox.showwarning("Warning", "Please connect and select a motor")
+            return
+        
+        motor_name = self.get_motor_name_from_id(self.selected_motor_id)
+        if not motor_name:
+            messagebox.showerror("Error", f"Motor ID {self.selected_motor_id} not found")
             return
         
         try:
             goal = int(self.goal_entry.get())
-            # self.motor_bus.write("Goal_Position", self.selected_motor_id, goal)
+            self.motor_bus.write("Goal_Position", motor_name, goal, normalize=False)
             self.position_slider.set(goal)
             print(f"Sent position {goal} to motor {self.selected_motor_id}")
         except ValueError:
             messagebox.showerror("Error", "Invalid position value")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to send position: {str(e)}")
     
     def start_sweep(self):
-        if not self.connected or not self.selected_motor_id:
+        if not self.connected or self.motor_bus is None or not self.selected_motor_id:
             messagebox.showwarning("Warning", "Please connect and select a motor")
             return
         
@@ -486,6 +718,9 @@ class ServoDebugUI:
             self.monitor_thread = threading.Thread(target=self.sweep_motor)
             self.monitor_thread.daemon = True
             self.monitor_thread.start()
+            
+            # Also start feedback monitoring
+            self.start_feedback_monitoring()
     
     def stop_sweep(self):
         self.monitoring = False
@@ -501,19 +736,183 @@ class ServoDebugUI:
                 for pos in range(start, end, 50):
                     if not self.monitoring:
                         break
-                    # self.motor_bus.write("Goal_Position", self.selected_motor_id, pos)
-                    self.root.after(0, self.position_slider.set, pos)
-                    time.sleep(delay / ((end - start) / 50))
+                    try:
+                        motor_name = self.get_motor_name_from_id(self.selected_motor_id)
+                        if motor_name:
+                            self.motor_bus.write("Goal_Position", motor_name, pos, normalize=False)
+                            self.root.after(0, self.position_slider.set, pos)
+                    except Exception as e:
+                        print(f"Sweep write error: {e}")
+                    time.sleep(delay / max(1, ((end - start) / 50)))
                 
                 # Sweep back
                 for pos in range(end, start, -50):
                     if not self.monitoring:
                         break
-                    # self.motor_bus.write("Goal_Position", self.selected_motor_id, pos)
-                    self.root.after(0, self.position_slider.set, pos)
-                    time.sleep(delay / ((end - start) / 50))
+                    try:
+                        motor_name = self.get_motor_name_from_id(self.selected_motor_id)
+                        if motor_name:
+                            self.motor_bus.write("Goal_Position", motor_name, pos, normalize=False)
+                            self.root.after(0, self.position_slider.set, pos)
+                    except Exception as e:
+                        print(f"Sweep write error: {e}")
+                    time.sleep(delay / max(1, ((end - start) / 50)))
         except Exception as e:
             print(f"Sweep error: {e}")
+    
+    def start_feedback_monitoring(self):
+        """Start periodic feedback updates for the programming tab."""
+        print("Debug: start_feedback_monitoring called")
+        self.update_feedback()
+        
+    def update_feedback(self):
+        """Update the feedback display with current motor values."""
+        if not self.connected or self.motor_bus is None or not self.selected_motor_id:
+            # Schedule next update anyway
+            self.root.after(200, self.update_feedback)  # Update every 200ms
+            return
+        
+        motor_name = self.get_motor_name_from_id(self.selected_motor_id)
+        if not motor_name:
+            print(f"Debug: No motor name found for feedback update of ID {self.selected_motor_id}")
+            # Schedule next update anyway
+            self.root.after(200, self.update_feedback)
+            return
+        
+        print(f"Debug: Updating feedback for motor {motor_name} (ID {self.selected_motor_id})")
+        print(f"Debug: Available feedback labels: {list(self.feedback_labels.keys())}")
+        
+        try:
+            # Read feedback values from motor
+            feedback_registers = {
+                'voltage': 'Present_Voltage',
+                'torque': 'Present_Load',
+                'current': 'Present_Load',  # Same as torque for Feetech
+                'speed': 'Present_Velocity',
+                'temperature': 'Present_Temperature',
+                'position': 'Present_Position',
+                'moving': 'Moving',
+                'goal': 'Goal_Position'
+            }
+            
+            for display_name, reg_key in feedback_registers.items():
+                try:
+                    print(f"Debug: Reading {reg_key} for {display_name}")
+                    value = self.motor_bus.read(reg_key, motor_name, normalize=False)
+                    print(f"Debug: Got value {value} for {display_name}")
+                    
+                    # Format the value appropriately
+                    if display_name == 'voltage':
+                        formatted_value = f"{value/10:.1f}V"  # Voltage is in 0.1V units
+                    elif display_name == 'temperature':
+                        formatted_value = f"{value}°C"
+                    elif display_name == 'moving':
+                        formatted_value = "Yes" if value else "No"
+                    else:
+                        formatted_value = str(value)
+                    
+                    print(f"Debug: Formatted value: {formatted_value}")
+                    
+                    # Update the label
+                    if display_name in self.feedback_labels:
+                        self.feedback_labels[display_name].config(text=formatted_value)
+                        print(f"Debug: Updated label for {display_name}")
+                    else:
+                        print(f"Debug: No label found for {display_name}")
+                    
+                    # Store data for plotting (use raw values for plotting)
+                    if display_name in self.plot_data:
+                        self.plot_data[display_name].append(value)
+                        print(f"Debug: Added {value} to plot_data[{display_name}]")
+                        
+                except Exception as e:
+                    print(f"Debug: Error reading {reg_key} for {display_name}: {e}")
+                    # If individual read fails, show error
+                    if display_name in self.feedback_labels:
+                        self.feedback_labels[display_name].config(text="ERR")
+            
+            # Update the plot after all data is collected
+            self.update_plot()
+                        
+        except Exception as e:
+            print(f"Feedback update error: {e}")
+        
+        # Schedule next update
+        self.root.after(200, self.update_feedback)  # Update every 200ms
+    
+    def update_plot(self):
+        """Update the canvas plot with current data."""
+        if not hasattr(self, 'canvas') or not self.canvas:
+            return
+            
+        # Clear the canvas
+        self.canvas.delete("all")
+        
+        # Get canvas dimensions
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        if canvas_width <= 1 or canvas_height <= 1:
+            # Canvas not ready yet
+            return
+        
+        # Plot margins
+        margin_left = 50
+        margin_right = 20
+        margin_top = 20
+        margin_bottom = 50
+        
+        plot_width = canvas_width - margin_left - margin_right
+        plot_height = canvas_height - margin_top - margin_bottom
+        
+        if plot_width <= 0 or plot_height <= 0:
+            return
+        
+        # Draw axes
+        # X-axis (time)
+        self.canvas.create_line(margin_left, canvas_height - margin_bottom, 
+                               canvas_width - margin_right, canvas_height - margin_bottom, 
+                               fill="black", width=2)
+        
+        # Y-axis (values)
+        self.canvas.create_line(margin_left, margin_top, 
+                               margin_left, canvas_height - margin_bottom, 
+                               fill="black", width=2)
+        
+        # Plot selected data series
+        for data_name, var in self.plot_vars.items():
+            if not var.get() or data_name not in self.plot_data:
+                continue
+                
+            data = list(self.plot_data[data_name])
+            if len(data) < 2:
+                continue
+                
+            # Normalize data for plotting
+            if len(data) > 0:
+                min_val = min(data)
+                max_val = max(data)
+                val_range = max_val - min_val if max_val != min_val else 1
+                
+                # Create points
+                points = []
+                for i, value in enumerate(data):
+                    x = margin_left + (i / max(1, len(data) - 1)) * plot_width
+                    y = canvas_height - margin_bottom - ((value - min_val) / val_range) * plot_height
+                    points.extend([x, y])
+                
+                # Draw the line
+                if len(points) >= 4:
+                    color = self.plot_colors.get(data_name, "#000000")
+                    self.canvas.create_line(points, fill=color, width=2)
+                    
+                    # Add legend
+                    legend_y = margin_top + list(self.plot_vars.keys()).index(data_name) * 20
+                    self.canvas.create_line(canvas_width - margin_right - 30, legend_y,
+                                          canvas_width - margin_right - 10, legend_y,
+                                          fill=color, width=3)
+                    self.canvas.create_text(canvas_width - margin_right - 35, legend_y,
+                                          text=data_name.capitalize(), anchor="e", fill=color)
     
     def save_config(self):
         messagebox.showinfo("Info", "Save configuration - to be implemented")
