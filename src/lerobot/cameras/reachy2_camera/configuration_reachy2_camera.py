@@ -22,7 +22,7 @@ REACHY2_CAMERA_HEIGHT = 480
 
 
 @CameraConfig.register_subclass("reachy2_camera")
-@dataclass
+@dataclass(kw_only=True)
 class Reachy2CameraConfig(CameraConfig):
     """Configuration class for Reachy 2 camera devices.
 
@@ -61,6 +61,7 @@ class Reachy2CameraConfig(CameraConfig):
 
     name: str
     image_type: str
+
     color_mode: ColorMode = ColorMode.RGB
     ip_address: str | None = "localhost"
     port: int = 50065

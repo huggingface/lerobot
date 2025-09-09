@@ -25,6 +25,11 @@ from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .configuration_reachy2 import Reachy2RobotConfig
 
+try:
+    from reachy2_sdk import ReachySDK
+except ImportError:
+    ReachySDK = None
+
 # {lerobot_keys: reachy2_sdk_keys}
 REACHY2_NECK_JOINTS = {
     "neck_yaw.pos": "head.neck.yaw",
@@ -75,9 +80,9 @@ class Reachy2Robot(Robot):
     name = "reachy2"
 
     def __init__(self, config: Reachy2RobotConfig):
-        from reachy2_sdk import ReachySDK
-
         super().__init__(config)
+        if ReachySDK is None:
+            raise ImportError("reachy2_sdk is required to use Reachy2Robot")
         self._sdk = ReachySDK
 
         self.config = config

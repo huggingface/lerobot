@@ -22,6 +22,11 @@ from .config_reachy2_teleoperator import Reachy2TeleoperatorConfig
 
 logger = logging.getLogger(__name__)
 
+try:
+    from reachy2_sdk import ReachySDK
+except ImportError:
+    ReachySDK = None
+
 # {lerobot_keys: reachy2_sdk_keys}
 REACHY2_NECK_JOINTS = {
     "neck_yaw.pos": "head.neck.yaw",
@@ -72,8 +77,8 @@ class Reachy2Teleoperator(Teleoperator):
     name = "reachy2_specific"
 
     def __init__(self, config: Reachy2TeleoperatorConfig):
-        from reachy2_sdk import ReachySDK
-
+        if ReachySDK is None:
+            raise ImportError("reachy2_sdk is required to use Reachy2Teleoperator")
         self._sdk = ReachySDK
         super().__init__(config)
         self.config = config
@@ -136,6 +141,9 @@ class Reachy2Teleoperator(Teleoperator):
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
 
+        joint_action = {}
+        vel_action = {}
+
         if self.is_connected:
             if self.config.use_present_position:
                 joint_action = {
@@ -153,6 +161,7 @@ class Reachy2Teleoperator(Teleoperator):
                 vel_action = {k: self.reachy.mobile_base.odometry[v] for k, v in REACHY2_VEL.items()}
             else:
                 vel_action = {k: self.reachy.mobile_base.last_cmd_vel[v] for k, v in REACHY2_VEL.items()}
+
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return {**joint_action, **vel_action}
