@@ -11,7 +11,6 @@ import time
 import tkinter as tk
 from collections import deque
 from tkinter import messagebox, ttk
-from typing import List
 
 from lerobot.motors.feetech import FeetechMotorsBus
 from lerobot.motors.motors_bus import Motor, MotorNormMode
