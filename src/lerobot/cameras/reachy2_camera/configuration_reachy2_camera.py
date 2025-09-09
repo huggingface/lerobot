@@ -16,6 +16,10 @@ from dataclasses import dataclass
 
 from ..configs import CameraConfig, ColorMode
 
+REACHY2_CAMERA_FPS = 15
+REACHY2_CAMERA_WIDTH = 640
+REACHY2_CAMERA_HEIGHT = 480
+
 
 @CameraConfig.register_subclass("reachy2_camera")
 @dataclass
@@ -60,7 +64,11 @@ class Reachy2CameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     ip_address: str | None = "localhost"
     port: int = 50065
-    # use_depth: bool = False
+
+    # TODO(maractingi):  verify if reachy2 camera supports different fps, width, and height
+    fps: int | None = REACHY2_CAMERA_FPS
+    width: int | None = REACHY2_CAMERA_WIDTH
+    height: int | None = REACHY2_CAMERA_HEIGHT
 
     def __post_init__(self):
         if self.name not in ["teleop", "depth"]:

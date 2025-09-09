@@ -38,7 +38,7 @@ except Exception as e:
 from lerobot.errors import DeviceNotConnectedError
 
 from ..camera import Camera
-from .configuration_reachy2_camera import ColorMode, Reachy2CameraConfig
+from .configuration_reachy2_camera import REACHY2_CAMERA_FPS, ColorMode, Reachy2CameraConfig
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,6 @@ class Reachy2Camera(Camera):
 
         self.config = config
 
-        self.fps = config.fps
         self.color_mode = config.color_mode
 
         self.cam_manager: CameraManager | None = None
@@ -127,7 +126,7 @@ class Reachy2Camera(Camera):
                 "default_profile": {
                     "width": width,
                     "height": height,
-                    "fps": 30,
+                    "fps": REACHY2_CAMERA_FPS,
                 },
             }
             initialized_cameras.append(camera_info)
@@ -157,26 +156,26 @@ class Reachy2Camera(Camera):
         start_time = time.perf_counter()
 
         frame = None
+        if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
+            if self.config.image_type == "left":
+                frame = self.cam_manager.teleop.get_frame(
+                    CameraView.LEFT, size=(self.config.width, self.config.height)
+                )[0]
+            elif self.config.image_type == "right":
+                frame = self.cam_manager.teleop.get_frame(
+                    CameraView.RIGHT, size=(self.config.width, self.config.height)
+                )[0]
+        elif self.config.name == "depth" and hasattr(self.cam_manager, "depth"):
+            if self.config.image_type == "depth":
+                frame = self.cam_manager.depth.get_depth_frame()[0]
+            elif self.config.image_type == "rgb":
+                frame = self.cam_manager.depth.get_frame(size=(self.config.width, self.config.height))[0]
 
-        if self.cam_manager is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-        else:
-            if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
-                if self.config.image_type == "left":
-                    frame = self.cam_manager.teleop.get_frame(CameraView.LEFT, size=(640, 480))[0]
-                elif self.config.image_type == "right":
-                    frame = self.cam_manager.teleop.get_frame(CameraView.RIGHT, size=(640, 480))[0]
-            elif self.config.name == "depth" and hasattr(self.cam_manager, "depth"):
-                if self.config.image_type == "depth":
-                    frame = self.cam_manager.depth.get_depth_frame()[0]
-                elif self.config.image_type == "rgb":
-                    frame = self.cam_manager.depth.get_frame(size=(640, 480))[0]
+        if frame is None:
+            return np.empty((0, 0, 3), dtype=np.uint8)
 
-            if frame is None:
-                return np.empty((0, 0, 3), dtype=np.uint8)
-
-            if self.config.color_mode == "rgb":
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if self.config.color_mode == "rgb":
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
