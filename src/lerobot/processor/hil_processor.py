@@ -252,8 +252,10 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
             return features
         for key in features[PipelineFeatureType.OBSERVATION]:
             if "image" in key:
+                nb_channel = features[PipelineFeatureType.OBSERVATION][key].shape[0]
                 features[PipelineFeatureType.OBSERVATION][key] = PolicyFeature(
-                    type=features[PipelineFeatureType.OBSERVATION][key].type, shape=self.resize_size
+                    type=features[PipelineFeatureType.OBSERVATION][key].type,
+                    shape=(nb_channel, *self.resize_size),
                 )
         return features
 
