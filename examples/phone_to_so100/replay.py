@@ -20,7 +20,7 @@ import time
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotProcessorPipeline
-from lerobot.processor.converters import action_to_transition, transition_to_robot_action
+from lerobot.processor.converters import action_to_transition, transition_to_action
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
@@ -60,7 +60,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline(
         ),
     ],
     to_transition=action_to_transition,
-    to_output=transition_to_robot_action,
+    to_output=transition_to_action,
 )
 
 robot_ee_to_joints_processor.reset()

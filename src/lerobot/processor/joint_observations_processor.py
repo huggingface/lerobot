@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_STATE
 from lerobot.processor.pipeline import (
     ObservationProcessorStep,
@@ -103,7 +103,9 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
         """Resets the internal state, clearing the last known joint positions."""
         self.last_joint_positions = None
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Updates the `observation.state` feature to reflect the added velocities.
 
@@ -116,12 +118,14 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
         Returns:
             The updated policy features dictionary.
         """
-        if OBS_STATE in features:
-            original_feature = features[OBS_STATE]
+        if OBS_STATE in features[PipelineFeatureType.OBSERVATION]:
+            original_feature = features[PipelineFeatureType.OBSERVATION][OBS_STATE]
             # Double the shape to account for positions + velocities
             new_shape = (original_feature.shape[0] * 2,) + original_feature.shape[1:]
 
-            features[OBS_STATE] = PolicyFeature(type=original_feature.type, shape=new_shape)
+            features[PipelineFeatureType.OBSERVATION][OBS_STATE] = PolicyFeature(
+                type=original_feature.type, shape=new_shape
+            )
         return features
 
 
@@ -177,7 +181,9 @@ class MotorCurrentProcessorStep(ObservationProcessorStep):
 
         return new_observation
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Updates the `observation.state` feature to reflect the added motor currents.
 
@@ -190,8 +196,8 @@ class MotorCurrentProcessorStep(ObservationProcessorStep):
         Returns:
             The updated policy features dictionary.
         """
-        if OBS_STATE in features and self.robot is not None:
-            original_feature = features[OBS_STATE]
+        if OBS_STATE in features[PipelineFeatureType.OBSERVATION] and self.robot is not None:
+            original_feature = features[PipelineFeatureType.OBSERVATION][OBS_STATE]
             # Add motor current dimensions to the original state shape
             num_motors = 0
             if hasattr(self.robot, "bus") and hasattr(self.robot.bus, "motors"):  # type: ignore[attr-defined]
@@ -199,5 +205,7 @@ class MotorCurrentProcessorStep(ObservationProcessorStep):
 
             if num_motors > 0:
                 new_shape = (original_feature.shape[0] + num_motors,) + original_feature.shape[1:]
-                features[OBS_STATE] = PolicyFeature(type=original_feature.type, shape=new_shape)
+                features[PipelineFeatureType.OBSERVATION][OBS_STATE] = PolicyFeature(
+                    type=original_feature.type, shape=new_shape
+                )
         return features

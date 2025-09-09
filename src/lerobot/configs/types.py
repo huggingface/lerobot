@@ -27,6 +27,11 @@ class FeatureType(str, Enum):
     LANGUAGE = "LANGUAGE"
 
 
+class PipelineFeatureType(str, Enum):
+    ACTION = "ACTION"
+    OBSERVATION = "OBSERVATION"
+
+
 class NormalizationMode(str, Enum):
     MIN_MAX = "MIN_MAX"
     MEAN_STD = "MEAN_STD"

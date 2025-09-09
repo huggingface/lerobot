@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import to_tensor
 from .pipeline import ActionProcessorStep, ProcessorStepRegistry
@@ -63,7 +63,9 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
 
         return numpy_action
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -87,5 +89,7 @@ class Numpy2TorchActionProcessorStep(ActionProcessorStep):
         torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
         return torch_action
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features

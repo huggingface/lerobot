@@ -24,7 +24,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     ProcessorKwargs,
-    RenameProcessorStep,
+    RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
 )
 
@@ -63,7 +63,7 @@ def make_tdmpc_pre_post_processors(
         postprocessor_kwargs = {}
 
     input_steps = [
-        RenameProcessorStep(rename_map={}),
+        RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(

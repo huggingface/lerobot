@@ -18,7 +18,7 @@ import tempfile
 import pytest
 import torch
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import DataProcessorPipeline, DeviceProcessorStep, TransitionKey
 
 
@@ -292,8 +292,10 @@ def test_features():
     processor = DeviceProcessorStep(device="cpu")
 
     features = {
-        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,)),
-        "action": PolicyFeature(type=FeatureType.ACTION, shape=(5,)),
+        PipelineFeatureType.OBSERVATION: {
+            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,))
+        },
+        PipelineFeatureType.ACTION: {"action": PolicyFeature(type=FeatureType.ACTION, shape=(5,))},
     }
 
     result = processor.transform_features(features)

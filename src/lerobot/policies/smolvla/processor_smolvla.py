@@ -16,7 +16,7 @@
 
 import torch
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
@@ -27,7 +27,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorKwargs,
     ProcessorStepRegistry,
-    RenameProcessorStep,
+    RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -69,7 +69,7 @@ def make_smolvla_pre_post_processors(
         postprocessor_kwargs = {}
 
     input_steps = [
-        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
         SmolVLANewLineProcessor(),
         TokenizerProcessorStep(
@@ -137,5 +137,7 @@ class SmolVLANewLineProcessor(ComplementaryDataProcessorStep):
 
         return new_complementary_data
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features

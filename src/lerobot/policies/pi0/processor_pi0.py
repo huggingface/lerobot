@@ -17,7 +17,7 @@
 
 import torch
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
@@ -29,7 +29,7 @@ from lerobot.processor import (
     ProcessorKwargs,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenameProcessorStep,
+    RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -77,7 +77,9 @@ class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
 
         return new_complementary_data
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         This step does not alter the feature definitions.
 
@@ -127,7 +129,7 @@ def make_pi0_pre_post_processors(
 
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
-        RenameProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
         Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
         TokenizerProcessorStep(

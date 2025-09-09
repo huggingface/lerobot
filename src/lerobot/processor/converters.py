@@ -25,7 +25,6 @@ import numpy as np
 import torch
 
 from lerobot.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
-from lerobot.utils.rotation import Rotation
 
 from .core import EnvTransition, TransitionKey
 
@@ -291,17 +290,8 @@ def action_to_transition(action: dict[str, Any]) -> EnvTransition:
     Returns:
         An `EnvTransition` containing the formatted action.
     """
-    act_dict: dict[str, Any] = {}
-    for k, v in action.items():
-        # Check if the value is a type that should not be converted to a tensor.
-        if isinstance(v, (Rotation, dict)):
-            act_dict[f"{ACTION}.{k}"] = v
-            continue
 
-        arr = np.array(v) if np.isscalar(v) else v
-        act_dict[f"{ACTION}.{k}"] = to_tensor(arr)
-
-    return create_transition(observation={}, action=act_dict)
+    return create_transition(observation={}, action=action)
 
 
 def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
@@ -320,18 +310,12 @@ def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
     """
     state, images = _split_obs_to_state_and_images(observation)
 
-    obs_dict: dict[str, Any] = {}
-    for k, v in state.items():
-        arr = np.array(v) if np.isscalar(v) else v
-        obs_dict[f"{OBS_STATE}.{k}"] = to_tensor(arr)
+    image_observations = {f"{OBS_IMAGES}.{cam}": img for cam, img in images.items()}
 
-    for cam, img in images.items():
-        obs_dict[f"{OBS_IMAGES}.{cam}"] = img
-
-    return create_transition(observation=obs_dict, action={})
+    return create_transition(observation={**state, **image_observations}, action={})
 
 
-def transition_to_robot_action(transition: EnvTransition) -> dict[str, Any]:
+def transition_to_action(transition: EnvTransition) -> dict[str, Any]:
     """
     Extract a raw action dictionary for a robot from an `EnvTransition`.
 
@@ -344,18 +328,7 @@ def transition_to_robot_action(transition: EnvTransition) -> dict[str, Any]:
     Returns:
         A dictionary representing the raw robot action.
     """
-    out: dict[str, Any] = {}
-    action_dict = transition.get(TransitionKey.ACTION) or {}
-
-    if action_dict is None:
-        return out
-
-    for k, v in action_dict.items():
-        if isinstance(k, str) and k.startswith(f"{ACTION}.") and k.endswith((".pos", ".vel")):
-            out_key = k[len(f"{ACTION}.") :]  # Strip the 'action.' prefix.
-            out[out_key] = float(v)
-
-    return out
+    return transition.get(TransitionKey.ACTION)
 
 
 def merge_transitions(transitions: Sequence[EnvTransition] | EnvTransition) -> EnvTransition:

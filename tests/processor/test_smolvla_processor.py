@@ -20,7 +20,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.processor_smolvla import (
@@ -33,7 +33,7 @@ from lerobot.processor import (
     EnvTransition,
     NormalizerProcessorStep,
     ProcessorStep,
-    RenameProcessorStep,
+    RenameObservationsProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
 )
@@ -122,7 +122,7 @@ def test_make_smolvla_processor_basic():
 
     # Check steps in preprocessor
     assert len(preprocessor.steps) == 6
-    assert isinstance(preprocessor.steps[0], RenameProcessorStep)
+    assert isinstance(preprocessor.steps[0], RenameObservationsProcessorStep)
     assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
     assert isinstance(preprocessor.steps[2], SmolVLANewLineProcessor)
     # Step 3 would be TokenizerProcessorStep but it's mocked
@@ -400,7 +400,7 @@ def test_smolvla_newline_processor_transform_features():
 
     # Test transform_features
     features = {
-        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,)),
+        PipelineFeatureType.OBSERVATION: {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
     }
     result = processor.transform_features(features)
     assert result == features  # Should return unchanged

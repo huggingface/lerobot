@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 from lerobot.utils.import_utils import _transformers_available
 
@@ -243,7 +243,9 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         return config
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         Adds feature definitions for the language tokens and attention mask.
 
@@ -257,12 +259,14 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             The updated dictionary of policy features.
         """
         # Add a feature for the token IDs if it doesn't already exist
-        if OBS_LANGUAGE_TOKENS not in features:
-            features[OBS_LANGUAGE_TOKENS] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
+        if OBS_LANGUAGE_TOKENS not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_TOKENS] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
 
         # Add a feature for the attention mask if it doesn't already exist
-        if OBS_LANGUAGE_ATTENTION_MASK not in features:
-            features[OBS_LANGUAGE_ATTENTION_MASK] = PolicyFeature(
+        if OBS_LANGUAGE_ATTENTION_MASK not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_ATTENTION_MASK] = PolicyFeature(
                 type=FeatureType.LANGUAGE, shape=(self.max_length,)
             )
 

@@ -17,7 +17,7 @@
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
+from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotProcessorPipeline
@@ -25,7 +25,7 @@ from lerobot.processor.converters import (
     action_to_transition,
     identity_transition,
     observation_to_transition,
-    transition_to_robot_action,
+    transition_to_action,
 )
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
@@ -107,7 +107,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline(
         ),
     ],
     to_transition=identity_transition,
-    to_output=transition_to_robot_action,
+    to_output=transition_to_action,
 )
 
 # Build pipeline to convert joint observation to ee pose observation
@@ -122,7 +122,7 @@ robot_joints_to_ee_pose = RobotProcessorPipeline(
 # Build dataset ee action features
 action_ee = aggregate_pipeline_dataset_features(
     pipeline=phone_to_robot_ee_pose_processor,
-    initial_features=phone.action_features,
+    initial_features=create_initial_features(action=phone.action_features),
     use_videos=True,
     patterns=["action.ee"],
 )
@@ -130,7 +130,7 @@ action_ee = aggregate_pipeline_dataset_features(
 # Get gripper pos action features
 gripper = aggregate_pipeline_dataset_features(
     pipeline=robot_ee_to_joints_processor,
-    initial_features={},
+    initial_features=create_initial_features(),
     use_videos=True,
     patterns=["action.gripper.pos", "observation.state.gripper.pos"],
 )
@@ -138,7 +138,7 @@ gripper = aggregate_pipeline_dataset_features(
 # Build dataset ee observation features
 observation_ee = aggregate_pipeline_dataset_features(
     pipeline=robot_joints_to_ee_pose,
-    initial_features=robot.observation_features,
+    initial_features=create_initial_features(observation=robot.observation_features),
     use_videos=True,
     patterns=["observation.state.ee"],
 )

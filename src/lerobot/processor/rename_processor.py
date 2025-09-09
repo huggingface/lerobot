@@ -17,14 +17,14 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from lerobot.configs.types import PolicyFeature
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="rename_processor")
-class RenameProcessorStep(ObservationProcessorStep):
+@ProcessorStepRegistry.register(name="rename_observations_processor")
+class RenameObservationsProcessorStep(ObservationProcessorStep):
     """
     A processor step that renames keys in an observation dictionary.
 
@@ -53,12 +53,18 @@ class RenameProcessorStep(ObservationProcessorStep):
     def get_config(self) -> dict[str, Any]:
         return {"rename_map": self.rename_map}
 
-    def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """Transforms:
         - Each key in the observation that appears in `rename_map` is renamed to its value.
         - Keys not in `rename_map` remain unchanged.
         """
-        return {self.rename_map.get(k, k): v for k, v in features.items()}
+        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = features.copy()
+        new_features[PipelineFeatureType.OBSERVATION] = {
+            self.rename_map.get(k, k): v for k, v in features[PipelineFeatureType.OBSERVATION].items()
+        }
+        return new_features
 
 
 def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -> dict[str, dict[str, Any]]:
