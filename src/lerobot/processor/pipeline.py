@@ -829,7 +829,7 @@ class ObservationProcessorStep(ProcessorStep, ABC):
 
         observation = new_transition.get(TransitionKey.OBSERVATION)
         if observation is None:
-            return new_transition
+            raise ValueError("ObservationProcessorStep requires an observation in the transition.")
 
         processed_observation = self.observation(observation)
         new_transition[TransitionKey.OBSERVATION] = processed_observation
@@ -876,7 +876,7 @@ class ActionProcessorStep(ProcessorStep, ABC):
 
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
-            return new_transition
+            raise ValueError("ActionProcessorStep requires an action in the transition.")
 
         processed_action = self.action(action)
         new_transition[TransitionKey.ACTION] = processed_action
@@ -922,7 +922,7 @@ class RewardProcessorStep(ProcessorStep, ABC):
 
         reward = new_transition.get(TransitionKey.REWARD)
         if reward is None:
-            return new_transition
+            raise ValueError("RewardProcessorStep requires a reward in the transition.")
 
         processed_reward = self.reward(reward)
         new_transition[TransitionKey.REWARD] = processed_reward
@@ -973,7 +973,7 @@ class DoneProcessorStep(ProcessorStep, ABC):
 
         done = new_transition.get(TransitionKey.DONE)
         if done is None:
-            return new_transition
+            raise ValueError("DoneProcessorStep requires a done flag in the transition.")
 
         processed_done = self.done(done)
         new_transition[TransitionKey.DONE] = processed_done
@@ -1020,7 +1020,7 @@ class TruncatedProcessorStep(ProcessorStep, ABC):
 
         truncated = new_transition.get(TransitionKey.TRUNCATED)
         if truncated is None:
-            return new_transition
+            raise ValueError("TruncatedProcessorStep requires a truncated flag in the transition.")
 
         processed_truncated = self.truncated(truncated)
         new_transition[TransitionKey.TRUNCATED] = processed_truncated
@@ -1072,7 +1072,7 @@ class InfoProcessorStep(ProcessorStep, ABC):
 
         info = new_transition.get(TransitionKey.INFO)
         if info is None:
-            return new_transition
+            raise ValueError("InfoProcessorStep requires an info dictionary in the transition.")
 
         processed_info = self.info(info)
         new_transition[TransitionKey.INFO] = processed_info
@@ -1105,7 +1105,7 @@ class ComplementaryDataProcessorStep(ProcessorStep, ABC):
 
         complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
         if complementary_data is None:
-            return new_transition
+            raise ValueError("ComplementaryDataProcessorStep requires complementary data in the transition.")
 
         processed_complementary_data = self.complementary_data(complementary_data)
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = processed_complementary_data
