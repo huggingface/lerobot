@@ -32,7 +32,7 @@ from safetensors.torch import load_file, save_file
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
-from .core import EnvTransition, PolicyAction, RobotAction, TransitionKey
+from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
 
 # Type variable for generic processor output type
 TOutput = TypeVar("TOutput")
@@ -859,7 +859,9 @@ class ActionProcessorStep(ProcessorStep, ABC):
     """
 
     @abstractmethod
-    def action(self, action: PolicyAction | RobotAction) -> PolicyAction | RobotAction:
+    def action(
+        self, action: PolicyAction | RobotAction | EnvAction
+    ) -> PolicyAction | RobotAction | EnvAction:
         """Process the action component.
 
         Args:
