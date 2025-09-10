@@ -862,23 +862,28 @@ class LeRobotDataset(torch.utils.data.Dataset):
         has_video_keys = len(self.meta.video_keys) > 0
         use_batched_encoding = self.batch_encoding_size > 1
 
-        if has_video_keys and not use_batched_encoding:
-            self.encode_episode_videos(episode_index)
+        # Check if we should trigger batch encoding
+        if has_video_keys:
+            if use_batched_encoding:
+                self.episodes_since_last_encoding += 1
+                if self.episodes_since_last_encoding == self.batch_encoding_size:
+                    start_ep = self.num_episodes - self.batch_encoding_size
+                    end_ep = self.num_episodes
+                    logging.info(
+                        f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
+                    )
+                    self.batch_encode_videos(start_ep, end_ep)
+                    self.episodes_since_last_encoding = 0
+            else:
+                self.encode_episode_videos(episode_index)
+        else:
+            # delete images
+            img_dir = self.root / "images"
+            if img_dir.is_dir():
+                shutil.rmtree(self.root / "images")
 
         # `meta.save_episode` should be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
-
-        # Check if we should trigger batch encoding
-        if has_video_keys and use_batched_encoding:
-            self.episodes_since_last_encoding += 1
-            if self.episodes_since_last_encoding == self.batch_encoding_size:
-                start_ep = self.num_episodes - self.batch_encoding_size
-                end_ep = self.num_episodes
-                logging.info(
-                    f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
-                )
-                self.batch_encode_videos(start_ep, end_ep)
-                self.episodes_since_last_encoding = 0
 
         # Episode data index and timestamp checking
         ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
