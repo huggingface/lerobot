@@ -20,12 +20,12 @@ from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import to_tensor
 from .core import EnvAction, PolicyAction
-from .pipeline import ActionProcessorStep, PolicyActionProcessorStep, ProcessorStepRegistry
+from .pipeline import ActionProcessorStep, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("torch2numpy_action_processor")
 @dataclass
-class Torch2NumpyActionProcessorStep(PolicyActionProcessorStep):
+class Torch2NumpyActionProcessorStep(ActionProcessorStep):
     """
     Converts a PyTorch tensor action to a NumPy array.
 
