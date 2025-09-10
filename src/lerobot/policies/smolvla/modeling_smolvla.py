@@ -56,7 +56,6 @@ import math
 import os
 import re
 from collections import deque
-from venv import logger
 
 import safetensors
 import torch
@@ -448,7 +447,10 @@ class SmolVLAPolicy(PreTrainedPolicy):
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
-        assert self._rtc_enabled(), "RTC is not supported for select_action, use it with predict_action_chunk"
+
+        assert not self._rtc_enabled(), (
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
 
         self.eval()
         batch = self._prepare_batch(batch)
@@ -922,8 +924,6 @@ class VLAFlowMatching(nn.Module):
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
 
-            logger.info(f"[SMOLVLA] expanded_time shape: {expanded_time.shape}")
-
             # Partial call of the function, I used `partial` package at the beginning
             # but it was not working as expected, so I used a lambda function instead
             # I want to pass `x_t` as positionan argument to the partial call, because
@@ -935,8 +935,6 @@ class VLAFlowMatching(nn.Module):
                 past_key_values=past_key_values,
                 timestep=expanded_time,  # noqa: B023
             )
-
-            logger.info("[SMOLVLA] starting denoise step")
 
             if self.config.rtc_config is not None and self.config.rtc_config.enabled:
                 inference_delay = kwargs.get("inference_delay")
@@ -953,8 +951,6 @@ class VLAFlowMatching(nn.Module):
                 )
             else:
                 v_t = denoise_step_partial_call(x_t)
-
-            logger.info("[SMOLVLA] denoise step completed")
 
             # Euler step
             x_t += dt * v_t

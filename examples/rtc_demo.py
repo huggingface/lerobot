@@ -192,7 +192,7 @@ class RTCDemoConfig(HubMixin):
 
     # Get new actions horizon. The amount of executed steps after which will be requested new actions.
     # It should be higher than inference delay + execution horizon.
-    action_queue_size_to_get_new_actions: int = 20
+    action_queue_size_to_get_new_actions: int = 40
 
     # Task to execute
     task: str = field(default="", metadata={"help": "Task to execute"})
@@ -252,7 +252,6 @@ def get_actions(
             inference_latency = latency_tracker.max()
             inference_delay = math.ceil(inference_latency / time_per_chunk)
 
-            logger.info("[GET_ACTIONS] get observation")
             obs = robot.get_observation()
             obs_with_policy_features = build_dataset_frame(dataset_features, obs, prefix="observation")
 
@@ -267,15 +266,12 @@ def get_actions(
 
             obs_with_policy_features["task"] = cfg.task
 
-            logger.info("[GET_ACTIONS] predict action chunk")
             actions = policy.predict_action_chunk(
                 obs_with_policy_features,
                 noise=None,
                 inference_delay=inference_delay,
                 prev_chunk_left_over=prev_actions,
             )
-
-            logger.info("[GET_ACTIONS] action chunk predicted")
 
             # Drop the batch dimension
             actions = actions.squeeze(0)
@@ -321,9 +317,7 @@ def actor_control(
     action_count = 0
 
     while not shutdown_event.is_set():
-        start_time = time.time()
-
-        logger.info("[ACTOR] Starting to get action from queue")
+        start_time = time.perf_counter()
 
         # Try to get an action from the queue with timeout
         action = action_queue.get()
@@ -334,11 +328,10 @@ def actor_control(
             robot.send_action(action)
 
             action_count += 1
-            logger.info(f"[ACTOR] Executed action {action_count}")
+            logger.info(f"[ACTOR] Executed action {action_count}, action: {action}")
 
         # Wait for the next action time
-        elapsed = time.time() - start_time
-        time.sleep(1)
+        elapsed = time.perf_counter() - start_time
         if elapsed < action_interval:
             time.sleep(action_interval - elapsed)
 
@@ -379,7 +372,7 @@ def demo_cli(cfg: RTCDemoConfig):
     # The processor won't be created
     policy.init_rtc_processor()
 
-    assert policy.name in ["smolvla", "pi0"], "Only smolvla and pi0 are supported for RTC"
+    assert policy.name in ["smolvla"], "Only smolvla are supported for RTC"
 
     policy = policy.to(cfg.device)
     policy.eval()
