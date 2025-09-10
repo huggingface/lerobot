@@ -86,7 +86,7 @@ def test_none_observation():
     """Test processor with None observation."""
     processor = RenameObservationsProcessorStep(rename_map={"old": "new"})
 
-    transition = create_transition()
+    transition = create_transition(observation={})
     result = processor(transition)
 
     # Should return transition unchanged

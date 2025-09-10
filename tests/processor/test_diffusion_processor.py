@@ -218,7 +218,11 @@ def test_diffusion_processor_without_stats():
     """Test Diffusion processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, dataset_stats=None)
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(
+        config,
+        dataset_stats=None,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Should still create processors
     assert preprocessor is not None

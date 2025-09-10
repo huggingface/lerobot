@@ -372,7 +372,7 @@ def test_sac_processor_edge_cases():
     assert processed[TransitionKey.ACTION].shape == (1, 5)
 
     # Test with None action
-    transition = create_transition(observation={OBS_STATE: torch.randn(10)}, action=None)
+    transition = create_transition(observation={OBS_STATE: torch.randn(10)}, action={})
     processed = preprocessor(transition)
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 10)
     # When action is None, it may still be present with None value
