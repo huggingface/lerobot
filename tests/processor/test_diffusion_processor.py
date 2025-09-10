@@ -33,7 +33,7 @@ from lerobot.processor import (
     TransitionKey,
     UnnormalizerProcessorStep,
 )
-from lerobot.processor.converters import create_transition
+from lerobot.processor.converters import create_transition, identity_transition
 
 
 def create_default_config():
@@ -96,8 +96,8 @@ def test_diffusion_processor_with_images():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create test data with images
@@ -127,8 +127,8 @@ def test_diffusion_processor_cuda():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create CPU data
@@ -165,8 +165,8 @@ def test_diffusion_processor_accelerate_scenario():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Simulate Accelerate: data already on GPU
@@ -246,7 +246,7 @@ def test_diffusion_processor_save_and_load():
 
     # Create new processors with EnvTransition input/output
     preprocessor = DataProcessorPipeline(
-        factory_preprocessor.steps, to_transition=lambda x: x, to_output=lambda x: x
+        factory_preprocessor.steps, to_transition=identity_transition, to_output=identity_transition
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -255,7 +255,7 @@ def test_diffusion_processor_save_and_load():
 
         # Load preprocessor
         loaded_preprocessor = DataProcessorPipeline.from_pretrained(
-            tmpdir, to_transition=lambda x: x, to_output=lambda x: x
+            tmpdir, to_transition=identity_transition, to_output=identity_transition
         )
 
         # Test that loaded processor works
@@ -302,7 +302,9 @@ def test_diffusion_processor_mixed_precision():
             modified_steps.append(step)
 
     # Create new processors with EnvTransition input/output
-    preprocessor = DataProcessorPipeline(modified_steps, to_transition=lambda x: x, to_output=lambda x: x)
+    preprocessor = DataProcessorPipeline(
+        modified_steps, to_transition=identity_transition, to_output=identity_transition
+    )
 
     # Create test data
     observation = {
@@ -329,8 +331,8 @@ def test_diffusion_processor_identity_normalization():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create test data
@@ -358,8 +360,8 @@ def test_diffusion_processor_batch_consistency():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Test with different batch sizes
@@ -411,7 +413,9 @@ def test_diffusion_processor_bfloat16_device_float32_normalizer():
             modified_steps.append(step)
 
     # Create new processor with modified steps
-    preprocessor = DataProcessorPipeline(modified_steps, to_transition=lambda x: x, to_output=lambda x: x)
+    preprocessor = DataProcessorPipeline(
+        modified_steps, to_transition=identity_transition, to_output=identity_transition
+    )
 
     # Verify initial normalizer configuration
     normalizer_step = modified_steps[3]  # NormalizerProcessorStep

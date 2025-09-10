@@ -20,7 +20,7 @@ import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import DataProcessorPipeline, DeviceProcessorStep, TransitionKey
-from lerobot.processor.converters import create_transition
+from lerobot.processor.converters import create_transition, identity_transition
 
 
 def test_basic_functionality():
@@ -294,8 +294,8 @@ def test_integration_with_robot_processor():
     processor = DataProcessorPipeline(
         steps=[batch_processor, device_processor],
         name="test_pipeline",
-        to_transition=lambda x: x,
-        to_output=lambda x: x,
+        to_transition=identity_transition,
+        to_output=identity_transition,
     )
 
     # Create test data
@@ -974,8 +974,8 @@ def test_policy_processor_integration():
             DeviceProcessorStep(device="cuda"),
         ],
         name="test_preprocessor",
-        to_transition=lambda x: x,
-        to_output=lambda x: x,
+        to_transition=identity_transition,
+        to_output=identity_transition,
     )
 
     # Create output processor (postprocessor) that moves to CPU
@@ -985,8 +985,8 @@ def test_policy_processor_integration():
             UnnormalizerProcessorStep(features={ACTION: features[ACTION]}, norm_map=norm_map, stats=stats),
         ],
         name="test_postprocessor",
-        to_transition=lambda x: x,
-        to_output=lambda x: x,
+        to_transition=identity_transition,
+        to_output=identity_transition,
     )
 
     # Test data on CPU

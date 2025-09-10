@@ -11,7 +11,7 @@ import torch
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_LANGUAGE
 from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep, TransitionKey
-from lerobot.processor.converters import create_transition
+from lerobot.processor.converters import create_transition, identity_transition
 from tests.utils import require_package
 
 
@@ -375,7 +375,7 @@ def test_integration_with_robot_processor(mock_auto_tokenizer):
 
     tokenizer_processor = TokenizerProcessorStep(tokenizer_name="test-tokenizer", max_length=6)
     robot_processor = DataProcessorPipeline(
-        [tokenizer_processor], to_transition=lambda x: x, to_output=lambda x: x
+        [tokenizer_processor], to_transition=identity_transition, to_output=identity_transition
     )
 
     transition = create_transition(
@@ -415,7 +415,7 @@ def test_save_and_load_pretrained_with_tokenizer_name(mock_auto_tokenizer):
     )
 
     robot_processor = DataProcessorPipeline(
-        [original_processor], to_transition=lambda x: x, to_output=lambda x: x
+        [original_processor], to_transition=identity_transition, to_output=identity_transition
     )
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -424,7 +424,7 @@ def test_save_and_load_pretrained_with_tokenizer_name(mock_auto_tokenizer):
 
         # Load processor - tokenizer will be recreated from saved config
         loaded_processor = DataProcessorPipeline.from_pretrained(
-            temp_dir, to_transition=lambda x: x, to_output=lambda x: x
+            temp_dir, to_transition=identity_transition, to_output=identity_transition
         )
 
         # Test that loaded processor works
@@ -450,7 +450,7 @@ def test_save_and_load_pretrained_with_tokenizer_object():
     )
 
     robot_processor = DataProcessorPipeline(
-        [original_processor], to_transition=lambda x: x, to_output=lambda x: x
+        [original_processor], to_transition=identity_transition, to_output=identity_transition
     )
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -461,8 +461,8 @@ def test_save_and_load_pretrained_with_tokenizer_object():
         loaded_processor = DataProcessorPipeline.from_pretrained(
             temp_dir,
             overrides={"tokenizer_processor": {"tokenizer": mock_tokenizer}},
-            to_transition=lambda x: x,
-            to_output=lambda x: x,
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         # Test that loaded processor works
@@ -965,7 +965,9 @@ def test_integration_with_device_processor(mock_auto_tokenizer):
     tokenizer_processor = TokenizerProcessorStep(tokenizer_name="test-tokenizer", max_length=6)
     device_processor = DeviceProcessorStep(device="cuda:0")
     robot_processor = DataProcessorPipeline(
-        [tokenizer_processor, device_processor], to_transition=lambda x: x, to_output=lambda x: x
+        [tokenizer_processor, device_processor],
+        to_transition=identity_transition,
+        to_output=identity_transition,
     )
 
     # Start with CPU tensors
