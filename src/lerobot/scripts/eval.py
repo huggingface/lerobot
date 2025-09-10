@@ -220,8 +220,8 @@ def rollout(
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[dict[str, Any]],
     n_episodes: int,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
