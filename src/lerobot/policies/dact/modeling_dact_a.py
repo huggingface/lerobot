@@ -469,12 +469,16 @@ class TemporalAttentionPool1D(nn.Module):
         )
         if self._robot_dim is not None:
             self.robot_state_input_proj = nn.Linear(self._robot_dim, config.dim_model)
+            self.robot_state_output_proj = nn.Linear(config.dim_model, self._robot_dim)
         else:
             self.robot_state_input_proj = None
+            self.robot_state_output_proj = None
         if self._env_dim is not None:
             self.env_state_input_proj = nn.Linear(self._env_dim, config.dim_model)
+            self.env_state_output_proj = nn.Linear(config.dim_model, self._env_dim)
         else:
             self.env_state_input_proj = None
+            self.env_state_output_proj = None
 
     def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
         # x: (B, T, D_in), mask: (B, T) True=valid
@@ -506,7 +510,16 @@ class TemporalAttentionPool1D(nn.Module):
         # The query encodes a trainable notion of "how should I pool a sequence into one vector?"
         q = self.query.expand(b, -1, -1)
         out, _ = self.attn(q, x, x, key_padding_mask=kpm)
-        return out.squeeze(1) # (B, D)
+        out = out.squeeze(1) # (B, D_model)
+
+        # Project back to original dimension
+        if self._robot_dim is not None and d_in == self._robot_dim and self.robot_state_output_proj is not None:
+            out = self.robot_state_output_proj(out)
+        elif self._env_dim is not None and d_in == self._env_dim and self.env_state_output_proj is not None:
+            out = self.env_state_output_proj(out)
+        # If already in model dimension, keep as is
+
+        return out # (B, D_original)
 
 class TemporalAttentionPool2D(nn.Module):
     """
