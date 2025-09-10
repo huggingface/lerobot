@@ -46,13 +46,22 @@ logger = logging.get_logger(__name__)
 
 
 # Workaround for Python 3.10+ UnionType compatibility with transformers auto_docstring
-def safe_auto_docstring(func):
+def safe_auto_docstring(func=None, **kwargs):
     """Auto docstring decorator that handles Python 3.10+ UnionType gracefully."""
-    try:
-        return auto_docstring(func)
-    except (AttributeError, TypeError):
-        # If auto_docstring fails due to UnionType, just return the function unchanged
-        return func
+
+    def decorator(f):
+        try:
+            return auto_docstring(f, **kwargs) if kwargs else auto_docstring(f)
+        except (AttributeError, TypeError):
+            # If auto_docstring fails due to UnionType, just return the function unchanged
+            return f
+
+    if func is None:
+        # Called with arguments, return the decorator
+        return decorator
+    else:
+        # Called without arguments, apply directly
+        return decorator(func)
 
 
 class GemmaRMSNorm(nn.Module):
