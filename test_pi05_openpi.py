@@ -20,8 +20,8 @@ def test_pi05_model_architecture():
     )
 
     # Verify tokenizer max length is set correctly
-    assert config.tokenizer_max_length == 48, (
-        f"Expected tokenizer_max_length=48 for pi05, got {config.tokenizer_max_length}"
+    assert config.tokenizer_max_length == 200, (
+        f"Expected tokenizer_max_length=200 for pi05, got {config.tokenizer_max_length}"
     )
     print(f"✓ Tokenizer max length correctly set to {config.tokenizer_max_length}")
 
