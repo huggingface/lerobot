@@ -75,6 +75,14 @@ class DACTPolicyA(PreTrainedPolicy):
 
         self.model = DACT(config)
 
+        self.temporal_attn_pool_1d = TemporalAttentionPool1D(config)
+        if config.image_features:
+            self.temporal_attn_pool_2d = TemporalAttentionPool2D(
+                config,
+                backbone=self.model.backbone,
+                backbone_out_channels=self.model.backbone_out_channels,
+            )
+
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
@@ -205,9 +213,29 @@ class DACTPolicyA(PreTrainedPolicy):
         mask[:, :k] = 1
         return mask
 
+    # def _temporal_pool(self, hist: dict[str, Tensor], t_mask: Tensor) -> dict[str, Tensor]:
+    #     """Pool the history of observations to a single vector.
+    #     This is a simple average pooling over the time axis.
+    #     Args:
+    #         hist: Dictionary of tensors with a time axis.
+    #     Returns:
+    #         Dictionary of tensors without a time axis.
+    #     """
+    #     pooled = {}
+    #     for k, x in hist.items():
+    #         if k in {OBS_STATE, OBS_ENV_STATE}:
+    #             assert x.ndim >= 3 and x.size(1) == self.config.n_obs_steps
+    #             pooled[k] = self._masked_mean(x, t_mask, dim=1, keepdim=False)
+    #         elif k in {OBS_IMAGES}:
+    #             assert x.ndim >= 5 and x.size(1) == self.config.n_obs_steps
+    #             pooled[k] = self._masked_mean(x, t_mask, dim=1, keepdim=False)
+    #         else:
+    #             pooled[k] = x
+    #     return pooled
+
     def _temporal_pool(self, hist: dict[str, Tensor], t_mask: Tensor) -> dict[str, Tensor]:
         """Pool the history of observations to a single vector.
-        This is a simple average pooling over the time axis.
+        This is a temporal attention pooling over the time axis. It uses a learnable query to attend to the history of observations.
         Args:
             hist: Dictionary of tensors with a time axis.
         Returns:
@@ -216,11 +244,13 @@ class DACTPolicyA(PreTrainedPolicy):
         pooled = {}
         for k, x in hist.items():
             if k in {OBS_STATE, OBS_ENV_STATE}:
-                assert x.ndim >= 3 and x.size(1) == self.config.n_obs_steps
-                pooled[k] = self._masked_mean(x, t_mask, dim=1, keepdim=False)
+                pooled[k] = self.temporal_attn_pool_1d(x, t_mask)
             elif k in {OBS_IMAGES}:
-                assert x.ndim >= 5 and x.size(1) == self.config.n_obs_steps
-                pooled[k] = self._masked_mean(x, t_mask, dim=1, keepdim=False)
+                # Loop through n_cams (dim=2) and pool each camera independently
+                pooled[k] = []
+                for i in range(x.shape[2]):
+                    pooled[k].append(self.temporal_attn_pool_2d(x[:, :, i], t_mask))
+                pooled[k] = torch.stack(pooled[k], dim=1)  # (B, n_cams, C, H, W)
             else:
                 pooled[k] = x
         return pooled
@@ -421,17 +451,47 @@ class ACTTemporalEnsembler:
 
 class TemporalAttentionPool1D(nn.Module):
     """
-    Pools a temporal sequence (B, T, D) -> (B, D) with a learnable query.
+    Pools a temporal sequence (B, T, D(feature dimension)) -> (B, D (model dimension)) with a learnable query.
     'mask': (B, T) with True=valid will be converted for the attention mask.
     """
     def __init__(self, config: DACTConfigA):
         super().__init__()
         self.query =  nn.Parameter(torch.randn(1, 1, config.dim_model)) # (1, 1, D)
         self.attn = nn.MultiheadAttention(num_heads=config.n_heads, embed_dim=config.dim_model, batch_first=True)
-        self.time_pos_embed = nn.Embedding(config.chunk_size, config.dim_model) # (T, D)
+        # Time positions correspond to observation history length, not chunked action length
+        self.time_pos_embed = nn.Embedding(config.n_obs_steps, config.dim_model) # (T, D)
+        # Support projecting either robot state or env state into model dim
+        self._robot_dim = (
+            config.robot_state_feature.shape[0] if config.robot_state_feature is not None else None
+        )
+        self._env_dim = (
+            config.env_state_feature.shape[0] if config.env_state_feature is not None else None
+        )
+        if self._robot_dim is not None:
+            self.robot_state_input_proj = nn.Linear(self._robot_dim, config.dim_model)
+        else:
+            self.robot_state_input_proj = None
+        if self._env_dim is not None:
+            self.env_state_input_proj = nn.Linear(self._env_dim, config.dim_model)
+        else:
+            self.env_state_input_proj = None
 
     def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
-        # x: (B, T, D), mask: (B, T) True=valid
+        # x: (B, T, D_in), mask: (B, T) True=valid
+        # Project input to model dimension depending on feature type
+        d_in = x.size(-1)
+        if self._robot_dim is not None and d_in == self._robot_dim and self.robot_state_input_proj is not None:
+            x = self.robot_state_input_proj(x)
+        elif self._env_dim is not None and d_in == self._env_dim and self.env_state_input_proj is not None:
+            x = self.env_state_input_proj(x)
+        elif d_in == self.attn.embed_dim:
+            # Already in model dimension
+            pass
+        else:
+            raise ValueError(
+                f"TemporalAttentionPool1D received input with dim {d_in}, which does not match robot ({self._robot_dim}) "
+                f"or env ({self._env_dim}) dims, and is not equal to model dim ({self.attn.embed_dim})."
+            )
         b, t, d = x.shape
 
         # Fetch the first T positional vectors and broadcast across the batch
@@ -442,35 +502,48 @@ class TemporalAttentionPool1D(nn.Module):
         x = x + t_pos_embed
 
         kpm = None if mask is None else ~mask
+        # Note: Expanded to batch size
+        # The query encodes a trainable notion of "how should I pool a sequence into one vector?"
         q = self.query.expand(b, -1, -1)
         out, _ = self.attn(q, x, x, key_padding_mask=kpm)
-        return out
+        return out.squeeze(1) # (B, D)
 
 class TemporalAttentionPool2D(nn.Module):
     """
     Pools a stack of feature maps (B, T, C, H, W) -> (B, C, H, W) with frame-level attention.
     Weights are derived from global pooled descriptors (B, T, C).
     """
-    def __init__(self, config: DACTConfigA):
+    def __init__(self, config: DACTConfigA, backbone: nn.Module, backbone_out_channels: int):
         super().__init__()
         self.query = nn.Parameter(torch.randn(1, 1, config.dim_model)) # (1, 1, D)
         self.attn = nn.MultiheadAttention(num_heads=config.n_heads, embed_dim=config.dim_model, batch_first=True)
-        self.time_pos_embed = nn.Embedding(config.chunk_size, config.dim_model) # (T, D)
+        # Time positions correspond to observation history length
+        self.time_pos_embed = nn.Embedding(config.n_obs_steps, config.dim_model) # (T, D)
+        # Use the shared CNN backbone to extract per-frame features
+        self.backbone = backbone
+        self.backbone_out_channels = backbone_out_channels
+        # Project frame descriptors from backbone channels to model dimension for attention
+        self.frame_feat_proj = nn.Linear(self.backbone_out_channels, config.dim_model)
 
     def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
         # x: (B, T, C, H, W), mask: (B, T) True=valid
         b, t, c, h, w = x.shape
-        g = x.mean(dim=(3, 4)) # (B, T, C) global avg-pooled descriptors
+        # Extract per-frame CNN features using the shared backbone
+        x_bt = x.reshape(b * t, c, h, w)                       # (B*T, C, H, W)
+        feat = self.backbone(x_bt)["feature_map"]              # (B*T, C_b, H_b, W_b)
+        g = feat.mean(dim=(2, 3))                              # (B*T, C_b)
+        g = self.frame_feat_proj(g)                            # (B*T, D)
+        g = g.view(b, t, -1)                                   # (B, T, D)
         device = get_device_from_parameters(self)
         t_ids = torch.arange(t, device=device)
-        g = g + self.time_pos_embed(t_ids).unsqueeze(0).expand(b, t, c)
+        g = g + self.time_pos_embed(t_ids).unsqueeze(0).expand(b, t, g.size(-1))
         kpm = None if mask is None else ~mask
-        query = self.query.expand(b, 1, c) # (B, 1, C)
+        query = self.query.expand(b, 1, g.size(-1))  # (B, 1, D)
         _, attn = self.attn(query, g, g, key_padding_mask=kpm)
         # attn: (B, 1, T) softmax over time t
         w = attn.squeeze(1).view(b, t, 1, 1, 1) # (B, T, 1, 1, 1)
         out = (x * w).sum(dim=1) # (B, C, H, W)
-        return out
+        return out # (B, C, H, W)
 
 class DACT(nn.Module):
     """Action Chunking Transformer: The underlying neural network for ACTPolicy.
@@ -549,6 +622,8 @@ class DACT(nn.Module):
             # feature map).
             # Note: The forward method of this returns a dict: {"feature_map": output}.
             self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+            # Expose backbone output channels for consumers
+            self.backbone_out_channels = backbone_model.fc.in_features
 
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
@@ -567,7 +642,7 @@ class DACT(nn.Module):
         self.encoder_latent_input_proj = nn.Linear(config.latent_dim, config.dim_model)
         if self.config.image_features:
             self.encoder_img_feat_input_proj = nn.Conv2d(
-                backbone_model.fc.in_features, config.dim_model, kernel_size=1
+                self.backbone_out_channels, config.dim_model, kernel_size=1
             )
         # Transformer encoder positional embeddings.
         n_1d_tokens = 1  # for the latent
@@ -630,7 +705,7 @@ class DACT(nn.Module):
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
             )  # (B, 1, D)
             if self.config.robot_state_feature:
-                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch[OBS_STATE])
+                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch[OBS_STATE]) # (B, D)
                 robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
             action_embed = self.vae_encoder_action_input_proj(batch[ACTION])  # (B, S, D)
 
