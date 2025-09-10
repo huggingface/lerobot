@@ -209,7 +209,14 @@ def record_loop(
             (
                 t
                 for t in teleop
-                if isinstance(t, (so100_leader.SO100Leader, so101_leader.SO101Leader, koch_leader.KochLeader))
+                if isinstance(
+                    t,
+                    (
+                        so100_leader.SO100Leader,
+                        so101_leader.SO101Leader,
+                        koch_leader.KochLeader,
+                    ),
+                )
             ),
             None,
         )
