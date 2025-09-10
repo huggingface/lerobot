@@ -805,6 +805,8 @@ def test_episode_index_distribution(tmp_path, empty_lerobot_dataset_factory):
             dataset.add_frame({"state": torch.randn(2), "task": f"task_{episode_idx}"})
         dataset.save_episode()
 
+    dataset.finalize()
+
     # Load the dataset and check episode indices
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
@@ -854,6 +856,8 @@ def test_multi_episode_metadata_consistency(tmp_path, empty_lerobot_dataset_fact
             dataset.add_frame({"state": torch.randn(3), "action": torch.randn(2), "task": tasks[episode_idx]})
         dataset.save_episode()
 
+    dataset.finalize()
+
     # Load and validate episode metadata
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
@@ -891,6 +895,8 @@ def test_data_consistency_across_episodes(tmp_path, empty_lerobot_dataset_factor
         for _ in range(frames_per_episode[episode_idx]):
             dataset.add_frame({"state": torch.randn(1), "task": "consistency_test"})
         dataset.save_episode()
+
+    dataset.finalize()
 
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
@@ -943,6 +949,8 @@ def test_statistics_metadata_validation(tmp_path, empty_lerobot_dataset_factory)
             dataset.add_frame({"state": state_data, "action": action_data, "task": "stats_test"})
         dataset.save_episode()
 
+    dataset.finalize()
+
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
     # Check that statistics exist for all features
@@ -988,6 +996,8 @@ def test_episode_boundary_integrity(tmp_path, empty_lerobot_dataset_factory):
             dataset.add_frame({"state": torch.tensor([float(frame_idx)]), "task": f"episode_{episode_idx}"})
         dataset.save_episode()
 
+    dataset.finalize()
+
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
     # Test episode boundaries
@@ -1029,6 +1039,8 @@ def test_task_indexing_and_validation(tmp_path, empty_lerobot_dataset_factory):
         for _ in range(frames_per_episode[episode_idx]):
             dataset.add_frame({"state": torch.randn(1), "task": task})
         dataset.save_episode()
+
+    dataset.finalize()
 
     loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
 
