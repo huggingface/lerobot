@@ -221,7 +221,7 @@ def test_diffusion_processor_without_stats():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         dataset_stats=None,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Should still create processors
