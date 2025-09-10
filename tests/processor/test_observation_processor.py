@@ -136,7 +136,7 @@ def test_none_observation():
     """Test processor with None observation."""
     processor = VanillaObservationProcessorStep()
 
-    transition = create_transition()
+    transition = create_transition(observation={})
     result = processor(transition)
 
     assert result == transition

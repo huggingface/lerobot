@@ -203,7 +203,7 @@ def test_none_complementary_data(mock_auto_tokenizer):
 
     processor = TokenizerProcessorStep(tokenizer_name="test-tokenizer")
 
-    transition = create_transition(complementary_data=None)
+    transition = create_transition(observation={}, complementary_data=None)
 
     result = processor(transition)
     assert result == transition  # Should return unchanged
@@ -218,7 +218,7 @@ def test_missing_task_key(mock_auto_tokenizer):
 
     processor = TokenizerProcessorStep(tokenizer_name="test-tokenizer")
 
-    transition = create_transition(complementary_data={"other_field": "some value"})
+    transition = create_transition(observation={}, complementary_data={"other_field": "some value"})
 
     result = processor(transition)
     assert result == transition  # Should return unchanged
@@ -233,7 +233,7 @@ def test_none_task_value(mock_auto_tokenizer):
 
     processor = TokenizerProcessorStep(tokenizer_name="test-tokenizer")
 
-    transition = create_transition(complementary_data={"task": None})
+    transition = create_transition(observation={}, complementary_data={"task": None})
 
     result = processor(transition)
     assert result == transition  # Should return unchanged
@@ -249,13 +249,13 @@ def test_unsupported_task_type(mock_auto_tokenizer):
     processor = TokenizerProcessorStep(tokenizer_name="test-tokenizer")
 
     # Test with integer task
-    transition = create_transition(complementary_data={"task": 123})
+    transition = create_transition(observation={}, complementary_data={"task": 123})
 
     result = processor(transition)
     assert result == transition  # Should return unchanged
 
     # Test with mixed list
-    transition = create_transition(complementary_data={"task": ["text", 123, "more text"]})
+    transition = create_transition(observation={}, complementary_data={"task": ["text", 123, "more text"]})
 
     result = processor(transition)
     assert result == transition  # Should return unchanged
