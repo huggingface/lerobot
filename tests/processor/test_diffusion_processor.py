@@ -33,19 +33,7 @@ from lerobot.processor import (
     TransitionKey,
     UnnormalizerProcessorStep,
 )
-
-
-def create_transition(observation=None, action=None, **kwargs):
-    """Helper function to create a transition dictionary."""
-    transition = {}
-    if observation is not None:
-        transition[TransitionKey.OBSERVATION] = observation
-    if action is not None:
-        transition[TransitionKey.ACTION] = action
-    for key, value in kwargs.items():
-        if hasattr(TransitionKey, key.upper()):
-            transition[getattr(TransitionKey, key.upper())] = value
-    return transition
+from lerobot.processor.converters import create_transition
 
 
 def create_default_config():
@@ -118,7 +106,8 @@ def test_diffusion_processor_with_images():
         OBS_IMAGE: torch.randn(3, 224, 224),
     }
     action = torch.randn(6)
-    transition = create_transition(observation, action)
+    transition = create_transition(observation=observation)
+    transition[TransitionKey.ACTION] = action
 
     # Process through preprocessor
     processed = preprocessor(transition)
@@ -149,7 +138,8 @@ def test_diffusion_processor_cuda():
         OBS_IMAGE: torch.randn(3, 224, 224),
     }
     action = torch.randn(6)
-    transition = create_transition(observation, action)
+    transition = create_transition(observation=observation)
+    transition[TransitionKey.ACTION] = action
 
     # Process through preprocessor
     processed = preprocessor(transition)
@@ -160,7 +150,8 @@ def test_diffusion_processor_cuda():
     assert processed[TransitionKey.ACTION].device.type == "cuda"
 
     # Process through postprocessor
-    action_transition = create_transition(action=processed[TransitionKey.ACTION])
+    action_transition = create_transition()
+    action_transition[TransitionKey.ACTION] = processed[TransitionKey.ACTION]
     postprocessed = postprocessor(action_transition)
 
     # Check that action is back on CPU
@@ -188,7 +179,8 @@ def test_diffusion_processor_accelerate_scenario():
         OBS_IMAGE: torch.randn(1, 3, 224, 224).to(device),
     }
     action = torch.randn(1, 6).to(device)
-    transition = create_transition(observation, action)
+    transition = create_transition(observation=observation)
+    transition[TransitionKey.ACTION] = action
 
     # Process through preprocessor
     processed = preprocessor(transition)
@@ -215,7 +207,8 @@ def test_diffusion_processor_multi_gpu():
         OBS_IMAGE: torch.randn(1, 3, 224, 224).to(device),
     }
     action = torch.randn(1, 6).to(device)
-    transition = create_transition(observation, action)
+    transition = create_transition(observation=observation)
+    transition[TransitionKey.ACTION] = action
 
     # Process through preprocessor
     processed = preprocessor(transition)
@@ -242,7 +235,8 @@ def test_diffusion_processor_without_stats():
         OBS_IMAGE: torch.randn(3, 224, 224),
     }
     action = torch.randn(6)
-    transition = create_transition(observation, action)
+    transition = create_transition(observation=observation)
+    transition[TransitionKey.ACTION] = action
 
     processed = preprocessor(transition)
     assert processed is not None
@@ -276,7 +270,8 @@ def test_diffusion_processor_save_and_load():
             OBS_IMAGE: torch.randn(3, 224, 224),
         }
         action = torch.randn(6)
-        transition = create_transition(observation, action)
+        transition = create_transition(observation=observation)
+        transition[TransitionKey.ACTION] = action
 
         processed = loaded_preprocessor(transition)
         assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 7)
@@ -322,7 +317,8 @@ def test_diffusion_processor_mixed_precision():
         OBS_IMAGE: torch.randn(3, 224, 224, dtype=torch.float32),
     }
     action = torch.randn(6, dtype=torch.float32)
-    transition = create_transition(observation, action)
+    transition = create_transition(observation=observation)
+    transition[TransitionKey.ACTION] = action
 
     # Process through preprocessor
     processed = preprocessor(transition)
@@ -352,7 +348,8 @@ def test_diffusion_processor_identity_normalization():
         OBS_IMAGE: image_value.clone(),
     }
     action = torch.randn(6)
-    transition = create_transition(observation, action)
+    transition = create_transition(observation=observation)
+    transition[TransitionKey.ACTION] = action
 
     # Process through preprocessor
     processed = preprocessor(transition)
@@ -381,7 +378,8 @@ def test_diffusion_processor_batch_consistency():
             OBS_IMAGE: torch.randn(batch_size, 3, 224, 224) if batch_size > 1 else torch.randn(3, 224, 224),
         }
         action = torch.randn(batch_size, 6) if batch_size > 1 else torch.randn(6)
-        transition = create_transition(observation, action)
+        transition = create_transition(observation=observation)
+        transition[TransitionKey.ACTION] = action
 
         processed = preprocessor(transition)
 
@@ -435,7 +433,8 @@ def test_diffusion_processor_bfloat16_device_float32_normalizer():
         OBS_IMAGE: torch.randn(3, 224, 224, dtype=torch.float32),
     }
     action = torch.randn(6, dtype=torch.float32)
-    transition = create_transition(observation, action)
+    transition = create_transition(observation=observation)
+    transition[TransitionKey.ACTION] = action
 
     # Process through full pipeline
     processed = preprocessor(transition)
