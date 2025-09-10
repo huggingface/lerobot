@@ -458,6 +458,43 @@ def _compile_episode_data(
     data_dict["index"] = torch.arange(start_data_index, start_data_index + total_frames, 1)
 
     return data_dict
+from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+def _inject_normalization_stats(policy: SmolVLAPolicy, dataset_meta: LeRobotDatasetMetadata):
+    """Recreate normalization layers with proper stats from the dataset."""
+    from lerobot.policies.normalize import Normalize, Unnormalize
+
+    # Convert numpy stats to the format expected by normalization layers
+    stats = {}
+    for key, stat_dict in dataset_meta.stats.items():
+        stats[key] = {
+            stat_type: torch.from_numpy(stat_array) if isinstance(stat_array, np.ndarray) else stat_array
+            for stat_type, stat_array in stat_dict.items()
+        }
+
+    # Recreate normalization layers with proper stats
+    normalize_inputs = Normalize(policy.config.input_features, policy.config.normalization_mapping, stats)
+
+    normalize_targets = Normalize(policy.config.output_features, policy.config.normalization_mapping, stats)
+
+    unnormalize_outputs = Unnormalize(
+        policy.config.output_features, policy.config.normalization_mapping, stats
+    )
+
+    # Replace the normalization layers on the policy
+    policy.normalize_inputs = normalize_inputs
+    policy.normalize_targets = normalize_targets
+    policy.unnormalize_outputs = unnormalize_outputs
+
+    print("Normalization layers recreated with dataset stats.")
+
+
+def load_smolvla(cfg, dataset_repo: str):
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    dataset = LeRobotDataset(dataset_repo, root='/raid/jade/.cache/huggingface/datasets/')
+    policy = make_policy(cfg=cfg, ds_meta=dataset.meta)
+    _inject_normalization_stats(policy=policy, dataset_meta=dataset.meta)  # only needed if stats are missing
+    return policy, dataset
 
 
 @parser.wrap()
@@ -466,7 +503,9 @@ def eval_main(cfg: EvalPipelineConfig):
 
     # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)
-
+    #login to hf
+    from huggingface_hub import login
+    login()
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     set_seed(cfg.seed)
@@ -481,6 +520,9 @@ def eval_main(cfg: EvalPipelineConfig):
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
+    # breakpoint()
+    load_smolvla(cfg.policy, "physical-intelligence/libero")
+    # breakpoint()
     policy.eval()
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         if cfg.env.multitask_eval:

@@ -104,32 +104,32 @@ def update_policy(
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
-# def _inject_normalization_stats(policy: SmolVLAPolicy, dataset_meta: LeRobotDatasetMetadata):
-#     """Recreate normalization layers with dataset stats if missing (Adil's workaround)."""
-#     from lerobot.policies.normalize import Normalize, Unnormalize
+def _inject_normalization_stats(policy: SmolVLAPolicy, dataset_meta: LeRobotDatasetMetadata):
+    """Recreate normalization layers with dataset stats if missing (Adil's workaround)."""
+    from lerobot.policies.normalize import Normalize, Unnormalize
 
-#     if not hasattr(dataset_meta, "stats") or not dataset_meta.stats:
-#         print("⚠️ Dataset has no stats, skipping normalization injection.")
-#         return
+    if not hasattr(dataset_meta, "stats") or not dataset_meta.stats:
+        print("⚠️ Dataset has no stats, skipping normalization injection.")
+        return
 
-#     stats = {}
-#     for key, stat_dict in dataset_meta.stats.items():
-#         stats[key] = {
-#             stat_type: torch.as_tensor(stat_array)
-#             if isinstance(stat_array, np.ndarray)
-#             else stat_array
-#             for stat_type, stat_array in stat_dict.items()
-#         }
+    stats = {}
+    for key, stat_dict in dataset_meta.stats.items():
+        stats[key] = {
+            stat_type: torch.as_tensor(stat_array)
+            if isinstance(stat_array, np.ndarray)
+            else stat_array
+            for stat_type, stat_array in stat_dict.items()
+        }
 
-#     normalize_inputs = Normalize(policy.config.input_features, policy.config.normalization_mapping, stats)
-#     normalize_targets = Normalize(policy.config.output_features, policy.config.normalization_mapping, stats)
-#     unnormalize_outputs = Unnormalize(policy.config.output_features, policy.config.normalization_mapping, stats)
+    normalize_inputs = Normalize(policy.config.input_features, policy.config.normalization_mapping, stats)
+    normalize_targets = Normalize(policy.config.output_features, policy.config.normalization_mapping, stats)
+    unnormalize_outputs = Unnormalize(policy.config.output_features, policy.config.normalization_mapping, stats)
 
-#     policy.normalize_inputs = normalize_inputs
-#     policy.normalize_targets = normalize_targets
-#     policy.unnormalize_outputs = unnormalize_outputs
+    policy.normalize_inputs = normalize_inputs
+    policy.normalize_targets = normalize_targets
+    policy.unnormalize_outputs = unnormalize_outputs
 
-#     print("✅ Normalization layers injected with dataset stats.")
+    print("✅ Normalization layers injected with dataset stats.")
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
@@ -152,6 +152,7 @@ def train(cfg: TrainPipelineConfig):
 
     logging.info("Creating dataset")
     dataset = make_dataset(cfg)
+
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
@@ -227,6 +228,7 @@ def train(cfg: TrainPipelineConfig):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         train_tracker.dataloading_s = time.perf_counter() - start_time
+
         for key in batch:
             if isinstance(batch[key], torch.Tensor):
                 batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")

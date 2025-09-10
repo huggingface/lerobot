@@ -77,8 +77,8 @@ class SmolVLMWithExpertModel(nn.Module):
             self.vlm = AutoModelForImageTextToText.from_pretrained(
                 model_id,
                 device_map="auto",
-                # torch_dtype="bfloat16",
-                torch_dtype=torch.float16,
+                torch_dtype="bfloat16",
+                # torch_dtype=torch.float16,
                 low_cpu_mem_usage=True,
             )
             config = self.vlm.config

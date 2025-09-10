@@ -21,8 +21,8 @@ export WANDB_CACHE_DIR=$RAID/.cache/wandb
 export TMPDIR=$RAID/.cache/tmp
 mkdir -p $TMPDIR
 export WANDB_MODE=offline
-export HF_DATASETS_OFFLINE=1
-export HF_HUB_OFFLINE=1
+# export HF_DATASETS_OFFLINE=1
+# export HF_HUB_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
 export MUJOCO_GL=egl
 
@@ -31,11 +31,11 @@ PORT=29522
 
 # =================== CONFIG ===================
 ENV=libero
-TASK=libero_spatial
+TASK=libero_object
 REPO_ID=physical-intelligence/libero
-
+ROOT=$RAID
 POLICY=smolvla
-VLM=HuggingFaceTB/SmolVLM2-2.2B-Instruct
+VLM=HuggingFaceTB/SmolVLM2-500M-Instruct
 
 # Optim / scheduling
 LR=1e-4
@@ -55,10 +55,10 @@ EVAL_BATCH_SIZE=1
 NUM_EPISODES=1
 
 # GPU selection 0, 1, 2, 3
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=0
 
 # naming/output dir
-TRAIN_DIR=$RAID/logs/lerobot/lerobot_${REPO_ID//\//_}_${POLICY}_lr${LR}bs${BATCH_SIZE}steps${OFFLINE_STEPS}
+TRAIN_DIR=$RAID/logs/lerobot/lerobot_solo_${REPO_ID//\//_}_${POLICY}_lr${LR}bs${BATCH_SIZE}steps${OFFLINE_STEPS}
 echo "Training dir: $TRAIN_DIR"
 
 # train
@@ -68,7 +68,6 @@ python src/lerobot/scripts/train.py \
   --policy.type=$POLICY \
   --policy.vlm_model_name=$VLM \
   --dataset.repo_id=$REPO_ID \
-  --dataset.root=$HF_DATASETS_CACHE \
   --env.type=$ENV \
   --env.task=$TASK \
   --output_dir=$TRAIN_DIR \
@@ -85,6 +84,6 @@ python src/lerobot/scripts/train.py \
   --policy.scheduler_decay_steps=$DECAY_STEPS \
   --policy.n_action_steps=$N_ACTION_STEPS \
   --policy.train_expert_only=$TRAIN_EXPERT_ONLY \
-  --policy.vlm_model_name=/raid/jade/.cache/huggingface/models/SmolVLM2-2.2B-Instruct \
+  --policy.vlm_model_name=$VLM \
   --seed=$SEED \
   --wandb.enable=false

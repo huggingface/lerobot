@@ -62,6 +62,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
+    gradient_accumulation_steps: int = 1
 
     push_to_hub: bool = True
     repo_id: str | None = None

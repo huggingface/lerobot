@@ -1,0 +1,1765 @@
+    self.vlm_with_expert = SmolVLMWithExpertModel(
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/smolvla/smolvlm_with_expert.py", line 88, in __init__
+    self.processor = AutoProcessor.from_pretrained(model_id)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/models/auto/processing
+_auto.py", line 300, in from_pretrained
+    config_dict, _ = ProcessorMixin.get_processor_dict(pretrained_model_name_or_path, **kwargs)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/processing_utils.py",
+line 944, in get_processor_dict
+    resolved_raw_chat_template_file = cached_file(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py", line 32
+1, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py", line 47
+8, in cached_files
+    hf_hub_download(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/utils/_validators.p
+y", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/file_download.py",
+line 1010, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/file_download.py",
+line 1073, in _hf_hub_download_to_cache_dir
+    (url_to_download, etag, commit_hash, expected_size, xet_file_data, head_call_error) = _get_metadata_or_catch_err
+or(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/file_download.py",
+line 1546, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/utils/_validators.p
+y", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/file_download.py",
+line 1463, in get_hf_file_metadata
+    r = _request_wrapper(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/file_download.py",
+line 286, in _request_wrapper
+    response = _request_wrapper(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/file_download.py",
+line 309, in _request_wrapper
+    response = http_backoff(method=method, url=url, **params, retry_on_exceptions=(), retry_on_status_codes=(429,))
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/utils/_http.py", li
+ne 310, in http_backoff
+    response = session.request(method=method, url=url, **kwargs)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/requests/sessions.py", line 589, in
+ request
+    resp = self.send(prep, **send_kwargs)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/requests/sessions.py", line 703, in
+ send
+    r = adapter.send(request, **kwargs)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/huggingface_hub/utils/_http.py", li
+ne 96, in send
+    return super().send(request, *args, **kwargs)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/requests/adapters.py", line 644, in
+ send
+    resp = conn.urlopen(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/urllib3/connectionpool.py", line 78
+7, in urlopen
+    response = self._make_request(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/urllib3/connectionpool.py", line 53
+4, in _make_request
+    response = conn.getresponse()
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/urllib3/connection.py", line 565, i
+n getresponse
+    httplib_response = super().getresponse()
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/http/client.py", line 1375, in getresponse
+    response.begin()
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/http/client.py", line 318, in begin
+    version, status, reason = self._read_status()
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/http/client.py", line 279, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/socket.py", line 717, in readinto
+    return self._sock.recv_into(b)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/ssl.py", line 1307, in recv_into
+    return self.read(nbytes, buffer)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/ssl.py", line 1163, in read
+    return self._sslobj.read(len, buffer)
+KeyboardInterrupt
+clea
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ clear
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ bash examples/8_train_smolvla_must.sh
+Training dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000
+/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py:111: FutureWarnin
+g: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO 2025-09-09 15:50:52 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-09-09 15:50:52 /policies.py:81 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-09-09 15:50:52 ts/train.py:137 {'batch_size': 32,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': 'physical-intelligence/libero',
+             'revision': None,
+             'root': '/raid/jade/.cache/huggingface/datasets',
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec'},
+ 'env': {'camera_name': 'agentview_image,robot0_eye_in_hand_image',
+         'episode_length': 520,
+         'features': {'action': {'shape': [7],
+                                 'type': <FeatureType.ACTION: 'ACTION'>},
+                      'agent_pos': {'shape': [8],
+                                    'type': <FeatureType.STATE: 'STATE'>},
+                      'pixels/agentview_image': {'shape': [360, 360, 3],
+                                                 'type': <FeatureType.VISUAL: 'VISUAL'>},
+                      'pixels/robot0_eye_in_hand_image': {'shape': [360,
+                                                                    360,
+                                                                    3],
+                                                          'type': <FeatureType.VISUAL: 'VISUAL'>}},
+         'features_map': {'action': 'action',
+                          'agent_pos': 'observation.state',
+                          'pixels/agentview_image': 'observation.images.image',
+                          'pixels/robot0_eye_in_hand_image': 'observation.images.image2'},
+         'fps': 30,
+         'init_states': True,
+         'max_parallel_tasks': 5,
+         'multitask_eval': True,
+         'obs_type': 'pixels_agent_pos',
+         'render_mode': 'rgb_array',
+         'task': 'libero_spatial',
+         'type': 'libero'},
+ 'eval': {'batch_size': 1, 'n_episodes': 1, 'use_async_envs': False},
+ 'eval_freq': 0,
+ 'job_name': 'libero_smolvla',
+ 'log_freq': 200,
+ 'num_workers': 4,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10,
+               'lr': 0.0001,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'add_image_special_tokens': False,
+            'attention_mode': 'cross_attn',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'expert_width_multiplier': 0.5,
+            'freeze_vision_encoder': True,
+            'gradient_accumulation_steps': 1,
+            'input_features': {},
+            'license': None,
+            'load_vlm_weights': False,
+            'max_action_dim': 32,
+            'max_period': 4.0,
+            'max_state_dim': 32,
+            'min_period': 0.004,
+            'n_action_steps': 1,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_expert_layers': -1,
+            'num_steps': 10,
+            'num_vlm_layers': 16,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_grad_clip_norm': 10,
+            'optimizer_lr': 0.0001,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'pad_language_to': 'longest',
+            'prefix_length': 0,
+            'private': None,
+            'push_to_hub': True,
+            'repo_id': 'None',
+            'resize_imgs_with_padding': [512, 512],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'self_attn_every_n_layers': 2,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'smolvla',
+            'use_amp': True,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'vlm_model_name': 'HuggingFaceTB/SmolVLM2-500M-Instruct'},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 20000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 0.0001,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 100000,
+ 'use_policy_training_preset': True,
+ 'wandb': {'disable_artifact': False,
+           'enable': False,
+           'entity': None,
+           'mode': None,
+           'notes': None,
+           'project': 'lerobot',
+           'run_id': None}}
+INFO 2025-09-09 15:50:52 ts/train.py:143 Logs will be saved locally.
+INFO 2025-09-09 15:50:52 ts/train.py:153 Creating dataset
+WARNING 2025-09-09 15:50:52 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+WARNING 2025-09-09 15:50:52 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+Resolving data files: 100%|████████████████████████████████████████████████████████| 1693/1693 [00:00<00:00, 67057.8
+5it/s]
+Loading dataset shards: 100%|███████████████████████████████████████████████████████████| 70/70 [00:00<00:00, 5343.9
+4it/s]
+INFO 2025-09-09 15:50:57 ts/train.py:163 Creating policy
+Fetching 2 files: 100%|██████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 47393.2
+7it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 3797.4
+7it/s]
+Fetching 2 files: 100%|██████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 44384.1
+7it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 6533.1
+8it/s]
+Reducing the number of VLM layers to 16 ...
+INFO 2025-09-09 15:51:30 ts/train.py:168 Creating optimizer and scheduler
+INFO 2025-09-09 15:51:30 ts/train.py:180 Output dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_
+smolvla_lr1e-4bs32steps100000
+INFO 2025-09-09 15:51:30 ts/train.py:182 cfg.env.task='libero_spatial'
+INFO 2025-09-09 15:51:30 ts/train.py:183 cfg.steps=100000 (100K)
+INFO 2025-09-09 15:51:30 ts/train.py:184 dataset.num_frames=273465 (273K)
+INFO 2025-09-09 15:51:30 ts/train.py:185 dataset.num_episodes=1693
+INFO 2025-09-09 15:51:30 ts/train.py:186 num_learnable_params=49103712 (49M)
+INFO 2025-09-09 15:51:30 ts/train.py:187 num_total_params=399268924 (399M)
+INFO 2025-09-09 15:51:30 ts/train.py:225 Start offline training on a fixed dataset
+> /home/jade_choghari/lerobot/src/lerobot/scripts/train.py(230)train()
+-> train_tracker.dataloading_s = time.perf_counter() - start_time
+(Pdb) batch.keys()
+dict_keys(['image', 'wrist_image', 'state', 'actions', 'timestamp', 'frame_index', 'episode_index', 'index', 'task_i
+ndex', 'task'])
+(Pdb) policy.config.input_features
+{'image': PolicyFeature(type=<FeatureType.VISUAL: 'VISUAL'>, shape=(3, 256, 256)), 'wrist_image': PolicyFeature(type
+=<FeatureType.VISUAL: 'VISUAL'>, shape=(3, 256, 256))}
+(Pdb) quit()
+Traceback (most recent call last):
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 343, in <module>
+    main()
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 339, in main
+    train()
+  File "/home/jade_choghari/lerobot/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+    response = fn(cfg, *args, **kwargs)
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 230, in train
+    train_tracker.dataloading_s = time.perf_counter() - start_time
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 230, in train
+    train_tracker.dataloading_s = time.perf_counter() - start_time
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/bdb.py", line 90, in trace_dispatch
+    return self.dispatch_line(frame)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/bdb.py", line 115, in dispatch_line
+    if self.quitting: raise BdbQuit
+bdb.BdbQuit
+clear
+^[[A(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ clear
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ bash examples/8_train_smolvla_must.sh
+Training dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000
+/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py:111: FutureWarnin
+g: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO 2025-09-09 15:53:49 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-09-09 15:53:49 /policies.py:81 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-09-09 15:53:49 ts/train.py:137 {'batch_size': 32,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': 'physical-intelligence/libero',
+             'revision': None,
+             'root': '/raid/jade/.cache/huggingface/datasets',
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec'},
+ 'env': {'camera_name': 'agentview_image,robot0_eye_in_hand_image',
+         'episode_length': 520,
+         'features': {'action': {'shape': [7],
+                                 'type': <FeatureType.ACTION: 'ACTION'>},
+                      'agent_pos': {'shape': [8],
+                                    'type': <FeatureType.STATE: 'STATE'>},
+                      'pixels/agentview_image': {'shape': [360, 360, 3],
+                                                 'type': <FeatureType.VISUAL: 'VISUAL'>},
+                      'pixels/robot0_eye_in_hand_image': {'shape': [360,
+                                                                    360,
+                                                                    3],
+                                                          'type': <FeatureType.VISUAL: 'VISUAL'>}},
+         'features_map': {'action': 'action',
+                          'agent_pos': 'observation.state',
+                          'pixels/agentview_image': 'observation.images.image',
+                          'pixels/robot0_eye_in_hand_image': 'observation.images.image2'},
+         'fps': 30,
+         'init_states': True,
+         'max_parallel_tasks': 5,
+         'multitask_eval': True,
+         'obs_type': 'pixels_agent_pos',
+         'render_mode': 'rgb_array',
+         'task': 'libero_spatial',
+         'type': 'libero'},
+ 'eval': {'batch_size': 1, 'n_episodes': 1, 'use_async_envs': False},
+ 'eval_freq': 0,
+ 'job_name': 'libero_smolvla',
+ 'log_freq': 200,
+ 'num_workers': 4,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10,
+               'lr': 0.0001,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'add_image_special_tokens': False,
+            'attention_mode': 'cross_attn',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'expert_width_multiplier': 0.5,
+            'freeze_vision_encoder': True,
+            'gradient_accumulation_steps': 1,
+            'input_features': {},
+            'license': None,
+            'load_vlm_weights': False,
+            'max_action_dim': 32,
+            'max_period': 4.0,
+            'max_state_dim': 32,
+            'min_period': 0.004,
+            'n_action_steps': 1,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_expert_layers': -1,
+            'num_steps': 10,
+            'num_vlm_layers': 16,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_grad_clip_norm': 10,
+            'optimizer_lr': 0.0001,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'pad_language_to': 'longest',
+            'prefix_length': 0,
+            'private': None,
+            'push_to_hub': True,
+            'repo_id': 'None',
+            'resize_imgs_with_padding': [512, 512],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'self_attn_every_n_layers': 2,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'smolvla',
+            'use_amp': True,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'vlm_model_name': 'HuggingFaceTB/SmolVLM2-500M-Instruct'},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 20000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 0.0001,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 100000,
+ 'use_policy_training_preset': True,
+ 'wandb': {'disable_artifact': False,
+           'enable': False,
+           'entity': None,
+           'mode': None,
+           'notes': None,
+           'project': 'lerobot',
+           'run_id': None}}
+INFO 2025-09-09 15:53:49 ts/train.py:143 Logs will be saved locally.
+INFO 2025-09-09 15:53:49 ts/train.py:153 Creating dataset
+WARNING 2025-09-09 15:53:49 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+WARNING 2025-09-09 15:53:49 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+Resolving data files: 100%|████████████████████████████████████████████████████████| 1693/1693 [00:00<00:00, 34701.4
+4it/s]
+Loading dataset shards: 100%|███████████████████████████████████████████████████████████| 70/70 [00:00<00:00, 5495.3
+7it/s]
+INFO 2025-09-09 15:53:55 ts/train.py:163 Creating policy
+Fetching 2 files: 100%|██████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 41943.0
+4it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 5500.7
+3it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 2361.6
+6it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 5041.2
+3it/s]
+Reducing the number of VLM layers to 16 ...
+> /home/jade_choghari/lerobot/src/lerobot/policies/factory.py(173)make_policy()
+-> assert isinstance(policy, nn.Module)
+(Pdb) features
+{'image': PolicyFeature(type=<FeatureType.VISUAL: 'VISUAL'>, shape=(3, 256, 256)), 'wrist_image': PolicyFeature(type
+=<FeatureType.VISUAL: 'VISUAL'>, shape=(3, 256, 256)), 'actions': PolicyFeature(type=<FeatureType.ACTION: 'ACTION'>,
+ shape=(7,))}
+(Pdb) ds_meta.features
+{'image': {'dtype': 'image', 'shape': (256, 256, 3), 'names': ['height', 'width', 'channel']}, 'wrist_image': {'dtyp
+e': 'image', 'shape': (256, 256, 3), 'names': ['height', 'width', 'channel']}, 'state': {'dtype': 'float32', 'shape'
+: (8,), 'names': ['state']}, 'actions': {'dtype': 'float32', 'shape': (7,), 'names': ['actions']}, 'timestamp': {'dt
+ype': 'float32', 'shape': (1,), 'names': None}, 'frame_index': {'dtype': 'int64', 'shape': (1,), 'names': None}, 'ep
+isode_index': {'dtype': 'int64', 'shape': (1,), 'names': None}, 'index': {'dtype': 'int64', 'shape': (1,), 'names':
+None}, 'task_index': {'dtype': 'int64', 'shape': (1,), 'names': None}}
+(Pdb) quit()
+
+Traceback (most recent call last):
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 343, in <module>
+    main()
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 339, in main
+    train()
+  File "/home/jade_choghari/lerobot/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+    response = fn(cfg, *args, **kwargs)
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 164, in train
+    policy = make_policy(
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/factory.py", line 173, in make_policy
+    assert isinstance(policy, nn.Module)
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/factory.py", line 173, in make_policy
+    assert isinstance(policy, nn.Module)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/bdb.py", line 90, in trace_dispatch
+    return self.dispatch_line(frame)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/bdb.py", line 115, in dispatch_line
+    if self.quitting: raise BdbQuit
+bdb.BdbQuit
+clear
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ clear
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ bash examples/8_train_smolvla_must.sh
+Training dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000
+/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py:111: FutureWarnin
+g: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO 2025-09-09 15:56:35 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-09-09 15:56:35 /policies.py:81 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-09-09 15:56:35 ts/train.py:137 {'batch_size': 32,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': 'physical-intelligence/libero',
+             'revision': None,
+             'root': '/raid/jade/.cache/huggingface/datasets',
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec'},
+ 'env': {'camera_name': 'agentview_image,robot0_eye_in_hand_image',
+         'episode_length': 520,
+         'features': {'action': {'shape': [7],
+                                 'type': <FeatureType.ACTION: 'ACTION'>},
+                      'agent_pos': {'shape': [8],
+                                    'type': <FeatureType.STATE: 'STATE'>},
+                      'pixels/agentview_image': {'shape': [360, 360, 3],
+                                                 'type': <FeatureType.VISUAL: 'VISUAL'>},
+                      'pixels/robot0_eye_in_hand_image': {'shape': [360,
+                                                                    360,
+                                                                    3],
+                                                          'type': <FeatureType.VISUAL: 'VISUAL'>}},
+         'features_map': {'action': 'action',
+                          'agent_pos': 'observation.state',
+                          'pixels/agentview_image': 'observation.images.image',
+                          'pixels/robot0_eye_in_hand_image': 'observation.images.image2'},
+         'fps': 30,
+         'init_states': True,
+         'max_parallel_tasks': 5,
+         'multitask_eval': True,
+         'obs_type': 'pixels_agent_pos',
+         'render_mode': 'rgb_array',
+         'task': 'libero_spatial',
+         'type': 'libero'},
+ 'eval': {'batch_size': 1, 'n_episodes': 1, 'use_async_envs': False},
+ 'eval_freq': 0,
+ 'job_name': 'libero_smolvla',
+ 'log_freq': 200,
+ 'num_workers': 4,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10,
+               'lr': 0.0001,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'add_image_special_tokens': False,
+            'attention_mode': 'cross_attn',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'expert_width_multiplier': 0.5,
+            'freeze_vision_encoder': True,
+            'gradient_accumulation_steps': 1,
+            'input_features': {},
+            'license': None,
+            'load_vlm_weights': False,
+            'max_action_dim': 32,
+            'max_period': 4.0,
+            'max_state_dim': 32,
+            'min_period': 0.004,
+            'n_action_steps': 1,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_expert_layers': -1,
+            'num_steps': 10,
+            'num_vlm_layers': 16,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_grad_clip_norm': 10,
+            'optimizer_lr': 0.0001,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'pad_language_to': 'longest',
+            'prefix_length': 0,
+            'private': None,
+            'push_to_hub': True,
+            'repo_id': 'None',
+            'resize_imgs_with_padding': [512, 512],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'self_attn_every_n_layers': 2,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'smolvla',
+            'use_amp': True,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'vlm_model_name': 'HuggingFaceTB/SmolVLM2-500M-Instruct'},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 20000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 0.0001,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 100000,
+ 'use_policy_training_preset': True,
+ 'wandb': {'disable_artifact': False,
+           'enable': False,
+           'entity': None,
+           'mode': None,
+           'notes': None,
+           'project': 'lerobot',
+           'run_id': None}}
+INFO 2025-09-09 15:56:35 ts/train.py:143 Logs will be saved locally.
+INFO 2025-09-09 15:56:35 ts/train.py:153 Creating dataset
+WARNING 2025-09-09 15:56:35 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+WARNING 2025-09-09 15:56:35 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+Resolving data files: 100%|████████████████████████████████████████████████████████| 1693/1693 [00:00<00:00, 78132.9
+5it/s]
+Loading dataset shards: 100%|███████████████████████████████████████████████████████████| 70/70 [00:00<00:00, 4716.0
+3it/s]
+INFO 2025-09-09 15:56:40 ts/train.py:163 Creating policy
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 5259.3
+2it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 3477.8
+6it/s]
+Fetching 2 files: 100%|██████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 45343.8
+3it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 5551.6
+9it/s]
+Reducing the number of VLM layers to 16 ...
+> /home/jade_choghari/lerobot/src/lerobot/policies/factory.py(173)make_policy()
+-> assert isinstance(policy, nn.Module)
+(Pdb) features
+{'image': PolicyFeature(type=<FeatureType.VISUAL: 'VISUAL'>, shape=(3, 256, 256)), 'wrist_image': PolicyFeature(type
+=<FeatureType.VISUAL: 'VISUAL'>, shape=(3, 256, 256)), 'state': PolicyFeature(type=<FeatureType.STATE: 'STATE'>, sha
+pe=(8,)), 'actions': PolicyFeature(type=<FeatureType.ACTION: 'ACTION'>, shape=(7,))}
+(Pdb) quit()
+Traceback (most recent call last):
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 343, in <module>
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 339, in main
+
+  File "/home/jade_choghari/lerobot/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+    response = fn(cfg, *args, **kwargs)
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 164, in train
+    policy = make_policy(
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/factory.py", line 173, in make_policy
+    # policy = torch.compile(policy, mode="reduce-overhead")
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/factory.py", line 173, in make_policy
+    # policy = torch.compile(policy, mode="reduce-overhead")
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/bdb.py", line 90, in trace_dispatch
+    return self.dispatch_line(frame)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/bdb.py", line 115, in dispatch_line
+    if self.quitting: raise BdbQuit
+bdb.BdbQuit
+clear
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ clear
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ bash examples/8_train_smolvla_must.sh
+Training dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000
+/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py:111: FutureWarnin
+g: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO 2025-09-09 15:58:35 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-09-09 15:58:35 /policies.py:81 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-09-09 15:58:35 ts/train.py:137 {'batch_size': 32,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': 'physical-intelligence/libero',
+             'revision': None,
+             'root': '/raid/jade/.cache/huggingface/datasets',
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec'},
+ 'env': {'camera_name': 'agentview_image,robot0_eye_in_hand_image',
+         'episode_length': 520,
+         'features': {'action': {'shape': [7],
+                                 'type': <FeatureType.ACTION: 'ACTION'>},
+                      'agent_pos': {'shape': [8],
+                                    'type': <FeatureType.STATE: 'STATE'>},
+                      'pixels/agentview_image': {'shape': [360, 360, 3],
+                                                 'type': <FeatureType.VISUAL: 'VISUAL'>},
+                      'pixels/robot0_eye_in_hand_image': {'shape': [360,
+                                                                    360,
+                                                                    3],
+                                                          'type': <FeatureType.VISUAL: 'VISUAL'>}},
+         'features_map': {'action': 'action',
+                          'agent_pos': 'observation.state',
+                          'pixels/agentview_image': 'observation.images.image',
+                          'pixels/robot0_eye_in_hand_image': 'observation.images.image2'},
+         'fps': 30,
+         'init_states': True,
+         'max_parallel_tasks': 5,
+         'multitask_eval': True,
+         'obs_type': 'pixels_agent_pos',
+         'render_mode': 'rgb_array',
+         'task': 'libero_spatial',
+         'type': 'libero'},
+ 'eval': {'batch_size': 1, 'n_episodes': 1, 'use_async_envs': False},
+ 'eval_freq': 0,
+ 'job_name': 'libero_smolvla',
+ 'log_freq': 200,
+ 'num_workers': 4,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10,
+               'lr': 0.0001,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'add_image_special_tokens': False,
+            'attention_mode': 'cross_attn',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'expert_width_multiplier': 0.5,
+            'freeze_vision_encoder': True,
+            'gradient_accumulation_steps': 1,
+            'input_features': {},
+            'license': None,
+            'load_vlm_weights': False,
+            'max_action_dim': 32,
+            'max_period': 4.0,
+            'max_state_dim': 32,
+            'min_period': 0.004,
+            'n_action_steps': 1,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_expert_layers': -1,
+            'num_steps': 10,
+            'num_vlm_layers': 16,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_grad_clip_norm': 10,
+            'optimizer_lr': 0.0001,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'pad_language_to': 'longest',
+            'prefix_length': 0,
+            'private': None,
+            'push_to_hub': True,
+            'repo_id': 'None',
+            'resize_imgs_with_padding': [512, 512],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'self_attn_every_n_layers': 2,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'smolvla',
+            'use_amp': True,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'vlm_model_name': 'HuggingFaceTB/SmolVLM2-500M-Instruct'},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 20000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 0.0001,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 100000,
+ 'use_policy_training_preset': True,
+ 'wandb': {'disable_artifact': False,
+           'enable': False,
+           'entity': None,
+           'mode': None,
+           'notes': None,
+           'project': 'lerobot',
+           'run_id': None}}
+INFO 2025-09-09 15:58:35 ts/train.py:143 Logs will be saved locally.
+INFO 2025-09-09 15:58:35 ts/train.py:153 Creating dataset
+WARNING 2025-09-09 15:58:35 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+WARNING 2025-09-09 15:58:35 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+Resolving data files: 100%|████████████████████████████████████████████████████████| 1693/1693 [00:00<00:00, 27666.4
+6it/s]
+Loading dataset shards: 100%|███████████████████████████████████████████████████████████| 70/70 [00:00<00:00, 5305.7
+0it/s]
+INFO 2025-09-09 15:58:41 ts/train.py:163 Creating policy
+Fetching 2 files: 100%|██████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 44384.1
+7it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 3192.0
+1it/s]
+Fetching 2 files: 100%|██████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 44620.2
+6it/s]
+Fetching 2 files: 100%|██████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 42799.0
+2it/s]
+Reducing the number of VLM layers to 16 ...
+INFO 2025-09-09 15:59:13 ts/train.py:168 Creating optimizer and scheduler
+INFO 2025-09-09 15:59:13 ts/train.py:180 Output dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_
+smolvla_lr1e-4bs32steps100000
+INFO 2025-09-09 15:59:13 ts/train.py:182 cfg.env.task='libero_spatial'
+INFO 2025-09-09 15:59:13 ts/train.py:183 cfg.steps=100000 (100K)
+INFO 2025-09-09 15:59:13 ts/train.py:184 dataset.num_frames=273465 (273K)
+INFO 2025-09-09 15:59:13 ts/train.py:185 dataset.num_episodes=1693
+INFO 2025-09-09 15:59:13 ts/train.py:186 num_learnable_params=49103712 (49M)
+INFO 2025-09-09 15:59:13 ts/train.py:187 num_total_params=399268940 (399M)
+INFO 2025-09-09 15:59:13 ts/train.py:225 Start offline training on a fixed dataset
+Traceback (most recent call last):
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 342, in <module>
+    main()
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 338, in main
+    train()
+  File "/home/jade_choghari/lerobot/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+    response = fn(cfg, *args, **kwargs)
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 235, in train
+    train_tracker, output_dict = update_policy(
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 71, in update_policy
+    loss, output_dict = policy.forward(batch)
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/smolvla/modeling_smolvla.py", line 458, in forward
+    actions = self.prepare_action(batch)
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/smolvla/modeling_smolvla.py", line 580, in prepare_action
+    actions = pad_vector(batch[ACTION], self.config.max_action_dim)
+KeyError: 'action'
+Exception in thread Thread-3 (_pin_memory_loop):
+Traceback (most recent call last):
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/threading.py", line 1016, in _bootstrap_inner
+    self.run()
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/threading.py", line 953, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/torch/utils/data/_utils/pin_memory.
+py", line 61, in _pin_memory_loop
+    do_one_step()
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/torch/utils/data/_utils/pin_memory.
+py", line 37, in do_one_step
+    r = in_queue.get(timeout=MP_STATUS_CHECK_INTERVAL)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/queues.py", line 122, in get
+    return _ForkingPickler.loads(res)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/torch/multiprocessing/reductions.py
+", line 541, in rebuild_storage_fd
+    fd = df.detach()
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/resource_sharer.py", line 57, in
+detach
+    with _resource_sharer.get_connection(self._id) as conn:
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/resource_sharer.py", line 86, in
+get_connection
+    c = Client(address, authkey=process.current_process().authkey)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/connection.py", line 508, in Clie
+nt
+    answer_challenge(c, authkey)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/connection.py", line 752, in answ
+er_challenge
+    message = connection.recv_bytes(256)         # reject large message
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/connection.py", line 216, in recv
+_bytes
+    buf = self._recv_bytes(maxlength)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/connection.py", line 414, in _rec
+v_bytes
+    buf = self._recv(4)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/multiprocessing/connection.py", line 379, in _rec
+v
+    chunk = read(handle, remaining)
+ConnectionResetError: [Errno 104] Connection reset by peer
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ clear
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ bash examples/8_train_smolvla_must.sh
+Training dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000
+/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py:111: FutureWarnin
+g: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO 2025-09-09 15:59:53 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-09-09 15:59:53 /policies.py:81 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-09-09 15:59:53 ts/train.py:137 {'batch_size': 32,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': 'physical-intelligence/libero',
+             'revision': None,
+             'root': '/raid/jade/.cache/huggingface/datasets',
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec'},
+ 'env': {'camera_name': 'agentview_image,robot0_eye_in_hand_image',
+         'episode_length': 520,
+         'features': {'action': {'shape': [7],
+                                 'type': <FeatureType.ACTION: 'ACTION'>},
+                      'agent_pos': {'shape': [8],
+                                    'type': <FeatureType.STATE: 'STATE'>},
+                      'pixels/agentview_image': {'shape': [360, 360, 3],
+                                                 'type': <FeatureType.VISUAL: 'VISUAL'>},
+                      'pixels/robot0_eye_in_hand_image': {'shape': [360,
+                                                                    360,
+                                                                    3],
+                                                          'type': <FeatureType.VISUAL: 'VISUAL'>}},
+         'features_map': {'action': 'action',
+                          'agent_pos': 'observation.state',
+                          'pixels/agentview_image': 'observation.images.image',
+                          'pixels/robot0_eye_in_hand_image': 'observation.images.image2'},
+         'fps': 30,
+         'init_states': True,
+         'max_parallel_tasks': 5,
+         'multitask_eval': True,
+         'obs_type': 'pixels_agent_pos',
+         'render_mode': 'rgb_array',
+         'task': 'libero_spatial',
+         'type': 'libero'},
+ 'eval': {'batch_size': 1, 'n_episodes': 1, 'use_async_envs': False},
+ 'eval_freq': 0,
+ 'job_name': 'libero_smolvla',
+ 'log_freq': 200,
+ 'num_workers': 4,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10,
+               'lr': 0.0001,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'add_image_special_tokens': False,
+            'attention_mode': 'cross_attn',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'expert_width_multiplier': 0.5,
+            'freeze_vision_encoder': True,
+            'gradient_accumulation_steps': 1,
+            'input_features': {},
+            'license': None,
+            'load_vlm_weights': False,
+            'max_action_dim': 32,
+            'max_period': 4.0,
+            'max_state_dim': 32,
+            'min_period': 0.004,
+            'n_action_steps': 1,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_expert_layers': -1,
+            'num_steps': 10,
+            'num_vlm_layers': 16,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_grad_clip_norm': 10,
+            'optimizer_lr': 0.0001,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'pad_language_to': 'longest',
+            'prefix_length': 0,
+            'private': None,
+            'push_to_hub': True,
+            'repo_id': 'None',
+            'resize_imgs_with_padding': [512, 512],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'self_attn_every_n_layers': 2,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'smolvla',
+            'use_amp': True,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'vlm_model_name': 'HuggingFaceTB/SmolVLM2-500M-Instruct'},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 20000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 0.0001,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 100000,
+ 'use_policy_training_preset': True,
+ 'wandb': {'disable_artifact': False,
+           'enable': False,
+           'entity': None,
+           'mode': None,
+           'notes': None,
+           'project': 'lerobot',
+           'run_id': None}}
+INFO 2025-09-09 15:59:53 ts/train.py:143 Logs will be saved locally.
+INFO 2025-09-09 15:59:53 ts/train.py:153 Creating dataset
+WARNING 2025-09-09 15:59:53 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+WARNING 2025-09-09 15:59:53 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+Resolving data files: 100%|████████████████████████████████████████████████████████| 1693/1693 [00:00<00:00, 72147.3
+3it/s]
+Loading dataset shards: 100%|███████████████████████████████████████████████████████████| 70/70 [00:00<00:00, 5076.7
+1it/s]
+INFO 2025-09-09 15:59:58 ts/train.py:163 Creating policy
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 6096.3
+7it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 4348.6
+8it/s]
+Fetching 2 files: 100%|██████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 46091.2
+5it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 3225.1
+5it/s]
+Reducing the number of VLM layers to 16 ...
+INFO 2025-09-09 16:00:31 ts/train.py:168 Creating optimizer and scheduler
+INFO 2025-09-09 16:00:31 ts/train.py:180 Output dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_
+smolvla_lr1e-4bs32steps100000
+INFO 2025-09-09 16:00:31 ts/train.py:182 cfg.env.task='libero_spatial'
+INFO 2025-09-09 16:00:31 ts/train.py:183 cfg.steps=100000 (100K)
+INFO 2025-09-09 16:00:31 ts/train.py:184 dataset.num_frames=273465 (273K)
+INFO 2025-09-09 16:00:31 ts/train.py:185 dataset.num_episodes=1693
+INFO 2025-09-09 16:00:31 ts/train.py:186 num_learnable_params=49103712 (49M)
+INFO 2025-09-09 16:00:31 ts/train.py:187 num_total_params=399268940 (399M)
+INFO 2025-09-09 16:00:31 ts/train.py:225 Start offline training on a fixed dataset
+Traceback (most recent call last):
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 342, in <module>
+    main()
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 338, in main
+    train()
+  File "/home/jade_choghari/lerobot/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+    response = fn(cfg, *args, **kwargs)
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 235, in train
+    train_tracker, output_dict = update_policy(
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 71, in update_policy
+    loss, output_dict = policy.forward(batch)
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/smolvla/modeling_smolvla.py", line 461, in forward
+    losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/smolvla/modeling_smolvla.py", line 850, in forward
+    att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+  File "/home/jade_choghari/lerobot/src/lerobot/policies/smolvla/modeling_smolvla.py", line 226, in make_att_2d_mask
+s
+    att_2d_masks = att_2d_masks & pad_2d_masks
+RuntimeError: The size of tensor a (199) must match the size of tensor b (181) at non-singleton dimension 2
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ clear
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ bash examples/8_train_smolvla_must.sh
+Training dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000
+/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py:111: FutureWarnin
+g: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO 2025-09-09 16:10:03 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-09-09 16:10:03 /policies.py:81 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-09-09 16:10:03 ts/train.py:137 {'batch_size': 32,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': 'physical-intelligence/libero',
+             'revision': None,
+             'root': '/raid/jade/.cache/huggingface/datasets',
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec'},
+ 'env': {'camera_name': 'agentview_image,robot0_eye_in_hand_image',
+         'episode_length': 520,
+         'features': {'action': {'shape': [7],
+                                 'type': <FeatureType.ACTION: 'ACTION'>},
+                      'agent_pos': {'shape': [8],
+                                    'type': <FeatureType.STATE: 'STATE'>},
+                      'pixels/agentview_image': {'shape': [360, 360, 3],
+                                                 'type': <FeatureType.VISUAL: 'VISUAL'>},
+                      'pixels/robot0_eye_in_hand_image': {'shape': [360,
+                                                                    360,
+                                                                    3],
+                                                          'type': <FeatureType.VISUAL: 'VISUAL'>}},
+         'features_map': {'action': 'action',
+                          'agent_pos': 'observation.state',
+                          'pixels/agentview_image': 'observation.images.image',
+                          'pixels/robot0_eye_in_hand_image': 'observation.images.image2'},
+         'fps': 30,
+         'init_states': True,
+         'max_parallel_tasks': 5,
+         'multitask_eval': True,
+         'obs_type': 'pixels_agent_pos',
+         'render_mode': 'rgb_array',
+         'task': 'libero_spatial',
+         'type': 'libero'},
+ 'eval': {'batch_size': 1, 'n_episodes': 1, 'use_async_envs': False},
+ 'eval_freq': 0,
+ 'job_name': 'libero_smolvla',
+ 'log_freq': 200,
+ 'num_workers': 4,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10,
+               'lr': 0.0001,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'add_image_special_tokens': False,
+            'attention_mode': 'cross_attn',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'expert_width_multiplier': 0.5,
+            'freeze_vision_encoder': True,
+            'gradient_accumulation_steps': 1,
+            'input_features': {},
+            'license': None,
+            'load_vlm_weights': False,
+            'max_action_dim': 32,
+            'max_period': 4.0,
+            'max_state_dim': 32,
+            'min_period': 0.004,
+            'n_action_steps': 1,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_expert_layers': -1,
+            'num_steps': 10,
+            'num_vlm_layers': 16,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_grad_clip_norm': 10,
+            'optimizer_lr': 0.0001,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'pad_language_to': 'longest',
+            'prefix_length': 0,
+            'private': None,
+            'push_to_hub': True,
+            'repo_id': 'None',
+            'resize_imgs_with_padding': [512, 512],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'self_attn_every_n_layers': 2,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'smolvla',
+            'use_amp': True,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'vlm_model_name': 'HuggingFaceTB/SmolVLM2-500M-Instruct'},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 20000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 0.0001,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 100000,
+ 'use_policy_training_preset': True,
+ 'wandb': {'disable_artifact': False,
+           'enable': False,
+           'entity': None,
+           'mode': None,
+           'notes': None,
+           'project': 'lerobot',
+           'run_id': None}}
+INFO 2025-09-09 16:10:03 ts/train.py:143 Logs will be saved locally.
+INFO 2025-09-09 16:10:03 ts/train.py:153 Creating dataset
+WARNING 2025-09-09 16:10:03 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+WARNING 2025-09-09 16:10:03 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+Resolving data files: 100%|█████████████████████████████████| 1693/1693 [00:00<00:00, 54574.89it/s]
+Loading dataset shards: 100%|████████████████████████████████████| 70/70 [00:00<00:00, 7567.63it/s]
+INFO 2025-09-09 16:10:09 ts/train.py:163 Creating policy
+Fetching 2 files: 100%|███████████████████████████████████████████| 2/2 [00:00<00:00, 40721.40it/s]
+Fetching 2 files: 100%|████████████████████████████████████████████| 2/2 [00:00<00:00, 7516.67it/s]
+Fetching 2 files: 100%|████████████████████████████████████████████| 2/2 [00:00<00:00, 3158.36it/s]
+Fetching 2 files: 100%|████████████████████████████████████████████| 2/2 [00:00<00:00, 6775.94it/s]
+Reducing the number of VLM layers to 16 ...
+INFO 2025-09-09 16:10:41 ts/train.py:168 Creating optimizer and scheduler
+INFO 2025-09-09 16:10:41 ts/train.py:180 Output dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_
+smolvla_lr1e-4bs32steps100000
+INFO 2025-09-09 16:10:41 ts/train.py:182 cfg.env.task='libero_spatial'
+INFO 2025-09-09 16:10:41 ts/train.py:183 cfg.steps=100000 (100K)
+INFO 2025-09-09 16:10:41 ts/train.py:184 dataset.num_frames=273465 (273K)
+INFO 2025-09-09 16:10:41 ts/train.py:185 dataset.num_episodes=1693
+INFO 2025-09-09 16:10:41 ts/train.py:186 num_learnable_params=49103712 (49M)
+INFO 2025-09-09 16:10:41 ts/train.py:187 num_total_params=399268940 (399M)
+INFO 2025-09-09 16:10:41 ts/train.py:225 Start offline training on a fixed dataset
+Traceback (most recent call last):
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 342, in <module>
+    main()
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 338, in main
+    train()
+  File "/home/jade_choghari/lerobot/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+    response = fn(cfg, *args, **kwargs)
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 235, in train
+    train_tracker, output_dict = update_policy(
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 76, in update_policy
+    grad_scaler.unscale_(optimizer)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 342
+, in unscale_
+    optimizer_state["found_inf_per_device"] = self._unscale_grads_(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 283
+, in _unscale_grads_
+    torch._amp_foreach_non_finite_check_and_unscale_(
+RuntimeError: "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ clear
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ bash examples/8_train_smolvla_must.sh
+Training dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000
+/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py:111: FutureWarnin
+g: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO 2025-09-09 16:12:28 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-09-09 16:12:28 /policies.py:81 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-09-09 16:12:28 ts/train.py:137 {'batch_size': 32,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': 'physical-intelligence/libero',
+             'revision': None,
+             'root': '/raid/jade/.cache/huggingface/datasets',
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec'},
+ 'env': {'camera_name': 'agentview_image,robot0_eye_in_hand_image',
+         'episode_length': 520,
+         'features': {'action': {'shape': [7],
+                                 'type': <FeatureType.ACTION: 'ACTION'>},
+                      'agent_pos': {'shape': [8],
+                                    'type': <FeatureType.STATE: 'STATE'>},
+                      'pixels/agentview_image': {'shape': [360, 360, 3],
+                                                 'type': <FeatureType.VISUAL: 'VISUAL'>},
+                      'pixels/robot0_eye_in_hand_image': {'shape': [360,
+                                                                    360,
+                                                                    3],
+                                                          'type': <FeatureType.VISUAL: 'VISUAL'>}},
+         'features_map': {'action': 'action',
+                          'agent_pos': 'observation.state',
+                          'pixels/agentview_image': 'observation.images.image',
+                          'pixels/robot0_eye_in_hand_image': 'observation.images.image2'},
+         'fps': 30,
+         'init_states': True,
+         'max_parallel_tasks': 5,
+         'multitask_eval': True,
+         'obs_type': 'pixels_agent_pos',
+         'render_mode': 'rgb_array',
+         'task': 'libero_spatial',
+         'type': 'libero'},
+ 'eval': {'batch_size': 1, 'n_episodes': 1, 'use_async_envs': False},
+ 'eval_freq': 0,
+ 'job_name': 'libero_smolvla',
+ 'log_freq': 200,
+ 'num_workers': 4,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10,
+               'lr': 0.0001,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'add_image_special_tokens': False,
+            'attention_mode': 'cross_attn',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'expert_width_multiplier': 0.5,
+            'freeze_vision_encoder': True,
+            'gradient_accumulation_steps': 1,
+            'input_features': {},
+            'license': None,
+            'load_vlm_weights': False,
+            'max_action_dim': 32,
+            'max_period': 4.0,
+            'max_state_dim': 32,
+            'min_period': 0.004,
+            'n_action_steps': 1,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_expert_layers': -1,
+            'num_steps': 10,
+            'num_vlm_layers': 16,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_grad_clip_norm': 10,
+            'optimizer_lr': 0.0001,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'pad_language_to': 'longest',
+            'prefix_length': 0,
+            'private': None,
+            'push_to_hub': True,
+            'repo_id': 'None',
+            'resize_imgs_with_padding': [512, 512],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'self_attn_every_n_layers': 2,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'smolvla',
+            'use_amp': True,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'vlm_model_name': 'HuggingFaceTB/SmolVLM2-500M-Instruct'},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 20000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 0.0001,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 100000,
+ 'use_policy_training_preset': True,
+ 'wandb': {'disable_artifact': False,
+           'enable': False,
+           'entity': None,
+           'mode': None,
+           'notes': None,
+           'project': 'lerobot',
+           'run_id': None}}
+INFO 2025-09-09 16:12:28 ts/train.py:143 Logs will be saved locally.
+INFO 2025-09-09 16:12:28 ts/train.py:153 Creating dataset
+WARNING 2025-09-09 16:12:28 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+WARNING 2025-09-09 16:12:28 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+Resolving data files: 100%|█████████████████████████████████| 1693/1693 [00:00<00:00, 87666.13it/s]
+Loading dataset shards: 100%|████████████████████████████████████| 70/70 [00:00<00:00, 4223.20it/s]
+INFO 2025-09-09 16:12:34 ts/train.py:163 Creating policy
+Fetching 2 files: 100%|███████████████████████████████████████████| 2/2 [00:00<00:00, 43690.67it/s]
+Fetching 2 files: 100%|████████████████████████████████████████████| 2/2 [00:00<00:00, 4871.43it/s]
+Fetching 2 files: 100%|████████████████████████████████████████████| 2/2 [00:00<00:00, 6512.89it/s]
+Fetching 2 files: 100%|███████████████████████████████████████████| 2/2 [00:00<00:00, 43018.50it/s]
+Reducing the number of VLM layers to 16 ...
+INFO 2025-09-09 16:13:06 ts/train.py:168 Creating optimizer and scheduler
+INFO 2025-09-09 16:13:06 ts/train.py:180 Output dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_
+smolvla_lr1e-4bs32steps100000
+INFO 2025-09-09 16:13:06 ts/train.py:182 cfg.env.task='libero_spatial'
+INFO 2025-09-09 16:13:06 ts/train.py:183 cfg.steps=100000 (100K)
+INFO 2025-09-09 16:13:06 ts/train.py:184 dataset.num_frames=273465 (273K)
+INFO 2025-09-09 16:13:06 ts/train.py:185 dataset.num_episodes=1693
+INFO 2025-09-09 16:13:06 ts/train.py:186 num_learnable_params=49103712 (49M)
+INFO 2025-09-09 16:13:06 ts/train.py:187 num_total_params=399268940 (399M)
+INFO 2025-09-09 16:13:06 ts/train.py:225 Start offline training on a fixed dataset
+Traceback (most recent call last):
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 342, in <module>
+    main()
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 338, in main
+    train()
+  File "/home/jade_choghari/lerobot/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+    response = fn(cfg, *args, **kwargs)
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 235, in train
+    train_tracker, output_dict = update_policy(
+  File "/home/jade_choghari/lerobot/src/lerobot/scripts/train.py", line 76, in update_policy
+    grad_scaler.unscale_(optimizer)
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 342
+, in unscale_
+    optimizer_state["found_inf_per_device"] = self._unscale_grads_(
+  File "/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/torch/amp/grad_scaler.py", line 283
+, in _unscale_grads_
+    torch._amp_foreach_non_finite_check_and_unscale_(
+RuntimeError: "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'
+(lerobot) jade_choghari@hf-dgx-01:~/lerobot$ bash examples/8_train_smolvla_must.sh
+Training dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000
+/home/jade_choghari/miniconda3/envs/lerobot/lib/python3.10/site-packages/transformers/utils/hub.py:111: FutureWarnin
+g: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO 2025-09-09 16:13:51 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-09-09 16:13:51 /policies.py:81 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-09-09 16:13:51 ts/train.py:137 {'batch_size': 32,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': 'physical-intelligence/libero',
+             'revision': None,
+             'root': '/raid/jade/.cache/huggingface/datasets',
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec'},
+ 'env': {'camera_name': 'agentview_image,robot0_eye_in_hand_image',
+         'episode_length': 520,
+         'features': {'action': {'shape': [7],
+                                 'type': <FeatureType.ACTION: 'ACTION'>},
+                      'agent_pos': {'shape': [8],
+                                    'type': <FeatureType.STATE: 'STATE'>},
+                      'pixels/agentview_image': {'shape': [360, 360, 3],
+                                                 'type': <FeatureType.VISUAL: 'VISUAL'>},
+                      'pixels/robot0_eye_in_hand_image': {'shape': [360,
+                                                                    360,
+                                                                    3],
+                                                          'type': <FeatureType.VISUAL: 'VISUAL'>}},
+         'features_map': {'action': 'action',
+                          'agent_pos': 'observation.state',
+                          'pixels/agentview_image': 'observation.images.image',
+                          'pixels/robot0_eye_in_hand_image': 'observation.images.image2'},
+         'fps': 30,
+         'init_states': True,
+         'max_parallel_tasks': 5,
+         'multitask_eval': True,
+         'obs_type': 'pixels_agent_pos',
+         'render_mode': 'rgb_array',
+         'task': 'libero_spatial',
+         'type': 'libero'},
+ 'eval': {'batch_size': 1, 'n_episodes': 1, 'use_async_envs': False},
+ 'eval_freq': 0,
+ 'job_name': 'libero_smolvla',
+ 'log_freq': 200,
+ 'num_workers': 4,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10,
+               'lr': 0.0001,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_smolvla_lr1e-4bs32steps100000',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'add_image_special_tokens': False,
+            'attention_mode': 'cross_attn',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'expert_width_multiplier': 0.5,
+            'freeze_vision_encoder': True,
+            'gradient_accumulation_steps': 1,
+            'input_features': {},
+            'license': None,
+            'load_vlm_weights': False,
+            'max_action_dim': 32,
+            'max_period': 4.0,
+            'max_state_dim': 32,
+            'min_period': 0.004,
+            'n_action_steps': 1,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_expert_layers': -1,
+            'num_steps': 10,
+            'num_vlm_layers': 16,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_grad_clip_norm': 10,
+            'optimizer_lr': 0.0001,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'pad_language_to': 'longest',
+            'prefix_length': 0,
+            'private': None,
+            'push_to_hub': True,
+            'repo_id': 'None',
+            'resize_imgs_with_padding': [512, 512],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'self_attn_every_n_layers': 2,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'smolvla',
+            'use_amp': False,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'vlm_model_name': 'HuggingFaceTB/SmolVLM2-500M-Instruct'},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 20000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 0.0001,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 100000,
+ 'use_policy_training_preset': True,
+ 'wandb': {'disable_artifact': False,
+           'enable': False,
+           'entity': None,
+           'mode': None,
+           'notes': None,
+           'project': 'lerobot',
+           'run_id': None}}
+INFO 2025-09-09 16:13:51 ts/train.py:143 Logs will be saved locally.
+INFO 2025-09-09 16:13:51 ts/train.py:153 Creating dataset
+WARNING 2025-09-09 16:13:51 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+WARNING 2025-09-09 16:13:51 ts/utils.py:302
+The dataset you requested (physical-intelligence/libero) is in 2.0 format.
+While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
+stats instead of per-episode stats. Update your dataset stats to the new format using this command:
+```
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 --repo-id=physical-intelligence/libero
+```
+
+If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
+or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
+
+Resolving data files: 100%|█████████████████████████████████| 1693/1693 [00:00<00:00, 82981.28it/s]
+Loading dataset shards: 100%|████████████████████████████████████| 70/70 [00:00<00:00, 4687.94it/s]
+INFO 2025-09-09 16:13:57 ts/train.py:163 Creating policy
+Fetching 2 files: 100%|███████████████████████████████████████████| 2/2 [00:00<00:00, 21345.06it/s]
+Fetching 2 files: 100%|████████████████████████████████████████████| 2/2 [00:00<00:00, 4226.00it/s]
+Fetching 2 files: 100%|████████████████████████████████████████████| 2/2 [00:00<00:00, 2966.27it/s]
+Fetching 2 files: 100%|████████████████████████████████████████████| 2/2 [00:00<00:00, 6497.76it/s]
+Reducing the number of VLM layers to 16 ...
+INFO 2025-09-09 16:14:30 ts/train.py:168 Creating optimizer and scheduler
+INFO 2025-09-09 16:14:30 ts/train.py:180 Output dir: /raid/jade/logs/lerobot/lerobot_2_physical-intelligence_libero_
+smolvla_lr1e-4bs32steps100000
+INFO 2025-09-09 16:14:30 ts/train.py:182 cfg.env.task='libero_spatial'
+INFO 2025-09-09 16:14:30 ts/train.py:183 cfg.steps=100000 (100K)
+INFO 2025-09-09 16:14:30 ts/train.py:184 dataset.num_frames=273465 (273K)
+INFO 2025-09-09 16:14:30 ts/train.py:185 dataset.num_episodes=1693
+INFO 2025-09-09 16:14:30 ts/train.py:186 num_learnable_params=49103712 (49M)
+INFO 2025-09-09 16:14:30 ts/train.py:187 num_total_params=399268940 (399M)
+INFO 2025-09-09 16:14:30 ts/train.py:225 Start offline training on a fixed dataset
+INFO 2025-09-09 16:16:20 ts/train.py:255 step:200 smpl:6K ep:40 epch:0.02 loss:1.244 grdn:2.492 lr:1.0e-05 updt_s:0.
+536 data_s:0.007
+INFO 2025-09-09 16:17:56 ts/train.py:255 step:400 smpl:13K ep:79 epch:0.05 loss:0.685 grdn:4.262 lr:3.0e-05 updt_s:0
+.481 data_s:0.000
+INFO 2025-09-09 16:19:33 ts/train.py:255 step:600 smpl:19K ep:119 epch:0.07 loss:0.364 grdn:4.849 lr:5.0e-05 updt_s:
+0.482 data_s:0.000
+INFO 2025-09-09 16:21:10 ts/train.py:255 step:800 smpl:26K ep:158 epch:0.09 loss:0.239 grdn:4.024 lr:7.0e-05 updt_s:
+0.481 data_s:0.000
+INFO 2025-09-09 16:22:46 ts/train.py:255 step:1K smpl:32K ep:198 epch:0.12 loss:0.197 grdn:3.267 lr:9.0e-05 updt_s:0
+.478 data_s:0.000
+INFO 2025-09-09 16:24:22 ts/train.py:255 step:1K smpl:38K ep:238 epch:0.14 loss:0.173 grdn:2.319 lr:1.0e-04 updt_s:0
+.481 data_s:0.000
+INFO 2025-09-09 16:25:59 ts/train.py:255 step:1K smpl:45K ep:277 epch:0.16 loss:0.153 grdn:1.741 lr:1.0e-04 updt_s:0
+.483 data_s:0.000
+INFO 2025-09-09 16:27:36 ts/train.py:255 step:2K smpl:51K ep:317 epch:0.19 loss:0.135 grdn:1.354 lr:9.9e-05 updt_s:0
+.483 data_s:0.000
+INFO 2025-09-09 16:29:14 ts/train.py:255 step:2K smpl:58K ep:357 epch:0.21 loss:0.126 grdn:1.177 lr:9.9e-05 updt_s:0
+.484 data_s:0.000
+

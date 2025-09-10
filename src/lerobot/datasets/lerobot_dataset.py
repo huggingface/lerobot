@@ -472,7 +472,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
             self.stats = aggregate_stats(episodes_stats)
 
-        # Load actual data
         try:
             if force_cache_sync:
                 raise FileNotFoundError
@@ -598,6 +597,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         if self.episodes is None:
             path = str(self.root / "data")
+            # added by jade
             hf_dataset = load_dataset("parquet", data_dir=path, split="train")
         else:
             files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
