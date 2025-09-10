@@ -17,13 +17,13 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.processor import ActionProcessorStep, ProcessorStepRegistry
+from lerobot.processor import ProcessorStepRegistry, RobotAction, RobotActionProcessorStep
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
 
 @ProcessorStepRegistry.register("map_phone_action_to_robot_action")
 @dataclass
-class MapPhoneActionToRobotAction(ActionProcessorStep):
+class MapPhoneActionToRobotAction(RobotActionProcessorStep):
     """
     Maps calibrated phone pose actions to standardized robot action inputs.
 
@@ -41,7 +41,7 @@ class MapPhoneActionToRobotAction(ActionProcessorStep):
     platform: PhoneOS
     _enabled_prev: bool = field(default=False, init=False, repr=False)
 
-    def action(self, act: dict) -> dict:
+    def action(self, act: RobotAction) -> RobotAction:
         """
         Processes the phone action dictionary to create a robot action dictionary.
 

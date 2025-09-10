@@ -22,7 +22,7 @@ from .converters import (
     transition_to_batch,
     transition_to_dataset_frame,
 )
-from .core import EnvTransition, TransitionKey
+from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
 from .gym_action_processor import Numpy2TorchActionProcessorStep, Torch2NumpyActionProcessorStep
