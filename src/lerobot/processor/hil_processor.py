@@ -25,7 +25,6 @@ import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.constants import ACTION
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 
@@ -345,7 +344,7 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
         if current_gripper_pos is None:
             return complementary_data
 
-        gripper_action = action[f"{ACTION}.{GRIPPER_KEY}.pos"]
+        gripper_action = action[f"{GRIPPER_KEY}.pos"]
         gripper_action_normalized = gripper_action / self.max_gripper_pos
 
         # Normalize gripper state and action
@@ -436,9 +435,9 @@ class InterventionActionProcessorStep(ProcessorStep):
             if isinstance(teleop_action, dict):
                 # Convert teleop_action dict to tensor format
                 action_list = [
-                    teleop_action.get(f"{ACTION}.delta_x", 0.0),
-                    teleop_action.get(f"{ACTION}.delta_y", 0.0),
-                    teleop_action.get(f"{ACTION}.delta_z", 0.0),
+                    teleop_action.get("delta_x", 0.0),
+                    teleop_action.get("delta_y", 0.0),
+                    teleop_action.get("delta_z", 0.0),
                 ]
                 if self.use_gripper:
                     action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
