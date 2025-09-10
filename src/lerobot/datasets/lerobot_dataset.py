@@ -613,6 +613,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Track dataset state for efficient incremental writing
         self._lazy_loading = False
         self._recorded_frames = 0
+        self._writer_closed_for_reading = False
 
         self.root.mkdir(exist_ok=True, parents=True)
 
@@ -887,6 +888,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _ensure_hf_dataset_loaded(self):
         """Lazy load the HF dataset only when needed for reading."""
         if self._lazy_loading or self.hf_dataset is None:
+            # Close the writer before loading to ensure parquet file is properly finalized
+            if self.writer is not None:
+                self._close_writer()
+                self._writer_closed_for_reading = True
             self.hf_dataset = self.load_hf_dataset()
             self._lazy_loading = False
 
@@ -1175,11 +1180,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
             av_size_per_frame = latest_size_in_mb / latest_num_frames
 
             # Determine if a new parquet file is needed
-            if latest_size_in_mb + av_size_per_frame * ep_num_frames >= self.meta.data_files_size_in_mb:
-                # Size limit is reached, prepare new parquet file
+            if (
+                latest_size_in_mb + av_size_per_frame * ep_num_frames >= self.meta.data_files_size_in_mb
+                or self._writer_closed_for_reading
+            ):
+                # Size limit is reached or writer was closed for reading, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
                 latest_num_frames = 0
                 self._close_writer()
+                self._writer_closed_for_reading = False
 
         ep_dict["data/chunk_index"] = chunk_idx
         ep_dict["data/file_index"] = file_idx
@@ -1199,8 +1208,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     path, schema=table.schema, compression="snappy", use_dictionary=True
                 )
             self.writer.write_table(table, row_group_size=ep_num_frames)
-            # Close the writer to ensure the file is properly finalized before reading
-            self._close_writer()
 
         # self.writer.write_table(table, row_group_size=ep_num_frames)
         self.latest_episode = ep_dict
@@ -1387,6 +1394,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Initialize tracking for incremental recording
         obj._lazy_loading = False
         obj._recorded_frames = 0
+        obj._writer_closed_for_reading = False
         return obj
 
 
