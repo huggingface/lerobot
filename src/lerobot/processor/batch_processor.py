@@ -27,7 +27,7 @@ from torch import Tensor
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
-from .core import EnvTransition, PolicyAction, TransitionKey
+from .core import EnvTransition, PolicyAction
 from .pipeline import (
     ComplementaryDataProcessorStep,
     ObservationProcessorStep,
@@ -227,10 +227,7 @@ class AddBatchDimensionProcessorStep(ProcessorStep):
         Returns:
             The environment transition with a batch dimension added.
         """
-        action = transition.get(TransitionKey.ACTION)
-        if action is not None:
-            transition = self.to_batch_action_processor(transition)
-
+        transition = self.to_batch_action_processor(transition)
         transition = self.to_batch_observation_processor(transition)
         transition = self.to_batch_complementary_data_processor(transition)
         return transition

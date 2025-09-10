@@ -315,7 +315,7 @@ def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
     return create_transition(observation={**state, **image_observations}, action={})
 
 
-def robot_transition_to_action(transition: EnvTransition) -> RobotAction:
+def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
     """
     Extract a raw robot action dictionary for a robot from an `EnvTransition`.
 

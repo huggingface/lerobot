@@ -38,7 +38,7 @@ def test_state_1d_to_2d():
     # Test observation.state
     state_1d = torch.randn(7)
     observation = {OBS_STATE: state_1d}
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
 
@@ -54,7 +54,7 @@ def test_env_state_1d_to_2d():
     # Test observation.environment_state
     env_state_1d = torch.randn(10)
     observation = {OBS_ENV_STATE: env_state_1d}
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
 
@@ -70,7 +70,7 @@ def test_image_3d_to_4d():
     # Test observation.image
     image_3d = torch.randn(224, 224, 3)
     observation = {OBS_IMAGE: image_3d}
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
 
@@ -90,7 +90,7 @@ def test_multiple_images_3d_to_4d():
         f"{OBS_IMAGES}.camera1": image1_3d,
         f"{OBS_IMAGES}.camera2": image2_3d,
     }
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
 
@@ -118,7 +118,7 @@ def test_already_batched_tensors_unchanged():
         OBS_ENV_STATE: env_state_2d,
         OBS_IMAGE: image_4d,
     }
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
 
@@ -142,7 +142,7 @@ def test_higher_dimensional_tensors_unchanged():
         OBS_STATE: state_3d,
         OBS_IMAGE: image_5d,
     }
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
 
@@ -163,7 +163,7 @@ def test_non_tensor_values_unchanged():
         "custom_key": 42,  # Integer
         "another_key": {"nested": "dict"},  # Dict
     }
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
 
@@ -180,7 +180,7 @@ def test_none_observation():
     """Test processor handles None observation gracefully."""
     processor = AddBatchDimensionProcessorStep()
 
-    transition = create_transition(observation={}, action={})
+    transition = create_transition(observation={}, action=torch.empty(0))
     result = processor(transition)
 
     assert result[TransitionKey.OBSERVATION] == {}
@@ -191,7 +191,7 @@ def test_empty_observation():
     processor = AddBatchDimensionProcessorStep()
 
     observation = {}
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
 
@@ -216,7 +216,7 @@ def test_mixed_observation():
         "other_tensor": other_tensor,
         "non_tensor": "string_value",
     }
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
     processed_obs = result[TransitionKey.OBSERVATION]
@@ -243,7 +243,7 @@ def test_integration_with_robot_processor():
         OBS_STATE: torch.randn(7),
         OBS_IMAGE: torch.randn(224, 224, 3),
     }
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = pipeline(transition)
     processed_obs = result[TransitionKey.OBSERVATION]
@@ -299,7 +299,7 @@ def test_save_and_load_pretrained():
 
         # Test functionality of loaded processor
         observation = {OBS_STATE: torch.randn(5)}
-        transition = create_transition(observation=observation, action={})
+        transition = create_transition(observation=observation, action=torch.empty(0))
 
         result = loaded_pipeline(transition)
         assert result[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 5)
@@ -333,7 +333,7 @@ def test_registry_based_save_load():
             OBS_STATE: torch.randn(3),
             OBS_IMAGE: torch.randn(100, 100, 3),
         }
-        transition = create_transition(observation=observation, action={})
+        transition = create_transition(observation=observation, action=torch.empty(0))
 
         result = loaded_pipeline(transition)
         processed_obs = result[TransitionKey.OBSERVATION]
@@ -355,7 +355,7 @@ def test_device_compatibility():
         OBS_STATE: state_1d,
         OBS_IMAGE: image_3d,
     }
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
     processed_obs = result[TransitionKey.OBSERVATION]
@@ -415,7 +415,7 @@ def test_edge_case_zero_dimensional_tensors():
         OBS_STATE: scalar_tensor,
         "scalar_value": scalar_tensor,
     }
-    transition = create_transition(observation=observation, action={})
+    transition = create_transition(observation=observation, action=torch.empty(0))
 
     result = processor(transition)
     processed_obs = result[TransitionKey.OBSERVATION]
@@ -520,12 +520,13 @@ def test_action_non_tensor_raises_error():
 
 
 def test_action_none():
-    """Test that None action is handled correctly."""
+    """Test that empty action tensor is handled correctly."""
     processor = AddBatchDimensionProcessorStep()
 
-    transition = create_transition(action={}, observation={})
+    transition = create_transition(action=torch.empty(0), observation={})
     result = processor(transition)
-    assert result[TransitionKey.ACTION] == {}
+    # Empty 1D tensor becomes empty 2D tensor with batch dimension
+    assert result[TransitionKey.ACTION].shape == (1, 0)
 
 
 def test_action_with_observation():
@@ -630,7 +631,9 @@ def test_task_string_to_list():
 
     # Create complementary data with string task
     complementary_data = {"task": "pick_cube"}
-    transition = create_transition(action={}, observation={}, complementary_data=complementary_data)
+    transition = create_transition(
+        action=torch.empty(0), observation={}, complementary_data=complementary_data
+    )
 
     result = processor(transition)
 
@@ -647,14 +650,18 @@ def test_task_string_validation():
 
     # Valid string task - should be converted to list
     complementary_data = {"task": "valid_task"}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
     result = processor(transition)
     processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
     assert processed_comp_data["task"] == ["valid_task"]
 
     # Valid list of strings - should remain unchanged
     complementary_data = {"task": ["task1", "task2"]}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
     result = processor(transition)
     processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
     assert processed_comp_data["task"] == ["task1", "task2"]
@@ -676,7 +683,9 @@ def test_task_list_of_strings():
 
     for task_list in test_lists:
         complementary_data = {"task": task_list}
-        transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+        transition = create_transition(
+            complementary_data=complementary_data, observation={}, action=torch.empty(0)
+        )
 
         result = processor(transition)
 
@@ -690,7 +699,7 @@ def test_complementary_data_none():
     """Test processor handles None complementary_data gracefully."""
     processor = AddBatchDimensionProcessorStep()
 
-    transition = create_transition(complementary_data=None, action={}, observation={})
+    transition = create_transition(complementary_data=None, action=torch.empty(0), observation={})
     result = processor(transition)
 
     assert result[TransitionKey.COMPLEMENTARY_DATA] == {}
@@ -701,7 +710,9 @@ def test_complementary_data_empty():
     processor = AddBatchDimensionProcessorStep()
 
     complementary_data = {}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
 
@@ -717,7 +728,9 @@ def test_complementary_data_no_task():
         "timestamp": 1234567890.0,
         "extra_info": "some data",
     }
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
 
@@ -736,7 +749,9 @@ def test_complementary_data_mixed():
         "difficulty": "hard",
         "metadata": {"scene": "kitchen"},
     }
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
 
@@ -803,7 +818,9 @@ def test_task_comprehensive_string_cases():
     # Test that all string tasks get properly batched
     for task in string_tasks:
         complementary_data = {"task": task}
-        transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+        transition = create_transition(
+            complementary_data=complementary_data, observation={}, action=torch.empty(0)
+        )
 
         result = processor(transition)
 
@@ -825,7 +842,9 @@ def test_task_comprehensive_string_cases():
 
     for task_list in list_tasks:
         complementary_data = {"task": task_list}
-        transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+        transition = create_transition(
+            complementary_data=complementary_data, observation={}, action=torch.empty(0)
+        )
 
         result = processor(transition)
 
@@ -845,7 +864,9 @@ def test_task_preserves_other_keys():
         "config": {"speed": "slow", "precision": "high"},
         "metrics": [1.0, 2.0, 3.0],
     }
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
 
@@ -869,7 +890,9 @@ def test_index_scalar_to_1d():
     # Create 0D index tensor (scalar)
     index_0d = torch.tensor(42, dtype=torch.int64)
     complementary_data = {"index": index_0d}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
 
@@ -886,7 +909,9 @@ def test_task_index_scalar_to_1d():
     # Create 0D task_index tensor (scalar)
     task_index_0d = torch.tensor(7, dtype=torch.int64)
     complementary_data = {"task_index": task_index_0d}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
 
@@ -908,7 +933,9 @@ def test_index_and_task_index_together():
         "task_index": task_index_0d,
         "task": "pick_object",
     }
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
 
@@ -936,13 +963,17 @@ def test_index_already_batched():
 
     # Test 1D (already batched)
     complementary_data = {"index": index_1d}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
     result = processor(transition)
     assert torch.equal(result[TransitionKey.COMPLEMENTARY_DATA]["index"], index_1d)
 
     # Test 2D
     complementary_data = {"index": index_2d}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
     result = processor(transition)
     assert torch.equal(result[TransitionKey.COMPLEMENTARY_DATA]["index"], index_2d)
 
@@ -957,13 +988,17 @@ def test_task_index_already_batched():
 
     # Test 1D (already batched)
     complementary_data = {"task_index": task_index_1d}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
     result = processor(transition)
     assert torch.equal(result[TransitionKey.COMPLEMENTARY_DATA]["task_index"], task_index_1d)
 
     # Test 2D
     complementary_data = {"task_index": task_index_2d}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
     result = processor(transition)
     assert torch.equal(result[TransitionKey.COMPLEMENTARY_DATA]["task_index"], task_index_2d)
 
@@ -976,7 +1011,9 @@ def test_index_non_tensor_unchanged():
         "index": 42,  # Plain int, not tensor
         "task_index": [1, 2, 3],  # List, not tensor
     }
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
 
@@ -999,7 +1036,9 @@ def test_index_dtype_preservation():
             "index": index_0d,
             "task_index": task_index_0d,
         }
-        transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+        transition = create_transition(
+            complementary_data=complementary_data, observation={}, action=torch.empty(0)
+        )
 
         result = processor(transition)
 
@@ -1062,7 +1101,9 @@ def test_index_device_compatibility():
         "index": index_0d,
         "task_index": task_index_0d,
     }
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
     processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
@@ -1081,7 +1122,9 @@ def test_empty_index_tensor():
     # Empty 0D tensor doesn't make sense, but test empty 1D
     index_empty = torch.tensor([], dtype=torch.int64)
     complementary_data = {"index": index_empty}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     result = processor(transition)
 
@@ -1116,7 +1159,9 @@ def test_task_processing_creates_new_transition():
     processor = AddBatchDimensionProcessorStep()
 
     complementary_data = {"task": "sort_objects"}
-    transition = create_transition(complementary_data=complementary_data, observation={}, action={})
+    transition = create_transition(
+        complementary_data=complementary_data, observation={}, action=torch.empty(0)
+    )
 
     # Store reference to original transition and complementary_data
     original_transition = transition
