@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, TypedDict
+from typing import Any, TypeAlias, TypedDict
 
+import numpy as np
 import torch
 
 
@@ -35,11 +36,16 @@ class TransitionKey(str, Enum):
     COMPLEMENTARY_DATA = "complementary_data"
 
 
+PolicyAction: TypeAlias = torch.Tensor
+RobotAction: TypeAlias = dict[str, Any]
+EnvAction: TypeAlias = np.ndarray
+
+
 EnvTransition = TypedDict(
     "EnvTransition",
     {
         TransitionKey.OBSERVATION.value: dict[str, Any] | None,
-        TransitionKey.ACTION.value: Any | torch.Tensor | None,
+        TransitionKey.ACTION.value: PolicyAction | RobotAction | EnvAction | None,
         TransitionKey.REWARD.value: float | torch.Tensor | None,
         TransitionKey.DONE.value: bool | torch.Tensor | None,
         TransitionKey.TRUNCATED.value: bool | torch.Tensor | None,

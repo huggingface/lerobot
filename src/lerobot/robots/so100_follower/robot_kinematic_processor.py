@@ -22,21 +22,22 @@ from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeatur
 from lerobot.constants import OBS_STATE
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
-    ActionProcessorStep,
     ComplementaryDataProcessorStep,
     EnvTransition,
     ObservationProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
+    RobotActionProcessorStep,
     TransitionKey,
 )
+from lerobot.processor.core import RobotAction
 from lerobot.robots.robot import Robot
 from lerobot.utils.rotation import Rotation
 
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
 @dataclass
-class EEReferenceAndDelta(ActionProcessorStep):
+class EEReferenceAndDelta(RobotActionProcessorStep):
     """
     Computes a target end-effector pose from a relative delta command.
 
@@ -72,7 +73,7 @@ class EEReferenceAndDelta(ActionProcessorStep):
     _prev_enabled: bool = field(default=False, init=False, repr=False)
     _command_when_disabled: np.ndarray | None = field(default=None, init=False, repr=False)
 
-    def action(self, action):
+    def action(self, action: RobotAction) -> RobotAction:
         new_action = action.copy()
         comp = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)
 
@@ -171,7 +172,7 @@ class EEReferenceAndDelta(ActionProcessorStep):
 
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
 @dataclass
-class EEBoundsAndSafety(ActionProcessorStep):
+class EEBoundsAndSafety(RobotActionProcessorStep):
     """
     Clips the end-effector pose to predefined bounds and checks for unsafe jumps.
 
@@ -192,7 +193,7 @@ class EEBoundsAndSafety(ActionProcessorStep):
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
     _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
 
-    def action(self, act: dict) -> dict:
+    def action(self, act: RobotAction) -> RobotAction:
         x = act.get("ee.x", None)
         y = act.get("ee.y", None)
         z = act.get("ee.z", None)
@@ -266,6 +267,10 @@ class InverseKinematicsEEToJoints(ProcessorStep):
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         new_transition = transition.copy()
         act = new_transition.get(TransitionKey.ACTION) or {}
+
+        if not isinstance(act, dict):
+            raise ValueError(f"Action should be a RobotAction type got {type(act)}")
+
         comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
         x = act.get("ee.x", None)
@@ -360,6 +365,9 @@ class GripperVelocityToJoint(ProcessorStep):
         obs = new_transition.get(TransitionKey.OBSERVATION) or {}
         act = new_transition.get(TransitionKey.ACTION) or {}
         comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+
+        if not isinstance(act, dict):
+            raise ValueError(f"Action should be a RobotAction type got {type(act)}")
 
         if "gripper" not in act:
             raise ValueError("Required action key 'gripper' not found in transition")

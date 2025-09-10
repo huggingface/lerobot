@@ -371,12 +371,12 @@ def test_sac_processor_edge_cases():
     assert processed[TransitionKey.OBSERVATION] == {}
     assert processed[TransitionKey.ACTION].shape == (1, 5)
 
-    # Test with None action
-    transition = create_transition(observation={OBS_STATE: torch.randn(10)}, action={})
+    # Test with zero action (representing "null" action)
+    transition = create_transition(observation={OBS_STATE: torch.randn(10)}, action=torch.zeros(5))
     processed = preprocessor(transition)
     assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 10)
-    # When action is None, it may still be present with None value
-    assert TransitionKey.ACTION not in processed or processed[TransitionKey.ACTION] is None
+    # Action should be present and batched, even if it's zeros
+    assert processed[TransitionKey.ACTION].shape == (1, 5)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")

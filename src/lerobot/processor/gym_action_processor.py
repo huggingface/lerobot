@@ -16,12 +16,10 @@
 
 from dataclasses import dataclass
 
-import numpy as np
-import torch
-
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import to_tensor
+from .core import EnvAction, PolicyAction
 from .pipeline import ActionProcessorStep, ProcessorStepRegistry
 
 
@@ -42,10 +40,10 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
 
     squeeze_batch_dim: bool = True
 
-    def action(self, action: torch.Tensor) -> np.ndarray:
-        if not isinstance(action, torch.Tensor):
+    def action(self, action: PolicyAction) -> EnvAction:
+        if not isinstance(action, PolicyAction):
             raise TypeError(
-                f"Expected torch.Tensor or None, got {type(action).__name__}. "
+                f"Expected PolicyAction or None, got {type(action).__name__}. "
                 "Use appropriate processor for non-tensor actions."
             )
 
@@ -80,8 +78,8 @@ class Numpy2TorchActionProcessorStep(ActionProcessorStep):
     by a policy or model.
     """
 
-    def action(self, action: np.ndarray) -> torch.Tensor:
-        if not isinstance(action, np.ndarray):
+    def action(self, action: EnvAction) -> PolicyAction:
+        if not isinstance(action, EnvAction):
             raise TypeError(
                 f"Expected np.ndarray or None, got {type(action).__name__}. "
                 "Use appropriate processor for non-tensor actions."

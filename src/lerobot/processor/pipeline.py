@@ -32,7 +32,7 @@ from safetensors.torch import load_file, save_file
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
-from .core import EnvTransition, TransitionKey
+from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
 
 # Type variable for generic processor output type
 TOutput = TypeVar("TOutput")
@@ -859,7 +859,9 @@ class ActionProcessorStep(ProcessorStep, ABC):
     """
 
     @abstractmethod
-    def action(self, action) -> Any | torch.Tensor:
+    def action(
+        self, action: PolicyAction | RobotAction | EnvAction
+    ) -> PolicyAction | RobotAction | EnvAction:
         """Process the action component.
 
         Args:
@@ -877,6 +879,82 @@ class ActionProcessorStep(ProcessorStep, ABC):
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
             raise ValueError("ActionProcessorStep requires an action in the transition.")
+
+        processed_action = self.action(action)
+        new_transition[TransitionKey.ACTION] = processed_action
+        raise ValueError("ActionProcessorStep requires an action in the transition.")
+
+
+class RobotActionProcessorStep(ProcessorStep, ABC):
+    """Base class for processors that modify only the robot action component of a transition.
+
+    Subclasses should override the `action` method to implement custom robot action processing.
+    This class handles the boilerplate of extracting and reinserting the processed action
+    into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
+
+
+    By inheriting from this class, you avoid writing repetitive code to handle transition dict
+    manipulation, focusing only on the specific robot action processing logic.
+    """
+
+    @abstractmethod
+    def action(self, action: RobotAction) -> RobotAction:
+        """Process the robot action component.
+
+        Args:
+            action: The robot action to process
+
+        Returns:
+            The processed robot action
+        """
+        ...
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        action = new_transition.get(TransitionKey.ACTION)
+        # NOTE: We can't use isinstance(action, RobotAction) because RobotAction is a dict[str, Any]
+        # because Any is generic
+        if not isinstance(action, dict):
+            raise ValueError(f"Action should be a RobotAction type got {type(action)}")
+
+        processed_action = self.action(action=action)
+        new_transition[TransitionKey.ACTION] = processed_action
+        return new_transition
+
+
+class PolicyActionProcessorStep(ProcessorStep, ABC):
+    """Base class for processors that modify only the policy action component of a transition.
+
+    Subclasses should override the `action` method to implement custom policy action processing.
+    This class handles the boilerplate of extracting and reinserting the processed action
+    into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
+
+
+    By inheriting from this class, you avoid writing repetitive code to handle transition dict
+    manipulation, focusing only on the specific policy action processing logic.
+    """
+
+    @abstractmethod
+    def action(self, action: PolicyAction) -> PolicyAction:
+        """Process the policy action component.
+
+        Args:
+            action: The policy action to process
+
+        Returns:
+            The processed policy action
+        """
+        ...
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        action = new_transition.get(TransitionKey.ACTION)
+        if not isinstance(action, PolicyAction):
+            raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
         processed_action = self.action(action)
         new_transition[TransitionKey.ACTION] = processed_action

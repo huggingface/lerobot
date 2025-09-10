@@ -27,11 +27,11 @@ from torch import Tensor
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
-from .core import EnvTransition
+from .core import EnvTransition, PolicyAction
 from .pipeline import (
-    ActionProcessorStep,
     ComplementaryDataProcessorStep,
     ObservationProcessorStep,
+    PolicyActionProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
 )
@@ -39,14 +39,14 @@ from .pipeline import (
 
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_action")
-class AddBatchDimensionActionStep(ActionProcessorStep):
+class AddBatchDimensionActionStep(PolicyActionProcessorStep):
     """
     Processor step to add a batch dimension to a 1D tensor action.
 
     This is useful for creating a batch of size 1 from a single action sample.
     """
 
-    def action(self, action: Tensor) -> Tensor:
+    def action(self, action: PolicyAction) -> PolicyAction:
         """
         Adds a batch dimension to the action if it's a 1D tensor.
 
@@ -56,7 +56,7 @@ class AddBatchDimensionActionStep(ActionProcessorStep):
         Returns:
             The action tensor with an added batch dimension.
         """
-        if not isinstance(action, Tensor) or action.dim() != 1:
+        if action.dim() != 1:
             return action
         return action.unsqueeze(0)
 

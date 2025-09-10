@@ -28,7 +28,7 @@ from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 
-from .core import EnvTransition, TransitionKey
+from .core import EnvTransition, PolicyAction, TransitionKey
 from .pipeline import (
     ComplementaryDataProcessorStep,
     InfoProcessorStep,
@@ -416,8 +416,8 @@ class InterventionActionProcessorStep(ProcessorStep):
             reward, and termination status.
         """
         action = transition.get(TransitionKey.ACTION)
-        if action is None:
-            return transition
+        if not isinstance(action, PolicyAction):
+            raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
         # Get intervention signals from complementary data
         info = transition.get(TransitionKey.INFO, {})

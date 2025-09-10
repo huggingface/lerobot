@@ -85,11 +85,11 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import (
-    action_to_transition,
     identity_transition,
     observation_to_transition,
-    transition_to_action,
+    robot_action_to_transition,
     transition_to_dataset_frame,
+    transition_to_robot_action,
 )
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
@@ -255,7 +255,9 @@ def record_loop(
     teleop_action_processor: RobotProcessorPipeline[EnvTransition] = (
         teleop_action_processor
         or RobotProcessorPipeline(
-            steps=[IdentityProcessorStep()], to_transition=action_to_transition, to_output=identity_transition
+            steps=[IdentityProcessorStep()],
+            to_transition=robot_action_to_transition,
+            to_output=identity_transition,
         )
     )
     robot_action_processor: RobotProcessorPipeline[dict[str, Any]] = (
@@ -263,7 +265,7 @@ def record_loop(
         or RobotProcessorPipeline(
             steps=[IdentityProcessorStep()],
             to_transition=identity_transition,
-            to_output=transition_to_action,
+            to_output=transition_to_robot_action,
         )
     )
     robot_observation_processor: RobotProcessorPipeline[EnvTransition] = (

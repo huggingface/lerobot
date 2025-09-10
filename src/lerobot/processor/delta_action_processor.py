@@ -16,11 +16,10 @@
 
 from dataclasses import dataclass
 
-from torch import Tensor
-
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 
-from .pipeline import ActionProcessorStep, ProcessorStepRegistry
+from .core import PolicyAction, RobotAction
+from .pipeline import ActionProcessorStep, ProcessorStepRegistry, RobotActionProcessorStep
 
 
 @ProcessorStepRegistry.register("map_tensor_to_delta_action_dict")
@@ -40,7 +39,10 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
 
     use_gripper: bool = True
 
-    def action(self, action: Tensor) -> dict:
+    def action(self, action: PolicyAction) -> RobotAction:
+        if not isinstance(action, PolicyAction):
+            raise ValueError("Only PolicyAction is supported for this processor")
+
         if action.dim() > 1:
             action = action.squeeze(0)
 
@@ -69,7 +71,7 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
 
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
 @dataclass
-class MapDeltaActionToRobotActionStep(ActionProcessorStep):
+class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     """
     Maps delta actions from teleoperators to robot target actions for inverse kinematics.
 
@@ -89,7 +91,7 @@ class MapDeltaActionToRobotActionStep(ActionProcessorStep):
     rotation_scale: float = 0.0  # No rotation deltas for gamepad/keyboard
     noise_threshold: float = 1e-3  # 1 mm threshold to filter out noise
 
-    def action(self, action: dict) -> dict:
+    def action(self, action: RobotAction) -> RobotAction:
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
         # TODO (maractingi): changing this target_xyz naming convention from the teleop_devices
         delta_x = action.pop("delta_x", 0.0)
