@@ -1226,9 +1226,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_size_in_mb = get_video_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
-        if self.meta.episodes is None or (
-            f"videos/{video_key}/chunk_index" not in self.meta.episodes.column_names
-            or f"videos/{video_key}/file_index" not in self.meta.episodes.column_names
+        if (
+            episode_index == 0
+            or self.meta.latest_episode is None
+            or f"videos/{video_key}/chunk_index" not in self.meta.latest_episode
         ):
             # Initialize indices for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
@@ -1239,16 +1240,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             new_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(ep_path), str(new_path))
         else:
-            # Retrieve information from the latest updated video file (possibly several episodes ago)
-            latest_ep = self.meta.episodes[episode_index - 1]
-            chunk_idx = latest_ep[f"videos/{video_key}/chunk_index"]
-            file_idx = latest_ep[f"videos/{video_key}/file_index"]
+            # Retrieve information from the latest updated video file using latest_episode
+            latest_ep = self.meta.latest_episode
+            chunk_idx = latest_ep[f"videos/{video_key}/chunk_index"][0]
+            file_idx = latest_ep[f"videos/{video_key}/file_index"][0]
 
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
             latest_size_in_mb = get_video_size_in_mb(latest_path)
-            latest_duration_in_s = get_video_duration_in_s(latest_path)
+            latest_duration_in_s = latest_ep[f"videos/{video_key}/to_timestamp"][0]
 
             if latest_size_in_mb + ep_size_in_mb >= self.meta.video_files_size_in_mb:
                 # Move temporary episode video to a new video file in the dataset
