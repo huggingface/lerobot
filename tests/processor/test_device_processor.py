@@ -20,28 +20,7 @@ import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import DataProcessorPipeline, DeviceProcessorStep, TransitionKey
-
-
-def create_transition(
-    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
-):
-    """Helper function to create a transition dictionary."""
-    transition = {}
-    if observation is not None:
-        transition[TransitionKey.OBSERVATION] = observation
-    if action is not None:
-        transition[TransitionKey.ACTION] = action
-    if reward is not None:
-        transition[TransitionKey.REWARD] = reward
-    if done is not None:
-        transition[TransitionKey.DONE] = done
-    if truncated is not None:
-        transition[TransitionKey.TRUNCATED] = truncated
-    if info is not None:
-        transition[TransitionKey.INFO] = info
-    if complementary_data is not None:
-        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
-    return transition
+from lerobot.processor.converters import create_transition
 
 
 def test_basic_functionality():
