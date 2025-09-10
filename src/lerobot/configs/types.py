@@ -21,6 +21,7 @@ from typing import Any, Protocol
 class FeatureType(str, Enum):
     STATE = "STATE"
     VISUAL = "VISUAL"
+    AUDIO = "AUDIO"
     ENV = "ENV"
     ACTION = "ACTION"
     REWARD = "REWARD"

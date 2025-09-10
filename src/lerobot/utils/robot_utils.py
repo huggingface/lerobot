@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import platform
 import time
 
 
 def busy_wait(seconds):
     if platform.system() == "Darwin" or platform.system() == "Windows":
-        # On Mac and Windows, `time.sleep` is not accurate and we need to use this while loop trick,
+        # On Mac, `time.sleep` is not accurate and we need to use this while loop trick,
         # but it consumes CPU cycles.
         end_time = time.perf_counter() + seconds
         while time.perf_counter() < end_time:
+            os.sched_yield()  # "To voluntarily relinquish the CPU"
             pass
     else:
         # On Linux time.sleep is accurate

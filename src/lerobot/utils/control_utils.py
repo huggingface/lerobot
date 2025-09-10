@@ -74,6 +74,11 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
             if key in robot.logs:
                 log_dt(f"dtR{name}", robot.logs[key])
 
+        for name in robot.microphones:
+            key = f"read_microphone_{name}_dt_s"
+            if key in robot.logs:
+                log_dt(f"dtR{name}", robot.logs[key])
+
     info_str = " ".join(log_items)
     logging.info(info_str)
 
@@ -110,12 +115,16 @@ def predict_action(
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
-        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
             observation[name] = torch.from_numpy(observation[name])
+            # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
+            # Convert to pytorch format: channel first and float32 in [-1,1] with batch dimension
+            if "audio" in name:
+                observation[name] = observation[name].type(torch.float32)
+                observation[name] = observation[name].permute(1, 0).contiguous()
             observation[name] = observation[name].unsqueeze(0)
             observation[name] = observation[name].to(device)
 

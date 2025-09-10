@@ -22,6 +22,7 @@ import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.errors import DeviceNotConnectedError
+from lerobot.microphones import make_microphones_from_configs
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus
@@ -59,6 +60,7 @@ class SO100FollowerEndEffector(SO100Follower):
         )
 
         self.cameras = make_cameras_from_configs(config.cameras)
+        self.microphones = make_microphones_from_configs(config.microphones)
 
         self.config = config
 
@@ -192,6 +194,13 @@ class SO100FollowerEndEffector(SO100Follower):
             obs_dict[cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+        # Read audio frames from microphones
+        for mic_key, mic in self.microphones.items():
+            start = time.perf_counter()
+            obs_dict[mic_key] = mic.read()
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {mic_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 

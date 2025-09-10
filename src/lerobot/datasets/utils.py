@@ -33,6 +33,7 @@ from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
+from soundfile import read
 from torchvision import transforms
 
 from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
@@ -54,6 +55,11 @@ TASKS_PATH = "meta/tasks.jsonl"
 DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
 DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
 DEFAULT_IMAGE_PATH = "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
+DEFAULT_RAW_AUDIO_PATH = "raw_audio/{audio_key}/episode_{episode_index:06d}.wav"
+DEFAULT_COMPRESSED_AUDIO_PATH = "audio/chunk-{episode_chunk:03d}/{audio_key}/episode_{episode_index:06d}.m4a"
+
+DEFAULT_AUDIO_CHUNK_DURATION = 0.5  # seconds
+DEFAULT_INITIAL_AUDIO_BUFFER_DURATION = 1.0  # seconds
 
 DATASET_CARD_TEMPLATE = """
 ---
@@ -254,6 +260,16 @@ def load_image_as_numpy(
     return img_array
 
 
+def load_audio_from_path(fpath: str | Path) -> np.ndarray:
+    audio_data, _ = read(fpath, dtype="float32")
+
+    # Fill missing channel dimension when loading mono audio data
+    if audio_data.ndim == 1:
+        audio_data = np.expand_dims(audio_data, axis=1)
+
+    return audio_data
+
+
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
     to torch tensors. Importantly, images are converted from PIL, which corresponds to
@@ -362,7 +378,7 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
 def get_hf_features_from_features(features: dict) -> datasets.Features:
     hf_features = {}
     for key, ft in features.items():
-        if ft["dtype"] == "video":
+        if ft["dtype"] == "video" or ft["dtype"] == "audio":
             continue
         elif ft["dtype"] == "image":
             hf_features[key] = datasets.Image()
@@ -397,7 +413,12 @@ def hw_to_dataset_features(
 ) -> dict[str, dict]:
     features = {}
     joint_fts = {key: ftype for key, ftype in hw_features.items() if ftype is float}
-    cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
+    cam_fts = {
+        key: shape for key, shape in hw_features.items() if isinstance(shape, tuple) and len(shape) == 3
+    }
+    mic_fts = {
+        key: shape for key, shape in hw_features.items() if isinstance(shape, tuple) and len(shape) == 2
+    }
 
     if joint_fts and prefix == "action":
         features[prefix] = {
@@ -420,6 +441,14 @@ def hw_to_dataset_features(
             "names": ["height", "width", "channels"],
         }
 
+    for key, parameters in mic_fts.items():
+        features[f"{prefix}.audio.{key}"] = {
+            "dtype": "audio",
+            "shape": (len(parameters[1]),),
+            "names": ["channels"],
+            "info": {"sample_rate": parameters[0]},
+        }
+
     _validate_feature_names(features)
     return features
 
@@ -435,6 +464,8 @@ def build_dataset_frame(
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+        elif ft["dtype"] == "audio":
+            frame[key] = values[key.removeprefix(f"{prefix}.audio.")]
 
     return frame
 
@@ -453,6 +484,10 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
             if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
                 shape = (shape[2], shape[0], shape[1])
+        elif ft["dtype"] == "audio":
+            type = FeatureType.AUDIO
+            if len(shape) != 2:
+                raise ValueError(f"Number of dimensions of {key} != 2 (shape={shape})")
         elif key == "observation.environment_state":
             type = FeatureType.ENV
         elif key.startswith("observation"):
@@ -484,12 +519,14 @@ def create_empty_dataset_info(
         "total_frames": 0,
         "total_tasks": 0,
         "total_videos": 0,
+        "total_audio": 0,
         "total_chunks": 0,
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": fps,
         "splits": {},
         "data_path": DEFAULT_PARQUET_PATH,
         "video_path": DEFAULT_VIDEO_PATH if use_videos else None,
+        "audio_path": DEFAULT_COMPRESSED_AUDIO_PATH,
         "features": features,
     }
 
@@ -776,6 +813,8 @@ def validate_feature_dtype_and_shape(name: str, feature: dict, value: np.ndarray
         return validate_feature_numpy_array(name, expected_dtype, expected_shape, value)
     elif expected_dtype in ["image", "video"]:
         return validate_feature_image_or_video(name, expected_shape, value)
+    elif expected_dtype == "audio":
+        return validate_feature_audio(name, expected_shape, value)
     elif expected_dtype == "string":
         return validate_feature_string(name, value)
     else:
@@ -813,6 +852,23 @@ def validate_feature_image_or_video(name: str, expected_shape: list[str], value:
         pass
     else:
         error_message += f"The feature '{name}' is expected to be of type 'PIL.Image' or 'np.ndarray' channel first or channel last, but type '{type(value)}' provided instead.\n"
+
+    return error_message
+
+
+def validate_feature_audio(name: str, expected_shape: list[str], value: np.ndarray):
+    error_message = ""
+    if isinstance(value, np.ndarray):
+        actual_shape = value.shape
+        c = expected_shape
+        if (len(actual_shape) != 2 and len(actual_shape) != 1) or actual_shape[-1] != c[
+            -1
+        ]:  # The number of frames might be different
+            error_message += (
+                f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{c}'.\n"
+            )
+    else:
+        error_message += f"The feature '{name}' is expected to be of type 'np.ndarray', but type '{type(value)}' provided instead.\n"
 
     return error_message
 
