@@ -28,21 +28,7 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     TransitionKey,
 )
-
-
-def create_transition(
-    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info,
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-    }
+from lerobot.processor.converters import create_transition
 
 
 def test_state_1d_to_2d():
@@ -703,7 +689,7 @@ def test_complementary_data_none():
     transition = create_transition(complementary_data=None)
     result = processor(transition)
 
-    assert result[TransitionKey.COMPLEMENTARY_DATA] is None
+    assert result[TransitionKey.COMPLEMENTARY_DATA] == {}
 
 
 def test_complementary_data_empty():

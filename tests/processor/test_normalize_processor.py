@@ -28,22 +28,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
     hotswap_stats,
 )
-from lerobot.processor.converters import to_tensor
-
-
-def create_transition(
-    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info,
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-    }
+from lerobot.processor.converters import create_transition, to_tensor
 
 
 def test_numpy_conversion():

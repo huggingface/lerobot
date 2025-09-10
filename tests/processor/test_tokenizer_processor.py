@@ -11,22 +11,8 @@ import torch
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_LANGUAGE
 from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep, TransitionKey
+from lerobot.processor.converters import create_transition
 from tests.utils import require_package
-
-
-def create_transition(
-    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
-):
-    """Helper function to create test transitions."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info,
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-    }
 
 
 class MockTokenizer:

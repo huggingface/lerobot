@@ -33,19 +33,7 @@ from lerobot.processor import (
     TransitionKey,
     UnnormalizerProcessorStep,
 )
-
-
-def create_transition(observation=None, action=None, **kwargs):
-    """Helper function to create a transition dictionary."""
-    transition = {}
-    if observation is not None:
-        transition[TransitionKey.OBSERVATION] = observation
-    if action is not None:
-        transition[TransitionKey.ACTION] = action
-    for key, value in kwargs.items():
-        if hasattr(TransitionKey, key.upper()):
-            transition[getattr(TransitionKey, key.upper())] = value
-    return transition
+from lerobot.processor.converters import create_transition
 
 
 def create_default_config():
@@ -198,7 +186,11 @@ def test_act_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Simulate data on different GPU (like in multi-GPU training)
     device = torch.device("cuda:1")
@@ -218,7 +210,12 @@ def test_act_processor_without_stats():
     """Test ACT processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_act_pre_post_processors(config, dataset_stats=None)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        dataset_stats=None,
+        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+    )
 
     # Should still create processors, but normalization won't have stats
     assert preprocessor is not None

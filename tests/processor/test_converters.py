@@ -5,6 +5,7 @@ import torch
 from lerobot.processor import TransitionKey
 from lerobot.processor.converters import (
     batch_to_transition,
+    create_transition,
     to_tensor,
     transition_to_batch,
     transition_to_dataset_frame,
@@ -281,21 +282,6 @@ def test_to_tensor_unsupported_type():
 
     with pytest.raises(TypeError, match="Unsupported type for tensor conversion"):
         to_tensor(object())
-
-
-def create_transition(
-    observation=None, action=None, reward=0.0, done=False, truncated=False, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info if info is not None else {},
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data if complementary_data is not None else {},
-    }
 
 
 def test_batch_to_transition_with_index_fields():

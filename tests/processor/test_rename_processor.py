@@ -26,23 +26,9 @@ from lerobot.processor import (
     RenameObservationsProcessorStep,
     TransitionKey,
 )
+from lerobot.processor.converters import create_transition
 from lerobot.processor.rename_processor import rename_stats
 from tests.conftest import assert_contract_is_typed
-
-
-def create_transition(
-    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info,
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-    }
 
 
 def test_basic_renaming():
