@@ -17,7 +17,6 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.constants import ACTION
 from lerobot.processor import ActionProcessorStep, ProcessorStepRegistry
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 
@@ -56,10 +55,10 @@ class MapPhoneActionToRobotAction(ActionProcessorStep):
             ValueError: If 'pos' or 'rot' keys are missing from the input action.
         """
         # Pop them from the action
-        enabled = bool(act.pop(f"{ACTION}.phone.enabled", 0))
-        pos = act.pop(f"{ACTION}.phone.pos", None)
-        rot = act.pop(f"{ACTION}.phone.rot", None)
-        inputs = act.pop(f"{ACTION}.phone.raw_inputs", {})
+        enabled = bool(act.pop("phone.enabled", 0))
+        pos = act.pop("phone.pos", None)
+        rot = act.pop("phone.rot", None)
+        inputs = act.pop("phone.raw_inputs", {})
 
         if pos is None or rot is None:
             raise ValueError("pos and rot must be present in action")
@@ -77,14 +76,14 @@ class MapPhoneActionToRobotAction(ActionProcessorStep):
             )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
 
         # For some actions we need to invert the axis
-        act[f"{ACTION}.enabled"] = enabled
-        act[f"{ACTION}.target_x"] = -pos[1] if enabled else 0.0
-        act[f"{ACTION}.target_y"] = pos[0] if enabled else 0.0
-        act[f"{ACTION}.target_z"] = pos[2] if enabled else 0.0
-        act[f"{ACTION}.target_wx"] = rotvec[1] if enabled else 0.0
-        act[f"{ACTION}.target_wy"] = rotvec[0] if enabled else 0.0
-        act[f"{ACTION}.target_wz"] = -rotvec[2] if enabled else 0.0
-        act[f"{ACTION}.gripper"] = gripper  # Still send gripper action when disabled
+        act["enabled"] = enabled
+        act["target_x"] = -pos[1] if enabled else 0.0
+        act["target_y"] = pos[0] if enabled else 0.0
+        act["target_z"] = pos[2] if enabled else 0.0
+        act["target_wx"] = rotvec[1] if enabled else 0.0
+        act["target_wy"] = rotvec[0] if enabled else 0.0
+        act["target_wz"] = -rotvec[2] if enabled else 0.0
+        act["gripper"] = gripper  # Still send gripper action when disabled
         return act
 
     def transform_features(
