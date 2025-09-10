@@ -33,19 +33,7 @@ from lerobot.processor import (
     TransitionKey,
     UnnormalizerProcessorStep,
 )
-
-
-def create_transition(observation=None, action=None, **kwargs):
-    """Helper function to create a transition dictionary."""
-    transition = {}
-    if observation is not None:
-        transition[TransitionKey.OBSERVATION] = observation
-    if action is not None:
-        transition[TransitionKey.ACTION] = action
-    for key, value in kwargs.items():
-        if hasattr(TransitionKey, key.upper()):
-            transition[getattr(TransitionKey, key.upper())] = value
-    return transition
+from lerobot.processor.converters import create_transition, identity_transition
 
 
 def create_default_config():
@@ -81,8 +69,8 @@ def test_make_sac_processor_basic():
     preprocessor, postprocessor = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Check processor names
@@ -110,8 +98,8 @@ def test_sac_processor_normalization_modes():
     preprocessor, postprocessor = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create test data
@@ -146,8 +134,8 @@ def test_sac_processor_cuda():
     preprocessor, postprocessor = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create CPU data
@@ -180,8 +168,8 @@ def test_sac_processor_accelerate_scenario():
     preprocessor, postprocessor = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Simulate Accelerate: data already on GPU
@@ -208,8 +196,8 @@ def test_sac_processor_multi_gpu():
     preprocessor, postprocessor = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Simulate data on different GPU
@@ -237,14 +225,14 @@ def test_sac_processor_without_stats():
     preprocessor = DataProcessorPipeline(
         factory_preprocessor.steps,
         name=factory_preprocessor.name,
-        to_transition=lambda x: x,
-        to_output=lambda x: x,
+        to_transition=identity_transition,
+        to_output=identity_transition,
     )
     postprocessor = DataProcessorPipeline(
         factory_postprocessor.steps,
         name=factory_postprocessor.name,
-        to_transition=lambda x: x,
-        to_output=lambda x: x,
+        to_transition=identity_transition,
+        to_output=identity_transition,
     )
 
     # Should still create processors
@@ -268,8 +256,8 @@ def test_sac_processor_save_and_load():
     preprocessor, postprocessor = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -278,7 +266,7 @@ def test_sac_processor_save_and_load():
 
         # Load preprocessor
         loaded_preprocessor = DataProcessorPipeline.from_pretrained(
-            tmpdir, to_transition=lambda x: x, to_output=lambda x: x
+            tmpdir, to_transition=identity_transition, to_output=identity_transition
         )
 
         # Test that loaded processor works
@@ -302,8 +290,8 @@ def test_sac_processor_mixed_precision():
     preprocessor, postprocessor = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Replace DeviceProcessorStep with one that uses float16
@@ -347,8 +335,8 @@ def test_sac_processor_batch_data():
     preprocessor, postprocessor = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Test with batched data
@@ -373,8 +361,8 @@ def test_sac_processor_edge_cases():
     preprocessor, postprocessor = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Test with empty observation
@@ -401,8 +389,8 @@ def test_sac_processor_bfloat16_device_float32_normalizer():
     preprocessor, _ = make_sac_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Modify the pipeline to use bfloat16 device processor with float32 normalizer

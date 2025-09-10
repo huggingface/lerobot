@@ -34,6 +34,7 @@ from lerobot.processor import (
     TransitionKey,
     UnnormalizerProcessorStep,
 )
+from lerobot.processor.converters import create_transition, identity_transition
 
 
 class MockTokenizerProcessorStep(ProcessorStep):
@@ -50,21 +51,6 @@ class MockTokenizerProcessorStep(ProcessorStep):
     def transform_features(self, features):
         # Pass through features unchanged
         return features
-
-
-def create_transition(observation=None, action=None, **kwargs):
-    """Helper function to create a transition dictionary."""
-    transition = {}
-    if observation is not None:
-        transition[TransitionKey.OBSERVATION] = observation
-    if action is not None:
-        transition[TransitionKey.ACTION] = action
-    for key, value in kwargs.items():
-        if hasattr(TransitionKey, key.upper()):
-            transition[getattr(TransitionKey, key.upper())] = value
-        elif key == "complementary_data":
-            transition[TransitionKey.COMPLEMENTARY_DATA] = value
-    return transition
 
 
 def create_default_config():
@@ -105,8 +91,8 @@ def test_make_pi0_processor_basic():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Check processor names
@@ -209,8 +195,8 @@ def test_pi0_processor_cuda():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Create CPU data
@@ -264,8 +250,8 @@ def test_pi0_processor_accelerate_scenario():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Simulate Accelerate: data already on GPU and batched
@@ -320,8 +306,8 @@ def test_pi0_processor_multi_gpu():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Simulate data on different GPU
@@ -351,8 +337,8 @@ def test_pi0_processor_without_stats():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             dataset_stats=None,
-            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Should still create processors
@@ -390,8 +376,8 @@ def test_pi0_processor_bfloat16_device_float32_normalizer():
         preprocessor, _ = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-            postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Modify the pipeline to use bfloat16 device processor with float32 normalizer

@@ -33,19 +33,7 @@ from lerobot.processor import (
     TransitionKey,
     UnnormalizerProcessorStep,
 )
-
-
-def create_transition(observation=None, action=None, **kwargs):
-    """Helper function to create a transition dictionary."""
-    transition = {}
-    if observation is not None:
-        transition[TransitionKey.OBSERVATION] = observation
-    if action is not None:
-        transition[TransitionKey.ACTION] = action
-    for key, value in kwargs.items():
-        if hasattr(TransitionKey, key.upper()):
-            transition[getattr(TransitionKey, key.upper())] = value
-    return transition
+from lerobot.processor.converters import create_transition, identity_transition
 
 
 def create_default_config():
@@ -105,8 +93,8 @@ def test_act_processor_normalization():
     preprocessor, postprocessor = make_act_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create test data
@@ -139,8 +127,8 @@ def test_act_processor_cuda():
     preprocessor, postprocessor = make_act_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create CPU data
@@ -173,8 +161,8 @@ def test_act_processor_accelerate_scenario():
     preprocessor, postprocessor = make_act_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Simulate Accelerate: data already on GPU
@@ -198,7 +186,11 @@ def test_act_processor_multi_gpu():
     config.device = "cuda:0"
     stats = create_default_stats()
 
-    preprocessor, postprocessor = make_act_pre_post_processors(config, stats)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        stats,
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+    )
 
     # Simulate data on different GPU (like in multi-GPU training)
     device = torch.device("cuda:1")
@@ -218,7 +210,12 @@ def test_act_processor_without_stats():
     """Test ACT processor creation without dataset statistics."""
     config = create_default_config()
 
-    preprocessor, postprocessor = make_act_pre_post_processors(config, dataset_stats=None)
+    preprocessor, postprocessor = make_act_pre_post_processors(
+        config,
+        dataset_stats=None,
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+    )
 
     # Should still create processors, but normalization won't have stats
     assert preprocessor is not None
@@ -241,8 +238,8 @@ def test_act_processor_save_and_load():
     preprocessor, postprocessor = make_act_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -251,7 +248,7 @@ def test_act_processor_save_and_load():
 
         # Load preprocessor
         loaded_preprocessor = DataProcessorPipeline.from_pretrained(
-            tmpdir, to_transition=lambda x: x, to_output=lambda x: x
+            tmpdir, to_transition=identity_transition, to_output=identity_transition
         )
 
         # Test that loaded processor works
@@ -274,8 +271,8 @@ def test_act_processor_device_placement_preservation():
     preprocessor, _ = make_act_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Process CPU data
@@ -299,8 +296,8 @@ def test_act_processor_mixed_precision():
     preprocessor, postprocessor = make_act_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Replace DeviceProcessorStep with one that uses float16
@@ -344,8 +341,8 @@ def test_act_processor_batch_consistency():
     preprocessor, postprocessor = make_act_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
-        postprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
+        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Test single sample (unbatched)
@@ -376,7 +373,7 @@ def test_act_processor_bfloat16_device_float32_normalizer():
     preprocessor, _ = make_act_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": lambda x: x, "to_output": lambda x: x},
+        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Modify the pipeline to use bfloat16 device processor with float32 normalizer

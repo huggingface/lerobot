@@ -34,22 +34,8 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     TransitionKey,
 )
+from lerobot.processor.converters import create_transition, identity_transition
 from tests.conftest import assert_contract_is_typed
-
-
-def create_transition(
-    observation=None, action=None, reward=0.0, done=False, truncated=False, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info if info is not None else {},
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data if complementary_data is not None else {},
-    }
 
 
 @dataclass
@@ -187,7 +173,7 @@ class MockStepWithTensorState(ProcessorStep):
 
 def test_empty_pipeline():
     """Test pipeline with no steps."""
-    pipeline = DataProcessorPipeline([], to_transition=lambda x: x, to_output=lambda x: x)
+    pipeline = DataProcessorPipeline([], to_transition=identity_transition, to_output=identity_transition)
 
     transition = create_transition()
     result = pipeline(transition)
@@ -199,7 +185,7 @@ def test_empty_pipeline():
 def test_single_step_pipeline():
     """Test pipeline with a single step."""
     step = MockStep("test_step")
-    pipeline = DataProcessorPipeline([step], to_transition=lambda x: x, to_output=lambda x: x)
+    pipeline = DataProcessorPipeline([step], to_transition=identity_transition, to_output=identity_transition)
 
     transition = create_transition()
     result = pipeline(transition)
@@ -216,7 +202,9 @@ def test_multiple_steps_pipeline():
     """Test pipeline with multiple steps."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = DataProcessorPipeline([step1, step2], to_transition=lambda x: x, to_output=lambda x: x)
+    pipeline = DataProcessorPipeline(
+        [step1, step2], to_transition=identity_transition, to_output=identity_transition
+    )
 
     transition = create_transition()
     result = pipeline(transition)
@@ -569,7 +557,7 @@ def test_step_without_optional_methods():
     """Test pipeline with steps that don't implement optional methods."""
     step = MockStepWithoutOptionalMethods(multiplier=3.0)
     pipeline = DataProcessorPipeline(
-        [step], to_transition=lambda x: x, to_output=lambda x: x
+        [step], to_transition=identity_transition, to_output=identity_transition
     )  # Identity for EnvTransition input/output
 
     transition = create_transition(reward=2.0)
@@ -900,7 +888,7 @@ def test_from_pretrained_with_overrides():
         }
 
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides=overrides, to_transition=lambda x: x, to_output=lambda x: x
+            tmp_dir, overrides=overrides, to_transition=identity_transition, to_output=identity_transition
         )
 
         # Verify the pipeline was loaded correctly
@@ -938,7 +926,7 @@ def test_from_pretrained_with_partial_overrides():
         # The current implementation applies overrides to ALL steps with the same class name
         # Both steps will get the override
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides=overrides, to_transition=lambda x: x, to_output=lambda x: x
+            tmp_dir, overrides=overrides, to_transition=identity_transition, to_output=identity_transition
         )
 
         transition = create_transition(reward=1.0)
@@ -997,7 +985,7 @@ def test_from_pretrained_registered_step_override():
         overrides = {"registered_mock_step": {"value": 999, "device": "cuda"}}
 
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides=overrides, to_transition=lambda x: x, to_output=lambda x: x
+            tmp_dir, overrides=overrides, to_transition=identity_transition, to_output=identity_transition
         )
 
         # Test that overrides were applied
@@ -1027,7 +1015,7 @@ def test_from_pretrained_mixed_registered_and_unregistered():
         }
 
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides=overrides, to_transition=lambda x: x, to_output=lambda x: x
+            tmp_dir, overrides=overrides, to_transition=identity_transition, to_output=identity_transition
         )
 
         # Test both steps
@@ -1050,7 +1038,7 @@ def test_from_pretrained_no_overrides():
 
         # Load without overrides
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, to_transition=lambda x: x, to_output=lambda x: x
+            tmp_dir, to_transition=identity_transition, to_output=identity_transition
         )
 
         assert len(loaded_pipeline) == 1
@@ -1072,7 +1060,7 @@ def test_from_pretrained_empty_overrides():
 
         # Load with empty overrides
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides={}, to_transition=lambda x: x, to_output=lambda x: x
+            tmp_dir, overrides={}, to_transition=identity_transition, to_output=identity_transition
         )
 
         assert len(loaded_pipeline) == 1
@@ -1496,8 +1484,8 @@ def test_override_with_nested_config():
             loaded = DataProcessorPipeline.from_pretrained(
                 tmp_dir,
                 overrides={"complex_config_step": {"nested_config": {"level1": {"level2": "overridden"}}}},
-                to_transition=lambda x: x,
-                to_output=lambda x: x,
+                to_transition=identity_transition,
+                to_output=identity_transition,
             )
 
             # Test that override worked
@@ -1600,8 +1588,8 @@ def test_override_with_callables():
             loaded = DataProcessorPipeline.from_pretrained(
                 tmp_dir,
                 overrides={"callable_step": {"transform_fn": double_values}},
-                to_transition=lambda x: x,
-                to_output=lambda x: x,
+                to_transition=identity_transition,
+                to_output=identity_transition,
             )
 
             # Test it works
@@ -1869,7 +1857,7 @@ class FeatureContractMutateStep(ProcessorStep):
     """Mutates a PolicyFeature"""
 
     key: str = "a"
-    fn: Callable[[PolicyFeature | None], PolicyFeature] = lambda x: x  # noqa: E731
+    fn: Callable[[PolicyFeature | None], PolicyFeature] = identity_transition  # noqa: E731
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition

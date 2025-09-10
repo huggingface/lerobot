@@ -28,22 +28,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
     hotswap_stats,
 )
-from lerobot.processor.converters import to_tensor
-
-
-def create_transition(
-    observation=None, action=None, reward=None, done=None, truncated=None, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info,
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-    }
+from lerobot.processor.converters import create_transition, identity_transition, to_tensor
 
 
 def test_numpy_conversion():
@@ -509,7 +494,7 @@ def test_get_config(full_stats):
 def test_integration_with_robot_processor(normalizer_processor):
     """Test integration with RobotProcessor pipeline"""
     robot_processor = DataProcessorPipeline(
-        [normalizer_processor], to_transition=lambda x: x, to_output=lambda x: x
+        [normalizer_processor], to_transition=identity_transition, to_output=identity_transition
     )
 
     observation = {
@@ -1322,7 +1307,7 @@ def test_hotswap_stats_functional_test():
     # Create original processor
     normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=initial_stats)
     original_processor = DataProcessorPipeline(
-        steps=[normalizer], to_transition=lambda x: x, to_output=lambda x: x
+        steps=[normalizer], to_transition=identity_transition, to_output=identity_transition
     )
 
     # Process with original stats
