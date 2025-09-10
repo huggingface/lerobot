@@ -90,6 +90,7 @@ def test_pi05_forward_pass():
         dtype="float32",
         pi05=True,
         action_horizon=16,  # Shorter horizon for testing
+        n_action_steps=16,  # Shorter action steps for testing
     )
 
     # Create dummy dataset stats
