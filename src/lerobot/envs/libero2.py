@@ -1,9 +1,8 @@
 import math
 import os
 from collections import defaultdict
-from collections.abc import Callable
 from itertools import chain
-from typing import Any
+from typing import Any, Callable
 
 import gymnasium as gym
 import numpy as np
@@ -13,6 +12,8 @@ from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
 
+OBS_IMAGE = "observation.image"
+OBS_IMAGE_2 = "observation.image2"
 def create_libero_envs(
     task: str,
     n_envs: int,
@@ -27,9 +28,6 @@ def create_libero_envs(
     Returns:
         dict[str, dict[str, list[LiberoEnv]]]: keys are task_suite and values are list of LiberoEnv envs.
     """
-    print("num envs", n_envs)
-    print("multitask_eval", multitask_eval)
-    print("gym_kwargs", gym_kwargs)
     if gym_kwargs is None:
         gym_kwargs = {}
 
@@ -43,9 +41,8 @@ def create_libero_envs(
             episode_indices = list(range(n_envs))
         elif len(tasks_id) < n_envs and n_envs % len(tasks_id) == 0:
             n_repeat = n_envs // len(tasks_id)
-            print("n_repeat", n_repeat)
             episode_indices = []
-            for _ in range(len(tasks_id)):
+            for i in range(len(tasks_id)):
                 episode_indices.extend(list(range(n_repeat)))
             tasks_id = list(chain.from_iterable([[item] * n_repeat for item in tasks_id]))
         elif n_envs < len(tasks_id):
@@ -53,9 +50,9 @@ def create_libero_envs(
             episode_indices = list(range(n_envs))[:n_envs]
             print(f"WARNING: n_envs < len(tasks_id), evaluating only on {tasks_id}")
         print(f"Creating Libero envs with task ids {tasks_id} from suite {task}")
-        assert n_envs == len(tasks_id), (
-            f"len(n_envs) and tasks_id should be the same, got {n_envs} and {len(tasks_id)}"
-        )
+        assert n_envs == len(
+            tasks_id
+        ), f"len(n_envs) and tasks_id should be the same, got {n_envs} and {len(tasks_id)}"
         return env_cls(
             [
                 lambda i=i: LiberoEnv(
@@ -79,26 +76,21 @@ def create_libero_envs(
                 _task
             ]()  # can also choose libero_spatial, libero_object, libero_10 etc.
             tasks_ids = list(range(len(task_suite.tasks)))
+            # tasks_ids = [0] # FIXME(mshukor): debug
             for tasks_id in tasks_ids:
                 episode_indices = list(range(n_envs))
                 print(
                     f"Creating Libero envs with task ids {tasks_id} from suite {_task}, episode_indices: {episode_indices}"
                 )
                 envs_list = [
-                    (
-                        lambda i=i,
+                    lambda i=i: LiberoEnv(
                         task_suite=task_suite,
-                        tasks_id=tasks_id,
-                        _task=_task,
-                        episode_indices=episode_indices: LiberoEnv(
-                            task_suite=task_suite,
-                            task_id=tasks_id,
-                            task_suite_name=_task,
-                            camera_name=camera_name,
-                            init_states=init_states,
-                            episode_index=episode_indices[i],
-                            **gym_kwargs,
-                        )
+                        task_id=tasks_id,
+                        task_suite_name=_task,
+                        camera_name=camera_name,
+                        init_states=init_states,
+                        episode_index=episode_indices[i],
+                        **gym_kwargs,
                     )
                     for i in range(n_envs)
                 ]
@@ -139,17 +131,13 @@ def get_task_init_states(task_suite, i):
         task_suite.tasks[i].problem_folder,
         task_suite.tasks[i].init_states_file,
     )
-    init_states = torch.load(init_states_path, weights_only=False)  # nosec B614
+    init_states = torch.load(init_states_path, weights_only=False)
     return init_states
 
 
 def get_libero_dummy_action():
     """Get dummy/no-op action, used to roll out the simulation while the robot does nothing."""
     return [0, 0, 0, 0, 0, 0, -1]
-
-
-OBS_STATE_DIM = 8
-ACTION_DIM = 7
 
 
 class LiberoEnv(gym.Env):
@@ -182,17 +170,10 @@ class LiberoEnv(gym.Env):
         self.camera_name = camera_name.split(
             ","
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
-
-        # Map raw camera names to "image1" and "image2".
-        # The preprocessing step `preprocess_observation` will then prefix these with `.images.*`,
-        # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
-        # This ensures the policy consistently receives observations in the
-        # expected format regardless of the original camera naming.
         self.camera_name_mapping = {
-            "agentview_image": "image",
-            "robot0_eye_in_hand_image": "image2",
+            "agentview_image": OBS_IMAGE,
+            "robot0_eye_in_hand_image": OBS_IMAGE_2,
         }
-
         self.num_steps_wait = (
             10  # Do nothing for the first few timesteps to wait for the simulator drops objects
         )
@@ -235,17 +216,17 @@ class LiberoEnv(gym.Env):
                     "agent_pos": spaces.Box(
                         low=-1000.0,
                         high=1000.0,
-                        shape=(OBS_STATE_DIM,),
+                        shape=(8,),
                         dtype=np.float64,
                     ),
                 }
             )
 
-        self.action_space = spaces.Box(low=-1, high=1, shape=(ACTION_DIM,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1, high=1, shape=(7,), dtype=np.float32)
 
     def render(self):
         raw_obs = self._env.env._get_observations()
-        image = self._format_raw_obs(raw_obs)["pixels"]["image"]
+        image = self._format_raw_obs(raw_obs)["pixels"][OBS_IMAGE]
         return image
 
     def _make_envs_task(self, task_suite, task_id: int = 0):
@@ -276,6 +257,7 @@ class LiberoEnv(gym.Env):
             image = raw_obs[camera_name]
             image = image[::-1, ::-1]  # rotate 180 degrees
             images[self.camera_name_mapping[camera_name]] = image
+        # images = image if len(images) == 1 else images
         state = np.concatenate(
             (
                 raw_obs["robot0_eef_pos"],

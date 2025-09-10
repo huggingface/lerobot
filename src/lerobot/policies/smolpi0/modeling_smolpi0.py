@@ -51,7 +51,9 @@ policy = Pi0Policy.from_pretrained("lerobot/pi0")
 
 import math
 from collections import deque
-
+import os
+import re
+import safetensors
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
@@ -169,7 +171,72 @@ def resize_with_pad(img, width, height, pad_value=-1):
     padded_img = F.pad(resized_img, (pad_width, 0, pad_height, 0), value=pad_value)
     return padded_img
 
+_VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
+def canonicalise(k: str) -> str:
+    """
+    Remove dataset-variant markers like '.so100-blue_' or '.so100_' from a
+    normalisation-buffer key.
+    """
+    return _VARIANT_RE.sub(".buffer_", k)
 
+def standardise_state_dict(
+    checkpoint: dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
+) -> tuple[dict[str, torch.Tensor], list[str]]:
+    """
+    • Re-keys `checkpoint ` so that every entry matches the *reference* key set.
+    • If several variant keys collapse to the same canonical name we keep the
+      first one and log the collision.
+    • Returns the new dict + a list of entries that could not be matched.
+    """
+    out, collisions, unmatched = {}, {}, []
+
+    for k, v in checkpoint.items():
+        canon = canonicalise(k)
+        if canon in ref_keys:
+            if canon in out:  # duplicate after collapsing
+                collisions.setdefault(canon, []).append(k)
+            else:
+                out[canon] = v
+        else:
+            unmatched.append(k)
+
+    if verbose:
+        for canon, variants in collisions.items():
+            print(f"[standardise_state_dict] '{canon}'  ←  {variants}")
+        if unmatched:
+            print(f"[standardise_state_dict] kept {len(unmatched)} unmatched keys")
+
+    out.update({k: checkpoint[k] for k in unmatched})
+    return out, unmatched
+
+def load_smolvla(
+    model: torch.nn.Module,
+    filename: str | os.PathLike,
+    *,
+    device: str = "cpu",
+    checkpoint_keys_mapping: str = "",
+) -> torch.nn.Module:
+    state_dict = safetensors.torch.load_file(filename, device=device)
+
+    # Optional user-supplied renames (e.g. "model._orig_mod.//model.")
+    if checkpoint_keys_mapping and "//" in checkpoint_keys_mapping:
+        state_dict = rename_checkpoint_keys(state_dict, checkpoint_keys_mapping)
+
+    state_dict, _ = standardise_state_dict(state_dict, set(model.state_dict().keys()))
+
+    # HACK(aliberts): to not overwrite normalization parameters as they should come from the dataset
+    norm_keys = ("normalize_inputs", "normalize_targets", "unnormalize_outputs")
+    state_dict = {k: v for k, v in state_dict.items() if not k.startswith(norm_keys)}
+
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if not all(key.startswith(norm_keys) for key in missing) or unexpected:
+        raise RuntimeError(
+            "SmolVLA %d missing / %d unexpected keys",
+            len(missing),
+            len(unexpected),
+        )
+
+    return model
 def pad_vector(vector, new_dim):
     """Can be (batch_size x sequence_length x features_dimension)
     or (batch_size x features_dimension)
@@ -219,7 +286,27 @@ def aloha_gripper_to_angular(value):
     # The values 0.4 and 1.5 were measured on an actual Trossen robot.
     return normalize(value, min_val=0.4, max_val=1.5)
 
+def rename_checkpoint_keys(checkpoint: dict, rename_str: str):
+    """
+    Renames keys in a checkpoint dictionary based on the given rename string.
 
+    Args:
+        checkpoint (dict): The checkpoint dictionary.
+        rename_str (str): A string specifying key mappings in the format "old1//new1,old2//new2".
+
+    Returns:
+        dict: The modified checkpoint with renamed keys.
+    """
+
+    rename_dict = dict(pair.split("//") for pair in rename_str.split(","))
+
+    new_checkpoint = {}
+    for k, v in checkpoint.items():
+        for old_key, new_key in rename_dict.items():
+            if old_key in k:
+                k = k.replace(old_key, new_key)
+        new_checkpoint[k] = v
+    return new_checkpoint
 def aloha_gripper_from_angular(value):
     # Convert from the gripper position used by pi0 to the gripper position that is used by Aloha.
     # Note that the units are still angular but the range is different.
@@ -333,7 +420,7 @@ class SMOLPI0Policy(PreTrainedPolicy):
             self.model.vlm_with_expert.merge_lora_weights()
 
     @torch.no_grad
-    def select_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -364,7 +451,24 @@ class SMOLPI0Policy(PreTrainedPolicy):
             actions = self._pi_aloha_encode_actions(actions)
 
         return actions
-    
+
+    # HACK(aliberts, danaaubakirova): we overwrite this classmethod here to fix smolVLA-specific issues
+    @classmethod
+    def _load_as_safetensor(
+        cls,
+        model: "SmolVLAPolicy",
+        model_file: str,
+        map_location: str,
+        strict: bool,
+        **kwargs,
+    ):
+        safetensors.torch.load_model(model, model_file, strict=strict, device=map_location)
+        return load_smolvla(
+            model,
+            model_file,
+            device=map_location,
+            checkpoint_keys_mapping="model._orig_mod.//model.",
+        )
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations.

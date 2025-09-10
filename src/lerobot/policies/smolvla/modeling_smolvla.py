@@ -1027,7 +1027,7 @@ from lerobot.policies.utils import (
     populate_queues,
 )
 from lerobot.utils.utils import get_safe_dtype
-
+# OBS_STATE = 'state'
 # Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
 _VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
 
@@ -1347,6 +1347,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
+        original_action_dim = 7
         actions = actions[:, :, :original_action_dim]
 
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
