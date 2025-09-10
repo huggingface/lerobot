@@ -53,7 +53,7 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 # Time Conditioning    | Concatenates time with actions via          | Uses time_mlp_* for AdaRMS conditioning
 #                      | action_time_mlp_*                           |
 # AdaRMS               | Not used                                    | Used in action expert
-# Tokenizer Length     | 200 tokens                                  | 48 tokens
+# Tokenizer Length     | 48 tokens                                   | 200 tokens
 # discrete_state_input | False                                       | True
 # Parameter Count      | Higher (includes state_proj)                | Lower (no state embedding)
 
@@ -117,7 +117,7 @@ class PI0OpenPIConfig(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 200  # pi0=200 and pi05=48, see openpi `__post_init__`
+    tokenizer_max_length: int = 48  # pi0=48 and pi05=200, see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()
@@ -128,9 +128,9 @@ class PI0OpenPIConfig(PreTrainedConfig):
 
         # Set tokenizer max length based on pi05 mode, see openpi `Pi0Config, __post_init__`
         if self.pi05:
-            self.tokenizer_max_length = 48
-        else:
             self.tokenizer_max_length = 200
+        else:
+            self.tokenizer_max_length = 48
 
         # Validate configuration
         if self.n_action_steps > self.action_horizon:

@@ -51,7 +51,7 @@ def create_and_push_model(
         compile_model=False,
         device=None,  # Auto-detect
         # Tokenizer settings
-        tokenizer_max_length=200,  # see openpi `__post_init__`, use pi0=200 and pi05=48
+        tokenizer_max_length=48,  # see openpi `__post_init__`, use pi0=48 and pi05=200
     )
 
     print(f"  - Config type: {config.__class__.__name__}")
