@@ -45,6 +45,19 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 #       pip install transformers==4.53.2
 
 
+# Comparison of PI0 vs PI0.5
+#
+# Feature              | PI0                                         | PI0.5
+# ---------------------|---------------------------------------------|-----------------------------------------
+# State Embedding      | Uses state_proj layer                       | No state embedding
+# Time Conditioning    | Concatenates time with actions via          | Uses time_mlp_* for AdaRMS conditioning
+#                      | action_time_mlp_*                           |
+# AdaRMS               | Not used                                    | Used in action expert
+# Tokenizer Length     | 200 tokens                                  | 48 tokens
+# discrete_state_input | False                                       | True
+# Parameter Count      | Higher (includes state_proj)                | Lower (no state embedding)
+
+
 @PreTrainedConfig.register_subclass("pi0_openpi")
 @dataclass
 class PI0OpenPIConfig(PreTrainedConfig):
@@ -52,6 +65,7 @@ class PI0OpenPIConfig(PreTrainedConfig):
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     pi05: bool = False  # Whether to use PI0.5 variant with AdaRMS
+    discrete_state_input: bool | None = None  # Whether to use discrete state input (defaults to pi05 value)
     dtype: str = "float32"  # Options: "bfloat16", "float32"
 
     # Input / output structure
@@ -107,6 +121,16 @@ class PI0OpenPIConfig(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
+
+        # Set discrete_state_input to pi05 value if not explicitly set
+        if self.discrete_state_input is None:  # see openpi `Pi0Config, __post_init__`
+            object.__setattr__(self, "discrete_state_input", self.pi05)
+
+        # Set tokenizer max length based on pi05 mode, see openpi `Pi0Config, __post_init__`
+        if self.pi05:
+            self.tokenizer_max_length = 48
+        else:
+            self.tokenizer_max_length = 200
 
         # Validate configuration
         if self.n_action_steps > self.action_horizon:

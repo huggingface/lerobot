@@ -924,11 +924,14 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
                 print(f"Could not load state dict from remote files: {e}")
                 return model
 
-            # Create a new state dict with "model." prefix for all keys that don't already have it
+            # First, fix any pi05-specific key differences
+            fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
+
+            # Then add "model." prefix for all keys that don't already have it
             remapped_state_dict = {}
             remap_count = 0
 
-            for key, value in original_state_dict.items():
+            for key, value in fixed_state_dict.items():
                 if not key.startswith("model."):
                     new_key = f"model.{key}"
                     remapped_state_dict[new_key] = value
@@ -974,6 +977,59 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
             print("Using default loading behavior")
 
         return model
+
+    def _fix_pytorch_state_dict_keys(
+        self, state_dict, model_config
+    ):  # see openpi `BaseModelConfig, _fix_pytorch_state_dict_keys`
+        """Fix state dict keys to match current model architecture."""
+        import re
+
+        fixed_state_dict = {}
+
+        for key, value in state_dict.items():
+            new_key = key
+
+            # Handle layer norm structure changes: .weight -> .dense.weight + .dense.bias
+            # For gemma expert layers
+            if re.match(
+                r"paligemma_with_expert\.gemma_expert\.model\.layers\.\d+\.(input_layernorm|post_attention_layernorm)\.weight",
+                key,
+            ):
+                # This key structure suggests old model without adaRMS - keep as is or skip
+                logging.warning(f"Skipping old layer norm key (no adaRMS support): {key}")
+                continue
+
+            if re.match(r"paligemma_with_expert\.gemma_expert\.model\.norm\.weight", key):
+                # Skip old norm structure
+                logging.warning(f"Skipping old norm key (no adaRMS support): {key}")
+                continue
+
+            # Handle MLP naming changes for pi05 vs non-pi05
+            if model_config.pi05:
+                # pi05 model expects time_mlp_*, but checkpoint might have action_time_mlp_*
+                if key.startswith("action_time_mlp_in."):
+                    new_key = key.replace("action_time_mlp_in.", "time_mlp_in.")
+                elif key.startswith("action_time_mlp_out."):
+                    new_key = key.replace("action_time_mlp_out.", "time_mlp_out.")
+                # Also handle state_proj which shouldn't exist in pi05
+                if key.startswith("state_proj."):
+                    logging.warning(f"Skipping state_proj key in pi05 mode: {key}")
+                    continue
+            else:
+                # non-pi05 model expects action_time_mlp_*, but checkpoint might have time_mlp_*
+                if key.startswith("time_mlp_in."):
+                    new_key = key.replace("time_mlp_in.", "action_time_mlp_in.")
+                elif key.startswith("time_mlp_out."):
+                    new_key = key.replace("time_mlp_out.", "action_time_mlp_out.")
+
+            # Handle vision tower embedding layer potential differences
+            if "patch_embedding" in key:
+                # Some checkpoints might have this, but current model expects different structure
+                logging.warning(f"Vision embedding key might need handling: {key}")
+
+            fixed_state_dict[new_key] = value
+
+        return fixed_state_dict
 
     def get_optim_params(self) -> dict:  # see lerobot pi0 `get_optim_params`
         return self.parameters()
