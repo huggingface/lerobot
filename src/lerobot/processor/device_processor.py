@@ -27,7 +27,7 @@ import torch
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.utils.utils import get_safe_torch_device
 
-from .core import EnvTransition, TransitionKey
+from .core import EnvTransition, PolicyAction, TransitionKey
 from .pipeline import ProcessorStep, ProcessorStepRegistry
 
 
@@ -129,6 +129,10 @@ class DeviceProcessorStep(ProcessorStep):
             A new `EnvTransition` object with all tensors moved to the target device and dtype.
         """
         new_transition = transition.copy()
+        action = new_transition.get(TransitionKey.ACTION)
+
+        if action is not None and not isinstance(action, PolicyAction):
+            raise ValueError(f"If action is not None should be a PolicyAction type got {type(action)}")
 
         simple_tensor_keys = [
             TransitionKey.ACTION,

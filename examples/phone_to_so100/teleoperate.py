@@ -17,7 +17,7 @@ import time
 
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotProcessorPipeline
-from lerobot.processor.converters import action_to_transition, transition_to_action
+from lerobot.processor.converters import robot_action_to_transition, robot_transition_to_action
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
@@ -72,8 +72,8 @@ phone_to_robot_joints_processor = RobotProcessorPipeline(
             speed_factor=20.0,
         ),
     ],
-    to_transition=action_to_transition,
-    to_output=transition_to_action,
+    to_transition=robot_action_to_transition,
+    to_output=robot_transition_to_action,
 )
 
 robot.connect()

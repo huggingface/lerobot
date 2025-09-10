@@ -26,7 +26,7 @@ import torch
 
 from lerobot.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 
-from .core import EnvTransition, TransitionKey
+from .core import EnvTransition, PolicyAction, RobotAction, TransitionKey
 
 
 @singledispatch
@@ -243,7 +243,7 @@ def _merge_transitions(base: EnvTransition, other: EnvTransition) -> EnvTransiti
 
 def create_transition(
     observation: dict[str, Any] | None = None,
-    action: dict[str, Any] | None = None,
+    action: PolicyAction | RobotAction | None = None,
     reward: float = 0.0,
     done: bool = False,
     truncated: bool = False,
@@ -276,9 +276,9 @@ def create_transition(
     }
 
 
-def action_to_transition(action: dict[str, Any]) -> EnvTransition:
+def robot_action_to_transition(action: RobotAction) -> EnvTransition:
     """
-    Convert a raw action dictionary into a standardized `EnvTransition`.
+    Convert a raw robot action dictionary into a standardized `EnvTransition`.
 
     The keys in the action dictionary are prefixed with "action." and stored under
     the `ACTION` key in the transition. Values are converted to tensors, except for
@@ -315,9 +315,9 @@ def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
     return create_transition(observation={**state, **image_observations}, action={})
 
 
-def transition_to_action(transition: EnvTransition) -> dict[str, Any]:
+def robot_transition_to_action(transition: EnvTransition) -> RobotAction:
     """
-    Extract a raw action dictionary for a robot from an `EnvTransition`.
+    Extract a raw robot action dictionary for a robot from an `EnvTransition`.
 
     This function searches for keys in the format "action.*.pos" or "action.*.vel"
     and converts them into a flat dictionary suitable for sending to a robot controller.
@@ -459,6 +459,10 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
     # Validate input type.
     if not isinstance(batch, dict):
         raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
+
+    action = batch.get("action")
+    if action is not None and not isinstance(action, PolicyAction):
+        raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
     # Extract observation and complementary data keys.
     observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}

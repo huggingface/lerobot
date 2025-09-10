@@ -490,33 +490,33 @@ def test_action_scalar_tensor():
     assert torch.equal(result[TransitionKey.ACTION], action_scalar)
 
 
-def test_action_non_tensor():
-    """Test that non-tensor actions remain unchanged."""
+def test_action_non_tensor_raises_error():
+    """Test that non-tensor actions raise ValueError for PolicyAction processors."""
     processor = AddBatchDimensionProcessorStep()
 
-    # List action
+    # List action should raise error
     action_list = [0.1, 0.2, 0.3, 0.4]
-    transition = create_transition(action=action_list, observation={})
-    result = processor(transition)
-    assert result[TransitionKey.ACTION] == action_list
+    transition = create_transition(action=action_list)
+    with pytest.raises(ValueError, match="Action should be a PolicyAction type"):
+        processor(transition)
 
-    # Numpy array action (as Python object, not converted)
+    # Numpy array action should raise error
     action_numpy = np.array([1, 2, 3, 4])
-    transition = create_transition(action=action_numpy, observation={})
-    result = processor(transition)
-    assert np.array_equal(result[TransitionKey.ACTION], action_numpy)
+    transition = create_transition(action=action_numpy)
+    with pytest.raises(ValueError, match="Action should be a PolicyAction type"):
+        processor(transition)
 
-    # String action (edge case)
+    # String action should raise error
     action_string = "forward"
-    transition = create_transition(action=action_string, observation={})
-    result = processor(transition)
-    assert result[TransitionKey.ACTION] == action_string
+    transition = create_transition(action=action_string)
+    with pytest.raises(ValueError, match="Action should be a PolicyAction type"):
+        processor(transition)
 
-    # Dict action (structured action)
+    # Dict action should raise error
     action_dict = {"linear": [0.5, 0.0], "angular": 0.2}
-    transition = create_transition(action=action_dict, observation={})
-    result = processor(transition)
-    assert result[TransitionKey.ACTION] == action_dict
+    transition = create_transition(action=action_dict)
+    with pytest.raises(ValueError, match="Action should be a PolicyAction type"):
+        processor(transition)
 
 
 def test_action_none():

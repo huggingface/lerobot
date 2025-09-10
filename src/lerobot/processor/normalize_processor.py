@@ -28,7 +28,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatur
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from .converters import from_tensor_to_numpy, to_tensor
-from .core import EnvTransition, TransitionKey
+from .core import EnvTransition, PolicyAction, TransitionKey
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 
@@ -345,8 +345,14 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
 
         # Handle action normalization.
         action = new_transition.get(TransitionKey.ACTION)
-        if action is not None:
-            new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=False)
+
+        if action is None:
+            return new_transition
+
+        if not isinstance(action, PolicyAction):
+            raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
+
+        new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=False)
 
         return new_transition
 
@@ -401,8 +407,13 @@ class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
 
         # Handle action unnormalization.
         action = new_transition.get(TransitionKey.ACTION)
-        if action is not None:
-            new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=True)
+
+        if action is None:
+            return new_transition
+        if not isinstance(action, PolicyAction):
+            raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
+
+        new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=True)
 
         return new_transition
 

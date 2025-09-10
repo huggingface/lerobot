@@ -329,14 +329,14 @@ def test_min_max_unnormalization(action_stats_min_max):
     assert torch.allclose(unnormalized_action, expected)
 
 
-def test_numpy_action_input(action_stats_mean_std):
+def test_tensor_action_input(action_stats_mean_std):
     features = _create_action_features()
     norm_map = _create_action_norm_map_mean_std()
     unnormalizer = UnnormalizerProcessorStep(
         features=features, norm_map=norm_map, stats={"action": action_stats_mean_std}
     )
 
-    normalized_action = np.array([1.0, -0.5, 2.0], dtype=np.float32)
+    normalized_action = torch.tensor([1.0, -0.5, 2.0], dtype=torch.float32)
     transition = create_transition(action=normalized_action)
 
     unnormalized_transition = unnormalizer(transition)
