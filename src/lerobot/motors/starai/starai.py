@@ -256,7 +256,7 @@ class StaraiMotorsBus(MotorsBus):
                 write_data[motor] = data
 
             if self.motors["gripper"].model == "rx8-u50":
-                write_data["gripper"].power=50
+                write_data["gripper"].power=100
             else:
                 write_data["gripper"].power=1000
 

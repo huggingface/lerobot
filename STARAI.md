@@ -73,8 +73,6 @@ For Ubuntu X86:
 - Python 3.10
 - Troch 2.6
 
-
-
 ## 安装与调试
 
 ### 安装LeRobot
