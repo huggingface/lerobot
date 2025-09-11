@@ -58,12 +58,15 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 # Parameter Count      | Higher (includes state_proj)                | Lower (no state embedding)
 
 
-@PreTrainedConfig.register_subclass("pi0_openpi")
+@PreTrainedConfig.register_subclass("pi05_openpi")
 @dataclass
-class PI0OpenPIConfig(PreTrainedConfig):
+class PI05OpenPIConfig(PreTrainedConfig):
     # Model architecture
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
+    discrete_state_input: bool | None = (
+        True  # Whether to use discrete state input # see openpi `Pi0Config, __post_init__`
+    )
     dtype: str = "float32"  # Options: "bfloat16", "float32"
 
     # Input / output structure
@@ -115,7 +118,7 @@ class PI0OpenPIConfig(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 48  # pi0=48, see openpi `__post_init__`
+    tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()

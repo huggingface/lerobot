@@ -30,7 +30,7 @@ from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditi
 
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.normalize import Normalize, Unnormalize
-from lerobot.policies.pi0_openpi.configuration_pi0openpi import PI0OpenPIConfig
+from lerobot.policies.pi05_openpi.configuration_pi05openpi import PI05OpenPIConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 
 
@@ -218,7 +218,7 @@ def get_gemma_config(variant: str) -> GemmaConfig:  # see openpi `gemma.py: get_
 
 
 class PaliGemmaWithExpertModel(nn.Module):  # see openpi `gemma_pytorch.py: PaliGemmaWithExpertModel`
-    """PaliGemma model with action expert for PI0."""
+    """PaliGemma model with action expert for PI05."""
 
     def __init__(
         self,
@@ -472,10 +472,10 @@ class PaliGemmaWithExpertModel(nn.Module):  # see openpi `gemma_pytorch.py: Pali
         return [prefix_output, suffix_output], prefix_past_key_values
 
 
-class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
-    """Core PI0 PyTorch model."""
+class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
+    """Core PI05 PyTorch model."""
 
-    def __init__(self, config: PI0OpenPIConfig):
+    def __init__(self, config: PI05OpenPIConfig):
         super().__init__()
         self.config = config
 
@@ -485,16 +485,15 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.paligemma_with_expert = PaliGemmaWithExpertModel(
             paligemma_config,
             action_expert_config,
-            use_adarms=[False, False],
+            use_adarms=[False, True],
             precision=config.dtype,
         )
 
         self.action_in_proj = nn.Linear(32, action_expert_config.width)
         self.action_out_proj = nn.Linear(action_expert_config.width, 32)
 
-        self.state_proj = nn.Linear(32, action_expert_config.width)
-        self.action_time_mlp_in = nn.Linear(2 * action_expert_config.width, action_expert_config.width)
-        self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
+        self.time_mlp_in = nn.Linear(action_expert_config.width, action_expert_config.width)
+        self.time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
@@ -510,7 +509,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = True
         self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = True
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = True
-        logging.info("Enabled gradient checkpointing for PI0Pytorch model")
+        logging.info("Enabled gradient checkpointing for PI05Pytorch model")
 
     def gradient_checkpointing_disable(self):
         """Disable gradient checkpointing."""
@@ -518,7 +517,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = False
         self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = False
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = False
-        logging.info("Disabled gradient checkpointing for PI0Pytorch model")
+        logging.info("Disabled gradient checkpointing for PI05Pytorch model")
 
     def _apply_checkpoint(self, func, *args, **kwargs):
         """Helper method to apply gradient checkpointing if enabled."""
@@ -598,21 +597,6 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         pad_masks = []
         att_masks = []
 
-        if self.state_proj.weight.dtype == torch.float32:
-            state = state.to(torch.float32)
-
-        def state_proj_func(state):
-            return self.state_proj(state)
-
-        state_emb = self._apply_checkpoint(state_proj_func, state)
-        embs.append(state_emb[:, None, :])
-        bsize = state_emb.shape[0]
-        device = state_emb.device
-
-        state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
-        pad_masks.append(state_mask)
-        att_masks += [1]
-
         # Embed timestep using sine-cosine positional encoding
         time_emb = create_sinusoidal_pos_embedding(
             timestep,
@@ -629,16 +613,15 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
 
-        time_emb = time_emb[:, None, :].expand_as(action_emb)
-        action_time_emb = torch.cat([action_emb, time_emb], dim=2)
-
-        def mlp_func(action_time_emb):
-            x = self.action_time_mlp_in(action_time_emb)
+        def time_mlp_func(time_emb):
+            x = self.time_mlp_in(time_emb)
             x = F.silu(x)
-            return self.action_time_mlp_out(x)
+            x = self.time_mlp_out(x)
+            return F.silu(x)
 
-        action_time_emb = self._apply_checkpoint(mlp_func, action_time_emb)
-        adarms_cond = None
+        time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
+        action_time_emb = action_emb
+        adarms_cond = time_emb
 
         embs.append(action_time_emb)
         bsize, action_time_dim = action_time_emb.shape[:2]
@@ -809,15 +792,15 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return self.action_out_proj(suffix_out)
 
 
-class PI0OpenPIPolicy(PreTrainedPolicy):
-    """PI0 OpenPI Policy for LeRobot."""
+class PI05OpenPIPolicy(PreTrainedPolicy):
+    """PI05 OpenPI Policy for LeRobot."""
 
-    config_class = PI0OpenPIConfig
-    name = "pi0_openpi"
+    config_class = PI05OpenPIConfig
+    name = "pi05_openpi"
 
     def __init__(  # see lerobot pi0 `__init__`
         self,
-        config: PI0OpenPIConfig,
+        config: PI05OpenPIConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -843,8 +826,8 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
         # Set max token length for tokenizer (from OpenPI)
         self.max_token_len = config.tokenizer_max_length
 
-        # Initialize the core PI0 model
-        self.model = PI0Pytorch(config)
+        # Initialize the core PI05 model
+        self.model = PI05Pytorch(config)
 
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
@@ -858,7 +841,7 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
     ):  # TODO(pepijn): modify this back so we do not have to add model. prefix to all keys in the state dict
         """Override the from_pretrained method to handle key remapping and display important disclaimer."""
         print(
-            "⚠️  DISCLAIMER: The PI0OpenPI model is a direct PyTorch port of the OpenPI implementation. \n"
+            "⚠️  DISCLAIMER: The PI05OpenPI model is a direct PyTorch port of the OpenPI implementation. \n"
             "   This implementation follows the original OpenPI structure for compatibility. \n"
             "   Original implementation: https://github.com/Physical-Intelligence/openpi"
         )
@@ -906,7 +889,7 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
                 print(f"Could not load state dict from remote files: {e}")
                 return model
 
-            # First, fix any pi key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
+            # First, fix any key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
 
             # Then add "model." prefix for all keys that don't already have it
@@ -986,12 +969,16 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
                 logging.warning(f"Skipping old norm key (no adaRMS support): {key}")
                 continue
 
-            # Handle MLP naming changes for pi0
-            # non-pi05 model expects action_time_mlp_*, but checkpoint might have time_mlp_*
-            if key.startswith("time_mlp_in."):
-                new_key = key.replace("time_mlp_in.", "action_time_mlp_in.")
-            elif key.startswith("time_mlp_out."):
-                new_key = key.replace("time_mlp_out.", "action_time_mlp_out.")
+            # Handle MLP naming changes for pi05
+            # pi05 model expects time_mlp_*, but checkpoint might have action_time_mlp_*
+            if key.startswith("action_time_mlp_in."):
+                new_key = key.replace("action_time_mlp_in.", "time_mlp_in.")
+            elif key.startswith("action_time_mlp_out."):
+                new_key = key.replace("action_time_mlp_out.", "time_mlp_out.")
+            # Also handle state_proj which shouldn't exist in pi05
+            if key.startswith("state_proj."):
+                logging.warning(f"Skipping state_proj key in pi05 mode: {key}")
+                continue
 
             # Handle vision tower embedding layer potential differences
             if "patch_embedding" in key:
@@ -1141,7 +1128,7 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
                 f"Please reduce state dimension or modify the model."
             )
 
-        # Pad state to 32 dimensions if needed (PI0 expects fixed 32-dim); works similar to lerobot pi0 `prepare_state`
+        # Pad state to 32 dimensions if needed (PI05 expects fixed 32-dim); works similar to lerobot pi0 `prepare_state`
         if state.shape[-1] < 32:
             padding = torch.zeros(
                 state.shape[0], 32 - state.shape[-1], device=state.device, dtype=state.dtype
@@ -1181,7 +1168,7 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
                 f"Please reduce action dimension or modify the model."
             )
 
-        # Pad state and actions to 32 dimensions if needed (PI0 expects fixed 32-dim)
+        # Pad state and actions to 32 dimensions if needed (PI05 expects fixed 32-dim)
         if state.shape[-1] < 32:
             padding = torch.zeros(
                 state.shape[0], 32 - state.shape[-1], device=state.device, dtype=state.dtype
