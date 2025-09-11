@@ -35,7 +35,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 
 
 # Helper functions
-def get_safe_dtype(target_dtype, device_type):  # see openpi `get_safe_dtype`
+def get_safe_dtype(target_dtype, device_type):  # see openpi `get_safe_dtype` (exact copy)
     """Get a safe dtype for the given device type."""
     if device_type == "cpu":
         # CPU doesn't support bfloat16, use float32 instead
@@ -46,7 +46,7 @@ def get_safe_dtype(target_dtype, device_type):  # see openpi `get_safe_dtype`
     return target_dtype
 
 
-def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedding`
+def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedding` (exact copy)
     time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu"
 ) -> Tensor:
     """Computes sine-cosine positional embedding vectors for scalar positions."""
@@ -66,14 +66,14 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
     return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
 
 
-def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta`
+def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
     alpha_t = torch.as_tensor(alpha, dtype=torch.float32, device=device)
     beta_t = torch.as_tensor(beta, dtype=torch.float32, device=device)
     dist = torch.distributions.Beta(alpha_t, beta_t)
     return dist.sample((bsize,))
 
 
-def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks`
+def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (exact copy)
     """Copied from big_vision.
 
     Tokens can attend to valid inputs tokens which have a cumulative mask_ar
@@ -105,7 +105,7 @@ def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks`
     return att_2d_masks & pad_2d_masks
 
 
-def resize_with_pad_torch(  # see openpi `resize_with_pad_torch`
+def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     images: torch.Tensor,
     height: int,
     width: int,
@@ -217,7 +217,9 @@ def get_gemma_config(variant: str) -> GemmaConfig:  # see openpi `gemma.py: get_
         raise ValueError(f"Unknown variant: {variant}")
 
 
-class PaliGemmaWithExpertModel(nn.Module):  # see openpi `gemma_pytorch.py: PaliGemmaWithExpertModel`
+class PaliGemmaWithExpertModel(
+    nn.Module
+):  # see openpi `gemma_pytorch.py: PaliGemmaWithExpertModel` this class is almost a exact copy of PaliGemmaWithExpertModel in openpi
     """PaliGemma model with action expert for PI0."""
 
     def __init__(
