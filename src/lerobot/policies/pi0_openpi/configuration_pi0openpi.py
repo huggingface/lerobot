@@ -20,43 +20,6 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
-# ### ⚠️ WARNING ⚠️ ###
-# This project requires patching the Hugging Face `transformers` library.
-#
-# 1. Make sure you have the exact version installed:
-#       pip show transformers
-#    It must be version 4.53.2.
-#
-# 2. Apply the custom patches by copying the modified files into your conda environment (make sure your environment is activated!)
-#       cp -r ./src/lerobot/policies/pi0_openpi/transformers_replace/* $(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")
-#
-#    These patches overwrite parts of `transformers` to:
-#      (a) support AdaRMS optimizer,
-#      (b) correctly control the precision of activations,
-#      (c) allow the KV cache to be used without updates.
-#
-# IMPORTANT:
-#   - This permanently modifies the `transformers` installation in your conda environment.
-#   - The changes will survive reinstalls of `transformers` unless you explicitly remove
-#     the patched files or recreate the environment.
-#
-# To undo the operation and restore a clean state, run:
-#       pip uninstall transformers
-#       pip install transformers==4.53.2
-
-
-# Comparison of PI0 vs PI0.5
-#
-# Feature              | PI0                                         | PI0.5
-# ---------------------|---------------------------------------------|-----------------------------------------
-# State Embedding      | Uses state_proj layer                       | No state embedding
-# Time Conditioning    | Concatenates time with actions via          | Uses time_mlp_* for AdaRMS conditioning
-#                      | action_time_mlp_*                           |
-# AdaRMS               | Not used                                    | Used in action expert
-# Tokenizer Length     | 48 tokens                                   | 200 tokens
-# discrete_state_input | False                                       | True
-# Parameter Count      | Higher (includes state_proj)                | Lower (no state embedding)
-
 
 @PreTrainedConfig.register_subclass("pi0_openpi")
 @dataclass
