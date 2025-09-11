@@ -80,7 +80,9 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
     EnvTransition,
     IdentityProcessorStep,
+    PolicyAction,
     PolicyProcessorPipeline,
+    RobotAction,
     RobotProcessorPipeline,
     TransitionKey,
 )
@@ -91,7 +93,6 @@ from lerobot.processor.converters import (
     transition_to_dataset_frame,
     transition_to_robot_action,
 )
-from lerobot.processor.core import PolicyAction, RobotAction
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,

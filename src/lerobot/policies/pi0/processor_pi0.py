@@ -26,6 +26,7 @@ from lerobot.processor import (
     ComplementaryDataProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
+    PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -34,7 +35,6 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
-from lerobot.processor.core import PolicyAction
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")

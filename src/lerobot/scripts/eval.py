@@ -72,8 +72,7 @@ from lerobot.envs.factory import make_env
 from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor.core import PolicyAction
-from lerobot.processor.pipeline import PolicyProcessorPipeline
+from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (

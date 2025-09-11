@@ -27,10 +27,10 @@ from lerobot.processor import (
     ObservationProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
+    RobotAction,
     RobotActionProcessorStep,
     TransitionKey,
 )
-from lerobot.processor.core import RobotAction
 from lerobot.robots.robot import Robot
 from lerobot.utils.rotation import Rotation
 

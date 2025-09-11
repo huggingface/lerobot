@@ -24,7 +24,6 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_policy_config, make_pre_post_processors
-from lerobot.processor import TransitionKey
 from lerobot.utils.random_utils import set_seed
 
 
@@ -104,7 +103,7 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
     actions = {}
     for i in range(actions_queue):
         unnormalized_action = policy.select_action(obs).contiguous()
-        action_robot = postprocessor({TransitionKey.ACTION: unnormalized_action}).get(TransitionKey.ACTION)
+        action_robot = postprocessor(unnormalized_action)
         actions[str(i)] = action_robot
 
     return output_dict, grad_stats, param_stats, actions
