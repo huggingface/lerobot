@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
@@ -27,6 +29,7 @@ from lerobot.processor.converters import (
     observation_to_transition,
     transition_to_robot_action,
 )
+from lerobot.processor.core import EnvTransition, RobotAction
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -66,7 +69,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints_processor = RobotProcessorPipeline(
+robot_ee_to_joints_processor = RobotProcessorPipeline[EnvTransition, RobotAction](
     steps=[
         AddRobotObservationAsComplimentaryData(robot=robot),
         InverseKinematicsEEToJoints(
@@ -80,7 +83,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline(
 )
 
 # Build pipeline to convert joint observation to ee pose observation
-robot_joints_to_ee_pose_processor = RobotProcessorPipeline(
+robot_joints_to_ee_pose_processor = RobotProcessorPipeline[dict[str, Any], EnvTransition](
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],

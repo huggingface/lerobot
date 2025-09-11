@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -27,6 +28,7 @@ from lerobot.processor.converters import (
     robot_action_to_transition,
     transition_to_robot_action,
 )
+from lerobot.processor.core import EnvTransition, RobotAction
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -74,7 +76,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert phone action to ee pose action
-phone_to_robot_ee_pose_processor = RobotProcessorPipeline(
+phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, EnvTransition](
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         AddRobotObservationAsComplimentaryData(robot=robot),
@@ -94,7 +96,7 @@ phone_to_robot_ee_pose_processor = RobotProcessorPipeline(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints_processor = RobotProcessorPipeline(
+robot_ee_to_joints_processor = RobotProcessorPipeline[EnvTransition, RobotAction](
     steps=[
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
@@ -111,7 +113,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline(
 )
 
 # Build pipeline to convert joint observation to ee pose observation
-robot_joints_to_ee_pose = RobotProcessorPipeline(
+robot_joints_to_ee_pose = RobotProcessorPipeline[dict[str, Any], EnvTransition](
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],

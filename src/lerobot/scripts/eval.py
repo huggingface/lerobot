@@ -72,7 +72,7 @@ from lerobot.envs.factory import make_env
 from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor.core import TransitionKey
+from lerobot.processor.core import PolicyAction
 from lerobot.processor.pipeline import PolicyProcessorPipeline
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
@@ -86,8 +86,8 @@ from lerobot.utils.utils import (
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
-    preprocessor: PolicyProcessorPipeline[dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[dict[str, Any]],
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
@@ -159,15 +159,15 @@ def rollout(
         observation = add_envs_task(env, observation)
         observation = preprocessor(observation)
         with torch.inference_mode():
-            action = policy.select_action(observation)
-        action: torch.Tensor = postprocessor({TransitionKey.ACTION: action})[TransitionKey.ACTION]
+            action: PolicyAction = policy.select_action(observation)
+        action: PolicyAction = postprocessor(action)
 
         # Convert to CPU / numpy.
-        action: np.ndarray = action.to("cpu").numpy()
-        assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
+        action_numpy: np.ndarray = action.to("cpu").numpy()
+        assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
         # Apply the next action.
-        observation, reward, terminated, truncated, info = env.step(action)
+        observation, reward, terminated, truncated, info = env.step(action_numpy)
         if render_callback is not None:
             render_callback(env)
 
@@ -181,7 +181,7 @@ def rollout(
         # Keep track of which environments are done so far.
         done = terminated | truncated | done
 
-        all_actions.append(torch.from_numpy(action))
+        all_actions.append(torch.from_numpy(action_numpy))
         all_rewards.append(torch.from_numpy(reward))
         all_dones.append(torch.from_numpy(done))
         all_successes.append(torch.tensor(successes))
@@ -220,8 +220,8 @@ def rollout(
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
-    preprocessor: PolicyProcessorPipeline[dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[dict[str, Any]],
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,

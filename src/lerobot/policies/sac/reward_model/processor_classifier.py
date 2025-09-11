@@ -13,6 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from typing import Any
+
 import torch
 
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
@@ -21,16 +24,17 @@ from lerobot.processor import (
     IdentityProcessorStep,
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
-    ProcessorKwargs,
 )
+from lerobot.processor.core import PolicyAction
 
 
 def make_classifier_processor(
     config: RewardClassifierConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
-    preprocessor_kwargs: ProcessorKwargs | None = None,
-    postprocessor_kwargs: ProcessorKwargs | None = None,
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
     """
     Constructs pre-processor and post-processor pipelines for the reward classifier.
 
@@ -51,10 +55,6 @@ def make_classifier_processor(
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-    if preprocessor_kwargs is None:
-        preprocessor_kwargs = {}
-    if postprocessor_kwargs is None:
-        postprocessor_kwargs = {}
 
     input_steps = [
         NormalizerProcessorStep(
@@ -71,11 +71,9 @@ def make_classifier_processor(
         PolicyProcessorPipeline(
             steps=input_steps,
             name="classifier_preprocessor",
-            **preprocessor_kwargs,
         ),
         PolicyProcessorPipeline(
             steps=output_steps,
             name="classifier_postprocessor",
-            **postprocessor_kwargs,
         ),
     )

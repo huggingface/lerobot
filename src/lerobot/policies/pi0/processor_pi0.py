@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
 
 import torch
 
@@ -26,13 +27,14 @@ from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
-    ProcessorKwargs,
     ProcessorStep,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
 )
+from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+from lerobot.processor.core import PolicyAction
 
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")
@@ -95,9 +97,10 @@ class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
 def make_pi0_pre_post_processors(
     config: PI0Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
-    preprocessor_kwargs: ProcessorKwargs | None = None,
-    postprocessor_kwargs: ProcessorKwargs | None = None,
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
     """
     Constructs pre-processor and post-processor pipelines for the PI0 policy.
 
@@ -122,10 +125,6 @@ def make_pi0_pre_post_processors(
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-    if preprocessor_kwargs is None:
-        preprocessor_kwargs = {}
-    if postprocessor_kwargs is None:
-        postprocessor_kwargs = {}
 
     # Add remaining processors
     input_steps: list[ProcessorStep] = [
@@ -154,14 +153,14 @@ def make_pi0_pre_post_processors(
     ]
 
     return (
-        PolicyProcessorPipeline(
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-            **preprocessor_kwargs,
         ),
-        PolicyProcessorPipeline(
+        PolicyProcessorPipeline[PolicyAction, PolicyAction](
             steps=output_steps,
             name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            **postprocessor_kwargs,
+            to_transition=policy_action_to_transition,
+            to_output=transition_to_policy_action,
         ),
     )

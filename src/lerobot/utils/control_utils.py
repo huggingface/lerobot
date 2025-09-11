@@ -32,7 +32,8 @@ from termcolor import colored
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_FEATURES
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import PolicyProcessorPipeline, TransitionKey
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor.core import PolicyAction
 from lerobot.robots import Robot
 
 
@@ -126,8 +127,8 @@ def predict_action(
     observation: dict[str, np.ndarray],
     policy: PreTrainedPolicy,
     device: torch.device,
-    preprocessor: PolicyProcessorPipeline[dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[dict[str, Any]],
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     use_amp: bool,
     task: str | None = None,
     robot_type: str | None = None,
@@ -178,7 +179,7 @@ def predict_action(
         # based on the current observation
         action = policy.select_action(observation)
 
-        action: torch.Tensor = postprocessor({TransitionKey.ACTION: action})[TransitionKey.ACTION]
+        action = postprocessor(action)
 
         # Remove batch dimension
         action = action.squeeze(0)

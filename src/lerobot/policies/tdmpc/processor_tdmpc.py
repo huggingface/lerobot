@@ -14,6 +14,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from typing import Any
+
 import torch
 
 from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
@@ -23,18 +25,20 @@ from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
-    ProcessorKwargs,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
 )
+from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+from lerobot.processor.core import PolicyAction
 
 
 def make_tdmpc_pre_post_processors(
     config: TDMPCConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
-    preprocessor_kwargs: ProcessorKwargs | None = None,
-    postprocessor_kwargs: ProcessorKwargs | None = None,
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
     """
     Constructs pre-processor and post-processor pipelines for the TDMPC policy.
 
@@ -51,16 +55,10 @@ def make_tdmpc_pre_post_processors(
     Args:
         config: The configuration object for the TDMPC policy.
         dataset_stats: A dictionary of statistics for normalization.
-        preprocessor_kwargs: Additional arguments for the pre-processor pipeline.
-        postprocessor_kwargs: Additional arguments for the post-processor pipeline.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-    if preprocessor_kwargs is None:
-        preprocessor_kwargs = {}
-    if postprocessor_kwargs is None:
-        postprocessor_kwargs = {}
 
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
@@ -79,14 +77,14 @@ def make_tdmpc_pre_post_processors(
         ),
     ]
     return (
-        PolicyProcessorPipeline(
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-            **preprocessor_kwargs,
         ),
-        PolicyProcessorPipeline(
+        PolicyProcessorPipeline[PolicyAction, PolicyAction](
             steps=output_steps,
             name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            **postprocessor_kwargs,
+            to_transition=policy_action_to_transition,
+            to_output=transition_to_policy_action,
         ),
     )

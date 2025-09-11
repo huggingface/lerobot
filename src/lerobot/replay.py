@@ -44,12 +44,12 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
-from typing import Any
 
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor import IdentityProcessorStep, RobotProcessorPipeline
 from lerobot.processor.converters import robot_action_to_transition, transition_to_robot_action
+from lerobot.processor.core import RobotAction
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -87,7 +87,7 @@ class ReplayConfig:
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Optional processor for actions before sending to robot
-    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] | None = None
+    robot_action_processor: RobotProcessorPipeline[RobotAction, RobotAction] | None = None
 
 
 @parser.wrap()
@@ -96,10 +96,10 @@ def replay(cfg: ReplayConfig):
     logging.info(pformat(asdict(cfg)))
 
     # Initialize robot action processor with default if not provided
-    robot_action_processor = cfg.robot_action_processor or RobotProcessorPipeline(
+    robot_action_processor = cfg.robot_action_processor or RobotProcessorPipeline[RobotAction, RobotAction](
         steps=[IdentityProcessorStep()],
         to_transition=robot_action_to_transition,
-        to_output=transition_to_robot_action,  # type: ignore[arg-type]
+        to_output=transition_to_robot_action,
     )
 
     # Reset processor
