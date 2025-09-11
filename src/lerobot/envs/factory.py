@@ -56,36 +56,41 @@ def make_env(
             names to indexed vectorized environments (when multitask eval is used).
 
     """
-        if n_envs < 1:
-            raise ValueError("`n_envs` must be at least 1")
+    if n_envs < 1:
+        raise ValueError("`n_envs` must be at least 1")
 
-        env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+    env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+
+
+    if "libero" in cfg.type:
+        from lerobot.envs.libero import create_libero_envs
+        return create_libero_envs(
+            task=cfg.task,
+            n_envs=n_envs,
+            camera_name=cfg.camera_name,
+            init_states=cfg.init_states,
+            gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+            multitask_eval=cfg.multitask_eval,
+        )
 
     
-        if "libero" in cfg.type:
-            from lerobot.envs.libero import create_libero_envs
-            return create_libero_envs(
-                task=cfg.task,
-                n_envs=n_envs,
-                camera_name=cfg.camera_name,
-                init_states=cfg.init_states,
-                gym_kwargs=cfg.gym_kwargs,
-                env_cls=env_cls,
-                multitask_eval=cfg.multitask_eval,
-            )
+    package_name = f"gym_{cfg.type}"
+    try:
+        importlib.import_module(package_name)
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            f"{package_name} is not installed. Install with: pip install \"lerobot[{cfg.type}]\""
+        ) from e
 
-        
-        package_name = f"gym_{cfg.type}"
-        try:
-            importlib.import_module(package_name)
-        except ModuleNotFoundError as e:
-            raise ModuleNotFoundError(
-                f"{package_name} is not installed. Install with: pip install \"lerobot[{cfg.type}]\""
-            ) from e
+    gym_handle = f"{package_name}/{cfg.task}"
+    
+    def _make_one():
+        return gym.make(gym_handle, disable_env_checker=True, **(cfg.gym_kwargs or {}))
 
-        gym_handle = f"{package_name}/{cfg.task}"
-        
-        def _make_one():
-            return gym.make(gym_handle, disable_env_checker=True, **(cfg.gym_kwargs or {}))
+    vec = env_cls([_make_one for _ in range(n_envs)])
 
-        return env_cls([_make_one for _ in range(n_envs)])
+    # normalize to {suite: {task_id: vec_env}} for consistency
+    suite_name = cfg.type  # e.g., "pusht", "aloha"
+    return {suite_name: {0: vec}}
+

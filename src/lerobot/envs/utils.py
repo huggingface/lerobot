@@ -182,3 +182,47 @@ def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dic
         num_envs = observation[list(observation.keys())[0]].shape[0]
         observation["task"] = ["" for _ in range(num_envs)]
     return observation
+
+def _close_single_env(env: Any) -> None:
+    """Try to close a single env object if it exposes .close()."""
+    try:
+        close_fn = getattr(env, "close", None)
+        if callable(close_fn):
+            close_fn()
+    except Exception as exc:
+        # Best-effort close: log but don't raise
+        LOG.debug("Exception while closing env %s: %s", env, exc)
+
+def close_envs(env_or_collection: Any) -> None:
+    """
+    Close a single env or any nested structure of envs.
+
+    Accepts:
+      - a single env with .close()
+      - a Mapping of things (e.g. dict)
+      - a Sequence of things (list/tuple) but NOT str/bytes
+      - nested combinations of the above
+
+    This is intentionally permissive and best-effort: it will swallow exceptions
+    encountered while closing individual envs and continue.
+    """
+    # Guard: single object with close()
+    if hasattr(env_or_collection, "close") and not isinstance(env_or_collection, (Mapping, Sequence)):
+        _close_single_env(env_or_collection)
+        return
+
+    # Mapping (e.g., {suite: {task_id: vec_env}})
+    if isinstance(env_or_collection, Mapping):
+        for v in env_or_collection.values():
+            close_envs(v)
+        return
+
+    # Sequence (list/tuple) but skip str/bytes
+    if isinstance(env_or_collection, Sequence) and not isinstance(env_or_collection, (str, bytes)):
+        for v in env_or_collection:
+            close_envs(v)
+        return
+
+    # Fallback: try to close if possible
+    if hasattr(env_or_collection, "close"):
+        _close_single_env(env_or_collection)

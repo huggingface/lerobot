@@ -56,14 +56,16 @@ EXPERT_WIDTH_MULTIPLIER=0.5
 # number of gpus to use
 NUM_PROCESSES=2
 NUM_VLM_LAYERS=0
-SELF_ATTN_EVERY_N_LAYERS=2
+SELF_ATTN_EVERY_N_LAYERS=0
 CHUNK_SIZE=50
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 PORT=29522
 PREFIX_LENGTH=0
 LOAD_VLM_WEIGHTS=true
+MAX_ACTION_DIM=32
+MAX_STATE_DIM=32
 # naming/output dir
-TRAIN_DIR=$RAID/logs/lerobot/lerobot_new_${REPO_ID//\//_}_${POLICY}_lr${LR}bs${BATCH_SIZE}steps${OFFLINE_STEPS}
+TRAIN_DIR=$RAID/logs/lerobot/lerobot_new_sep11_v2_${REPO_ID//\//_}_${POLICY}_lr${LR}bs${BATCH_SIZE}steps${OFFLINE_STEPS}
 echo "Training dir: $TRAIN_DIR"
 
 rm -rf "$TRAIN_DIR"
@@ -137,5 +139,7 @@ python src/lerobot/scripts/train.py \
     --policy.load_vlm_weights=$LOAD_VLM_WEIGHTS \
     --policy.expert_width_multiplier=$EXPERT_WIDTH_MULTIPLIER \
     --policy.self_attn_every_n_layers=$SELF_ATTN_EVERY_N_LAYERS \
+    --policy.max_action_dim=$MAX_ACTION_DIM \
+    --policy.max_state_dim=$MAX_STATE_DIM \
     --seed=$SEED \
     --wandb.enable=false

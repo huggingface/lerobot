@@ -45,7 +45,6 @@ Note that in both examples, the repo/folder should contain at least `config.json
 
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
-
 import concurrent
 import json
 import logging
@@ -80,6 +79,9 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
+from typing import TypedDict, Dict, List, Tuple, Iterator
+from collections import defaultdict
+import concurrent.futures as cf
 
 
 def rollout(
@@ -537,8 +539,8 @@ def eval_main(cfg: EvalPipelineConfig):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
     logging.info("Making environment.")
-    env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
-
+    envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+    breakpoint()
     logging.info("Making policy.")
     policy = make_policy(
         cfg=cfg.policy,
@@ -550,41 +552,29 @@ def eval_main(cfg: EvalPipelineConfig):
     
     policy.eval()
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
-        if cfg.env.multitask_eval:
-            info = eval_policy_multitask(
-                env,
-                policy,
-                cfg.eval.n_episodes,
-                max_episodes_rendered=10,
-                videos_dir=Path(cfg.output_dir) / "videos",
-                start_seed=cfg.seed,
-                max_parallel_tasks=cfg.env.max_parallel_tasks,
-                verbose=False,
-            )
-            print("Overall Aggregated Metrics:")
-            print(info["overall"]["aggregated"])
+        info = eval_policy_all(
+            envs,
+            policy,
+            cfg.eval.n_episodes,
+            max_episodes_rendered=10,
+            videos_dir=Path(cfg.output_dir) / "videos",
+            start_seed=cfg.seed,
+            max_parallel_tasks=cfg.env.max_parallel_tasks,
+            verbose=False,
+        )
+        print("Overall Aggregated Metrics:")
+        print(info["overall"]["aggregated"])
 
-            # Print per-suite stats
-            for task_group, task_group_info in info.items():
-                if task_group == "overall":
-                    continue  # Skip the overall stats since we already printed it
-                print(f"\nAggregated Metrics for {task_group}:")
-                print(task_group_info["aggregated"])
-            for _task_group, v in env.items():
-                for _env in v.values():
-                    _env.close()
-        else:
-            info = eval_policy(
-                env,
-                policy,
-                cfg.eval.n_episodes,
-                max_episodes_rendered=10,
-                videos_dir=Path(cfg.output_dir) / "videos",
-                start_seed=cfg.seed,
-            )
-            print(info["aggregated"])
-            env.close()
-
+        # Print per-suite stats
+        for task_group, task_group_info in info.items():
+            if task_group == "overall":
+                continue  # Skip the overall stats since we already printed it
+            print(f"\nAggregated Metrics for {task_group}:")
+            print(task_group_info["aggregated"])
+    # Close all vec envs
+    for _suite, task_map in envs.items():
+        for _vec in task_map.values():
+            _vec.close()
     # Save info
     with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
         json.dump(info, f, indent=2)
@@ -592,9 +582,19 @@ def eval_main(cfg: EvalPipelineConfig):
     logging.info("End of eval")
 
 
-def eval_policy_multitask(
-    envs: dict[str, dict[str, gym.vector.VectorEnv]],
-    policy,
+# ---- typed payload returned by one task eval ----
+class TaskMetrics(TypedDict):
+    sum_rewards: List[float]
+    max_rewards: List[float]
+    successes: List[bool]
+    video_paths: List[str]
+
+ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths")
+
+
+def eval_policy_all(
+    envs: dict[str, dict[int, gym.vector.VectorEnv]],
+    policy: PreTrainedPolicy,
     n_episodes: int,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
@@ -603,127 +603,134 @@ def eval_policy_multitask(
     max_parallel_tasks: int = 5,
     verbose: bool = True,
 ) -> dict:
+    """
+    Evaluate a policy over a dict-of-dicts of vectorized envs:
+    envs[suite_name][task_id] -> gym.vector.VectorEnv
+    Returns a dict with per-suite aggregates and an 'overall' block.
+    """
     global_start = time.time()
-    results = {}
 
-    overall_rewards, overall_max_rewards, overall_successes = [], [], []
-    overall_video_paths = []
-    overall_episode_data = None
+    # inner: evaluate a single (suite, task) 
+    def eval_one(
+        task_group: str,
+        task_id: int,
+        env: gym.vector.VectorEnv,
+        *,
+        policy: PreTrainedPolicy,
+        n_episodes: int,
+        max_episodes_rendered: int,
+        videos_dir: Path | None,
+        return_episode_data: bool,
+        start_seed: int | None,
+    ) -> TaskMetrics:
+        """Evaluates one task_id of one suite using the provided vec env."""
+        if verbose:
+            print(f"Evaluating: task_group={task_group}, task_id={task_id} ...")
 
-    def eval_task(task_group, task_id, env):
-        """Evaluates a single task in parallel."""
-        print(f"Evaluating: task_group: {task_group}, task_id: {task_id} ...")
+        task_videos_dir = None
         if videos_dir is not None:
             task_videos_dir = videos_dir / f"{task_group}_{task_id}"
             task_videos_dir.mkdir(parents=True, exist_ok=True)
+
         task_result = eval_policy(
-            env,
-            policy,
-            n_episodes,
-            max_episodes_rendered,
-            task_videos_dir,
-            return_episode_data,
-            start_seed,
+            env=env,
+            policy=policy,
+            n_episodes=n_episodes,
+            max_episodes_rendered=max_episodes_rendered,
+            videos_dir=task_videos_dir,
+            return_episode_data=return_episode_data,
+            start_seed=start_seed,
         )
 
         per_episode = task_result["per_episode"]
-        return {
-            "task_group": task_group,
-            "task_id": task_id,
-            "sum_rewards": [ep["sum_reward"] for ep in per_episode],
-            "max_rewards": [ep["max_reward"] for ep in per_episode],
-            "successes": [ep["success"] for ep in per_episode],
-            "video_paths": task_result.get("video_paths", []),
-        }
+        return TaskMetrics(
+            sum_rewards=[ep["sum_reward"] for ep in per_episode],
+            max_rewards=[ep["max_reward"] for ep in per_episode],
+            successes=[ep["success"] for ep in per_episode],
+            video_paths=task_result.get("video_paths", []),
+        )
 
-    task_group_results = {}
-    if max_parallel_tasks == 1:
-        # sequential mode (safe for colab / EGL)
-        for task_group, tasks in envs.items():
-            for task_id, env in tasks.items():
-                task_result = eval_task(task_group, task_id, env)
-                if task_group not in task_group_results:
-                    task_group_results[task_group] = {
-                        "sum_rewards": [],
-                        "max_rewards": [],
-                        "successes": [],
-                        "video_paths": [],
-                    }
-                task_group_results[task_group]["sum_rewards"].extend(task_result["sum_rewards"])
-                task_group_results[task_group]["max_rewards"].extend(task_result["max_rewards"])
-                task_group_results[task_group]["successes"].extend(task_result["successes"])
-                task_group_results[task_group]["video_paths"].extend(task_result["video_paths"])
-    else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
-            future_to_task = {
-                executor.submit(eval_task, task_group, task_id, env): (task_group, task_id)
-                for task_group, tasks in envs.items()
-                for task_id, env in tasks.items()
-            }
+    # result producer: sequential or threaded, same consumer 
+    def iter_task_results() -> Iterator[Tuple[str, int, TaskMetrics]]:
+        if max_parallel_tasks == 1:
+            for task_group, tasks in envs.items():
+                for task_id, vec in tasks.items():
+                    yield task_group, task_id, eval_one(
+                        task_group, task_id, vec,
+                        policy=policy,
+                        n_episodes=n_episodes,
+                        max_episodes_rendered=max_episodes_rendered,
+                        videos_dir=videos_dir,
+                        return_episode_data=return_episode_data,
+                        start_seed=start_seed,
+                    )
+        else:
+            with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
+                fut2key: Dict[cf.Future, Tuple[str, int]] = {}
+                for task_group, tasks in envs.items():
+                    for task_id, vec in tasks.items():
+                        fut = executor.submit(
+                            eval_one, task_group, task_id, vec,
+                            policy=policy,
+                            n_episodes=n_episodes,
+                            max_episodes_rendered=max_episodes_rendered,
+                            videos_dir=videos_dir,
+                            return_episode_data=return_episode_data,
+                            start_seed=start_seed,
+                        )
+                        fut2key[fut] = (task_group, task_id)
+                for fut in cf.as_completed(fut2key):
+                    task_group, task_id = fut2key[fut]
+                    yield task_group, task_id, fut.result()
 
-            task_group_results = {}
+    # single accumulator path on the main thread 
+    group_acc: Dict[str, Dict[str, List]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
+    overall: Dict[str, List] = {k: [] for k in ACC_KEYS}
 
-            for future in concurrent.futures.as_completed(future_to_task):
-                task_result = future.result()
-                task_group = task_result["task_group"]
+    for task_group, task_id, metrics in iter_task_results():
+        acc = group_acc[task_group]
+        for k in ACC_KEYS:
+            acc[k].extend(metrics[k])
+            overall[k].extend(metrics[k])
 
-                if task_group not in task_group_results:
-                    task_group_results[task_group] = {
-                        "sum_rewards": [],
-                        "max_rewards": [],
-                        "successes": [],
-                        "video_paths": [],
-                    }
-
-                task_group_results[task_group]["sum_rewards"].extend(task_result["sum_rewards"])
-                task_group_results[task_group]["max_rewards"].extend(task_result["max_rewards"])
-                task_group_results[task_group]["successes"].extend(task_result["successes"])
-                task_group_results[task_group]["video_paths"].extend(task_result["video_paths"])
-
-    # Process results per task group
-    for task_group, data in task_group_results.items():
+    # build outputs
+    results: Dict[str, dict] = {}
+    for task_group, data in group_acc.items():
         suite_rewards = data["sum_rewards"]
-        suite_max_rewards = data["max_rewards"]
-        suite_successes = data["successes"]
-        suite_video_paths = data["video_paths"]
+        suite_max = data["max_rewards"]
+        suite_succ = data["successes"]
+        suite_vids = data["video_paths"]
 
         suite_eval_s = time.time() - global_start
         suite_eval_ep_s = suite_eval_s / max(1, len(suite_rewards))
 
         results[task_group] = {
             "aggregated": {
-                "avg_sum_reward": float(np.nanmean(suite_rewards)),
-                "avg_max_reward": float(np.nanmean(suite_max_rewards)),
-                "pc_success": float(np.nanmean(suite_successes) * 100),
+                "avg_sum_reward": float(np.nanmean(suite_rewards)) if suite_rewards else float("nan"),
+                "avg_max_reward": float(np.nanmean(suite_max)) if suite_max else float("nan"),
+                "pc_success": float(np.nanmean(suite_succ) * 100) if suite_succ else float("nan"),
                 "eval_s": suite_eval_s,
                 "eval_ep_s": suite_eval_ep_s,
             },
-            "video_paths": suite_video_paths,
-            "episodes": None,  # Modify if episode data is needed
+            "video_paths": suite_vids,
+            "episodes": None,
         }
 
-        overall_rewards.extend(suite_rewards)
-        overall_max_rewards.extend(suite_max_rewards)
-        overall_successes.extend(suite_successes)
-        overall_video_paths.extend(suite_video_paths)
-
-    # Global metrics
     global_eval_s = time.time() - global_start
-    global_eval_ep_s = global_eval_s / max(1, len(overall_rewards))
-
+    global_eval_ep_s = global_eval_s / max(1, len(overall["sum_rewards"]))
     results["overall"] = {
         "aggregated": {
-            "avg_sum_reward": float(np.nanmean(overall_rewards)),
-            "avg_max_reward": float(np.nanmean(overall_max_rewards)),
-            "pc_success": float(np.nanmean(overall_successes) * 100),
+            "avg_sum_reward": float(np.nanmean(overall["sum_rewards"])) if overall["sum_rewards"] else float("nan"),
+            "avg_max_reward": float(np.nanmean(overall["max_rewards"])) if overall["max_rewards"] else float("nan"),
+            "pc_success": float(np.nanmean(overall["successes"]) * 100) if overall["successes"] else float("nan"),
             "eval_s": global_eval_s,
             "eval_ep_s": global_eval_ep_s,
         },
-        "video_paths": overall_video_paths,
-        "episodes": overall_episode_data,
+        "video_paths": overall["video_paths"],
+        "episodes": None,
     }
-
     return results
+
 
 
 if __name__ == "__main__":

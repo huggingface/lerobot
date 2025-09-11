@@ -177,6 +177,5 @@ def make_policy(
         policy = policy_cls(**kwargs)
     policy.to(cfg.device)
     assert isinstance(policy, nn.Module)
-    breakpoint()
     # policy = torch.compile(policy, mode="reduce-overhead")
     return policy
