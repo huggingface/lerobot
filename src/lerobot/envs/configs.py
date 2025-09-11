@@ -320,8 +320,6 @@ class LiberoEnv(EnvConfig):
     @property
     def gym_kwargs(self) -> dict:
         return {
-            # "task": self.task,
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
-            # "max_episode_steps": self.episode_length,
         }

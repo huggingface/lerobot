@@ -186,7 +186,5 @@ def make_policy(
 
     policy.to(cfg.device)
     assert isinstance(policy, nn.Module)
-
     # policy = torch.compile(policy, mode="reduce-overhead")
-
     return policy

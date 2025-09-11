@@ -57,15 +57,14 @@ def make_env(
 
     """
     if n_envs < 1:
-        raise ValueError("`n_envs must be at least 1")
+        raise ValueError("`n_envs` must be at least 1")
 
-    # batched version of the env that returns an observation of shape (b, c)
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
 
     if "libero" in cfg.type:
         from lerobot.envs.libero import create_libero_envs
 
-        env = create_libero_envs(
+        return create_libero_envs(
             task=cfg.task,
             n_envs=n_envs,
             camera_name=cfg.camera_name,
@@ -74,19 +73,22 @@ def make_env(
             env_cls=env_cls,
             multitask_eval=cfg.multitask_eval,
         )
-    else:
-        package_name = f"gym_{cfg.type}"
-        try:
-            importlib.import_module(package_name)
-        except ModuleNotFoundError as e:
-            print(
-                f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`"
-            )
-            raise e
 
-        gym_handle = f"{package_name}/{cfg.task}"
-        env = env_cls(
-            [lambda: gym.make(gym_handle, disable_env_checker=True, **cfg.gym_kwargs) for _ in range(n_envs)]
-        )
+    package_name = f"gym_{cfg.type}"
+    try:
+        importlib.import_module(package_name)
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            f'{package_name} is not installed. Install with: pip install "lerobot[{cfg.type}]"'
+        ) from e
 
-    return env
+    gym_handle = f"{package_name}/{cfg.task}"
+
+    def _make_one():
+        return gym.make(gym_handle, disable_env_checker=True, **(cfg.gym_kwargs or {}))
+
+    vec = env_cls([_make_one for _ in range(n_envs)])
+
+    # normalize to {suite: {task_id: vec_env}} for consistency
+    suite_name = cfg.type  # e.g., "pusht", "aloha"
+    return {suite_name: {0: vec}}

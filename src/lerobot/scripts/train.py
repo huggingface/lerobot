@@ -30,11 +30,12 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env
+from lerobot.envs.utils import close_envs
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.scripts.eval import eval_policy, eval_policy_multitask
+from lerobot.scripts.eval import eval_policy_all
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -126,7 +127,6 @@ def train(cfg: TrainPipelineConfig):
 
     logging.info("Creating dataset")
     dataset = make_dataset(cfg)
-
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
@@ -140,7 +140,6 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
-
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
@@ -203,7 +202,6 @@ def train(cfg: TrainPipelineConfig):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         train_tracker.dataloading_s = time.perf_counter() - start_time
-
         for key in batch:
             if isinstance(batch[key], torch.Tensor):
                 batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")
@@ -251,34 +249,27 @@ def train(cfg: TrainPipelineConfig):
                 torch.no_grad(),
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
             ):
-                if cfg.env.multitask_eval:
-                    eval_info = eval_policy_multitask(
-                        eval_env,
-                        policy,
-                        cfg.eval.n_episodes,
-                        videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
-                        max_episodes_rendered=4,
-                        start_seed=cfg.seed,
-                        max_parallel_tasks=cfg.env.max_parallel_tasks,
-                    )
-                    aggregated = eval_info["overall"]["aggregated"]
-                    # Print per-suite stats, log?
-                    for task_group, task_group_info in eval_info.items():
-                        if task_group == "overall":
-                            continue  # Skip the overall stats since we already printed it
-                        print(f"\nAggregated Metrics for {task_group}:")
-                        print(task_group_info["aggregated"])
-                else:
-                    eval_info = eval_policy(
-                        eval_env,
-                        policy,
-                        cfg.eval.n_episodes,
-                        videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
-                        max_episodes_rendered=4,
-                        start_seed=cfg.seed,
-                    )
-                    aggregated = eval_info["aggregated"]
+                eval_info = eval_policy_all(
+                    eval_env,  # dict[suite][task_id] -> vec_env
+                    policy,
+                    cfg.eval.n_episodes,
+                    videos_dir=videos_dir,
+                    max_episodes_rendered=4,
+                    start_seed=cfg.seed,
+                    max_parallel_tasks=cfg.env.max_parallel_tasks,
+                    verbose=False,
+                )
 
+            # overall metrics (suite-agnostic)
+            aggregated = eval_info["overall"]["aggregated"]
+
+            # optional: per-suite logging
+            for suite, suite_info in eval_info.items():
+                if suite == "overall":
+                    continue
+                logging.info("Suite %s aggregated: %s", suite, suite_info["aggregated"])
+
+            # meters/tracker
             eval_metrics = {
                 "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
                 "pc_success": AverageMeter("success", ":.1f"),
@@ -287,22 +278,16 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker = MetricsTracker(
                 cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
             )
-            eval_tracker.eval_s = aggregated.pop("eval_s")
-            eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
-            eval_tracker.pc_success = aggregated.pop("pc_success")
-            logging.info(eval_tracker)
+            eval_tracker.eval_s = aggregated.get("eval_s", 0.0)
+            eval_tracker.avg_sum_reward = aggregated.get("avg_sum_reward", float("nan"))
+            eval_tracker.pc_success = aggregated.get("pc_success", float("nan"))
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
 
     if eval_env:
-        if cfg.env.multitask_eval:
-            for _task_group, envs_dict in eval_env.items():
-                for _idx, env in envs_dict.items():
-                    env.close()
-        else:
-            eval_env.close()
+        close_envs(eval_env)
     logging.info("End of training")
 
     if cfg.policy.push_to_hub:
