@@ -34,7 +34,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.eval import eval_policy, eval_policy_multitask
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -186,7 +186,6 @@ def train(cfg: TrainPipelineConfig):
     dl_iter = cycle(dataloader)
 
     policy.train()
-
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
@@ -252,14 +251,33 @@ def train(cfg: TrainPipelineConfig):
                 torch.no_grad(),
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
             ):
-                eval_info = eval_policy(
-                    eval_env,
-                    policy,
-                    cfg.eval.n_episodes,
-                    videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
-                    max_episodes_rendered=4,
-                    start_seed=cfg.seed,
-                )
+                if cfg.env.multitask_eval:
+                    eval_info = eval_policy_multitask(
+                        eval_env,
+                        policy,
+                        cfg.eval.n_episodes,
+                        videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
+                        max_episodes_rendered=4,
+                        start_seed=cfg.seed,
+                        max_parallel_tasks=cfg.env.max_parallel_tasks,
+                    )
+                    aggregated = eval_info["overall"]["aggregated"]
+                    # Print per-suite stats, log?
+                    for task_group, task_group_info in eval_info.items():
+                        if task_group == "overall":
+                            continue  # Skip the overall stats since we already printed it
+                        print(f"\nAggregated Metrics for {task_group}:")
+                        print(task_group_info["aggregated"])
+                else:
+                    eval_info = eval_policy(
+                        eval_env,
+                        policy,
+                        cfg.eval.n_episodes,
+                        videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
+                        max_episodes_rendered=4,
+                        start_seed=cfg.seed,
+                    )
+                    aggregated = eval_info["aggregated"]
 
             eval_metrics = {
                 "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
@@ -269,9 +287,9 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker = MetricsTracker(
                 cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
             )
-            eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
-            eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
-            eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
+            eval_tracker.eval_s = aggregated.pop("eval_s")
+            eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
+            eval_tracker.pc_success = aggregated.pop("pc_success")
             logging.info(eval_tracker)
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
@@ -279,7 +297,12 @@ def train(cfg: TrainPipelineConfig):
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
 
     if eval_env:
-        eval_env.close()
+        if cfg.env.multitask_eval:
+            for _task_group, envs_dict in eval_env.items():
+                for _idx, env in envs_dict.items():
+                    env.close()
+        else:
+            eval_env.close()
     logging.info("End of training")
 
     if cfg.policy.push_to_hub:
