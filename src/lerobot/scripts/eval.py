@@ -52,14 +52,13 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
-from typing import Dict, List, Tuple, TypedDict
-from collections.abc import Iterator
+from typing import TypedDict
 
 import einops
 import gymnasium as gym
