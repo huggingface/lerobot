@@ -157,7 +157,9 @@ class DiffusionPolicy(PreTrainedPolicy):
 
         if len(self._queues[ACTION]) == 0:
             # Create prepared batch for action generation
-            prepared_batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+            prepared_batch = {
+                k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues
+            }
             actions = self._get_action_chunk(prepared_batch)
             self._queues[ACTION].extend(actions.transpose(0, 1))
 
