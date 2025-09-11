@@ -381,6 +381,7 @@ def merge_transitions(transitions: Sequence[EnvTransition] | EnvTransition) -> E
     return result
 
 
+# TODO(Steven): Currently unused consider removing after testing
 def transition_to_dataset_frame(
     transitions_or_transition: EnvTransition | Sequence[EnvTransition], features: dict[str, dict]
 ) -> dict[str, Any]:
