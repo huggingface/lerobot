@@ -91,6 +91,7 @@ from lerobot.processor.converters import (
     transition_to_dataset_frame,
     transition_to_robot_action,
 )
+from lerobot.processor.core import PolicyAction, RobotAction
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -243,34 +244,37 @@ def record_loop(
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
-    preprocessor: PolicyProcessorPipeline | None = None,
-    postprocessor: PolicyProcessorPipeline | None = None,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
     control_time_s: int | None = None,
-    teleop_action_processor: RobotProcessorPipeline[EnvTransition] | None = None,  # runs after teleop
-    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] | None = None,  # runs before robot
-    robot_observation_processor: RobotProcessorPipeline[EnvTransition] | None = None,  # runs after robot
+    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition]
+    | None = None,  # runs after teleop
+    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction]
+    | None = None,  # runs before robot
+    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition]
+    | None = None,  # runs after robot
     single_task: str | None = None,
     display_data: bool = False,
 ):
-    teleop_action_processor: RobotProcessorPipeline[EnvTransition] = (
+    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition] = (
         teleop_action_processor
-        or RobotProcessorPipeline(
+        or RobotProcessorPipeline[RobotAction, EnvTransition](
             steps=[IdentityProcessorStep()],
             to_transition=robot_action_to_transition,
             to_output=identity_transition,
         )
     )
-    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] = (
+    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction] = (
         robot_action_processor
-        or RobotProcessorPipeline(
+        or RobotProcessorPipeline[EnvTransition, RobotAction](
             steps=[IdentityProcessorStep()],
             to_transition=identity_transition,
             to_output=transition_to_robot_action,
         )
     )
-    robot_observation_processor: RobotProcessorPipeline[EnvTransition] = (
+    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition] = (
         robot_observation_processor
-        or RobotProcessorPipeline(
+        or RobotProcessorPipeline[dict[str, Any], EnvTransition](
             steps=[IdentityProcessorStep()],
             to_transition=observation_to_transition,
             to_output=identity_transition,

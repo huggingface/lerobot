@@ -18,6 +18,7 @@ import time
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import robot_action_to_transition, transition_to_robot_action
+from lerobot.processor.core import RobotAction
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
@@ -49,7 +50,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert phone action to ee pose action to joint action
-phone_to_robot_joints_processor = RobotProcessorPipeline(
+phone_to_robot_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         AddRobotObservationAsComplimentaryData(robot=robot),

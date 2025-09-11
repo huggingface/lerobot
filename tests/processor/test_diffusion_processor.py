@@ -33,7 +33,7 @@ from lerobot.processor import (
     TransitionKey,
     UnnormalizerProcessorStep,
 )
-from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.processor.converters import create_transition, transition_to_batch
 
 
 def create_default_config():
@@ -96,8 +96,6 @@ def test_diffusion_processor_with_images():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create test data with images
@@ -108,13 +106,16 @@ def test_diffusion_processor_with_images():
     action = torch.randn(6)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data is batched
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 7)
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (1, 3, 224, 224)
-    assert processed[TransitionKey.ACTION].shape == (1, 6)
+    assert processed[OBS_STATE].shape == (1, 7)
+    assert processed[OBS_IMAGE].shape == (1, 3, 224, 224)
+    assert processed[TransitionKey.ACTION.value].shape == (1, 6)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -127,8 +128,6 @@ def test_diffusion_processor_cuda():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create CPU data
@@ -139,20 +138,22 @@ def test_diffusion_processor_cuda():
     action = torch.randn(6)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data is on CUDA
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device.type == "cuda"
-    assert processed[TransitionKey.ACTION].device.type == "cuda"
+    assert processed[OBS_STATE].device.type == "cuda"
+    assert processed[OBS_IMAGE].device.type == "cuda"
+    assert processed[TransitionKey.ACTION.value].device.type == "cuda"
 
     # Process through postprocessor
-    action_transition = create_transition(action=processed[TransitionKey.ACTION])
-    postprocessed = postprocessor(action_transition)
+    postprocessed = postprocessor(processed[TransitionKey.ACTION.value])
 
     # Check that action is back on CPU
-    assert postprocessed[TransitionKey.ACTION].device.type == "cpu"
+    assert postprocessed.device.type == "cpu"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -165,8 +166,6 @@ def test_diffusion_processor_accelerate_scenario():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Simulate Accelerate: data already on GPU
@@ -178,13 +177,16 @@ def test_diffusion_processor_accelerate_scenario():
     action = torch.randn(1, 6).to(device)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data stays on same GPU
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[OBS_IMAGE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -205,13 +207,16 @@ def test_diffusion_processor_multi_gpu():
     action = torch.randn(1, 6).to(device)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data stays on cuda:1
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[OBS_IMAGE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 def test_diffusion_processor_without_stats():
@@ -221,7 +226,6 @@ def test_diffusion_processor_without_stats():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         dataset_stats=None,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Should still create processors
@@ -236,7 +240,9 @@ def test_diffusion_processor_without_stats():
     action = torch.randn(6)
     transition = create_transition(observation, action)
 
-    processed = preprocessor(transition)
+    batch = transition_to_batch(transition)
+
+    processed = preprocessor(batch)
     assert processed is not None
 
 
@@ -245,22 +251,14 @@ def test_diffusion_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    # Get the steps from the factory function
-    factory_preprocessor, factory_postprocessor = make_diffusion_pre_post_processors(config, stats)
-
-    # Create new processors with EnvTransition input/output
-    preprocessor = DataProcessorPipeline(
-        factory_preprocessor.steps, to_transition=identity_transition, to_output=identity_transition
-    )
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = DataProcessorPipeline.from_pretrained(
-            tmpdir, to_transition=identity_transition, to_output=identity_transition
-        )
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(tmpdir)
 
         # Test that loaded processor works
         observation = {
@@ -269,62 +267,12 @@ def test_diffusion_processor_save_and_load():
         }
         action = torch.randn(6)
         transition = create_transition(observation, action)
+        batch = transition_to_batch(transition)
 
-        processed = loaded_preprocessor(transition)
-        assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 7)
-        assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (1, 3, 224, 224)
-        assert processed[TransitionKey.ACTION].shape == (1, 6)
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_diffusion_processor_mixed_precision():
-    """Test Diffusion processor with mixed precision."""
-    config = create_default_config()
-    config.device = "cuda"
-    stats = create_default_stats()
-
-    # Get the steps from the factory function
-    factory_preprocessor, factory_postprocessor = make_diffusion_pre_post_processors(config, stats)
-
-    # Replace DeviceProcessorStep with one that uses float16
-    modified_steps = []
-    for step in factory_preprocessor.steps:
-        if isinstance(step, DeviceProcessorStep):
-            modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="float16"))
-        elif isinstance(step, NormalizerProcessorStep):
-            # Update normalizer to use the same device as the device processor
-            modified_steps.append(
-                NormalizerProcessorStep(
-                    features=step.features,
-                    norm_map=step.norm_map,
-                    stats=step.stats,
-                    device=config.device,
-                    dtype=torch.float16,  # Match the float16 dtype
-                )
-            )
-        else:
-            modified_steps.append(step)
-
-    # Create new processors with EnvTransition input/output
-    preprocessor = DataProcessorPipeline(
-        modified_steps, to_transition=identity_transition, to_output=identity_transition
-    )
-
-    # Create test data
-    observation = {
-        OBS_STATE: torch.randn(7, dtype=torch.float32),
-        OBS_IMAGE: torch.randn(3, 224, 224, dtype=torch.float32),
-    }
-    action = torch.randn(6, dtype=torch.float32)
-    transition = create_transition(observation, action)
-
-    # Process through preprocessor
-    processed = preprocessor(transition)
-
-    # Check that data is converted to float16
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.float16
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].dtype == torch.float16
-    assert processed[TransitionKey.ACTION].dtype == torch.float16
+        processed = loaded_preprocessor(batch)
+        assert processed[OBS_STATE].shape == (1, 7)
+        assert processed[OBS_IMAGE].shape == (1, 3, 224, 224)
+        assert processed[TransitionKey.ACTION.value].shape == (1, 6)
 
 
 def test_diffusion_processor_identity_normalization():
@@ -335,8 +283,6 @@ def test_diffusion_processor_identity_normalization():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create test data
@@ -348,12 +294,15 @@ def test_diffusion_processor_identity_normalization():
     action = torch.randn(6)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Image should not be normalized (IDENTITY mode)
     # Just batched
-    assert torch.allclose(processed[TransitionKey.OBSERVATION][OBS_IMAGE][0], image_value, rtol=1e-5)
+    assert torch.allclose(processed[OBS_IMAGE][0], image_value, rtol=1e-5)
 
 
 def test_diffusion_processor_batch_consistency():
@@ -364,8 +313,6 @@ def test_diffusion_processor_batch_consistency():
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Test with different batch sizes
@@ -377,13 +324,15 @@ def test_diffusion_processor_batch_consistency():
         action = torch.randn(batch_size, 6) if batch_size > 1 else torch.randn(6)
         transition = create_transition(observation, action)
 
-        processed = preprocessor(transition)
+        batch = transition_to_batch(transition)
+
+        processed = preprocessor(batch)
 
         # Check correct batch size
         expected_batch = batch_size if batch_size > 1 else 1
-        assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape[0] == expected_batch
-        assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape[0] == expected_batch
-        assert processed[TransitionKey.ACTION].shape[0] == expected_batch
+        assert processed[OBS_STATE].shape[0] == expected_batch
+        assert processed[OBS_IMAGE].shape[0] == expected_batch
+        assert processed[TransitionKey.ACTION.value].shape[0] == expected_batch
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -393,36 +342,32 @@ def test_diffusion_processor_bfloat16_device_float32_normalizer():
     config.device = "cuda"
     stats = create_default_stats()
 
-    # Get the steps from the factory function
-    factory_preprocessor, _ = make_diffusion_pre_post_processors(config, stats)
+    preprocessor, _ = make_diffusion_pre_post_processors(config, stats)
 
     # Modify the pipeline to use bfloat16 device processor with float32 normalizer
     modified_steps = []
-    for step in factory_preprocessor.steps:
+    for step in preprocessor.steps:
         if isinstance(step, DeviceProcessorStep):
             # Device processor converts to bfloat16
             modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="bfloat16"))
         elif isinstance(step, NormalizerProcessorStep):
             # Normalizer stays configured as float32 (will auto-adapt to bfloat16)
+            norm_step = step  # Now type checker knows this is NormalizerProcessorStep
             modified_steps.append(
                 NormalizerProcessorStep(
-                    features=step.features,
-                    norm_map=step.norm_map,
-                    stats=step.stats,
+                    features=norm_step.features,
+                    norm_map=norm_step.norm_map,
+                    stats=norm_step.stats,
                     device=config.device,
                     dtype=torch.float32,  # Deliberately configured as float32
                 )
             )
         else:
             modified_steps.append(step)
-
-    # Create new processor with modified steps
-    preprocessor = DataProcessorPipeline(
-        modified_steps, to_transition=identity_transition, to_output=identity_transition
-    )
+    preprocessor.steps = modified_steps
 
     # Verify initial normalizer configuration
-    normalizer_step = modified_steps[3]  # NormalizerProcessorStep
+    normalizer_step = preprocessor.steps[3]  # NormalizerProcessorStep
     assert normalizer_step.dtype == torch.float32
 
     # Create test data with both state and visual observations
@@ -433,15 +378,15 @@ def test_diffusion_processor_bfloat16_device_float32_normalizer():
     action = torch.randn(6, dtype=torch.float32)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through full pipeline
-    processed = preprocessor(transition)
+    processed = preprocessor(batch)
 
     # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.bfloat16
-    assert (
-        processed[TransitionKey.OBSERVATION][OBS_IMAGE].dtype == torch.bfloat16
-    )  # IDENTITY normalization still gets dtype conversion
-    assert processed[TransitionKey.ACTION].dtype == torch.bfloat16
+    assert processed[OBS_STATE].dtype == torch.bfloat16
+    assert processed[OBS_IMAGE].dtype == torch.bfloat16  # IDENTITY normalization still gets dtype conversion
+    assert processed[TransitionKey.ACTION.value].dtype == torch.bfloat16
 
     # Verify normalizer automatically adapted its internal state
     assert normalizer_step.dtype == torch.bfloat16

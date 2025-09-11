@@ -69,6 +69,7 @@ from lerobot.processor.converters import (
     robot_action_to_transition,
     transition_to_robot_action,
 )
+from lerobot.processor.core import RobotAction
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -106,9 +107,15 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
     # Optional processors for data transformation
-    teleop_action_processor: RobotProcessorPipeline | None = None  # runs after teleop
-    robot_action_processor: RobotProcessorPipeline | None = None  # runs before robot
-    robot_observation_processor: RobotProcessorPipeline | None = None  # runs after robot
+    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition] | None = (
+        None  # runs after teleop
+    )
+    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction] | None = (
+        None  # runs before robot
+    )
+    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition] | None = (
+        None  # runs after robot
+    )
 
 
 def teleop_loop(
@@ -117,9 +124,9 @@ def teleop_loop(
     fps: int,
     display_data: bool = False,
     duration: float | None = None,
-    teleop_action_processor: RobotProcessorPipeline[EnvTransition] | None = None,
-    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] | None = None,
-    robot_observation_processor: RobotProcessorPipeline[EnvTransition] | None = None,
+    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition] | None = None,
+    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction] | None = None,
+    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition] | None = None,
 ):
     """
     This function continuously reads actions from a teleoperation device, processes them through optional
@@ -137,25 +144,25 @@ def teleop_loop(
         robot_observation_processor: An optional pipeline to process raw observations from the robot.
     """
     # Initialize processors with defaults if not provided
-    teleop_action_processor: RobotProcessorPipeline[EnvTransition] = (
+    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition] = (
         teleop_action_processor
-        or RobotProcessorPipeline(
+        or RobotProcessorPipeline[RobotAction, EnvTransition](
             steps=[IdentityProcessorStep()],
             to_transition=robot_action_to_transition,
             to_output=identity_transition,
         )
     )
-    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] = (
+    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction] = (
         robot_action_processor
-        or RobotProcessorPipeline(
+        or RobotProcessorPipeline[EnvTransition, RobotAction](
             steps=[IdentityProcessorStep()],
             to_transition=identity_transition,
-            to_output=transition_to_robot_action,  # type: ignore[arg-type]
+            to_output=transition_to_robot_action,
         )
     )
-    robot_observation_processor: RobotProcessorPipeline[EnvTransition] = (
+    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition] = (
         robot_observation_processor
-        or RobotProcessorPipeline(
+        or RobotProcessorPipeline[dict[str, Any], EnvTransition](
             steps=[IdentityProcessorStep()],
             to_transition=observation_to_transition,
             to_output=identity_transition,

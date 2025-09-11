@@ -39,7 +39,14 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.processor import PolicyProcessorPipeline, ProcessorKwargs
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor.converters import (
+    batch_to_transition,
+    policy_action_to_transition,
+    transition_to_batch,
+    transition_to_policy_action,
+)
+from lerobot.processor.core import PolicyAction
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -153,8 +160,6 @@ class ProcessorConfigKwargs(TypedDict, total=False):
         preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
         postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
         dataset_stats: Dataset statistics for normalization.
-        preprocessor_kwargs: Additional arguments for the `PolicyProcessorPipeline`.
-        postprocessor_kwargs: Additional arguments for the `PolicyProcessorPipeline`.
     """
 
     preprocessor_config_filename: str | None
@@ -162,15 +167,16 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
-    preprocessor_kwargs: ProcessorKwargs | None
-    postprocessor_kwargs: ProcessorKwargs | None
 
 
 def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
     **kwargs: Unpack[ProcessorConfigKwargs],
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
     """
     Create or load pre- and post-processor pipelines for a given policy.
 
@@ -194,10 +200,6 @@ def make_pre_post_processors(
             policy configuration type.
     """
     if pretrained_path:
-        # Extract preprocessor and postprocessor kwargs
-        preprocessor_kwargs = kwargs.get("preprocessor_kwargs", {})
-        postprocessor_kwargs = kwargs.get("postprocessor_kwargs", {})
-
         return (
             PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
@@ -205,8 +207,8 @@ def make_pre_post_processors(
                     "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
                 ),
                 overrides=kwargs.get("preprocessor_overrides", {}),
-                to_transition=preprocessor_kwargs.get("to_transition"),
-                to_output=preprocessor_kwargs.get("to_output"),
+                to_transition=batch_to_transition,
+                to_output=transition_to_batch,
             ),
             PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
@@ -214,8 +216,8 @@ def make_pre_post_processors(
                     "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
                 ),
                 overrides=kwargs.get("postprocessor_overrides", {}),
-                to_transition=postprocessor_kwargs.get("to_transition"),
-                to_output=postprocessor_kwargs.get("to_output"),
+                to_transition=policy_action_to_transition,
+                to_output=transition_to_policy_action,
             ),
         )
 
@@ -226,8 +228,6 @@ def make_pre_post_processors(
         processors = make_tdmpc_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
-            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, DiffusionConfig):
@@ -236,8 +236,6 @@ def make_pre_post_processors(
         processors = make_diffusion_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
-            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, ACTConfig):
@@ -246,8 +244,6 @@ def make_pre_post_processors(
         processors = make_act_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
-            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, VQBeTConfig):
@@ -256,8 +252,6 @@ def make_pre_post_processors(
         processors = make_vqbet_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
-            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, PI0Config):
@@ -266,8 +260,6 @@ def make_pre_post_processors(
         processors = make_pi0_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
-            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, PI0FASTConfig):
@@ -276,8 +268,6 @@ def make_pre_post_processors(
         processors = make_pi0fast_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
-            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, SACConfig):
@@ -286,8 +276,6 @@ def make_pre_post_processors(
         processors = make_sac_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
-            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, RewardClassifierConfig):
@@ -296,8 +284,6 @@ def make_pre_post_processors(
         processors = make_classifier_processor(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
-            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     elif isinstance(policy_cfg, SmolVLAConfig):
@@ -306,8 +292,6 @@ def make_pre_post_processors(
         processors = make_smolvla_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
-            preprocessor_kwargs=kwargs.get("preprocessor_kwargs"),
-            postprocessor_kwargs=kwargs.get("postprocessor_kwargs"),
         )
 
     else:

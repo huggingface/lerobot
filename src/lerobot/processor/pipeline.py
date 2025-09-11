@@ -34,7 +34,8 @@ from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from .converters import batch_to_transition, create_transition, transition_to_batch
 from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
 
-# Type variable for generic processor output type
+# Type variables for generic processor input and output types
+TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
 
 
@@ -180,10 +181,13 @@ class ProcessorKwargs(TypedDict, total=False):
 
     to_transition: Callable[[dict[str, Any]], EnvTransition] | None
     to_output: Callable[[EnvTransition], Any] | None
+    name: str | None
+    before_step_hooks: list[Callable[[int, EnvTransition], None]] | None
+    after_step_hooks: list[Callable[[int, EnvTransition], None]] | None
 
 
 @dataclass
-class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
+class DataProcessorPipeline(ModelHubMixin, Generic[TInput, TOutput]):
     """
     Composable, debuggable post-processing processor for robot transitions.
 
@@ -217,14 +221,14 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
         result: dict[str, Any] = processor(batch_data)  # Type checker knows this is a dict
 
         # For EnvTransition output, explicitly specify identity function
-        transition_processor: DataProcessorPipeline[EnvTransition] = DataProcessorPipeline(
+        transition_processor: DataProcessorPipeline[EnvTransition, EnvTransition] = DataProcessorPipeline(
             steps=[some_step1, some_step2],
             to_output=lambda x: x,  # Identity function
         )
         result: EnvTransition = transition_processor(batch_data)  # Type checker knows this is EnvTransition
 
         # For custom output types
-        processor: DataProcessorPipeline[str] = DataProcessorPipeline(
+        processor: DataProcessorPipeline[dict[str, Any], str] = DataProcessorPipeline(
             steps=[custom_step], to_output=lambda t: f"Processed {len(t)} keys"
         )
         result: str = processor(batch_data)  # Type checker knows this is str
@@ -248,7 +252,9 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
     steps: Sequence[ProcessorStep] = field(default_factory=list)
     name: str = "DataProcessorPipeline"
 
-    to_transition: Callable[[dict[str, Any]], EnvTransition] = field(default=batch_to_transition, repr=False)
+    to_transition: Callable[[TInput], EnvTransition] = field(
+        default_factory=lambda: cast(Callable[[TInput], EnvTransition], batch_to_transition), repr=False
+    )
     to_output: Callable[[EnvTransition], TOutput] = field(
         # Cast is necessary here: Working around Python type-checker limitation.
         # _default_transition_to_batch returns dict[str, Any], but we need it to be TOutput
@@ -263,7 +269,7 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
     before_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
     after_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
 
-    def __call__(self, data: dict[str, Any]) -> TOutput:
+    def __call__(self, data: TInput) -> TOutput:
         """Process data through all steps.
 
         The method accepts a batch dictionary (like the ones returned by ReplayBuffer or
@@ -299,7 +305,7 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
                 hook(idx, transition)
         return transition
 
-    def step_through(self, data: dict[str, Any]) -> Iterable[EnvTransition]:
+    def step_through(self, data: TInput) -> Iterable[EnvTransition]:
         """Yield the intermediate results after each processor step.
 
         This is a low-level method that does NOT apply hooks. It simply executes each step
@@ -419,10 +425,10 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
         revision: str | None = None,
         config_filename: str | None = None,
         overrides: dict[str, Any] | None = None,
-        to_transition: Callable[[dict[str, Any]], EnvTransition] | None = None,
+        to_transition: Callable[[TInput], EnvTransition] | None = None,
         to_output: Callable[[EnvTransition], TOutput] | None = None,
         **kwargs,
-    ) -> DataProcessorPipeline[TOutput]:
+    ) -> DataProcessorPipeline[TInput, TOutput]:
         """Load a serialized processor from source (local path or Hugging Face Hub identifier).
 
         Args:
@@ -443,7 +449,7 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
                 Use identity function (lambda x: x) for EnvTransition output.
 
         Returns:
-            A DataProcessorPipeline[TOutput] instance loaded from the saved configuration.
+            A DataProcessorPipeline[TInput, TOutput] instance loaded from the saved configuration.
 
         Raises:
             ImportError: If a processor step class cannot be loaded or imported.
@@ -652,7 +658,7 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
         """Return the number of steps in the processor."""
         return len(self.steps)
 
-    def __getitem__(self, idx: int | slice) -> ProcessorStep | DataProcessorPipeline[TOutput]:
+    def __getitem__(self, idx: int | slice) -> ProcessorStep | DataProcessorPipeline[TInput, TOutput]:
         """Indexing helper exposing underlying steps.
         * ``int`` – returns the idx-th ProcessorStep.
         * ``slice`` – returns a new DataProcessorPipeline with the sliced steps.
@@ -755,7 +761,9 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
         transformed_transition = self._forward(transition)
         return transformed_transition[TransitionKey.OBSERVATION]
 
-    def process_action(self, action: Any | torch.Tensor) -> Any | torch.Tensor:
+    def process_action(
+        self, action: PolicyAction | RobotAction | EnvAction
+    ) -> PolicyAction | RobotAction | EnvAction:
         transition: EnvTransition = create_transition(action=action)
         transformed_transition = self._forward(transition)
         return transformed_transition[TransitionKey.ACTION]
@@ -786,8 +794,8 @@ class DataProcessorPipeline(ModelHubMixin, Generic[TOutput]):
         return transformed_transition[TransitionKey.COMPLEMENTARY_DATA]
 
 
-RobotProcessorPipeline: TypeAlias = DataProcessorPipeline[TOutput]
-PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline[TOutput]
+RobotProcessorPipeline: TypeAlias = DataProcessorPipeline[TInput, TOutput]
+PolicyProcessorPipeline: TypeAlias = DataProcessorPipeline[TInput, TOutput]
 
 
 class ObservationProcessorStep(ProcessorStep, ABC):

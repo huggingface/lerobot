@@ -34,7 +34,7 @@ from lerobot.processor import (
     TransitionKey,
     UnnormalizerProcessorStep,
 )
-from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.processor.converters import create_transition, transition_to_batch
 
 
 class MockTokenizerProcessorStep(ProcessorStep):
@@ -91,8 +91,6 @@ def test_make_pi0_processor_basic():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Check processor names
@@ -195,8 +193,6 @@ def test_pi0_processor_cuda():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Create CPU data
@@ -206,14 +202,15 @@ def test_pi0_processor_cuda():
     }
     action = torch.randn(6)
     transition = create_transition(observation, action, complementary_data={"task": "test task"})
+    batch = transition_to_batch(transition)
 
     # Process through preprocessor
-    processed = preprocessor(transition)
+    processed = preprocessor(batch)
 
     # Check that data is on CUDA
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device.type == "cuda"
-    assert processed[TransitionKey.ACTION].device.type == "cuda"
+    assert processed[OBS_STATE].device.type == "cuda"
+    assert processed[OBS_IMAGE].device.type == "cuda"
+    assert processed[TransitionKey.ACTION.value].device.type == "cuda"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -250,8 +247,6 @@ def test_pi0_processor_accelerate_scenario():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Simulate Accelerate: data already on GPU and batched
@@ -262,14 +257,15 @@ def test_pi0_processor_accelerate_scenario():
     }
     action = torch.randn(1, 6).to(device)
     transition = create_transition(observation, action, complementary_data={"task": ["test task"]})
+    batch = transition_to_batch(transition)
 
     # Process through preprocessor
-    processed = preprocessor(transition)
+    processed = preprocessor(batch)
 
     # Check that data stays on same GPU
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[OBS_IMAGE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -306,8 +302,6 @@ def test_pi0_processor_multi_gpu():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Simulate data on different GPU
@@ -318,14 +312,15 @@ def test_pi0_processor_multi_gpu():
     }
     action = torch.randn(1, 6).to(device)
     transition = create_transition(observation, action, complementary_data={"task": ["test task"]})
+    batch = transition_to_batch(transition)
 
     # Process through preprocessor
-    processed = preprocessor(transition)
+    processed = preprocessor(batch)
 
     # Check that data stays on cuda:1
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[OBS_IMAGE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 def test_pi0_processor_without_stats():
@@ -337,8 +332,6 @@ def test_pi0_processor_without_stats():
         preprocessor, postprocessor = make_pi0_pre_post_processors(
             config,
             dataset_stats=None,
-            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Should still create processors
@@ -376,8 +369,6 @@ def test_pi0_processor_bfloat16_device_float32_normalizer():
         preprocessor, _ = make_pi0_pre_post_processors(
             config,
             stats,
-            preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-            postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
         )
 
     # Modify the pipeline to use bfloat16 device processor with float32 normalizer
@@ -388,11 +379,12 @@ def test_pi0_processor_bfloat16_device_float32_normalizer():
             modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="bfloat16"))
         elif isinstance(step, NormalizerProcessorStep):
             # Normalizer stays configured as float32 (will auto-adapt to bfloat16)
+            norm_step = step  # Now type checker knows this is NormalizerProcessorStep
             modified_steps.append(
                 NormalizerProcessorStep(
-                    features=step.features,
-                    norm_map=step.norm_map,
-                    stats=step.stats,
+                    features=norm_step.features,
+                    norm_map=norm_step.norm_map,
+                    stats=norm_step.stats,
                     device=config.device,
                     dtype=torch.float32,  # Deliberately configured as float32
                 )
@@ -414,16 +406,15 @@ def test_pi0_processor_bfloat16_device_float32_normalizer():
     transition = create_transition(
         observation, action, complementary_data={"task": "test bfloat16 adaptation"}
     )
+    batch = transition_to_batch(transition)
 
     # Process through full pipeline
-    processed = preprocessor(transition)
+    processed = preprocessor(batch)
 
     # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.bfloat16
-    assert (
-        processed[TransitionKey.OBSERVATION][OBS_IMAGE].dtype == torch.bfloat16
-    )  # IDENTITY normalization still gets dtype conversion
-    assert processed[TransitionKey.ACTION].dtype == torch.bfloat16
+    assert processed[OBS_STATE].dtype == torch.bfloat16
+    assert processed[OBS_IMAGE].dtype == torch.bfloat16  # IDENTITY normalization still gets dtype conversion
+    assert processed[TransitionKey.ACTION.value].dtype == torch.bfloat16
 
     # Verify normalizer automatically adapted its internal state
     assert normalizer_step.dtype == torch.bfloat16

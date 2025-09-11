@@ -331,6 +331,25 @@ def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
     return transition.get(TransitionKey.ACTION)
 
 
+def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
+    """
+    Convert an `EnvTransition` to a `PolicyAction`.
+    """
+    action = transition.get(TransitionKey.ACTION)
+    if not isinstance(action, PolicyAction):
+        raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
+    return action
+
+
+def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
+    """
+    Convert a `PolicyAction` to an `EnvTransition`.
+    """
+    if not isinstance(action, PolicyAction):
+        raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
+    return create_transition(action=action)
+
+
 def merge_transitions(transitions: Sequence[EnvTransition] | EnvTransition) -> EnvTransition:
     """
     Merge a sequence of transitions into a single one.

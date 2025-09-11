@@ -33,7 +33,7 @@ from lerobot.processor import (
     TransitionKey,
     UnnormalizerProcessorStep,
 )
-from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.processor.converters import create_transition, transition_to_batch
 
 
 def create_default_config():
@@ -72,8 +72,6 @@ def test_make_tdmpc_processor_basic():
     preprocessor, postprocessor = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Check processor names
@@ -101,8 +99,6 @@ def test_tdmpc_processor_normalization():
     preprocessor, postprocessor = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create test data
@@ -113,20 +109,22 @@ def test_tdmpc_processor_normalization():
     action = torch.randn(6)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data is processed and batched
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 12)
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (1, 3, 224, 224)
-    assert processed[TransitionKey.ACTION].shape == (1, 6)
+    assert processed[OBS_STATE].shape == (1, 12)
+    assert processed[OBS_IMAGE].shape == (1, 3, 224, 224)
+    assert processed[TransitionKey.ACTION.value].shape == (1, 6)
 
     # Process action through postprocessor
-    action_transition = create_transition(action=processed[TransitionKey.ACTION])
-    postprocessed = postprocessor(action_transition)
+    postprocessed = postprocessor(processed[TransitionKey.ACTION.value])
 
     # Check that action is unnormalized (but still batched)
-    assert postprocessed[TransitionKey.ACTION].shape == (1, 6)
+    assert postprocessed.shape == (1, 6)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -139,8 +137,6 @@ def test_tdmpc_processor_cuda():
     preprocessor, postprocessor = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create CPU data
@@ -151,20 +147,22 @@ def test_tdmpc_processor_cuda():
     action = torch.randn(6)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data is on CUDA
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device.type == "cuda"
-    assert processed[TransitionKey.ACTION].device.type == "cuda"
+    assert processed[OBS_STATE].device.type == "cuda"
+    assert processed[OBS_IMAGE].device.type == "cuda"
+    assert processed[TransitionKey.ACTION.value].device.type == "cuda"
 
     # Process through postprocessor
-    action_transition = create_transition(action=processed[TransitionKey.ACTION])
-    postprocessed = postprocessor(action_transition)
+    postprocessed = postprocessor(processed[TransitionKey.ACTION.value])
 
     # Check that action is back on CPU
-    assert postprocessed[TransitionKey.ACTION].device.type == "cpu"
+    assert postprocessed.device.type == "cpu"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -177,8 +175,6 @@ def test_tdmpc_processor_accelerate_scenario():
     preprocessor, postprocessor = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Simulate Accelerate: data already on GPU
@@ -190,13 +186,16 @@ def test_tdmpc_processor_accelerate_scenario():
     action = torch.randn(6).to(device)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data stays on same GPU
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[OBS_IMAGE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -209,8 +208,6 @@ def test_tdmpc_processor_multi_gpu():
     preprocessor, postprocessor = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Simulate data on different GPU
@@ -222,35 +219,23 @@ def test_tdmpc_processor_multi_gpu():
     action = torch.randn(6).to(device)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data stays on cuda:1
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[OBS_IMAGE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 def test_tdmpc_processor_without_stats():
     """Test TDMPC processor creation without dataset statistics."""
     config = create_default_config()
 
-    # Get the steps from the factory function
-    factory_preprocessor, factory_postprocessor = make_tdmpc_pre_post_processors(config, dataset_stats=None)
-
-    # Create new processors with EnvTransition input/output
-    preprocessor = DataProcessorPipeline(
-        factory_preprocessor.steps,
-        name=factory_preprocessor.name,
-        to_transition=identity_transition,
-        to_output=identity_transition,
-    )
-    postprocessor = DataProcessorPipeline(
-        factory_postprocessor.steps,
-        name=factory_postprocessor.name,
-        to_transition=identity_transition,
-        to_output=identity_transition,
-    )
+    preprocessor, postprocessor = make_tdmpc_pre_post_processors(config, dataset_stats=None)
 
     # Should still create processors
     assert preprocessor is not None
@@ -263,8 +248,9 @@ def test_tdmpc_processor_without_stats():
     }
     action = torch.randn(6)
     transition = create_transition(observation, action)
+    batch = transition_to_batch(transition)
 
-    processed = preprocessor(transition)
+    processed = preprocessor(batch)
     assert processed is not None
 
 
@@ -276,8 +262,6 @@ def test_tdmpc_processor_save_and_load():
     preprocessor, postprocessor = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -285,9 +269,7 @@ def test_tdmpc_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = DataProcessorPipeline.from_pretrained(
-            tmpdir, to_transition=identity_transition, to_output=identity_transition
-        )
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(tmpdir)
 
         # Test that loaded processor works
         observation = {
@@ -297,10 +279,11 @@ def test_tdmpc_processor_save_and_load():
         action = torch.randn(6)
         transition = create_transition(observation, action)
 
-        processed = loaded_preprocessor(transition)
-        assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 12)
-        assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (1, 3, 224, 224)
-        assert processed[TransitionKey.ACTION].shape == (1, 6)
+        batch = transition_to_batch(transition)
+        processed = loaded_preprocessor(batch)
+        assert processed[OBS_STATE].shape == (1, 12)
+        assert processed[OBS_IMAGE].shape == (1, 3, 224, 224)
+        assert processed[TransitionKey.ACTION.value].shape == (1, 6)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -314,8 +297,6 @@ def test_tdmpc_processor_mixed_precision():
     preprocessor, postprocessor = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Replace DeviceProcessorStep with one that uses float16
@@ -346,13 +327,16 @@ def test_tdmpc_processor_mixed_precision():
     action = torch.randn(6, dtype=torch.float32)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data is converted to float16
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.float16
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].dtype == torch.float16
-    assert processed[TransitionKey.ACTION].dtype == torch.float16
+    assert processed[OBS_STATE].dtype == torch.float16
+    assert processed[OBS_IMAGE].dtype == torch.float16
+    assert processed[TransitionKey.ACTION.value].dtype == torch.float16
 
 
 def test_tdmpc_processor_batch_data():
@@ -363,8 +347,6 @@ def test_tdmpc_processor_batch_data():
     preprocessor, postprocessor = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Test with batched data
@@ -376,13 +358,16 @@ def test_tdmpc_processor_batch_data():
     action = torch.randn(batch_size, 6)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that batch dimension is preserved
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (batch_size, 12)
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (batch_size, 3, 224, 224)
-    assert processed[TransitionKey.ACTION].shape == (batch_size, 6)
+    assert processed[OBS_STATE].shape == (batch_size, 12)
+    assert processed[OBS_IMAGE].shape == (batch_size, 3, 224, 224)
+    assert processed[TransitionKey.ACTION.value].shape == (batch_size, 6)
 
 
 def test_tdmpc_processor_edge_cases():
@@ -393,8 +378,6 @@ def test_tdmpc_processor_edge_cases():
     preprocessor, postprocessor = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Test with only state observation (no image)
@@ -402,17 +385,21 @@ def test_tdmpc_processor_edge_cases():
     action = torch.randn(6)
     transition = create_transition(observation, action)
 
-    processed = preprocessor(transition)
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 12)
-    assert OBS_IMAGE not in processed[TransitionKey.OBSERVATION]
+    batch = transition_to_batch(transition)
+
+    processed = preprocessor(batch)
+    assert processed[OBS_STATE].shape == (1, 12)
+    assert OBS_IMAGE not in processed
 
     # Test with only image observation (no state)
     observation = {OBS_IMAGE: torch.randn(3, 224, 224)}
     transition = create_transition(observation, action)
 
-    processed = preprocessor(transition)
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (1, 3, 224, 224)
-    assert OBS_STATE not in processed[TransitionKey.OBSERVATION]
+    batch = transition_to_batch(transition)
+
+    processed = preprocessor(batch)
+    assert processed[OBS_IMAGE].shape == (1, 3, 224, 224)
+    assert OBS_STATE not in processed
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -425,7 +412,6 @@ def test_tdmpc_processor_bfloat16_device_float32_normalizer():
     preprocessor, _ = make_tdmpc_pre_post_processors(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Modify the pipeline to use bfloat16 device processor with float32 normalizer
@@ -461,15 +447,15 @@ def test_tdmpc_processor_bfloat16_device_float32_normalizer():
     action = torch.randn(6, dtype=torch.float32)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through full pipeline
-    processed = preprocessor(transition)
+    processed = preprocessor(batch)
 
     # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.bfloat16
-    assert (
-        processed[TransitionKey.OBSERVATION][OBS_IMAGE].dtype == torch.bfloat16
-    )  # IDENTITY normalization still gets dtype conversion
-    assert processed[TransitionKey.ACTION].dtype == torch.bfloat16
+    assert processed[OBS_STATE].dtype == torch.bfloat16
+    assert processed[OBS_IMAGE].dtype == torch.bfloat16  # IDENTITY normalization still gets dtype conversion
+    assert processed[TransitionKey.ACTION.value].dtype == torch.bfloat16
 
     # Verify normalizer automatically adapted its internal state
     assert normalizer_step.dtype == torch.bfloat16
