@@ -82,7 +82,7 @@ def test_hub_loading(model_id="pepijn223/pi0_base_fp32", model_name="PI0"):
         print(f"  - Action expert variant: {policy.config.action_expert_variant}")
         print(f"  - Action dimension: {policy.config.action_dim}")
         print(f"  - State dimension: {policy.config.state_dim}")
-        print(f"  - Action horizon: {policy.config.action_horizon}")
+        print(f"  - Chunk_size: {policy.config.chunk_size}")
         print(f"  - Tokenizer max length: {policy.config.tokenizer_max_length}")
         if model_name == "PI0.5":
             print(f"  - discrete_state_input: {policy.config.discrete_state_input}")
@@ -172,7 +172,7 @@ def test_hub_loading(model_id="pepijn223/pi0_base_fp32", model_name="PI0"):
         ),
         "action": torch.randn(
             batch_size,
-            policy.config.action_horizon,
+            policy.config.chunk_size,
             policy.config.action_dim,
             dtype=torch.float32,
             device=device,

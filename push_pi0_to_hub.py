@@ -38,7 +38,7 @@ def create_and_push_model(
         # Input/output dimensions
         action_dim=32,  # see openpi `Pi0Config`
         state_dim=32,
-        action_horizon=50,
+        chunk_size=50,
         n_action_steps=50,
         # Image inputs, see openpi `model.py, IMAGE_KEYS`
         image_keys=(
