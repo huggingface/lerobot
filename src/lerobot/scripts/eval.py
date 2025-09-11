@@ -465,48 +465,6 @@ def _compile_episode_data(
 
     return data_dict
 
-
-from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-
-
-def _inject_normalization_stats(policy: SmolVLAPolicy, dataset_meta: LeRobotDatasetMetadata):
-    """Recreate normalization layers with proper stats from the dataset."""
-    from lerobot.policies.normalize import Normalize, Unnormalize
-
-    # Convert numpy stats to the format expected by normalization layers
-    stats = {}
-    for key, stat_dict in dataset_meta.stats.items():
-        stats[key] = {
-            stat_type: torch.from_numpy(stat_array) if isinstance(stat_array, np.ndarray) else stat_array
-            for stat_type, stat_array in stat_dict.items()
-        }
-
-    # Recreate normalization layers with proper stats
-    normalize_inputs = Normalize(policy.config.input_features, policy.config.normalization_mapping, stats)
-
-    normalize_targets = Normalize(policy.config.output_features, policy.config.normalization_mapping, stats)
-
-    unnormalize_outputs = Unnormalize(
-        policy.config.output_features, policy.config.normalization_mapping, stats
-    )
-
-    # Replace the normalization layers on the policy
-    policy.normalize_inputs = normalize_inputs
-    policy.normalize_targets = normalize_targets
-    policy.unnormalize_outputs = unnormalize_outputs
-
-    print("Normalization layers recreated with dataset stats.")
-
-
-def load_smolvla(cfg, dataset_repo: str, policy):
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-    dataset = LeRobotDataset(dataset_repo, root="/raid/jade/.cache/huggingface/datasets/")
-    _inject_normalization_stats(policy=policy, dataset_meta=dataset.meta)  # only needed if stats are missing
-    return policy.to("cuda"), dataset
-
-
 @parser.wrap()
 def eval_main(cfg: EvalPipelineConfig):
     logging.info(pformat(asdict(cfg)))
