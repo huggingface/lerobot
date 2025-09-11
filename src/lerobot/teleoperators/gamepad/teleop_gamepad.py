@@ -94,9 +94,9 @@ class GamepadTeleop(Teleoperator):
         gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
 
         action_dict = {
-            "action.delta_x": gamepad_action[0],
-            "action.delta_y": gamepad_action[1],
-            "action.delta_z": gamepad_action[2],
+            "delta_x": gamepad_action[0],
+            "delta_y": gamepad_action[1],
+            "delta_z": gamepad_action[2],
         }
 
         # Default gripper action is to stay
