@@ -162,7 +162,6 @@ def test_pi0_vs_pi05_differences():
 
     print("\nPI0 Model:")
     print(f"  - Tokenizer max length: {config_pi0.tokenizer_max_length}")
-    print(f"  - discrete_state_input: {config_pi0.discrete_state_input}")
     print(f"  - Has state_proj: {hasattr(policy_pi0.model, 'state_proj')}")
     print(f"  - Has action_time_mlp: {hasattr(policy_pi0.model, 'action_time_mlp_in')}")
     print(f"  - Has time_mlp: {hasattr(policy_pi0.model, 'time_mlp_in')}")
