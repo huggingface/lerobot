@@ -25,6 +25,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
 )
+from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 from lerobot.processor.core import PolicyAction
 
 
@@ -75,5 +76,7 @@ def make_classifier_processor(
         PolicyProcessorPipeline(
             steps=output_steps,
             name="classifier_postprocessor",
+            to_transition=policy_action_to_transition,
+            to_output=transition_to_policy_action,
         ),
     )

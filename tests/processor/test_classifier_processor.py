@@ -29,9 +29,8 @@ from lerobot.processor import (
     DeviceProcessorStep,
     IdentityProcessorStep,
     NormalizerProcessorStep,
-    TransitionKey,
 )
-from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.processor.converters import create_transition, transition_to_batch
 
 
 def create_default_config():
@@ -93,8 +92,6 @@ def test_classifier_processor_normalization():
     preprocessor, postprocessor = make_classifier_processor(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create test data
@@ -104,14 +101,15 @@ def test_classifier_processor_normalization():
     }
     action = torch.randn(1)  # Dummy action/reward
     transition = create_transition(observation, action)
+    batch = transition_to_batch(transition)
 
     # Process through preprocessor
-    processed = preprocessor(transition)
+    processed = preprocessor(batch)
 
     # Check that data is processed
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (10,)
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (3, 224, 224)
-    assert processed[TransitionKey.ACTION].shape == (1,)
+    assert processed["observation.state"].shape == (10,)
+    assert processed["observation.image"].shape == (3, 224, 224)
+    assert processed["action"].shape == (1,)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -124,8 +122,6 @@ def test_classifier_processor_cuda():
     preprocessor, postprocessor = make_classifier_processor(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create CPU data
@@ -136,20 +132,22 @@ def test_classifier_processor_cuda():
     action = torch.randn(1)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data is on CUDA
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device.type == "cuda"
-    assert processed[TransitionKey.ACTION].device.type == "cuda"
+    assert processed["observation.state"].device.type == "cuda"
+    assert processed["observation.image"].device.type == "cuda"
+    assert processed["action"].device.type == "cuda"
 
     # Process through postprocessor
-    reward_transition = create_transition(action=processed[TransitionKey.ACTION])
-    postprocessed = postprocessor(reward_transition)
+    postprocessed = postprocessor(processed["action"])
 
     # Check that output is back on CPU
-    assert postprocessed[TransitionKey.ACTION].device.type == "cpu"
+    assert postprocessed.device.type == "cpu"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -162,8 +160,6 @@ def test_classifier_processor_accelerate_scenario():
     preprocessor, postprocessor = make_classifier_processor(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Simulate Accelerate: data already on GPU
@@ -175,13 +171,16 @@ def test_classifier_processor_accelerate_scenario():
     action = torch.randn(1).to(device)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data stays on same GPU
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed["observation.state"].device == device
+    assert processed["observation.image"].device == device
+    assert processed["action"].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -202,13 +201,16 @@ def test_classifier_processor_multi_gpu():
     action = torch.randn(1).to(device)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data stays on cuda:1
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].device == device
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION].device == device
+    assert processed["observation.state"].device == device
+    assert processed["observation.image"].device == device
+    assert processed["action"].device == device
 
 
 def test_classifier_processor_without_stats():
@@ -229,7 +231,9 @@ def test_classifier_processor_without_stats():
     action = torch.randn(1)
     transition = create_transition(observation, action)
 
-    processed = preprocessor(transition)
+    batch = transition_to_batch(transition)
+
+    processed = preprocessor(batch)
     assert processed is not None
 
 
@@ -238,22 +242,14 @@ def test_classifier_processor_save_and_load():
     config = create_default_config()
     stats = create_default_stats()
 
-    # Get the steps from the factory function
-    factory_preprocessor, factory_postprocessor = make_classifier_processor(config, stats)
-
-    # Create new processors with EnvTransition input/output
-    preprocessor = DataProcessorPipeline(
-        factory_preprocessor.steps, to_transition=identity_transition, to_output=identity_transition
-    )
+    preprocessor, postprocessor = make_classifier_processor(config, stats)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save preprocessor
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = DataProcessorPipeline.from_pretrained(
-            tmpdir, to_transition=identity_transition, to_output=identity_transition
-        )
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(tmpdir)
 
         # Test that loaded processor works
         observation = {
@@ -262,11 +258,12 @@ def test_classifier_processor_save_and_load():
         }
         action = torch.randn(1)
         transition = create_transition(observation, action)
+        batch = transition_to_batch(transition)
 
-        processed = loaded_preprocessor(transition)
-        assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (10,)
-        assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (3, 224, 224)
-        assert processed[TransitionKey.ACTION].shape == (1,)
+        processed = loaded_preprocessor(batch)
+        assert processed["observation.state"].shape == (10,)
+        assert processed["observation.image"].shape == (3, 224, 224)
+        assert processed["action"].shape == (1,)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -276,21 +273,16 @@ def test_classifier_processor_mixed_precision():
     config.device = "cuda"
     stats = create_default_stats()
 
-    # Get the steps from the factory function
-    factory_preprocessor, factory_postprocessor = make_classifier_processor(config, stats)
+    preprocessor, postprocessor = make_classifier_processor(config, stats)
 
     # Replace DeviceProcessorStep with one that uses float16
     modified_steps = []
-    for step in factory_preprocessor.steps:
+    for step in preprocessor.steps:
         if isinstance(step, DeviceProcessorStep):
             modified_steps.append(DeviceProcessorStep(device=config.device, float_dtype="float16"))
         else:
             modified_steps.append(step)
-
-    # Create new processors with EnvTransition input/output
-    preprocessor = DataProcessorPipeline(
-        modified_steps, to_transition=identity_transition, to_output=identity_transition
-    )
+    preprocessor.steps = modified_steps
 
     # Create test data
     observation = {
@@ -300,13 +292,16 @@ def test_classifier_processor_mixed_precision():
     action = torch.randn(1, dtype=torch.float32)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that data is converted to float16
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.float16
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].dtype == torch.float16
-    assert processed[TransitionKey.ACTION].dtype == torch.float16
+    assert processed["observation.state"].dtype == torch.float16
+    assert processed["observation.image"].dtype == torch.float16
+    assert processed["action"].dtype == torch.float16
 
 
 def test_classifier_processor_batch_data():
@@ -317,8 +312,6 @@ def test_classifier_processor_batch_data():
     preprocessor, postprocessor = make_classifier_processor(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Test with batched data
@@ -330,13 +323,16 @@ def test_classifier_processor_batch_data():
     action = torch.randn(batch_size, 1)
     transition = create_transition(observation, action)
 
+    batch = transition_to_batch(transition)
+
     # Process through preprocessor
-    processed = preprocessor(transition)
+
+    processed = preprocessor(batch)
 
     # Check that batch dimension is preserved
-    assert processed[TransitionKey.OBSERVATION][OBS_STATE].shape == (batch_size, 10)
-    assert processed[TransitionKey.OBSERVATION][OBS_IMAGE].shape == (batch_size, 3, 224, 224)
-    assert processed[TransitionKey.ACTION].shape == (batch_size, 1)
+    assert processed["observation.state"].shape == (batch_size, 10)
+    assert processed["observation.image"].shape == (batch_size, 3, 224, 224)
+    assert processed["action"].shape == (batch_size, 1)
 
 
 def test_classifier_processor_postprocessor_identity():
@@ -347,17 +343,17 @@ def test_classifier_processor_postprocessor_identity():
     preprocessor, postprocessor = make_classifier_processor(
         config,
         stats,
-        preprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
-        postprocessor_kwargs={"to_transition": identity_transition, "to_output": identity_transition},
     )
 
     # Create test data for postprocessor
     reward = torch.tensor([[0.8], [0.3], [0.9]])  # Batch of rewards/predictions
     transition = create_transition(action=reward)
 
+    _ = transition_to_batch(transition)
+
     # Process through postprocessor
-    processed = postprocessor(transition)
+    processed = postprocessor(reward)
 
     # IdentityProcessor should leave values unchanged (except device)
-    assert torch.allclose(processed[TransitionKey.ACTION].cpu(), reward.cpu())
-    assert processed[TransitionKey.ACTION].device.type == "cpu"
+    assert torch.allclose(processed.cpu(), reward.cpu())
+    assert processed.device.type == "cpu"
