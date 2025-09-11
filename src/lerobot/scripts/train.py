@@ -105,6 +105,7 @@ def update_policy(
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
