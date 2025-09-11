@@ -30,6 +30,7 @@ from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
     RenameObservationsProcessorStep,
+    TransitionKey,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
@@ -115,9 +116,9 @@ def test_vqbet_processor_with_images():
     processed = preprocessor(batch)
 
     # Check that data is batched
-    assert processed["observation.state"].shape == (1, 8)
-    assert processed["observation.image"].shape == (1, 3, 224, 224)
-    assert processed["action"].shape == (1, 7)
+    assert processed[OBS_STATE].shape == (1, 8)
+    assert processed[OBS_IMAGE].shape == (1, 3, 224, 224)
+    assert processed[TransitionKey.ACTION.value].shape == (1, 7)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -147,12 +148,12 @@ def test_vqbet_processor_cuda():
     processed = preprocessor(batch)
 
     # Check that data is on CUDA
-    assert processed["observation.state"].device.type == "cuda"
-    assert processed["observation.image"].device.type == "cuda"
-    assert processed["action"].device.type == "cuda"
+    assert processed[OBS_STATE].device.type == "cuda"
+    assert processed[OBS_IMAGE].device.type == "cuda"
+    assert processed[TransitionKey.ACTION.value].device.type == "cuda"
 
     # Process through postprocessor
-    postprocessed = postprocessor(processed["action"])
+    postprocessed = postprocessor(processed[TransitionKey.ACTION.value])
 
     # Check that action is back on CPU
     assert postprocessed.device.type == "cpu"
@@ -186,9 +187,9 @@ def test_vqbet_processor_accelerate_scenario():
     processed = preprocessor(batch)
 
     # Check that data stays on same GPU
-    assert processed["observation.state"].device == device
-    assert processed["observation.image"].device == device
-    assert processed["action"].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[OBS_IMAGE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -219,9 +220,9 @@ def test_vqbet_processor_multi_gpu():
     processed = preprocessor(batch)
 
     # Check that data stays on cuda:1
-    assert processed["observation.state"].device == device
-    assert processed["observation.image"].device == device
-    assert processed["action"].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[OBS_IMAGE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 def test_vqbet_processor_without_stats():
@@ -275,9 +276,9 @@ def test_vqbet_processor_save_and_load():
 
         batch = transition_to_batch(transition)
         processed = loaded_preprocessor(batch)
-        assert processed["observation.state"].shape == (1, 8)
-        assert processed["observation.image"].shape == (1, 3, 224, 224)
-        assert processed["action"].shape == (1, 7)
+        assert processed[OBS_STATE].shape == (1, 8)
+        assert processed[OBS_IMAGE].shape == (1, 3, 224, 224)
+        assert processed[TransitionKey.ACTION.value].shape == (1, 7)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -328,9 +329,9 @@ def test_vqbet_processor_mixed_precision():
     processed = preprocessor(batch)
 
     # Check that data is converted to float16
-    assert processed["observation.state"].dtype == torch.float16
-    assert processed["observation.image"].dtype == torch.float16
-    assert processed["action"].dtype == torch.float16
+    assert processed[OBS_STATE].dtype == torch.float16
+    assert processed[OBS_IMAGE].dtype == torch.float16
+    assert processed[TransitionKey.ACTION.value].dtype == torch.float16
 
 
 def test_vqbet_processor_large_batch():
@@ -359,9 +360,9 @@ def test_vqbet_processor_large_batch():
     processed = preprocessor(batch)
 
     # Check that batch dimension is preserved
-    assert processed["observation.state"].shape == (batch_size, 8)
-    assert processed["observation.image"].shape == (batch_size, 3, 224, 224)
-    assert processed["action"].shape == (batch_size, 7)
+    assert processed[OBS_STATE].shape == (batch_size, 8)
+    assert processed[OBS_IMAGE].shape == (batch_size, 3, 224, 224)
+    assert processed[TransitionKey.ACTION.value].shape == (batch_size, 7)
 
 
 def test_vqbet_processor_sequential_processing():
@@ -391,9 +392,9 @@ def test_vqbet_processor_sequential_processing():
 
     # Check that all results are consistent
     for result in results:
-        assert result["observation.state"].shape == (1, 8)
-        assert result["observation.image"].shape == (1, 3, 224, 224)
-        assert result["action"].shape == (1, 7)
+        assert result[OBS_STATE].shape == (1, 8)
+        assert result[OBS_IMAGE].shape == (1, 3, 224, 224)
+        assert result[TransitionKey.ACTION.value].shape == (1, 7)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -447,11 +448,9 @@ def test_vqbet_processor_bfloat16_device_float32_normalizer():
     processed = preprocessor(batch)
 
     # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
-    assert processed["observation.state"].dtype == torch.bfloat16
-    assert (
-        processed["observation.image"].dtype == torch.bfloat16
-    )  # IDENTITY normalization still gets dtype conversion
-    assert processed["action"].dtype == torch.bfloat16
+    assert processed[OBS_STATE].dtype == torch.bfloat16
+    assert processed[OBS_IMAGE].dtype == torch.bfloat16  # IDENTITY normalization still gets dtype conversion
+    assert processed[TransitionKey.ACTION.value].dtype == torch.bfloat16
 
     # Verify normalizer automatically adapted its internal state
     assert normalizer_step.dtype == torch.bfloat16

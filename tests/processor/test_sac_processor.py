@@ -30,6 +30,7 @@ from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
     RenameObservationsProcessorStep,
+    TransitionKey,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
@@ -109,11 +110,11 @@ def test_sac_processor_normalization_modes():
     # Check that data is normalized and batched
     # State should be mean-std normalized
     # Action should be min-max normalized to [-1, 1]
-    assert processed["observation.state"].shape == (1, 10)
-    assert processed["action"].shape == (1, 5)
+    assert processed[OBS_STATE].shape == (1, 10)
+    assert processed[TransitionKey.ACTION.value].shape == (1, 5)
 
     # Process action through postprocessor
-    postprocessed = postprocessor(processed["action"])
+    postprocessed = postprocessor(processed[TransitionKey.ACTION.value])
 
     # Check that action is unnormalized (but still batched)
     assert postprocessed.shape == (1, 5)
@@ -141,11 +142,11 @@ def test_sac_processor_cuda():
     processed = preprocessor(batch)
 
     # Check that data is on CUDA
-    assert processed["observation.state"].device.type == "cuda"
-    assert processed["action"].device.type == "cuda"
+    assert processed[OBS_STATE].device.type == "cuda"
+    assert processed[TransitionKey.ACTION.value].device.type == "cuda"
 
     # Process through postprocessor
-    postprocessed = postprocessor(processed["action"])
+    postprocessed = postprocessor(processed[TransitionKey.ACTION.value])
 
     # Check that action is back on CPU
     assert postprocessed.device.type == "cpu"
@@ -174,8 +175,8 @@ def test_sac_processor_accelerate_scenario():
     processed = preprocessor(batch)
 
     # Check that data stays on same GPU
-    assert processed["observation.state"].device == device
-    assert processed["action"].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -201,8 +202,8 @@ def test_sac_processor_multi_gpu():
     processed = preprocessor(batch)
 
     # Check that data stays on cuda:1
-    assert processed["observation.state"].device == device
-    assert processed["action"].device == device
+    assert processed[OBS_STATE].device == device
+    assert processed[TransitionKey.ACTION.value].device == device
 
 
 def test_sac_processor_without_stats():
@@ -249,8 +250,8 @@ def test_sac_processor_save_and_load():
         batch = transition_to_batch(transition)
 
         processed = loaded_preprocessor(batch)
-        assert processed["observation.state"].shape == (1, 10)
-        assert processed["action"].shape == (1, 5)
+        assert processed[OBS_STATE].shape == (1, 10)
+        assert processed[TransitionKey.ACTION.value].shape == (1, 5)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -297,8 +298,8 @@ def test_sac_processor_mixed_precision():
     processed = preprocessor(batch)
 
     # Check that data is converted to float16
-    assert processed["observation.state"].dtype == torch.float16
-    assert processed["action"].dtype == torch.float16
+    assert processed[OBS_STATE].dtype == torch.float16
+    assert processed[TransitionKey.ACTION.value].dtype == torch.float16
 
 
 def test_sac_processor_batch_data():
@@ -322,8 +323,8 @@ def test_sac_processor_batch_data():
     processed = preprocessor(batch)
 
     # Check that batch dimension is preserved
-    assert processed["observation.state"].shape == (batch_size, 10)
-    assert processed["action"].shape == (batch_size, 5)
+    assert processed[OBS_STATE].shape == (batch_size, 10)
+    assert processed[TransitionKey.ACTION.value].shape == (batch_size, 5)
 
 
 def test_sac_processor_edge_cases():
@@ -339,19 +340,19 @@ def test_sac_processor_edge_cases():
     # Test with observation that has no state key but still exists
     observation = {"observation.dummy": torch.randn(1)}  # Some dummy observation to pass validation
     action = torch.randn(5)
-    batch = {"action": action, **observation}
+    batch = {TransitionKey.ACTION.value: action, **observation}
     processed = preprocessor(batch)
     # observation.state wasn't in original, so it won't be in processed
-    assert "observation.state" not in processed
-    assert processed["action"].shape == (1, 5)
+    assert OBS_STATE not in processed
+    assert processed[TransitionKey.ACTION.value].shape == (1, 5)
 
     # Test with zero action (representing "null" action)
     transition = create_transition(observation={OBS_STATE: torch.randn(10)}, action=torch.zeros(5))
     batch = transition_to_batch(transition)
     processed = preprocessor(batch)
-    assert processed["observation.state"].shape == (1, 10)
+    assert processed[OBS_STATE].shape == (1, 10)
     # Action should be present and batched, even if it's zeros
-    assert processed["action"].shape == (1, 5)
+    assert processed[TransitionKey.ACTION.value].shape == (1, 5)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -402,10 +403,10 @@ def test_sac_processor_bfloat16_device_float32_normalizer():
     processed = preprocessor(batch)
 
     # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
-    assert processed["observation.state"].dtype == torch.bfloat16
-    assert processed["action"].dtype == torch.bfloat16
+    assert processed[OBS_STATE].dtype == torch.bfloat16
+    assert processed[TransitionKey.ACTION.value].dtype == torch.bfloat16
 
     # Verify normalizer automatically adapted its internal state
     assert normalizer_step.dtype == torch.bfloat16
-    for stat_tensor in normalizer_step._tensor_stats["observation.state"].values():
+    for stat_tensor in normalizer_step._tensor_stats[OBS_STATE].values():
         assert stat_tensor.dtype == torch.bfloat16
