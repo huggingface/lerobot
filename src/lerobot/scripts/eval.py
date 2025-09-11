@@ -132,10 +132,6 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-    # added by jade
-    # for k in list(policy.config.input_features.keys()):
-    #         if k.startswith("observation.image"):
-    #             policy.config.input_features["observation.images." + k.split("observation.", 1)[1]] = policy.config.input_features.pop(k)
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
@@ -171,26 +167,6 @@ def rollout(
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
-        # breakpoint()
-        # observation = {
-        #     k.replace("observation.images.", "observation.") if k.startswith("observation.images.") else k: v
-        #     for k, v in observation.items()
-        # # }
-        # if "observation.image" in observation:
-        #     observation["image"] = observation.pop("observation.image").to(
-        #         device, non_blocking=device.type == "cuda"
-        #     )
-
-        # if "observation.image2" in observation:
-        #     observation["wrist_image"] = observation.pop("observation.image2").to(
-        #         device, non_blocking=device.type == "cuda"
-        #     )
-
-        # if "observation.state" in observation:
-        #     observation["state"] = observation.pop("observation.state").to(
-        #         device, non_blocking=device.type == "cuda"
-        #     )
-
         with torch.inference_mode():
             action = policy.select_action(observation)
         # Convert to CPU / numpy.
@@ -550,15 +526,12 @@ def eval_main(cfg: EvalPipelineConfig):
 
     logging.info("Making environment.")
     envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
-    breakpoint()
+
     logging.info("Making policy.")
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
-    breakpoint()
-    # policy, _ = load_smolvla(cfg.policy, "physical-intelligence/libero", policy)
-    # rename "image" -> "observation.image"
 
     policy.eval()
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
