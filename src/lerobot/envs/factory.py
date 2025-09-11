@@ -37,7 +37,7 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
 
 def make_env(
     cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False
-) -> gym.vector.VectorEnv | dict[str, dict[int, gym.vector.VectorEnv]]:
+) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """Makes a gym vector environment according to the config.
 
     Args:
@@ -51,10 +51,10 @@ def make_env(
         ModuleNotFoundError: If the requested env package is not installed
 
     Returns:
-        gym.vector.VectorEnv: The parallelized gym.env instance.
-        dict[str, dict[int, gym.vector.VectorEnv]]: A mapping from task suite
-            names to indexed vectorized environments (when multitask eval is used).
-
+        dict[str, dict[int, gym.vector.VectorEnv]]:
+            A mapping from suite name to indexed vectorized environments.
+            - For LIBERO: one entry per suite, one vec env per task_id.
+            - For non-LIBERO envs: a single suite entry (cfg.type) with task_id=0.
     """
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")

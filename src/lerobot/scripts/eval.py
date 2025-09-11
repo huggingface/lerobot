@@ -74,6 +74,7 @@ from lerobot.envs.factory import make_env
 from lerobot.envs.utils import (
     add_envs_task,
     check_env_attributes_and_types,
+    close_envs,
     preprocess_observation,
 )
 from lerobot.policies.factory import make_policy
@@ -512,9 +513,8 @@ def eval_main(cfg: EvalPipelineConfig):
             print(f"\nAggregated Metrics for {task_group}:")
             print(task_group_info["aggregated"])
     # Close all vec envs
-    for _suite, task_map in envs.items():
-        for _vec in task_map.values():
-            _vec.close()
+    close_envs(envs)
+
     # Save info
     with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
         json.dump(info, f, indent=2)
@@ -637,7 +637,7 @@ def eval_policy_all(
     group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
     overall: dict[str, list] = {k: [] for k in ACC_KEYS}
 
-    for task_group, task_id, metrics in iter_task_results():
+    for task_group, _task_id, metrics in iter_task_results():
         acc = group_acc[task_group]
         for k in ACC_KEYS:
             acc[k].extend(metrics[k])

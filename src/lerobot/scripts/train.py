@@ -253,7 +253,7 @@ def train(cfg: TrainPipelineConfig):
                     eval_env,  # dict[suite][task_id] -> vec_env
                     policy,
                     cfg.eval.n_episodes,
-                    videos_dir=videos_dir,
+                    videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                     max_parallel_tasks=cfg.env.max_parallel_tasks,
