@@ -45,17 +45,21 @@ Note that in both examples, the repo/folder should contain at least `config.json
 
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
-import concurrent
+
+import concurrent.futures as cf
 import json
 import logging
 import threading
 import time
+from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
+from typing import Dict, List, Tuple, TypedDict
+from collections.abc import Iterator
 
 import einops
 import gymnasium as gym
@@ -68,7 +72,11 @@ from tqdm import trange
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env
-from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation, preprocess_observation1
+from lerobot.envs.utils import (
+    add_envs_task,
+    check_env_attributes_and_types,
+    preprocess_observation,
+)
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
@@ -79,9 +87,6 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
-from typing import TypedDict, Dict, List, Tuple, Iterator
-from collections import defaultdict
-import concurrent.futures as cf
 
 
 def rollout(
@@ -485,8 +490,12 @@ def _compile_episode_data(
     data_dict["index"] = torch.arange(start_data_index, start_data_index + total_frames, 1)
 
     return data_dict
-from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+
 def _inject_normalization_stats(policy: SmolVLAPolicy, dataset_meta: LeRobotDatasetMetadata):
     """Recreate normalization layers with proper stats from the dataset."""
     from lerobot.policies.normalize import Normalize, Unnormalize
@@ -518,7 +527,8 @@ def _inject_normalization_stats(policy: SmolVLAPolicy, dataset_meta: LeRobotData
 
 def load_smolvla(cfg, dataset_repo: str, policy):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    dataset = LeRobotDataset(dataset_repo, root='/raid/jade/.cache/huggingface/datasets/')
+
+    dataset = LeRobotDataset(dataset_repo, root="/raid/jade/.cache/huggingface/datasets/")
     _inject_normalization_stats(policy=policy, dataset_meta=dataset.meta)  # only needed if stats are missing
     return policy.to("cuda"), dataset
 
@@ -529,8 +539,8 @@ def eval_main(cfg: EvalPipelineConfig):
 
     # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)
-    #login to hf
-    from huggingface_hub import login
+    # login to hf
+
     # login()
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -549,7 +559,7 @@ def eval_main(cfg: EvalPipelineConfig):
     breakpoint()
     # policy, _ = load_smolvla(cfg.policy, "physical-intelligence/libero", policy)
     # rename "image" -> "observation.image"
-    
+
     policy.eval()
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
@@ -584,10 +594,11 @@ def eval_main(cfg: EvalPipelineConfig):
 
 # ---- typed payload returned by one task eval ----
 class TaskMetrics(TypedDict):
-    sum_rewards: List[float]
-    max_rewards: List[float]
-    successes: List[bool]
-    video_paths: List[str]
+    sum_rewards: list[float]
+    max_rewards: list[float]
+    successes: list[bool]
+    video_paths: list[str]
+
 
 ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths")
 
@@ -610,7 +621,7 @@ def eval_policy_all(
     """
     global_start = time.time()
 
-    # inner: evaluate a single (suite, task) 
+    # inner: evaluate a single (suite, task)
     def eval_one(
         task_group: str,
         task_id: int,
@@ -650,27 +661,36 @@ def eval_policy_all(
             video_paths=task_result.get("video_paths", []),
         )
 
-    # result producer: sequential or threaded, same consumer 
-    def iter_task_results() -> Iterator[Tuple[str, int, TaskMetrics]]:
+    # result producer: sequential or threaded, same consumer
+    def iter_task_results() -> Iterator[tuple[str, int, TaskMetrics]]:
         if max_parallel_tasks == 1:
             for task_group, tasks in envs.items():
                 for task_id, vec in tasks.items():
-                    yield task_group, task_id, eval_one(
-                        task_group, task_id, vec,
-                        policy=policy,
-                        n_episodes=n_episodes,
-                        max_episodes_rendered=max_episodes_rendered,
-                        videos_dir=videos_dir,
-                        return_episode_data=return_episode_data,
-                        start_seed=start_seed,
+                    yield (
+                        task_group,
+                        task_id,
+                        eval_one(
+                            task_group,
+                            task_id,
+                            vec,
+                            policy=policy,
+                            n_episodes=n_episodes,
+                            max_episodes_rendered=max_episodes_rendered,
+                            videos_dir=videos_dir,
+                            return_episode_data=return_episode_data,
+                            start_seed=start_seed,
+                        ),
                     )
         else:
             with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
-                fut2key: Dict[cf.Future, Tuple[str, int]] = {}
+                fut2key: dict[cf.Future, tuple[str, int]] = {}
                 for task_group, tasks in envs.items():
                     for task_id, vec in tasks.items():
                         fut = executor.submit(
-                            eval_one, task_group, task_id, vec,
+                            eval_one,
+                            task_group,
+                            task_id,
+                            vec,
                             policy=policy,
                             n_episodes=n_episodes,
                             max_episodes_rendered=max_episodes_rendered,
@@ -683,9 +703,9 @@ def eval_policy_all(
                     task_group, task_id = fut2key[fut]
                     yield task_group, task_id, fut.result()
 
-    # single accumulator path on the main thread 
-    group_acc: Dict[str, Dict[str, List]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
-    overall: Dict[str, List] = {k: [] for k in ACC_KEYS}
+    # single accumulator path on the main thread
+    group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
+    overall: dict[str, list] = {k: [] for k in ACC_KEYS}
 
     for task_group, task_id, metrics in iter_task_results():
         acc = group_acc[task_group]
@@ -694,7 +714,7 @@ def eval_policy_all(
             overall[k].extend(metrics[k])
 
     # build outputs
-    results: Dict[str, dict] = {}
+    results: dict[str, dict] = {}
     for task_group, data in group_acc.items():
         suite_rewards = data["sum_rewards"]
         suite_max = data["max_rewards"]
@@ -720,9 +740,15 @@ def eval_policy_all(
     global_eval_ep_s = global_eval_s / max(1, len(overall["sum_rewards"]))
     results["overall"] = {
         "aggregated": {
-            "avg_sum_reward": float(np.nanmean(overall["sum_rewards"])) if overall["sum_rewards"] else float("nan"),
-            "avg_max_reward": float(np.nanmean(overall["max_rewards"])) if overall["max_rewards"] else float("nan"),
-            "pc_success": float(np.nanmean(overall["successes"]) * 100) if overall["successes"] else float("nan"),
+            "avg_sum_reward": float(np.nanmean(overall["sum_rewards"]))
+            if overall["sum_rewards"]
+            else float("nan"),
+            "avg_max_reward": float(np.nanmean(overall["max_rewards"]))
+            if overall["max_rewards"]
+            else float("nan"),
+            "pc_success": float(np.nanmean(overall["successes"]) * 100)
+            if overall["successes"]
+            else float("nan"),
             "eval_s": global_eval_s,
             "eval_ep_s": global_eval_ep_s,
         },
@@ -730,7 +756,6 @@ def eval_policy_all(
         "episodes": None,
     }
     return results
-
 
 
 if __name__ == "__main__":

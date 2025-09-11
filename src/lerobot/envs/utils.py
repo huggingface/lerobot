@@ -80,6 +80,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
     return return_observations
 
+
 def preprocess_observation1(
     observations: dict[str, np.ndarray], cfg: dict[str, Any] = None
 ) -> dict[str, Tensor]:
@@ -130,6 +131,8 @@ def preprocess_observation1(
     if "task" in observations:
         return_observations["task"] = observations["task"]
     return return_observations
+
+
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
     # (need to also refactor preprocess_observation and externalize normalization from policies)
@@ -183,6 +186,7 @@ def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dic
         observation["task"] = ["" for _ in range(num_envs)]
     return observation
 
+
 def _close_single_env(env: Any) -> None:
     """Try to close a single env object if it exposes .close()."""
     try:
@@ -192,6 +196,7 @@ def _close_single_env(env: Any) -> None:
     except Exception as exc:
         # Best-effort close: log but don't raise
         LOG.debug("Exception while closing env %s: %s", env, exc)
+
 
 def close_envs(env_or_collection: Any) -> None:
     """

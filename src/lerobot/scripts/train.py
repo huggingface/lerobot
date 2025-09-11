@@ -105,6 +105,7 @@ def update_policy(
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
+
 # def _inject_normalization_stats(policy: SmolVLAPolicy, dataset_meta: LeRobotDatasetMetadata):
 #     """Recreate normalization layers with dataset stats if missing (Adil's workaround)."""
 #     from lerobot.policies.normalize import Normalize, Unnormalize
@@ -131,6 +132,7 @@ def update_policy(
 #     policy.unnormalize_outputs = unnormalize_outputs
 
 #     print("✅ Normalization layers injected with dataset stats.")
+
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
@@ -271,9 +273,12 @@ def train(cfg: TrainPipelineConfig):
         if cfg.env and is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")
-            with torch.no_grad(), (torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext()):
+            with (
+                torch.no_grad(),
+                torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
+            ):
                 eval_info = eval_policy_all(
-                    eval_env,                         # dict[suite][task_id] -> vec_env
+                    eval_env,  # dict[suite][task_id] -> vec_env
                     policy,
                     cfg.eval.n_episodes,
                     videos_dir=videos_dir,
@@ -295,15 +300,15 @@ def train(cfg: TrainPipelineConfig):
             # meters/tracker
             eval_metrics = {
                 "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
-                "pc_success":     AverageMeter("success", ":.1f"),
-                "eval_s":         AverageMeter("eval_s", ":.3f"),
+                "pc_success": AverageMeter("success", ":.1f"),
+                "eval_s": AverageMeter("eval_s", ":.3f"),
             }
             eval_tracker = MetricsTracker(
                 cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
             )
-            eval_tracker.eval_s         = aggregated.get("eval_s", 0.0)
+            eval_tracker.eval_s = aggregated.get("eval_s", 0.0)
             eval_tracker.avg_sum_reward = aggregated.get("avg_sum_reward", float("nan"))
-            eval_tracker.pc_success     = aggregated.get("pc_success", float("nan"))
+            eval_tracker.pc_success = aggregated.get("pc_success", float("nan"))
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")

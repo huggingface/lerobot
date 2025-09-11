@@ -309,8 +309,8 @@ class NormalizePerRobotType(nn.Module):
                 getattr(self, f"{robot_type}_buffer_" + key.replace(".", "_")) for robot_type in robot_types
             ]
             if norm_mode is NormalizationMode.MEAN_STD:
-                mean = torch.stack([buffers[i]["mean"] for i in range(len(robot_types))],dim=0)
-                std = torch.stack([buffers[i]["std"] for i in range(len(robot_types))],dim=0)
+                mean = torch.stack([buffers[i]["mean"] for i in range(len(robot_types))], dim=0)
+                std = torch.stack([buffers[i]["std"] for i in range(len(robot_types))], dim=0)
                 if batch[key].ndim == 3:
                     mean = mean.unsqueeze(1)
                     std = std.unsqueeze(1)
@@ -332,6 +332,8 @@ class NormalizePerRobotType(nn.Module):
             else:
                 raise ValueError(norm_mode)
         return batch
+
+
 # TODO (azouitine): We should replace all normalization on the policies with register_buffer normalization
 #       and remove the `Normalize` and `Unnormalize` classes.
 def _initialize_stats_buffers(

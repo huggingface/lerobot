@@ -14,12 +14,12 @@
 
 from dataclasses import dataclass, field
 
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 
 @dataclass
@@ -52,7 +52,7 @@ class SMOLPI0Config(PreTrainedConfig):
     max_action_dim: int = 32
 
     # Image preprocessing
-    resize_imgs_with_padding: tuple[int, int] = (512, 512) #(224, 224)
+    resize_imgs_with_padding: tuple[int, int] = (512, 512)  # (224, 224)
 
     # Add empty images. Used by pi0_aloha_sim which adds the empty
     # left and right wrist cameras in addition to the top camera.
@@ -107,14 +107,14 @@ class SMOLPI0Config(PreTrainedConfig):
 
     add_image_special_tokens: bool = False
     add_prompt_template: bool = False
-    prefix_prompt_template: str = f"<|im_start|>User: What action should the robot take to"
-    suffix_prompt_template: str = f"?\nAssistant:"
+    prefix_prompt_template: str = "<|im_start|>User: What action should the robot take to"
+    suffix_prompt_template: str = "?\nAssistant:"
 
     attention_mode: str = "self_attn"
 
-    prefix_length: int = -1 # n_obs_steps * num_cameras * num_image_token_per_image + tokenizer_max_length
+    prefix_length: int = -1  # n_obs_steps * num_cameras * num_image_token_per_image + tokenizer_max_length
 
-    past_obs_keys: str = f"image"
+    past_obs_keys: str = "image"
 
     add_local_special_image_tokens: bool = False
 
@@ -122,7 +122,7 @@ class SMOLPI0Config(PreTrainedConfig):
 
     state_to_prefix: bool = False
 
-    pad_language_to: str = "longest" # "max_length"
+    pad_language_to: str = "longest"  # "max_length"
 
     num_expert_layers: int = -1
     num_vlm_layers: int = -1
@@ -144,9 +144,9 @@ class SMOLPI0Config(PreTrainedConfig):
 
     shuffle_camera_positions: bool = False
     vlm_img_size: int = -1
-    
+
     regression_loss: bool = False
-    
+
     def __post_init__(self):
         super().__post_init__()
         if self.vlm_img_size > 0:
@@ -198,7 +198,7 @@ class SMOLPI0Config(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> list: # FIXME(mshukor): support spacing between observations
+    def observation_delta_indices(self) -> list:  # FIXME(mshukor): support spacing between observations
         return [-k for k in range(0, self.n_obs_steps * self.n_obs_gap, self.n_obs_gap)][::-1]
 
     @property

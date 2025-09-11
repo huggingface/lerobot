@@ -85,7 +85,7 @@ def flex_attention_forward(
 
     b_mask, h_mask, q_len, kv_len = causal_mask.shape  # The shape of your mask
 
-    block_size = 128 # limitation of flex attention
+    block_size = 128  # limitation of flex attention
     q_len_rounded = _round_up_to_multiple(q_len, block_size)
     kv_len_rounded = _round_up_to_multiple(kv_len, block_size)
 
@@ -95,7 +95,7 @@ def flex_attention_forward(
     pad_k = kv_len_rounded - kv_len
     if pad_q > 0 or pad_k > 0:
         padded_causal_mask = F.pad(causal_mask, (0, pad_k, 0, pad_q), value=0.0)
-    else: 
+    else:
         padded_causal_mask = causal_mask
     mask_mod_fn_orig = precomputed_mask_factory(padded_causal_mask)
 
@@ -107,21 +107,21 @@ def flex_attention_forward(
         KV_LEN=kv_len_rounded,
         device=causal_mask.device,
     )
-    
+
     mask_mod_fn_padded = precomputed_mask_factory(mask_4d)
     # FIXME(mshukor): compile mask torch.compile(create_block_mask)
     create_block_mask_compiled = torch.compile(create_block_mask)
     block_mask = create_block_mask_compiled(
         mask_mod=mask_mod_fn_padded,
         B=b_mask,
-        H=None, # 
+        H=None,  #
         Q_LEN=q_len_rounded,
         KV_LEN=kv_len_rounded,
         BLOCK_SIZE=block_size,
         device=causal_mask.device,
         _compile=False,
     )
-    padded_query_states = F.pad(query_states, (0, 0, 0, pad_q), value=0.0) if pad_q > 0  else query_states
+    padded_query_states = F.pad(query_states, (0, 0, 0, pad_q), value=0.0) if pad_q > 0 else query_states
     padded_key_states = F.pad(key_states, (0, 0, 0, pad_k), value=0.0) if pad_k > 0 else key_states
     padded_value_states = F.pad(value_states, (0, 0, 0, pad_k), value=0.0) if pad_k > 0 else value_states
     #  mask is applied inside the kernel, ideally more efficiently than score_mod.

@@ -12,30 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Union
-from functools import partial
 import copy
+from functools import partial
+from typing import List, Optional, Union
 
 import torch
-import torch.version
 import torch.nn.functional as F  # noqa: N812
+import torch.version
 from peft import LoraConfig, TaskType, get_peft_model
 from pytest import Cache
 from torch import nn
 from transformers import (
     AutoConfig,
-    GemmaForCausalLM,
-    AutoModelForImageTextToText,
-    AutoProcessor,
-    PretrainedConfig,
-    PreTrainedModel,
-    SmolVLMForConditionalGeneration,
     AutoModel,
+    AutoModelForImageTextToText,
     AutoModelForVision2Seq,
+    AutoProcessor,
+    SmolVLMForConditionalGeneration,
 )
-from transformers.models.auto import CONFIG_MAPPING
-from transformers import SmolVLMModel, SmolVLMConfig
+
 from lerobot.policies.smolpi0.flex_attention import flex_attention_forward
+
 
 def _round_up_to_multiple(x, multiple):
     return (x + multiple - 1) // multiple * multiple
@@ -180,20 +177,31 @@ def apply_rope(x, positions, max_wavelength=10_000):
 #                 f"Wrong value provided for `attention_implementation` ({self.attention_implementation}). Expected 'eager', 'fa2' or 'flex'."
 #             )
 
+
 def get_intermediate_size(hidden_dim, ffn_dim_multiplier=4, multiple_of=256):
     hidden_dim = int(2 * hidden_dim / 3)
     hidden_dim = int(ffn_dim_multiplier * hidden_dim)
     hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
     return hidden_dim
-    
+
 
 class SmolVLMWithExpertModel(nn.Module):
     # config_class = PaliGemmaWithExpertConfig
 
-    def __init__(self, model_id: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct", 
-    load_vlm_weights: bool = True, train_expert_only: bool = True, freeze_vision_encoder: bool = False, 
-    attention_implementation: str = "eager", attention_mode: str = "self_attn", num_expert_layers: int = -1, 
-    num_vlm_layers: int = -1, self_attn_every_n_layers: int = -1, expert_width_multiplier: float = 0.5, self_attn_only_actions: bool = False):
+    def __init__(
+        self,
+        model_id: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+        load_vlm_weights: bool = True,
+        train_expert_only: bool = True,
+        freeze_vision_encoder: bool = False,
+        attention_implementation: str = "eager",
+        attention_mode: str = "self_attn",
+        num_expert_layers: int = -1,
+        num_vlm_layers: int = -1,
+        self_attn_every_n_layers: int = -1,
+        expert_width_multiplier: float = 0.5,
+        self_attn_only_actions: bool = False,
+    ):
         super().__init__()
         if load_vlm_weights:
             print(f"Loading  {model_id} weights ...")
@@ -227,15 +235,17 @@ class SmolVLMWithExpertModel(nn.Module):
         # Smaller lm expert
         lm_expert_config = copy.deepcopy(config.text_config)
         hidden_size = lm_expert_config.hidden_size
-        lm_expert_config.hidden_size = int(hidden_size*expert_width_multiplier) #hidden_size // 2
-        lm_expert_config.intermediate_size = get_intermediate_size(int(hidden_size*expert_width_multiplier))
+        lm_expert_config.hidden_size = int(hidden_size * expert_width_multiplier)  # hidden_size // 2
+        lm_expert_config.intermediate_size = get_intermediate_size(int(hidden_size * expert_width_multiplier))
         lm_expert_config.num_hidden_layers = self.num_vlm_layers
-        if num_expert_layers > 0 :
-            assert len(self.get_vlm_model().text_model.layers) % num_expert_layers == 0, f"Number of layers in the VLM {len(self.get_vlm_model().text_model.layers)} are not multiple of num_expert_layers {num_expert_layers}"
+        if num_expert_layers > 0:
+            assert len(self.get_vlm_model().text_model.layers) % num_expert_layers == 0, (
+                f"Number of layers in the VLM {len(self.get_vlm_model().text_model.layers)} are not multiple of num_expert_layers {num_expert_layers}"
+            )
             lm_expert_config.num_hidden_layers = num_expert_layers
         # lm_expert_config.head_dim = lm_expert_config.head_dim * 2
         self.lm_expert = AutoModel.from_config(lm_expert_config)
-        
+
         self.num_expert_layers = len(self.lm_expert.layers)
         self.self_attn_every_n_layers = self_attn_every_n_layers
         self.self_attn_only_actions = self_attn_only_actions
@@ -245,10 +255,14 @@ class SmolVLMWithExpertModel(nn.Module):
                 if self.self_attn_every_n_layers > 0 and layer_idx % self.self_attn_every_n_layers == 0:
                     continue
                 self.lm_expert.layers[layer_idx].self_attn.k_proj = nn.Linear(
-                    config.text_config.num_key_value_heads * config.text_config.head_dim, lm_expert_config.num_key_value_heads * lm_expert_config.head_dim, bias=lm_expert_config.attention_bias
+                    config.text_config.num_key_value_heads * config.text_config.head_dim,
+                    lm_expert_config.num_key_value_heads * lm_expert_config.head_dim,
+                    bias=lm_expert_config.attention_bias,
                 )
                 self.lm_expert.layers[layer_idx].self_attn.v_proj = nn.Linear(
-                    config.text_config.num_key_value_heads * config.text_config.head_dim, lm_expert_config.num_key_value_heads * lm_expert_config.head_dim, bias=lm_expert_config.attention_bias
+                    config.text_config.num_key_value_heads * config.text_config.head_dim,
+                    lm_expert_config.num_key_value_heads * lm_expert_config.head_dim,
+                    bias=lm_expert_config.attention_bias,
                 )
         # Remove unused embed_tokens
         self.lm_expert.embed_tokens = None
@@ -308,8 +322,10 @@ class SmolVLMWithExpertModel(nn.Module):
         else:
             self.vlm = self.vlm.merge_and_unload()
 
-    def get_vlm_model(self,):
-        if hasattr(self.vlm.model, "model"): # When using peft
+    def get_vlm_model(
+        self,
+    ):
+        if hasattr(self.vlm.model, "model"):  # When using peft
             return self.vlm.model.model
         else:
             return self.vlm.model
@@ -326,22 +342,20 @@ class SmolVLMWithExpertModel(nn.Module):
         else:
             # To avoid unused params issue with distributed training
             last_layers = [self.num_vlm_layers - 1]
-            if self.num_vlm_layers != self.num_expert_layers and self.num_vlm_layers % self.num_expert_layers == 0:
+            if (
+                self.num_vlm_layers != self.num_expert_layers
+                and self.num_vlm_layers % self.num_expert_layers == 0
+            ):
                 last_layers.append(self.num_vlm_layers - 2)
             frozen_layers = [
-                            "lm_head",
-                            "text_model.model.norm.weight",
-                        ]
+                "lm_head",
+                "text_model.model.norm.weight",
+            ]
             for layer in last_layers:
                 frozen_layers.append(f"text_model.model.layers.{layer}.")
 
             for name, params in self.vlm.named_parameters():
-                if any(
-                    [
-                        k in name
-                        for k in frozen_layers
-                    ]
-                ):
+                if any([k in name for k in frozen_layers]):
                     params.requires_grad = False
         # To avoid unused params issue with distributed training
         for name, params in self.lm_expert.named_parameters():
@@ -410,19 +424,34 @@ class SmolVLMWithExpertModel(nn.Module):
 
         # FIXME(mshukor): add special image tokens specific to smolvlm
         # Get sequence from the vision encoder
-        image_hidden_states = self.get_vlm_model().vision_model(
-            pixel_values=image.to(dtype=self.get_vlm_model().vision_model.dtype),
-            patch_attention_mask=patch_attention_mask,
-        ).last_hidden_state
+        image_hidden_states = (
+            self.get_vlm_model()
+            .vision_model(
+                pixel_values=image.to(dtype=self.get_vlm_model().vision_model.dtype),
+                patch_attention_mask=patch_attention_mask,
+            )
+            .last_hidden_state
+        )
         # Modality projection & resampling
         image_hidden_states = self.get_vlm_model().connector(image_hidden_states)
         return image_hidden_states
-        
+
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.get_vlm_model().text_model.get_input_embeddings()(tokens)
 
-    def forward_attn_layer(self, model_layers, inputs_embeds, layer_idx, position_ids, attention_mask, batch_size, head_dim, use_cache: bool = True, fill_kv_cache: bool = True, past_key_values=None) -> list[torch.Tensor]:
-
+    def forward_attn_layer(
+        self,
+        model_layers,
+        inputs_embeds,
+        layer_idx,
+        position_ids,
+        attention_mask,
+        batch_size,
+        head_dim,
+        use_cache: bool = True,
+        fill_kv_cache: bool = True,
+        past_key_values=None,
+    ) -> list[torch.Tensor]:
         query_states = []
         key_states = []
         value_states = []
@@ -430,7 +459,7 @@ class SmolVLMWithExpertModel(nn.Module):
             layer = model_layers[i][layer_idx]
             if hidden_states is None or layer is None:
                 continue
-            
+
             # normalizer = torch.tensor(models[i].config.hidden_size**0.5, dtype=hidden_states.dtype)
             # hidden_states = hidden_states * normalizer
             hidden_states = layer.input_layernorm(hidden_states)
@@ -468,12 +497,16 @@ class SmolVLMWithExpertModel(nn.Module):
             if inputs_embeds[1] is not None:
                 suffix_len = inputs_embeds[1].shape[1]
                 attention_mask_[:, -suffix_len:, :-suffix_len] = False
-                position_ids_[:, -suffix_len:] = _position_ids[:, -suffix_len:] - _position_ids[:, -suffix_len][:, None]
+                position_ids_[:, -suffix_len:] = (
+                    _position_ids[:, -suffix_len:] - _position_ids[:, -suffix_len][:, None]
+                )
         else:
             attention_mask_ = _attention_mask
             position_ids_ = _position_ids
 
-        query_states = apply_rope(query_states, position_ids_) # FIXME(mshukor): this assumes we have always the vlm features?
+        query_states = apply_rope(
+            query_states, position_ids_
+        )  # FIXME(mshukor): this assumes we have always the vlm features?
         key_states = apply_rope(key_states, position_ids_)
 
         if use_cache and past_key_values is None:
@@ -491,9 +524,7 @@ class SmolVLMWithExpertModel(nn.Module):
                 # the max len, then we (for instance) double the cache size. This implementation already exists
                 # in `transformers`. (molbap)
                 key_states = torch.cat([past_key_values[layer_idx]["key_states"], key_states], dim=1)
-                value_states = torch.cat(
-                    [past_key_values[layer_idx]["value_states"], value_states], dim=1
-                )
+                value_states = torch.cat([past_key_values[layer_idx]["value_states"], value_states], dim=1)
 
         attention_interface = self.get_attention_interface()
 
@@ -504,20 +535,32 @@ class SmolVLMWithExpertModel(nn.Module):
 
         return [att_output], past_key_values
 
-
-    def forward_cross_attn_layer(self, model_layers, inputs_embeds, layer_idx, position_ids, attention_mask, batch_size, head_dim, use_cache: bool = True, fill_kv_cache: bool = True, past_key_values = None) -> list[torch.Tensor]:
-
+    def forward_cross_attn_layer(
+        self,
+        model_layers,
+        inputs_embeds,
+        layer_idx,
+        position_ids,
+        attention_mask,
+        batch_size,
+        head_dim,
+        use_cache: bool = True,
+        fill_kv_cache: bool = True,
+        past_key_values=None,
+    ) -> list[torch.Tensor]:
         attention_interface = self.get_attention_interface()
 
         att_outputs = []
-        assert len(inputs_embeds) == 2 or (use_cache and past_key_values is not None and not fill_kv_cache), f"Both len(inputs_embeds) == {len(inputs_embeds)} and past_key_values is {past_key_values}"
+        assert len(inputs_embeds) == 2 or (use_cache and past_key_values is not None and not fill_kv_cache), (
+            f"Both len(inputs_embeds) == {len(inputs_embeds)} and past_key_values is {past_key_values}"
+        )
 
         if len(inputs_embeds) == 2 and not past_key_values:
             # Prefix attention
             seq_len = inputs_embeds[0].shape[1]
-            position_id, expert_position_id = position_ids[:, :seq_len],  position_ids[:, seq_len:]
+            position_id, expert_position_id = position_ids[:, :seq_len], position_ids[:, seq_len:]
             prefix_attention_mask = attention_mask[:, :seq_len, :seq_len]
-            
+
             layer = model_layers[0][layer_idx]
 
             hidden_states = layer.input_layernorm(inputs_embeds[0])
@@ -558,7 +601,6 @@ class SmolVLMWithExpertModel(nn.Module):
                 key_states = past_key_values[layer_idx]["key_states"]
                 value_states = past_key_values[layer_idx]["value_states"]
 
-
         # Expert
         expert_layer = model_layers[1][layer_idx]
         if expert_layer is not None:
@@ -570,21 +612,37 @@ class SmolVLMWithExpertModel(nn.Module):
             expert_hidden_states = expert_hidden_states.to(dtype=expert_layer.self_attn.q_proj.weight.dtype)
             expert_query_state = expert_layer.self_attn.q_proj(expert_hidden_states).view(expert_hidden_shape)
 
+            _key_states = key_states.to(dtype=expert_layer.self_attn.k_proj.weight.dtype).view(
+                *key_states.shape[:2], -1
+            )
+            expert_key_states = expert_layer.self_attn.k_proj(_key_states).view(
+                *_key_states.shape[:-1], -1, expert_layer.self_attn.head_dim
+            )  # k_proj should have same dim as kv
 
-            _key_states = key_states.to(dtype=expert_layer.self_attn.k_proj.weight.dtype).view(*key_states.shape[:2], -1)
-            expert_key_states = expert_layer.self_attn.k_proj(_key_states).view(*_key_states.shape[:-1], -1, expert_layer.self_attn.head_dim) # k_proj should have same dim as kv
+            _value_states = value_states.to(dtype=expert_layer.self_attn.v_proj.weight.dtype).view(
+                *value_states.shape[:2], -1
+            )
+            expert_value_states = expert_layer.self_attn.v_proj(_value_states).view(
+                *_value_states.shape[:-1], -1, expert_layer.self_attn.head_dim
+            )
 
-            _value_states = value_states.to(dtype=expert_layer.self_attn.v_proj.weight.dtype).view(*value_states.shape[:2], -1)
-            expert_value_states = expert_layer.self_attn.v_proj(_value_states).view(*_value_states.shape[:-1], -1, expert_layer.self_attn.head_dim)
-
-            expert_position_id = expert_position_id - torch.min(expert_position_id, dim=1, keepdim=True).values # start from 0
-            expert_attention_mask = attention_mask[:, -inputs_embeds[1].shape[1]:, :expert_key_states.shape[1]:] # take into account kv
+            expert_position_id = (
+                expert_position_id - torch.min(expert_position_id, dim=1, keepdim=True).values
+            )  # start from 0
+            expert_attention_mask = attention_mask[
+                :, -inputs_embeds[1].shape[1] :, : expert_key_states.shape[1] :
+            ]  # take into account kv
 
             expert_query_states = apply_rope(expert_query_state, expert_position_id)
             # expert_key_states = apply_rope(expert_key_state, expert_position_id)
-            
+
             att_output = attention_interface(
-                expert_attention_mask, batch_size, head_dim, expert_query_states, expert_key_states, expert_value_states
+                expert_attention_mask,
+                batch_size,
+                head_dim,
+                expert_query_states,
+                expert_key_states,
+                expert_value_states,
             )
             att_outputs.append(att_output)
         else:
@@ -592,8 +650,8 @@ class SmolVLMWithExpertModel(nn.Module):
 
         # att_output = att_output.to(dtype=models[i].dtype)
         return att_outputs, past_key_values
-    
-    def get_model_layers(self, models: list) -> list: # FIXME(mshukor): is this efficient?
+
+    def get_model_layers(self, models: list) -> list:  # FIXME(mshukor): is this efficient?
         vlm_layers = []
         expert_layers = []
         multiple_of = self.num_vlm_layers // self.num_expert_layers
@@ -606,15 +664,16 @@ class SmolVLMWithExpertModel(nn.Module):
             vlm_layers.append(models[0].layers[i])
             expert_layers.append(expert_layer)
         return [vlm_layers, expert_layers]
+
     # TODO: break down this huge forward into modules or functions
     def forward(
         self,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
-        inputs_embeds: List[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        fill_kv_cache: Optional[bool] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: list[torch.FloatTensor] | Cache | None = None,
+        inputs_embeds: list[torch.FloatTensor] = None,
+        use_cache: bool | None = None,
+        fill_kv_cache: bool | None = None,
     ):
         models = [self.get_vlm_model().text_model, self.lm_expert]
         model_layers = self.get_model_layers(models)
@@ -626,26 +685,58 @@ class SmolVLMWithExpertModel(nn.Module):
                 continue
             batch_size = hidden_states.shape[0]
 
-        # # Pad prefix embds so that prefix_embs + prefix_embs len are multiple of 128, pad left or right depending on the gen or train 
+        # # Pad prefix embds so that prefix_embs + prefix_embs len are multiple of 128, pad left or right depending on the gen or train
         if self.attention_implementation == "flex":
-            if inputs_embeds[0] is not None and inputs_embeds[1] is not None and attention_mask.shape[-1] == attention_mask.shape[-2] and past_key_values is None: # Now only during training
+            if (
+                inputs_embeds[0] is not None
+                and inputs_embeds[1] is not None
+                and attention_mask.shape[-1] == attention_mask.shape[-2]
+                and past_key_values is None
+            ):  # Now only during training
                 seq_len = inputs_embeds[0].shape[1] + inputs_embeds[1].shape[1]
-                padded_seq_len = _round_up_to_multiple(seq_len, 128) # FIXME(mshukor): more efficient to have a fixed seq len?
+                padded_seq_len = _round_up_to_multiple(
+                    seq_len, 128
+                )  # FIXME(mshukor): more efficient to have a fixed seq len?
                 b_mask, q_len, kv_len = attention_mask.shape  # The shape of your mask
                 pad = padded_seq_len - q_len
                 attention_mask = F.pad(attention_mask, (0, pad, 0, pad), value=True)
                 inputs_embeds[0] = F.pad(inputs_embeds[0], (0, 0, 0, pad), value=0.0)
                 position_ids = F.pad(position_ids, (0, pad), value=0)
 
-
         # RMSNorm
         num_layers = self.num_vlm_layers
         head_dim = self.vlm.config.text_config.head_dim
         for layer_idx in range(num_layers):
-            if fill_kv_cache or "cross" not in self.attention_mode or (self.self_attn_every_n_layers > 0 and layer_idx % self.self_attn_every_n_layers == 0):
-                att_outputs, past_key_values = self.forward_attn_layer(model_layers, inputs_embeds, layer_idx, position_ids, attention_mask, batch_size, head_dim, use_cache=use_cache, fill_kv_cache=fill_kv_cache, past_key_values=past_key_values)
+            if (
+                fill_kv_cache
+                or "cross" not in self.attention_mode
+                or (self.self_attn_every_n_layers > 0 and layer_idx % self.self_attn_every_n_layers == 0)
+            ):
+                att_outputs, past_key_values = self.forward_attn_layer(
+                    model_layers,
+                    inputs_embeds,
+                    layer_idx,
+                    position_ids,
+                    attention_mask,
+                    batch_size,
+                    head_dim,
+                    use_cache=use_cache,
+                    fill_kv_cache=fill_kv_cache,
+                    past_key_values=past_key_values,
+                )
             else:
-                att_outputs, past_key_values = self.forward_cross_attn_layer(model_layers, inputs_embeds, layer_idx, position_ids, attention_mask, batch_size, head_dim, use_cache=use_cache, fill_kv_cache=fill_kv_cache, past_key_values=past_key_values)
+                att_outputs, past_key_values = self.forward_cross_attn_layer(
+                    model_layers,
+                    inputs_embeds,
+                    layer_idx,
+                    position_ids,
+                    attention_mask,
+                    batch_size,
+                    head_dim,
+                    use_cache=use_cache,
+                    fill_kv_cache=fill_kv_cache,
+                    past_key_values=past_key_values,
+                )
             # query_states = []
             # key_states = []
             # value_states = []
@@ -703,7 +794,6 @@ class SmolVLMWithExpertModel(nn.Module):
             #     attention_mask, batch_size, head_dim, query_states, key_states, value_states
             # )
 
-
             # att_output = att_output.to(dtype=models[i].dtype)
 
             # first part of att_output is prefix (up to sequence length, [:, 0:prefix_seq_len])
@@ -712,7 +802,9 @@ class SmolVLMWithExpertModel(nn.Module):
             for i, hidden_states in enumerate(inputs_embeds):
                 # layer = models[i].layers[layer_idx]
                 layer = model_layers[i][layer_idx]
-                att_output = att_outputs[i] if i < len(att_outputs) else att_outputs[0] # in case of self_attn
+                att_output = (
+                    att_outputs[i] if i < len(att_outputs) else att_outputs[0]
+                )  # in case of self_attn
                 if hidden_states is not None:
                     if layer is None:
                         outputs_embeds.append(hidden_states)
@@ -759,7 +851,11 @@ class SmolVLMWithExpertModel(nn.Module):
         if self.attention_implementation == "fa2":
             attention_interface = self.flash_attention_forward
         elif self.attention_implementation == "flex":
-            attention_interface = partial(flex_attention_forward, num_att_heads=self.num_attention_heads, num_key_value_heads=self.num_key_value_heads)
+            attention_interface = partial(
+                flex_attention_forward,
+                num_att_heads=self.num_attention_heads,
+                num_key_value_heads=self.num_key_value_heads,
+            )
         else:
             attention_interface = self.eager_attention_forward
         return attention_interface
@@ -807,7 +903,7 @@ class SmolVLMWithExpertModel(nn.Module):
         att_weights *= head_dim**-0.5
 
         att_weights = att_weights.to(dtype=torch.float32)
-        big_neg = torch.finfo(att_weights.dtype).min #-2.3819763e38  # See gemma/modules.py
+        big_neg = torch.finfo(att_weights.dtype).min  # -2.3819763e38  # See gemma/modules.py
         masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
         probs = nn.functional.softmax(masked_att_weights, dim=-1)
         probs = probs.to(dtype=value_states.dtype)

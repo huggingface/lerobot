@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 from collections import defaultdict
 from collections.abc import Callable
 from itertools import chain
-from typing import Any
+from typing import Any, Dict, List
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import gymnasium as gym
 import numpy as np
@@ -14,16 +16,12 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-import logging
-from collections import defaultdict
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence
-
-
 logger = logging.getLogger(__name__)
 
 # ---- Helpers -----------------------------------------------------------------
 
-def _parse_camera_names(camera_name: str | Sequence[str]) -> List[str]:
+
+def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     """Normalize camera_name into a non-empty list of strings."""
     if isinstance(camera_name, str):
         cams = [c.strip() for c in camera_name.split(",") if c.strip()]
@@ -47,14 +45,14 @@ def _get_suite(name: str):
     return suite
 
 
-def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> List[int]:
+def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[int]:
     """Validate/normalize task ids. If None → all tasks."""
     if task_ids is None:
         return list(range(total_tasks))
-    ids = sorted(set(int(t) for t in task_ids))
+    ids = sorted({int(t) for t in task_ids})
     for t in ids:
         if t < 0 or t >= total_tasks:
-            raise ValueError(f"task_id {t} out of range [0, {total_tasks-1}].")
+            raise ValueError(f"task_id {t} out of range [0, {total_tasks - 1}].")
     return ids
 
 
@@ -64,16 +62,25 @@ def _make_env_fns(
     suite_name: str,
     task_id: int,
     n_envs: int,
-    camera_names: List[str],
+    camera_names: list[str],
     init_states: bool,
     gym_kwargs: Mapping[str, Any],
     LiberoEnv: type,  # injected to avoid forward ref issues if needed
-) -> List[Callable[[], "LiberoEnv"]]:
+) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
     joined_cams = ",".join(camera_names)  # keep backward-compat: downstream expects a string
-    fns: List[Callable[[], "LiberoEnv"]] = []
+    fns: list[Callable[[], LiberoEnv]] = []
     for i in range(n_envs):
-        def _mk(i=i, suite=suite, task_id=task_id, suite_name=suite_name, joined_cams=joined_cams, init_states=init_states, gym_kwargs=dict(gym_kwargs)):
+
+        def _mk(
+            i=i,
+            suite=suite,
+            task_id=task_id,
+            suite_name=suite_name,
+            joined_cams=joined_cams,
+            init_states=init_states,
+            gym_kwargs=dict(gym_kwargs),
+        ):
             return LiberoEnv(
                 task_suite=suite,
                 task_id=task_id,
@@ -83,10 +90,13 @@ def _make_env_fns(
                 episode_index=i,
                 **gym_kwargs,
             )
+
         fns.append(_mk)
     return fns
 
+
 # ---- Main API ----------------------------------------------------------------
+
 
 def create_libero_envs(
     task: str,
@@ -130,12 +140,15 @@ def create_libero_envs(
 
     logger.info(
         "Creating LIBERO envs | suites=%s | n_envs(per task)=%d | init_states=%s | multitask_eval=%s",
-        suite_names, n_envs, init_states, bool(multitask_eval)
+        suite_names,
+        n_envs,
+        init_states,
+        bool(multitask_eval),
     )
     if task_ids_filter is not None:
         logger.info("Restricting to task_ids=%s", task_ids_filter)
 
-    out: Dict[str, Dict[int, Any]] = defaultdict(dict)
+    out: dict[str, dict[int, Any]] = defaultdict(dict)
 
     for suite_name in suite_names:
         suite = _get_suite(suite_name)
@@ -161,6 +174,8 @@ def create_libero_envs(
 
     # return plain dicts for predictability
     return {suite: dict(task_map) for suite, task_map in out.items()}
+
+
 def quat2axisangle(quat):
     """
     Copied from robosuite: https://github.com/ARISE-Initiative/robosuite/blob/eafb81f54ffc104f905ee48a16bb15f059176ad3/robosuite/utils/transform_utils.py#L490C1-L512C55
@@ -256,10 +271,10 @@ class LiberoEnv(gym.Env):
         self._env = self._make_envs_task(task_suite, self.task_id)
         TASK_SUITE_MAX_STEPS: dict[str, int] = {
             "libero_spatial": 220,  # longest training demo has 193 steps
-            "libero_object": 280,   # longest training demo has 254 steps
-            "libero_goal": 300,     # longest training demo has 270 steps
-            "libero_10": 520,       # longest training demo has 505 steps
-            "libero_90": 400,       # longest training demo has 373 steps
+            "libero_object": 280,  # longest training demo has 254 steps
+            "libero_goal": 300,  # longest training demo has 270 steps
+            "libero_10": 520,  # longest training demo has 505 steps
+            "libero_90": 400,  # longest training demo has 373 steps
         }
         default_steps = 500
         self._max_episode_steps = TASK_SUITE_MAX_STEPS.get(task_suite_name, default_steps)

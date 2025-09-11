@@ -104,6 +104,7 @@ def update_policy(
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
+
 def _inject_normalization_stats(policy: SmolVLAPolicy, dataset_meta: LeRobotDatasetMetadata):
     """Recreate normalization layers with dataset stats if missing (Adil's workaround)."""
     from lerobot.policies.normalize import Normalize, Unnormalize
@@ -115,21 +116,22 @@ def _inject_normalization_stats(policy: SmolVLAPolicy, dataset_meta: LeRobotData
     stats = {}
     for key, stat_dict in dataset_meta.stats.items():
         stats[key] = {
-            stat_type: torch.as_tensor(stat_array)
-            if isinstance(stat_array, np.ndarray)
-            else stat_array
+            stat_type: torch.as_tensor(stat_array) if isinstance(stat_array, np.ndarray) else stat_array
             for stat_type, stat_array in stat_dict.items()
         }
 
     normalize_inputs = Normalize(policy.config.input_features, policy.config.normalization_mapping, stats)
     normalize_targets = Normalize(policy.config.output_features, policy.config.normalization_mapping, stats)
-    unnormalize_outputs = Unnormalize(policy.config.output_features, policy.config.normalization_mapping, stats)
+    unnormalize_outputs = Unnormalize(
+        policy.config.output_features, policy.config.normalization_mapping, stats
+    )
 
     policy.normalize_inputs = normalize_inputs
     policy.normalize_targets = normalize_targets
     policy.unnormalize_outputs = unnormalize_outputs
 
     print("✅ Normalization layers injected with dataset stats.")
+
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
