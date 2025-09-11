@@ -93,9 +93,8 @@ robot_joints_to_ee_pose_processor = RobotProcessorPipeline[dict[str, Any], EnvTr
 # Build dataset action and gripper features
 action_ee_and_gripper = aggregate_pipeline_dataset_features(
     pipeline=robot_ee_to_joints_processor,
-    initial_features=create_initial_features(),
+    initial_features=create_initial_features(action=robot.action_features),
     use_videos=True,
-    patterns=["action.ee", "action.gripper.pos", "observation.state.gripper.pos"],
 )  # Get all ee action features + gripper pos action features
 
 # Build dataset observation features
@@ -103,7 +102,6 @@ obs_ee = aggregate_pipeline_dataset_features(
     pipeline=robot_joints_to_ee_pose_processor,
     initial_features=create_initial_features(observation=robot.observation_features),
     use_videos=True,
-    patterns=["observation.state.ee"],
 )  # Get all ee observation features
 
 dataset_features = combine_feature_dicts(obs_ee, action_ee_and_gripper)

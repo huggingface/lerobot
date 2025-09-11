@@ -125,15 +125,13 @@ action_ee = aggregate_pipeline_dataset_features(
     pipeline=phone_to_robot_ee_pose_processor,
     initial_features=create_initial_features(action=phone.action_features),
     use_videos=True,
-    patterns=["action.ee"],
 )
 
 # Get gripper pos action features
 gripper = aggregate_pipeline_dataset_features(
     pipeline=robot_ee_to_joints_processor,
-    initial_features=create_initial_features(),
+    initial_features=create_initial_features(action=robot.action_features),
     use_videos=True,
-    patterns=["action.gripper.pos", "observation.state.gripper.pos"],
 )
 
 # Build dataset ee observation features
@@ -141,7 +139,6 @@ observation_ee = aggregate_pipeline_dataset_features(
     pipeline=robot_joints_to_ee_pose,
     initial_features=create_initial_features(observation=robot.observation_features),
     use_videos=True,
-    patterns=["observation.state.ee"],
 )
 
 dataset_features = combine_feature_dicts(action_ee, gripper, observation_ee)
