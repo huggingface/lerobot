@@ -22,6 +22,7 @@ import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from typing import Any
 
 import numpy as np
 import torch
@@ -125,8 +126,8 @@ def predict_action(
     observation: dict[str, np.ndarray],
     policy: PreTrainedPolicy,
     device: torch.device,
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[dict[str, Any]],
     use_amp: bool,
     task: str | None = None,
     robot_type: str | None = None,

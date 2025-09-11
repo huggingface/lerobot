@@ -243,8 +243,8 @@ def record_loop(
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
-    preprocessor: PolicyProcessorPipeline | None = None,
-    postprocessor: PolicyProcessorPipeline | None = None,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any]] | None = None,
+    postprocessor: PolicyProcessorPipeline[dict[str, Any]] | None = None,
     control_time_s: int | None = None,
     teleop_action_processor: RobotProcessorPipeline[EnvTransition] | None = None,  # runs after teleop
     robot_action_processor: RobotProcessorPipeline[dict[str, Any]] | None = None,  # runs before robot

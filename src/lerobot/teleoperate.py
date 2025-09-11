@@ -106,9 +106,9 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
     # Optional processors for data transformation
-    teleop_action_processor: RobotProcessorPipeline | None = None  # runs after teleop
-    robot_action_processor: RobotProcessorPipeline | None = None  # runs before robot
-    robot_observation_processor: RobotProcessorPipeline | None = None  # runs after robot
+    teleop_action_processor: RobotProcessorPipeline[EnvTransition] | None = None  # runs after teleop
+    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] | None = None  # runs before robot
+    robot_observation_processor: RobotProcessorPipeline[EnvTransition] | None = None  # runs after robot
 
 
 def teleop_loop(

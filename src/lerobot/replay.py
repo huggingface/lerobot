@@ -44,6 +44,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
+from typing import Any
 
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -86,7 +87,7 @@ class ReplayConfig:
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Optional processor for actions before sending to robot
-    robot_action_processor: RobotProcessorPipeline | None = None
+    robot_action_processor: RobotProcessorPipeline[dict[str, Any]] | None = None
 
 
 @parser.wrap()
