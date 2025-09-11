@@ -43,3 +43,6 @@ class ViperXConfig(RobotConfig):
     # Troubleshooting: If one of your IntelRealSense cameras freeze during
     # data recording due to bandwidth limit, you might need to plug the camera
     # on another USB hub or PCIe card.
+
+    # Set to `True` for backward compatibility with previous policies/dataset
+    use_degrees: bool = False

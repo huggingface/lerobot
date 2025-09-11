@@ -23,3 +23,5 @@ from ..config import TeleoperatorConfig
 @dataclass
 class WidowXConfig(TeleoperatorConfig):
     port: str  # Port to connect to the arm
+
+    gripper_motor: str = "xl430-w250"  # This could be xc430-w150 or xl430-w250

@@ -20,7 +20,6 @@ import time
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
-    DriveMode,
     DynamixelMotorsBus,
     OperatingMode,
 )
@@ -40,7 +39,6 @@ class WidowX(Teleoperator):
     name = "widowx"
 
     def __init__(self, config: WidowXConfig):
-        raise NotImplementedError
         super().__init__(config)
         self.config = config
         self.bus = DynamixelMotorsBus(
@@ -53,9 +51,14 @@ class WidowX(Teleoperator):
                 "elbow_shadow": Motor(5, "xm430-w350", MotorNormMode.RANGE_M100_100),
                 "forearm_roll": Motor(6, "xm430-w350", MotorNormMode.RANGE_M100_100),
                 "wrist_angle": Motor(7, "xm430-w350", MotorNormMode.RANGE_M100_100),
-                "wrist_rotate": Motor(8, "xl430-w250", MotorNormMode.RANGE_M100_100),
-                "gripper": Motor(9, "xc430-w150", MotorNormMode.RANGE_0_100),
+                "wrist_rotate": Motor(
+                    8, "xm430-w350", MotorNormMode.RANGE_M100_100
+                ),  # This could be xl430-w250 or xm430-w350
+                "gripper": Motor(
+                    9, self.config.gripper_motor, MotorNormMode.RANGE_0_100
+                ),  # This could be xc430-w150 or xl430-w250
             },
+            calibration=self.calibration,
         )
 
     @property
@@ -76,6 +79,9 @@ class WidowX(Teleoperator):
 
         self.bus.connect()
         if not self.is_calibrated and calibrate:
+            logger.info(
+                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+            )
             self.calibrate()
 
         self.configure()
@@ -86,19 +92,27 @@ class WidowX(Teleoperator):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch)
-        logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
+        if self.calibration:
+            # Calibration file exists, ask user whether to use it or run new calibration
+            user_input = input(
+                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
+            )
+            if user_input.strip().lower() != "c":
+                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
+                self.bus.write_calibration(self.calibration)
+                return
+        logger.info(f"\nRunning calibration of {self}")
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
-        drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
+        # self.bus.write("Drive_Mode", "el", DriveMode.INVERTED.value)
+        # drive_modes = {motor: 1 if motor == ["elbow_shadow", "shoulder_shadow"] else 0 for motor in self.bus.motors}
 
-        input("Move robot to the middle of its range of motion and press ENTER....")
+        input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        full_turn_motors = ["shoulder_pan", "wrist_roll"]
+        full_turn_motors = ["shoulder", "forearm_roll", "wrist_rotate"]
         unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
         print(
             f"Move all joints except {full_turn_motors} sequentially through their "
@@ -113,7 +127,7 @@ class WidowX(Teleoperator):
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
-                drive_mode=drive_modes[motor],
+                drive_mode=0,
                 homing_offset=homing_offsets[motor],
                 range_min=range_mins[motor],
                 range_max=range_maxes[motor],
@@ -132,6 +146,22 @@ class WidowX(Teleoperator):
         # the other will follow. This is to avoid breaking the motors.
         self.bus.write("Secondary_ID", "shoulder_shadow", 2)
         self.bus.write("Secondary_ID", "elbow_shadow", 4)
+
+        for motor in self.bus.motors:
+            self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+
+        # TODO(pepijn): Re enable this
+        # Use 'position control current based' for gripper to be limited by the limit of the current.
+        # For the follower gripper, it means it can grasp an object without forcing too much even tho,
+        # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+        # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
+        # to make it move, and it will move back to its original target position when we release the force.
+        # self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+        # Set gripper's goal pos in current position mode so that we can use it as a trigger.
+        # self.bus.enable_torque("gripper")
+
+        if self.is_calibrated:
+            self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
 
     def get_action(self) -> dict[str, float]:
         if not self.is_connected:
