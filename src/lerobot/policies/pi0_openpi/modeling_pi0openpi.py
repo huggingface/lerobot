@@ -978,7 +978,6 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
 
         except Exception as e:
             print(f"Warning: Could not remap state dict keys: {e}")
-            print("Returning model without loading pretrained weights")
 
         return model
 
