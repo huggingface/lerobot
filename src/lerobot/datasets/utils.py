@@ -18,9 +18,9 @@ import importlib.resources
 import json
 import logging
 from collections.abc import Iterable, Iterator
-from typing import Any, Deque, Generic, TypeVar
 from pathlib import Path
 from pprint import pformat
+from typing import Any, Deque, Generic, TypeVar
 
 import datasets
 import numpy as np
@@ -87,6 +87,7 @@ DEFAULT_FEATURES = {
 }
 
 T = TypeVar("T")
+
 
 def get_parquet_file_size_in_mb(parquet_path: str | Path) -> float:
     metadata = pq.read_metadata(parquet_path)

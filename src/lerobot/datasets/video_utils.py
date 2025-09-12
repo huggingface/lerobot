@@ -616,7 +616,7 @@ def get_video_duration_in_s(video_path: Path | str) -> float:
             # Fallback to container duration if stream duration is not available
             duration = float(container.duration / av.time_base)
     return duration
-  
+
 
 class VideoEncodingManager:
     """
