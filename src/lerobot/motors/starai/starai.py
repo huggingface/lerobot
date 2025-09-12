@@ -52,25 +52,6 @@ class TorqueMode(Enum):
     ENABLED = 1
     DISABLED = 0
 
-
-# def _split_into_byte_chunks(value: int, length: int) -> list[int]:
-#     import scservo_sdk as scs
-
-#     if length == 1:
-#         data = [value]
-#     elif length == 2:
-#         data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
-#     elif length == 4:
-#         data = [
-#             scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
-#             scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
-#             scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
-#             scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
-#         ]
-#     return data
-
-
-
 class StaraiMotorsBus(MotorsBus):
 
 
