@@ -20,6 +20,7 @@ from pprint import pformat
 from typing import Any
 
 import torch
+from accelerate import Accelerator
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
@@ -33,7 +34,6 @@ from lerobot.envs.factory import make_env
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import get_device_from_parameters
 from lerobot.scripts.eval import eval_policy
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -46,7 +46,6 @@ from lerobot.utils.train_utils import (
 )
 from lerobot.utils.utils import (
     format_big_number,
-    get_safe_torch_device,
     has_method,
     init_logging,
 )
@@ -59,34 +58,30 @@ def update_policy(
     batch: Any,
     optimizer: Optimizer,
     grad_clip_norm: float,
-    grad_scaler: GradScaler,
+    accelerator: Accelerator,
     lr_scheduler=None,
-    use_amp: bool = False,
     lock=None,
 ) -> tuple[MetricsTracker, dict]:
     start_time = time.perf_counter()
-    device = get_device_from_parameters(policy)
     policy.train()
-    with torch.autocast(device_type=device.type) if use_amp else nullcontext():
+
+    # Let accelerator handle mixed precision
+    with accelerator.autocast():
         loss, output_dict = policy.forward(batch)
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-    grad_scaler.scale(loss).backward()
 
-    # Unscale the gradient of the optimizer's assigned params in-place **prior to gradient clipping**.
-    grad_scaler.unscale_(optimizer)
+    # Use accelerator's backward method
+    accelerator.backward(loss)
 
-    grad_norm = torch.nn.utils.clip_grad_norm_(
-        policy.parameters(),
-        grad_clip_norm,
-        error_if_nonfinite=False,
-    )
+    # Clip gradients if specified
+    if grad_clip_norm > 0:
+        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+    else:
+        grad_norm = torch.tensor(0.0, device=accelerator.device)
 
-    # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
-    # although it still skips optimizer.step() if the gradients contain infs or NaNs.
+    # Use accelerator's optimizer step
     with lock if lock is not None else nullcontext():
-        grad_scaler.step(optimizer)
-    # Updates the scale for next iteration.
-    grad_scaler.update()
+        optimizer.step()
 
     optimizer.zero_grad()
 
@@ -108,23 +103,37 @@ def update_policy(
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
-    logging.info(pformat(cfg.to_dict()))
 
-    if cfg.wandb.enable and cfg.wandb.project:
+    # Initialize accelerator
+    accelerator = Accelerator(
+        gradient_accumulation_steps=getattr(cfg, "gradient_accumulation_steps", 1),
+        mixed_precision=getattr(cfg, "mixed_precision", "no"),
+        log_with="wandb" if cfg.wandb.enable and cfg.wandb.project else None,
+        project_dir=str(cfg.output_dir) if cfg.wandb.enable and cfg.wandb.project else None,
+    )
+
+    # Only log on main process
+    if accelerator.is_main_process:
+        logging.info(pformat(cfg.to_dict()))
+
+    # Initialize wandb only on main process
+    if cfg.wandb.enable and cfg.wandb.project and accelerator.is_main_process:
         wandb_logger = WandBLogger(cfg)
     else:
         wandb_logger = None
-        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+        if accelerator.is_main_process:
+            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     if cfg.seed is not None:
         set_seed(cfg.seed)
 
-    # Check device is available
-    device = get_safe_torch_device(cfg.policy.device, log=True)
+    # Use accelerator's device instead of manual device selection
+    device = accelerator.device
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    logging.info("Creating dataset")
+    if accelerator.is_main_process:
+        logging.info("Creating dataset")
     dataset = make_dataset(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
@@ -132,18 +141,23 @@ def train(cfg: TrainPipelineConfig):
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
     if cfg.eval_freq > 0 and cfg.env is not None:
-        logging.info("Creating env")
+        if accelerator.is_main_process:
+            logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
-    logging.info("Creating policy")
+    if accelerator.is_main_process:
+        logging.info("Creating policy")
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
 
-    logging.info("Creating optimizer and scheduler")
+    if accelerator.is_main_process:
+        logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
-    grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
+
+    # No need for GradScaler when using accelerator's mixed precision
+    _grad_scaler = GradScaler(device.type, enabled=False)
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -153,14 +167,15 @@ def train(cfg: TrainPipelineConfig):
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 
-    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
-    if cfg.env is not None:
-        logging.info(f"{cfg.env.task=}")
-    logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
-    logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
-    logging.info(f"{dataset.num_episodes=}")
-    logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
-    logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
+    if accelerator.is_main_process:
+        logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
+        if cfg.env is not None:
+            logging.info(f"{cfg.env.task=}")
+        logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
+        logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
+        logging.info(f"{dataset.num_episodes=}")
+        logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
+        logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
@@ -183,6 +198,12 @@ def train(cfg: TrainPipelineConfig):
         pin_memory=device.type == "cuda",
         drop_last=False,
     )
+
+    # Prepare model, optimizer, scheduler, and dataloader with accelerator
+    policy, optimizer, dataloader = accelerator.prepare(policy, optimizer, dataloader)
+    if lr_scheduler is not None:
+        lr_scheduler = accelerator.prepare(lr_scheduler)
+
     dl_iter = cycle(dataloader)
 
     policy.train()
@@ -199,15 +220,15 @@ def train(cfg: TrainPipelineConfig):
         cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
     )
 
-    logging.info("Start offline training on a fixed dataset")
+    if accelerator.is_main_process:
+        logging.info("Start offline training on a fixed dataset")
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        for key in batch:
-            if isinstance(batch[key], torch.Tensor):
-                batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")
+        # No need for manual device transfers - accelerator handles this
+        # The dataloader is already prepared and tensors are on the correct device
 
         train_tracker, output_dict = update_policy(
             train_tracker,
@@ -215,9 +236,8 @@ def train(cfg: TrainPipelineConfig):
             batch,
             optimizer,
             cfg.optimizer.grad_clip_norm,
-            grad_scaler=grad_scaler,
+            accelerator=accelerator,
             lr_scheduler=lr_scheduler,
-            use_amp=cfg.policy.use_amp,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -228,7 +248,7 @@ def train(cfg: TrainPipelineConfig):
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
-        if is_log_step:
+        if is_log_step and accelerator.is_main_process:
             logging.info(train_tracker)
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
@@ -237,53 +257,70 @@ def train(cfg: TrainPipelineConfig):
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
-        if cfg.save_checkpoint and is_saving_step:
+        if cfg.save_checkpoint and is_saving_step and accelerator.is_main_process:
+            # Wait for all processes to finish current step
+            accelerator.wait_for_everyone()
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler)
+
+            # Use accelerator to unwrap the model before saving
+            unwrapped_policy = accelerator.unwrap_model(policy)
+            save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
                 wandb_logger.log_policy(checkpoint_dir)
 
         if cfg.env and is_eval_step:
-            step_id = get_step_identifier(step, cfg.steps)
-            logging.info(f"Eval policy at step {step}")
-            with (
-                torch.no_grad(),
-                torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
-            ):
-                eval_info = eval_policy(
-                    eval_env,
-                    policy,
-                    cfg.eval.n_episodes,
-                    videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
-                    max_episodes_rendered=4,
-                    start_seed=cfg.seed,
-                )
+            # Only evaluate on main process
+            if accelerator.is_main_process:
+                step_id = get_step_identifier(step, cfg.steps)
+                logging.info(f"Eval policy at step {step}")
 
-            eval_metrics = {
-                "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
-                "pc_success": AverageMeter("success", ":.1f"),
-                "eval_s": AverageMeter("eval_s", ":.3f"),
-            }
-            eval_tracker = MetricsTracker(
-                cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
-            )
-            eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
-            eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
-            eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
-            logging.info(eval_tracker)
-            if wandb_logger:
-                wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
-                wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+                # Use unwrapped model for evaluation and accelerator's autocast
+                unwrapped_policy = accelerator.unwrap_model(policy)
+                with (
+                    torch.no_grad(),
+                    accelerator.autocast(),
+                ):
+                    eval_info = eval_policy(
+                        eval_env,
+                        unwrapped_policy,
+                        cfg.eval.n_episodes,
+                        videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
+                        max_episodes_rendered=4,
+                        start_seed=cfg.seed,
+                    )
+
+                eval_metrics = {
+                    "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
+                    "pc_success": AverageMeter("success", ":.1f"),
+                    "eval_s": AverageMeter("eval_s", ":.3f"),
+                }
+                eval_tracker = MetricsTracker(
+                    cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
+                )
+                eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
+                eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
+                eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
+                logging.info(eval_tracker)
+                if wandb_logger:
+                    wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
+                    wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
+                    wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+
+            # Wait for evaluation to complete before continuing training
+            accelerator.wait_for_everyone()
 
     if eval_env:
         eval_env.close()
-    logging.info("End of training")
 
-    if cfg.policy.push_to_hub:
-        policy.push_model_to_hub(cfg)
+    if accelerator.is_main_process:
+        logging.info("End of training")
+
+        if cfg.policy.push_to_hub:
+            # Use unwrapped model for pushing to hub
+            unwrapped_policy = accelerator.unwrap_model(policy)
+            unwrapped_policy.push_model_to_hub(cfg)
 
 
 def main():
