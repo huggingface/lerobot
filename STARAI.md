@@ -160,7 +160,7 @@ lerobot-find-port
 例如：
 
 1. 识别Leader时端口的示例输出（例如，在 Mac 上为 `/dev/tty.usbmodem575E0031751`，或在 Linux 上可能为 `/dev/ttyUSB0`） 
-2. 识别Reader时端口的示例输出（例如，在 Mac 上为 `/dev/tty.usbmodem575E0032081`，或在 Linux 上可能为 `/dev/ttyUSB1`）
+2. 识别Follower时端口的示例输出（例如，在 Mac 上为 `/dev/tty.usbmodem575E0032081`，或在 Linux 上可能为 `/dev/ttyUSB1`）
 
 > [!NOTE]
 >
@@ -420,7 +420,7 @@ lerobot-record \
 
 播放已经录制好的动作，可以借此测试机器人动作的重复性。
 
-```
+```bash
 lerobot-replay \
     --robot.type=starai_viola \
     --robot.port=/dev/ttyUSB1 \
