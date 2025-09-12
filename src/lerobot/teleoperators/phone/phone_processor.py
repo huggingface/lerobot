@@ -41,7 +41,7 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
     platform: PhoneOS
     _enabled_prev: bool = field(default=False, init=False, repr=False)
 
-    def action(self, act: RobotAction) -> RobotAction:
+    def action(self, action: RobotAction) -> RobotAction:
         """
         Processes the phone action dictionary to create a robot action dictionary.
 
@@ -55,10 +55,10 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
             ValueError: If 'pos' or 'rot' keys are missing from the input action.
         """
         # Pop them from the action
-        enabled = bool(act.pop("phone.enabled", 0))
-        pos = act.pop("phone.pos", None)
-        rot = act.pop("phone.rot", None)
-        inputs = act.pop("phone.raw_inputs", {})
+        enabled = bool(action.pop("phone.enabled", 0))
+        pos = action.pop("phone.pos", None)
+        rot = action.pop("phone.rot", None)
+        inputs = action.pop("phone.raw_inputs", {})
 
         if pos is None or rot is None:
             raise ValueError("pos and rot must be present in action")
@@ -76,15 +76,15 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
             )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
 
         # For some actions we need to invert the axis
-        act["enabled"] = enabled
-        act["target_x"] = -pos[1] if enabled else 0.0
-        act["target_y"] = pos[0] if enabled else 0.0
-        act["target_z"] = pos[2] if enabled else 0.0
-        act["target_wx"] = rotvec[1] if enabled else 0.0
-        act["target_wy"] = rotvec[0] if enabled else 0.0
-        act["target_wz"] = -rotvec[2] if enabled else 0.0
-        act["gripper"] = gripper  # Still send gripper action when disabled
-        return act
+        action["enabled"] = enabled
+        action["target_x"] = -pos[1] if enabled else 0.0
+        action["target_y"] = pos[0] if enabled else 0.0
+        action["target_z"] = pos[2] if enabled else 0.0
+        action["target_wx"] = rotvec[1] if enabled else 0.0
+        action["target_wy"] = rotvec[0] if enabled else 0.0
+        action["target_wz"] = -rotvec[2] if enabled else 0.0
+        action["gripper"] = gripper  # Still send gripper action when disabled
+        return action
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
