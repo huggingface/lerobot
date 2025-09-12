@@ -157,6 +157,33 @@ def train(cfg: TrainPipelineConfig):
 
     if accelerator.is_main_process:
         logging.info("Creating optimizer and scheduler")
+
+    # Scale learning rate and scheduler parameters for distributed training
+    original_lr = cfg.optimizer.lr
+    scaled_lr = original_lr * accelerator.num_processes
+    cfg.optimizer.lr = scaled_lr
+
+    # Scale scheduler parameters to account for faster data consumption in distributed training
+    original_scheduler_params = {}
+    if cfg.scheduler is not None:
+        # Store original values
+        if hasattr(cfg.scheduler, "num_warmup_steps"):
+            original_scheduler_params["num_warmup_steps"] = cfg.scheduler.num_warmup_steps
+            cfg.scheduler.num_warmup_steps = int(cfg.scheduler.num_warmup_steps * accelerator.num_processes)
+
+        if hasattr(cfg.scheduler, "num_decay_steps"):
+            original_scheduler_params["num_decay_steps"] = cfg.scheduler.num_decay_steps
+            cfg.scheduler.num_decay_steps = int(cfg.scheduler.num_decay_steps * accelerator.num_processes)
+
+    if accelerator.is_main_process:
+        logging.info(
+            f"Scaling learning rate from {original_lr} to {scaled_lr} for {accelerator.num_processes} processes"
+        )
+        if cfg.scheduler is not None and original_scheduler_params:
+            for param_name, original_value in original_scheduler_params.items():
+                new_value = getattr(cfg.scheduler, param_name)
+                logging.info(f"Scaling scheduler {param_name} from {original_value} to {new_value}")
+
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     # No need for GradScaler when using accelerator's mixed precision
@@ -177,6 +204,9 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
+        logging.info(
+            f"Effective batch size: {cfg.batch_size} x {accelerator.num_processes} = {cfg.batch_size * accelerator.num_processes}"
+        )
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -219,8 +249,10 @@ def train(cfg: TrainPipelineConfig):
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
 
+    # Use effective batch size for proper epoch calculation in distributed training
+    effective_batch_size = cfg.batch_size * accelerator.num_processes
     train_tracker = MetricsTracker(
-        cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
+        effective_batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
     )
 
     if accelerator.is_main_process:
