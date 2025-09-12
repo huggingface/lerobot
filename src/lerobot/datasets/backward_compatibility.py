@@ -27,18 +27,6 @@ If you encounter a problem, contact LeRobot maintainers on [Discord](https://dis
 or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
 """
 
-V30_MESSAGE = """
-The dataset you requested ({repo_id}) is in {version} format.
-While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
-stats instead of per-episode stats. Update your dataset stats to the new format using this command:
-```
-python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id={repo_id}
-```
-
-If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
-or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
-"""
-
 FUTURE_MESSAGE = """
 The dataset you requested ({repo_id}) is only available in {version} format.
 As we cannot ensure forward compatibility with it, please update your current version of lerobot.
