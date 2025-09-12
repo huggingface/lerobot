@@ -28,6 +28,8 @@
 - sections:
   - local: introduction_processors
     title: Introduction to Robot Processors
+  - local: debug_processor_pipeline
+    title: Debug your processor pipeline
   - local: implement_your_own_processor
     title: Implement your own processor
   - local: processors_robots_teleop
