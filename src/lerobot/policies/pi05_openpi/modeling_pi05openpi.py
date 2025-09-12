@@ -517,6 +517,19 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
 
+        msg = """transformers_replace is not installed correctly.
+Please install it with `pip install transformers==4.53.2`
+and `cp -r ./src/lerobot/policies/pi0_openpi/transformers_replace/* \
+$(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")"""
+
+        try:
+            from transformers.models.siglip import check
+
+            if not check.check_whether_transformers_replace_is_installed_correctly():
+                raise ValueError(msg)
+        except ImportError:
+            raise ValueError(msg) from None
+
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
