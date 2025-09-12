@@ -50,3 +50,7 @@
   - local: backwardcomp
     title: Backward compatibility
   title: "About"
+- sections:
+  - local: datasets
+    title: "The LeRobotDataset Format"
+  -title: "Datasets"
