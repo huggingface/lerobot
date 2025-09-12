@@ -87,7 +87,7 @@ def test_pi05_forward_pass():
         action_dim=7,
         state_dim=14,
         dtype="float32",
-        action_horizon=16,  # Shorter horizon for testing
+        chunk_size=16,  # Shorter chunk_size for testing
         n_action_steps=16,  # Shorter action steps for testing
     )
 
@@ -111,7 +111,7 @@ def test_pi05_forward_pass():
     device = next(policy.parameters()).device
     batch = {
         "observation.state": torch.randn(batch_size, 14, dtype=torch.float32, device=device),
-        "action": torch.randn(batch_size, config.action_horizon, 7, dtype=torch.float32, device=device),
+        "action": torch.randn(batch_size, config.chunk_size, 7, dtype=torch.float32, device=device),
         "observation.images.base_0_rgb": torch.rand(
             batch_size, 3, 224, 224, dtype=torch.float32, device=device
         ),

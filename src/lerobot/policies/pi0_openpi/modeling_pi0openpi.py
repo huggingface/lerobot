@@ -647,7 +647,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
         pad_masks.append(action_time_mask)
 
-        att_masks += [1] + ([0] * (self.config.action_horizon - 1))
+        att_masks += [1] + ([0] * (self.config.chunk_size - 1))
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
@@ -705,7 +705,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
         )
 
-        suffix_out = suffix_out[:, -self.config.action_horizon :]
+        suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
 
         def action_out_proj_func(suffix_out):
@@ -728,7 +728,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         if noise is None:
             # Sample noise with padded dimension (32) as expected by action_in_proj
-            actions_shape = (bsize, self.config.action_horizon, 32)  # Use 32 for internal processing
+            actions_shape = (bsize, self.config.chunk_size, 32)  # Use 32 for internal processing
             noise = self.sample_noise(actions_shape, device)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
@@ -806,7 +806,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
 
         suffix_out = outputs_embeds[1]
-        suffix_out = suffix_out[:, -self.config.action_horizon :]
+        suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
         return self.action_out_proj(suffix_out)
 

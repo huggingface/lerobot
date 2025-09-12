@@ -36,7 +36,7 @@ def test_policy_instantiation():
     device = policy.device if hasattr(policy, "device") else "cpu"
     batch = {
         "observation.state": torch.randn(batch_size, 14, dtype=torch.float32, device=device),
-        "action": torch.randn(batch_size, config.action_horizon, 7, dtype=torch.float32, device=device),
+        "action": torch.randn(batch_size, config.chunk_size, 7, dtype=torch.float32, device=device),
         "observation.images.base_0_rgb": torch.rand(
             batch_size, 3, 224, 224, dtype=torch.float32, device=device
         ),  # Use rand for [0,1] range

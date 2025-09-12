@@ -31,7 +31,7 @@ class PI0OpenPIConfig(PreTrainedConfig):
 
     # Input / output structure
     n_obs_steps: int = 1
-    action_horizon: int = 50  # Number of action steps to predict
+    chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
     action_dim: int = 32  # Action dimension (will be padded to 32)
     state_dim: int = 32  # State dimension (will be padded to 32)
@@ -84,9 +84,9 @@ class PI0OpenPIConfig(PreTrainedConfig):
         super().__post_init__()
 
         # Validate configuration
-        if self.n_action_steps > self.action_horizon:
+        if self.n_action_steps > self.chunk_size:
             raise ValueError(
-                f"n_action_steps ({self.n_action_steps}) cannot be greater than action_horizon ({self.action_horizon})"
+                f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
             )
 
         if self.paligemma_variant not in ["gemma_300m", "gemma_2b"]:
