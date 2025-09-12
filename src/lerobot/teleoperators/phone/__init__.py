@@ -15,4 +15,4 @@
 # limitations under the License.
 
 from .config_phone import PhoneConfig
-from .phone import Phone
+from .teleop_phone import Phone

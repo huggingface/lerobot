@@ -193,13 +193,13 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
     _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
 
-    def action(self, act: RobotAction) -> RobotAction:
-        x = act.get("ee.x", None)
-        y = act.get("ee.y", None)
-        z = act.get("ee.z", None)
-        wx = act.get("ee.wx", None)
-        wy = act.get("ee.wy", None)
-        wz = act.get("ee.wz", None)
+    def action(self, action: RobotAction) -> RobotAction:
+        x = action.get("ee.x", None)
+        y = action.get("ee.y", None)
+        z = action.get("ee.z", None)
+        wx = action.get("ee.wx", None)
+        wy = action.get("ee.wy", None)
+        wz = action.get("ee.wz", None)
 
         if None in (x, y, z, wx, wy, wz):
             raise ValueError(
@@ -223,13 +223,13 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
         self._last_pos = pos
         self._last_twist = twist
 
-        act["ee.x"] = float(pos[0])
-        act["ee.y"] = float(pos[1])
-        act["ee.z"] = float(pos[2])
-        act["ee.wx"] = float(twist[0])
-        act["ee.wy"] = float(twist[1])
-        act["ee.wz"] = float(twist[2])
-        return act
+        action["ee.x"] = float(pos[0])
+        action["ee.y"] = float(pos[1])
+        action["ee.z"] = float(pos[2])
+        action["ee.wx"] = float(twist[0])
+        action["ee.wy"] = float(twist[1])
+        action["ee.wz"] = float(twist[2])
+        return action
 
     def reset(self):
         """Resets the last known position and orientation."""
@@ -435,22 +435,23 @@ class ForwardKinematicsJointsToEE(ObservationProcessorStep):
     kinematics: RobotKinematics
     motor_names: list[str]
 
-    def observation(self, obs: dict) -> dict:
-        if not all(f"{OBS_STATE}.{n}.pos" in obs for n in self.motor_names):
+    def observation(self, observation: dict) -> dict:
+        print("observation in step", observation)
+        if not all(f"{n}.pos" in observation for n in self.motor_names):
             raise ValueError(f"Missing required joint positions for motors: {self.motor_names}")
 
-        q = np.array([obs[f"{OBS_STATE}.{n}.pos"] for n in self.motor_names], dtype=float)
+        q = np.array([observation[f"{n}.pos"] for n in self.motor_names], dtype=float)
         t = self.kinematics.forward_kinematics(q)
         pos = t[:3, 3]
         tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
 
-        obs[f"{OBS_STATE}.ee.x"] = float(pos[0])
-        obs[f"{OBS_STATE}.ee.y"] = float(pos[1])
-        obs[f"{OBS_STATE}.ee.z"] = float(pos[2])
-        obs[f"{OBS_STATE}.ee.wx"] = float(tw[0])
-        obs[f"{OBS_STATE}.ee.wy"] = float(tw[1])
-        obs[f"{OBS_STATE}.ee.wz"] = float(tw[2])
-        return obs
+        observation[f"{OBS_STATE}.ee.x"] = float(pos[0])
+        observation[f"{OBS_STATE}.ee.y"] = float(pos[1])
+        observation[f"{OBS_STATE}.ee.z"] = float(pos[2])
+        observation[f"{OBS_STATE}.ee.wx"] = float(tw[0])
+        observation[f"{OBS_STATE}.ee.wy"] = float(tw[1])
+        observation[f"{OBS_STATE}.ee.wz"] = float(tw[2])
+        return observation
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

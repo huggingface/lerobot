@@ -123,21 +123,21 @@ robot_joints_to_ee_pose = RobotProcessorPipeline[dict[str, Any], EnvTransition](
 # Build dataset ee action features
 action_ee = aggregate_pipeline_dataset_features(
     pipeline=phone_to_robot_ee_pose_processor,
-    initial_features=create_initial_features(action=phone.action_features),
+    initial_features=create_initial_features(action=phone.action_features, observation={}),
     use_videos=True,
 )
 
 # Get gripper pos action features
 gripper = aggregate_pipeline_dataset_features(
     pipeline=robot_ee_to_joints_processor,
-    initial_features=create_initial_features(action=robot.action_features),
+    initial_features=create_initial_features(action=robot.action_features, observation={}),
     use_videos=True,
 )
 
 # Build dataset ee observation features
 observation_ee = aggregate_pipeline_dataset_features(
     pipeline=robot_joints_to_ee_pose,
-    initial_features=create_initial_features(observation=robot.observation_features),
+    initial_features=create_initial_features(observation=robot.observation_features, action={}),
     use_videos=True,
 )
 
