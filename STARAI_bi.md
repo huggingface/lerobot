@@ -159,8 +159,10 @@ lerobot-find-port
 
 例如：
 
-1. 识别Leader时端口的示例输出（例如，在 Mac 上为 `/dev/tty.usbmodem575E0031751`，或在 Linux 上可能为 `/dev/ttyUSB0`） 
-2. 识别Reader时端口的示例输出（例如，在 Mac 上为 `/dev/tty.usbmodem575E0032081`，或在 Linux 上可能为 `/dev/ttyUSB1`）
+1. 识别Leader的left_arm_port时端口的示例输出（例如，在 Mac 上为 `/dev/tty.usbmodem575E0031751`，或在 Linux 上可能为 `/dev/ttyUSB0`） 
+2. 识别Leader的right_arm_port时端口的示例输出（例如，在 Mac 上为 `/dev/tty.usbmodem575E0032081`，或在 Linux 上可能为 `/dev/ttyUSB02`） 
+3. 识别Follower的left_arm_port时端口的示例输出（例如，在 Mac 上为 `/dev/tty.usbmodem575E0032411`，或在 Linux 上可能为 `/dev/ttyUSB1`）
+4. 识别Follower的right_arm_port时端口的示例输出（例如，在 Mac 上为 `/dev/tty.usbmodem575E0032741`，或在 Linux 上可能为 `/dev/ttyUSB3`）
 
 > [!NOTE]
 >
@@ -236,7 +238,7 @@ lerobot-calibrate     --teleop.type=bi_starai_leader  --teleop.left_arm_port=/de
 > 将left_arm_port连接到/dev/ttyUSB1，right_arm_port连接到/dev/ttyUSB3，或者修改下面的命令。
 
 ```bash
-lerobot-calibrate     --robot.type=bi_starai_follower  --robot.left_arm_port=/dev/ttyUSB1  --robot.right_arm_port=/dev/ttyUSB3 --robot.id=my_awesome_staraiviola_arm
+lerobot-calibrate     --robot.type=bi_starai_follower  --robot.left_arm_port=/dev/ttyUSB1  --robot.right_arm_port=/dev/ttyUSB3 --robot.id=bi_starai_follower
 ```
 
 ## 遥操作
