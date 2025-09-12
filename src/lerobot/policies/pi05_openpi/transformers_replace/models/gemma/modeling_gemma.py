@@ -45,25 +45,6 @@ from .configuration_gemma import GemmaConfig
 logger = logging.get_logger(__name__)
 
 
-# Workaround for Python 3.10+ UnionType compatibility with transformers auto_docstring
-def safe_auto_docstring(func=None, **kwargs):
-    """Auto docstring decorator that handles Python 3.10+ UnionType gracefully."""
-
-    def decorator(f):
-        try:
-            return auto_docstring(f, **kwargs) if kwargs else auto_docstring(f)
-        except (AttributeError, TypeError):
-            # If auto_docstring fails due to UnionType, just return the function unchanged
-            return f
-
-    if func is None:
-        # Called with arguments, return the decorator
-        return decorator
-    else:
-        # Called without arguments, apply directly
-        return decorator(func)
-
-
 class GemmaRMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6, cond_dim: int | None = None):
         super().__init__()
@@ -374,9 +355,8 @@ class GemmaDecoderLayer(GradientCheckpointingLayer):
         output_attentions: bool | None = False,
         use_cache: bool | None = False,
         cache_position: torch.LongTensor | None = None,
-        position_embeddings: (
-            None | tuple[torch.Tensor, torch.Tensor]
-        ) = None,  # necessary, but kept here for BC
+        position_embeddings: None
+        | (tuple[torch.Tensor, torch.Tensor]) = None,  # necessary, but kept here for BC
         adarms_cond: torch.Tensor | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
@@ -410,7 +390,7 @@ class GemmaDecoderLayer(GradientCheckpointingLayer):
         return outputs
 
 
-@safe_auto_docstring
+@auto_docstring
 class GemmaPreTrainedModel(PreTrainedModel):
     config_class = GemmaConfig
     base_model_prefix = "model"
@@ -441,7 +421,7 @@ class GemmaPreTrainedModel(PreTrainedModel):
                 module.weight.data.fill_(1.0)
 
 
-@safe_auto_docstring
+@auto_docstring
 class GemmaModel(GemmaPreTrainedModel):
     def __init__(self, config: GemmaConfig):
         super().__init__(config)
@@ -468,7 +448,7 @@ class GemmaModel(GemmaPreTrainedModel):
         self.embed_tokens = value
 
     @can_return_tuple
-    @safe_auto_docstring
+    @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
@@ -540,7 +520,7 @@ class GemmaModel(GemmaPreTrainedModel):
         # normalized
         # Gemma downcasts the below to float16, causing sqrt(3072)=55.4256 to become 55.5
         # See https://github.com/huggingface/transformers/pull/29402
-        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)  # noqa: F841
+        _normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
         # hidden_states = hidden_states * normalizer
 
         # decoder layers
@@ -586,7 +566,7 @@ class GemmaModel(GemmaPreTrainedModel):
 class KwargsForCausalLM(FlashAttentionKwargs, LossKwargs): ...
 
 
-@safe_auto_docstring
+@auto_docstring
 class GemmaForCausalLM(GemmaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
@@ -620,7 +600,7 @@ class GemmaForCausalLM(GemmaPreTrainedModel, GenerationMixin):
         return self.model
 
     @can_return_tuple
-    @safe_auto_docstring
+    @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
@@ -704,7 +684,7 @@ class GemmaForCausalLM(GemmaPreTrainedModel, GenerationMixin):
         )
 
 
-@safe_auto_docstring(
+@auto_docstring(
     custom_intro="""
     The Gemma Model transformer with a sequence classification head on top (linear layer).
 
@@ -735,7 +715,7 @@ class GemmaForSequenceClassification(GemmaPreTrainedModel):
         self.model.embed_tokens = value
 
     @can_return_tuple
-    @safe_auto_docstring
+    @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
@@ -811,7 +791,7 @@ class GemmaForSequenceClassification(GemmaPreTrainedModel):
         )
 
 
-@safe_auto_docstring
+@auto_docstring
 class GemmaForTokenClassification(GemmaPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -836,7 +816,7 @@ class GemmaForTokenClassification(GemmaPreTrainedModel):
         self.model.embed_tokens = value
 
     @can_return_tuple
-    @safe_auto_docstring
+    @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
