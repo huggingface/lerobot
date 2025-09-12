@@ -73,6 +73,8 @@ For Ubuntu X86:
 - Python 3.10
 - Troch 2.6
 
+
+
 ## 安装与调试
 
 ### 安装LeRobot
@@ -86,7 +88,7 @@ For Ubuntu X86:
     ./Miniconda3-latest-Linux-aarch64.sh
     source ~/.bashrc
     ```
-	或者，对于 X86 Ubuntu 22.04：
+    或者，对于 X86 Ubuntu 22.04：
 
     ```bash
     mkdir -p ~/miniconda3
@@ -109,7 +111,7 @@ For Ubuntu X86:
     ```bash
     git clone https://github.com/servodevelop/lerobot.git
     ```
-	切换到develop分支
+    切换到develop分支
 
 4. 使用 miniconda 时，在环境中安装 ffmpeg：
 
@@ -219,22 +221,22 @@ lerobot-find-port
 
 > [!TIP]
 >
-> 将leader连接到/dev/ttyUSB0，或者修改下面的命令。
+> 将left_arm_port连接到/dev/ttyUSB0，right_arm_port连接到/dev/ttyUSB2，或者修改下面的命令。
 
 
 
 ```bash
-lerobot-calibrate     --teleop.type=starai_violin --teleop.port=/dev/ttyUSB0 --teleop.id=my_awesome_staraiviolin_arm
+lerobot-calibrate     --teleop.type=bi_starai_leader  --teleop.left_arm_port=/dev/ttyUSB0  --teleop.right_arm_port=/dev/ttyUSB2  --teleop.id=bi_starai_leader
 ```
 
 ### follower
 
 > [!TIP]
 >
-> 将follower连接到/dev/ttyUSB1，或者修改下面的命令。
+> 将left_arm_port连接到/dev/ttyUSB1，right_arm_port连接到/dev/ttyUSB3，或者修改下面的命令。
 
 ```bash
-lerobot-calibrate     --robot.type=starai_viola --robot.port=/dev/ttyUSB1 --robot.id=my_awesome_staraiviola_arm
+lerobot-calibrate     --robot.type=bi_starai_follower  --robot.left_arm_port=/dev/ttyUSB1  --robot.right_arm_port=/dev/ttyUSB3 --robot.id=my_awesome_staraiviola_arm
 ```
 
 ## 遥操作
@@ -253,12 +255,14 @@ https://github.com/user-attachments/assets/23b3aa00-9889-48d3-ae2c-00ad50595e0a
 
 ```bash
 lerobot-teleoperate \
-    --robot.type=starai_viola \
-    --robot.port=/dev/ttyUSB1 \
-    --robot.id=my_awesome_staraiviola_arm \
-    --teleop.type=starai_violin \
-    --teleop.port=/dev/ttyUSB0 \
-    --teleop.id=my_awesome_staraiviolin_arm
+    --robot.type=bi_starai_follower \
+    --robot.left_arm_port=/dev/ttyUSB1 \
+    --robot.right_arm_port=/dev/ttyUSB3 \
+    --robot.id=bi_starai_follower \
+    --teleop.type=bi_starai_leader \
+    --teleop.left_arm_port=/dev/ttyUSB0 \
+    --teleop.right_arm_port=/dev/ttyUSB2 \
+    --teleop.id=bi_starai_leader \
 ```
 远程操作命令将自动检测下列参数:
 
@@ -318,13 +322,15 @@ Image capture finished. Images saved to outputs/captured_images
 
 ```bash
 lerobot-teleoperate \
-    --robot.type=starai_viola \
-    --robot.port=/dev/ttyUSB1 \
-    --robot.id=my_awesome_staraiviola_arm \
+    --robot.type=bi_starai_follower \
+    --robot.left_arm_port=/dev/ttyUSB1 \
+    --robot.right_arm_port=/dev/ttyUSB3 \
+    --robot.id=bi_starai_follower \
     --robot.cameras="{ front: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}" \
-    --teleop.type=starai_violin \
-    --teleop.port=/dev/ttyUSB0 \
-    --teleop.id=my_awesome_staraiviolin_arm \
+    --teleop.type=bi_starai_leader \
+    --teleop.left_arm_port=/dev/ttyUSB0 \
+    --teleop.right_arm_port=/dev/ttyUSB2 \
+    --teleop.id=bi_starai_leader \
     --display_data=true
     
 ```
@@ -349,20 +355,22 @@ https://github.com/user-attachments/assets/8bb25714-783a-4f29-83dd-58b457aed80c
 
 ```bash
 lerobot-record \
-    --robot.type=starai_viola \
-    --robot.port=/dev/ttyUSB1 \
-    --robot.id=my_awesome_staraiviola_arm \
-    --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video2, width: 640, height: 480, fps: 30},front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}}" \
-    --teleop.type=starai_violin \
-    --teleop.port=/dev/ttyUSB0 \
-    --teleop.id=my_awesome_staraiviolin_arm \
+    --robot.type=bi_starai_follower \
+    --robot.left_arm_port=/dev/ttyUSB1 \
+    --robot.right_arm_port=/dev/ttyUSB3 \
+    --robot.id=bi_starai_follower \
+    --teleop.type=bi_starai_leader \
+    --teleop.left_arm_port=/dev/ttyUSB0 \
+    --teleop.right_arm_port=/dev/ttyUSB2 \
+    --teleop.id=bi_starai_leader \
+    --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30},front: {type: opencv, index_or_path: /dev/video2, width: 640, height: 480, fps: 30}}" \
     --display_data=true \
-    --dataset.repo_id=starai/record-test \
+    --dataset.repo_id=starai/record-test_bi_arm \
     --dataset.episode_time_s=30 \
     --dataset.reset_time_s=30 \
     --dataset.num_episodes=10 \
     --dataset.push_to_hub=False \
-    --dataset.single_task="Grab the black cube"
+    --dataset.single_task="Grab the black cube"    
 ```
 
 
@@ -418,13 +426,14 @@ lerobot-record \
 
 播放已经录制好的动作，可以借此测试机器人动作的重复性。
 
-```
+```bash
 lerobot-replay \
-    --robot.type=starai_viola \
-    --robot.port=/dev/ttyUSB1 \
-    --robot.id=my_awesome_staraiviola_arm \
-    --dataset.repo_id=starai/record-test \
-    --dataset.episode=1 # choose the episode you want to replay
+    --robot.type=bi_starai_follower \
+    --robot.left_arm_port=/dev/ttyUSB1 \
+    --robot.right_arm_port=/dev/ttyUSB3 \
+    --robot.id=bi_starai_follower \
+    --dataset.repo_id=starai/record-test_bi_arm \
+    --dataset.episode=0 # choose the episode you want to replay
 ```
 
 
@@ -435,16 +444,16 @@ lerobot-replay \
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=starai/record-test \
+  --dataset.repo_id=starai/record-test_bi_arm \
   --policy.type=act \
-  --output_dir=outputs/train/act_viola_test \
-  --job_name=act_viola_test \
+  --output_dir=outputs/train/act_bi_viola_test \
+  --job_name=act_bi_viola_test \
   --policy.device=cuda \
   --wandb.enable=False \
   --policy.repo_id=starai/my_policy
 ```
 
-1. 我们提供了数据集作为参数。`dataset.repo_id=starai/record-test`
+1. 我们提供了数据集作为参数。`dataset.repo_id=starai/record-test_bi_arm`
 2. 我们为 .这将从 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py) 加载配置。重要的是，此策略将自动适应机器人的电机状态、电机动作和相机的数量已保存在您的数据集中。`policy.type=act` `laptop` `phone`
 4. 我们提供了使用[权重和偏差](https://docs.wandb.ai/quickstart)来可视化训练图。这是可选的，但如果您使用它，请确保您已通过运行 登录。`wandb.enable=true` `wandb login`
 
@@ -454,7 +463,7 @@ lerobot-train \
 
 ```bash
 lerobot-train \
-  --config_path=outputs/train/act_viola_test/checkpoints/last/pretrained_model/train_config.json \
+  --config_path=outputs/train/act_bi_viola_test/checkpoints/last/pretrained_model/train_config.json \
   --resume=true
 ```
 
@@ -464,14 +473,15 @@ lerobot-train \
 
 ```bash
 lerobot-record  \
-  --robot.type=starai_viola \
-  --robot.port=/dev/ttyUSB1 \
-  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video2, width: 640, height: 480, fps: 30},front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}}" \
-  --robot.id=my_awesome_staraiviola_arm \
-  --display_data=false \
-  --dataset.repo_id=starai/eval_record-test \
-  --dataset.single_task="Put lego brick into the transparent box" \
-  --policy.path=outputs/train/act_viola_test/checkpoints/last/pretrained_model
+    --robot.type=bi_starai_follower \
+    --robot.left_arm_port=/dev/ttyUSB1 \
+    --robot.right_arm_port=/dev/ttyUSB3 \
+    --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30},front: {type: opencv, index_or_path: /dev/video2, width: 640, height: 480, fps: 30}}" \
+    --robot.id=bi_starai_follower \
+    --display_data=false \
+    --dataset.repo_id=starai/eval_record-test_bi_arm \
+    --dataset.single_task="test" \
+    --policy.path=outputs/train/act_bi_viola_test/checkpoints/last/pretrained_model
   # <- Teleop optional if you want to teleoperate in between episodes \
   # --teleop.type=starai_violin \
   # --teleop.port=/dev/ttyUSB0 \
