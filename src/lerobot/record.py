@@ -204,7 +204,7 @@ def record_loop(
     display_data: bool = False,
 ):
     global RemoteSendingActive
-    global LastRemoteGoalPositions
+    global LastRemoteAction
 
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -244,34 +244,39 @@ def record_loop(
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
-        if policy is not None:
-            action_values = predict_action(
-                observation_frame,
-                policy,
-                get_safe_torch_device(policy.config.device),
-                policy.config.use_amp,
-                task=single_task,
-                robot_type=robot.robot_type,
-            )
-            action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-        elif policy is None and isinstance(teleop, Teleoperator):
-            action = teleop.get_action()
-        elif policy is None and isinstance(teleop, list):
-            # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
-            arm_action = teleop_arm.get_action()
-            arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+        # Only run inference if remote policy is not active
+        if not RemoteSendingActive:
+            if policy is not None:
+                action_values = predict_action(
+                    observation_frame,
+                    policy,
+                    get_safe_torch_device(policy.config.device),
+                    policy.config.use_amp,
+                    task=single_task,
+                    robot_type=robot.robot_type,
+                )
+                action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+            elif policy is None and isinstance(teleop, Teleoperator):
+                action = teleop.get_action()
+            elif policy is None and isinstance(teleop, list):
+                # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
+                arm_action = teleop_arm.get_action()
+                arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
 
-            keyboard_action = teleop_keyboard.get_action()
-            base_action = robot._from_keyboard_to_base_action(keyboard_action)
+                keyboard_action = teleop_keyboard.get_action()
+                base_action = robot._from_keyboard_to_base_action(keyboard_action)
 
-            action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+                action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+            else:
+                logging.info(
+                    "No policy or teleoperator provided, skipping action generation."
+                    "This is likely to happen when resetting the environment without a teleop device."
+                    "The robot won't be at its rest position at the start of the next episode."
+                )
+                continue
         else:
-            logging.info(
-                "No policy or teleoperator provided, skipping action generation."
-                "This is likely to happen when resetting the environment without a teleop device."
-                "The robot won't be at its rest position at the start of the next episode."
-            )
-            continue
+            with LastRemoteActionLock:
+                action = LastRemoteAction
 
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
@@ -429,11 +434,31 @@ def validate_arm_positions(name: str, data: dict) -> bool:
 # Global variables for remote assisted teleop
 RemoteSendingActive = False
 LastRemoteRxTime = 0
-LastRemoteGoalPositions = None
+LastRemoteAction = None
+LastRemoteActionLock = threading.Lock()
+
+def convert_remote_msg_to_action(msg: dict) -> dict:
+    """
+    Convert a remote operator message into a flat action dict suitable
+    for bi_so100_follower.send_action().
+    """
+    action = {}
+
+    # Left arm
+    left = msg.get("left_arm_positions", {})
+    for joint, value in left.items():
+        action[f"left_{joint}"] = value
+
+    # Right arm
+    right = msg.get("right_arm_positions", {})
+    for joint, value in right.items():
+        action[f"right_{joint}"] = value
+
+    return action
 
 def teleop_listener_thread():
     global LastRemoteRxTime
-    global LastRemoteGoalPositions
+    global LastRemoteAction
 
     # highest_msg_idx records the highest message received
     highest_msg_idx = -1
@@ -482,8 +507,10 @@ def teleop_listener_thread():
                 continue
 
             # Update the global variable corresponding to the most recent arm movement goal
+            remote_action = convert_remote_msg_to_action(msg)
+            with LastRemoteActionLock:
+                LastRemoteAction = remote_action
             LastRemoteRxTime = time.monotonic()
-            LastRemoteGoalPositions = msg
     finally:
         sock.close()
         print("Teleoperator socket closed")
