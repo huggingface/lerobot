@@ -172,3 +172,99 @@ class Rotation:
             Quaternion [x, y, z, w]
         """
         return self._quat.copy()
+
+    def apply(self, vectors: np.ndarray, inverse: bool = False) -> np.ndarray:
+        """
+        Apply this rotation to a set of vectors.
+
+        This is equivalent to applying the rotation matrix to the vectors:
+        self.as_matrix() @ vectors (or self.as_matrix().T @ vectors if inverse=True).
+
+        Args:
+            vectors: Array of shape (3,) or (N, 3) representing vectors in 3D space
+            inverse: If True, apply the inverse of the rotation. Default is False.
+
+        Returns:
+            Rotated vectors with shape:
+            - (3,) if input was single vector with shape (3,)
+            - (N, 3) in all other cases
+        """
+        vectors = np.asarray(vectors, dtype=float)
+        original_shape = vectors.shape
+
+        # Handle single vector case - ensure it's 2D for matrix multiplication
+        if vectors.ndim == 1:
+            if len(vectors) != 3:
+                raise ValueError("Single vector must have length 3")
+            vectors = vectors.reshape(1, 3)
+            single_vector = True
+        elif vectors.ndim == 2:
+            if vectors.shape[1] != 3:
+                raise ValueError("Vectors must have shape (N, 3)")
+            single_vector = False
+        else:
+            raise ValueError("Vectors must be 1D or 2D array")
+
+        # Get rotation matrix
+        rotation_matrix = self.as_matrix()
+
+        # Apply inverse if requested (transpose for orthogonal rotation matrices)
+        if inverse:
+            rotation_matrix = rotation_matrix.T
+
+        # Apply rotation: (N, 3) @ (3, 3).T -> (N, 3)
+        rotated_vectors = vectors @ rotation_matrix.T
+
+        # Return original shape for single vector case
+        if single_vector and original_shape == (3,):
+            return rotated_vectors.flatten()
+
+        return rotated_vectors
+
+    def inv(self) -> "Rotation":
+        """
+        Invert this rotation.
+
+        Composition of a rotation with its inverse results in an identity transformation.
+
+        Returns:
+            Rotation instance containing the inverse of this rotation
+        """
+        qx, qy, qz, qw = self._quat
+
+        # For a unit quaternion, the inverse is the conjugate: [-x, -y, -z, w]
+        inverse_quat = np.array([-qx, -qy, -qz, qw])
+
+        return Rotation(inverse_quat)
+
+    def __mul__(self, other: "Rotation") -> "Rotation":
+        """
+        Compose this rotation with another rotation using the * operator.
+
+        The composition `r2 * r1` means "apply r1 first, then r2".
+        This is equivalent to applying rotation matrices: r2.as_matrix() @ r1.as_matrix()
+
+        Args:
+            other: Another Rotation instance to compose with
+
+        Returns:
+            Rotation instance representing the composition of rotations
+        """
+        if not isinstance(other, Rotation):
+            return NotImplemented
+
+        # Get quaternions [x, y, z, w]
+        x1, y1, z1, w1 = other._quat  # Apply first
+        x2, y2, z2, w2 = self._quat  # Apply second
+
+        # Quaternion multiplication: q2 * q1 (apply q1 first, then q2)
+        composed_quat = np.array(
+            [
+                w2 * x1 + x2 * w1 + y2 * z1 - z2 * y1,  # x component
+                w2 * y1 - x2 * z1 + y2 * w1 + z2 * x1,  # y component
+                w2 * z1 + x2 * y1 - y2 * x1 + z2 * w1,  # z component
+                w2 * w1 - x2 * x1 - y2 * y1 - z2 * z1,  # w component
+            ]
+        )
+
+        return Rotation(composed_quat)
