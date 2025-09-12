@@ -1298,7 +1298,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if self.image_writer is not None:
                 self._wait_image_writer()
             episode_index = self.episode_buffer["episode_index"]
-            episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
+            if isinstance(episode_index, np.ndarray):
+                episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
             for cam_key in self.meta.camera_keys:
                 img_dir = self._get_image_file_dir(episode_index, cam_key)
                 if img_dir.is_dir():

@@ -204,7 +204,8 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
             paths_to_cat.append(ep_path)
             continue
 
-        concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys)
+        if paths_to_cat:
+            concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys)
 
         # Reset for the next file
         size_in_mb = ep_size_in_mb
