@@ -203,6 +203,9 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
 ):
+    global RemoteSendingActive
+    global LastRemoteGoalPositions
+
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
@@ -425,12 +428,12 @@ def validate_arm_positions(name: str, data: dict) -> bool:
 
 # Global variables for remote assisted teleop
 RemoteSendingActive = False
-LastRxTime = 0
-LastGoalPositions = None
+LastRemoteRxTime = 0
+LastRemoteGoalPositions = None
 
 def teleop_listener_thread():
-    global LastRxTime
-    global LastGoalPositions
+    global LastRemoteRxTime
+    global LastRemoteGoalPositions
 
     # highest_msg_idx records the highest message received
     highest_msg_idx = -1
@@ -479,20 +482,20 @@ def teleop_listener_thread():
                 continue
 
             # Update the global variable corresponding to the most recent arm movement goal
-            LastRxTime = time.monotonic()
-            LastGoalPositions = msg
+            LastRemoteRxTime = time.monotonic()
+            LastRemoteGoalPositions = msg
     finally:
         sock.close()
         print("Teleoperator socket closed")
 
 def teleop_timeout_thread():
     global RemoteSendingActive
-    global LastRxTime
+    global LastRemoteRxTime
 
     # Monitor for a sender timeout on the UDP stream
     while True:
         current_time = time.monotonic()
-        if current_time - LastRxTime > 1:
+        if current_time - LastRemoteRxTime > 1:
             RemoteSendingActive = False
         else:
             RemoteSendingActive = True
