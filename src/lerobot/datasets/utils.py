@@ -17,13 +17,10 @@ import contextlib
 import importlib.resources
 import json
 import logging
-import subprocess
-from collections import deque
 from collections.abc import Iterable, Iterator
+from typing import Any, Deque, Generic, TypeVar
 from pathlib import Path
 from pprint import pformat
-from types import SimpleNamespace
-from typing import Any, Deque, Generic, TypeVar
 
 import datasets
 import numpy as np
@@ -91,7 +88,6 @@ DEFAULT_FEATURES = {
 
 T = TypeVar("T")
 
-
 def get_parquet_file_size_in_mb(parquet_path: str | Path) -> float:
     metadata = pq.read_metadata(parquet_path)
     total_uncompressed_size = 0
@@ -105,6 +101,12 @@ def get_parquet_file_size_in_mb(parquet_path: str | Path) -> float:
 
 def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
     return hf_ds.data.nbytes // (1024**2)
+
+
+def get_hf_dataset_cache_dir(hf_ds: Dataset) -> Path | None:
+    if hf_ds.cache_files is None or len(hf_ds.cache_files) == 0:
+        return None
+    return Path(hf_ds.cache_files[0]["filename"]).parents[2]
 
 
 def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -> tuple[int, int]:

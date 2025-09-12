@@ -55,6 +55,7 @@ from lerobot.robots import (  # noqa: F401
     hope_jr,
     koch_follower,
     make_robot_from_config,
+    reachy2,
     so100_follower,
     so101_follower,
 )
@@ -92,11 +93,15 @@ def replay(cfg: ReplayConfig):
 
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
-    actions = dataset.hf_dataset.select_columns("action")
+
+    # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
+    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.episode)
+    actions = episode_frames.select_columns("action")
+
     robot.connect()
 
     log_say("Replaying episode", cfg.play_sounds, blocking=True)
-    for idx in range(dataset.num_frames):
+    for idx in range(len(episode_frames)):
         start_episode_t = time.perf_counter()
 
         action_array = actions[idx]["action"]

@@ -70,7 +70,7 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.video_utils import concat_video_files, get_video_duration_in_s
+from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 
 V21 = "v2.1"
 
@@ -204,7 +204,8 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
             paths_to_cat.append(ep_path)
             continue
 
-        concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys)
+        if paths_to_cat:
+            concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys)
 
         # Reset for the next file
         size_in_mb = ep_size_in_mb
@@ -287,7 +288,11 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
         # Check if adding this episode would exceed the limit
         if size_in_mb + ep_size_in_mb >= video_file_size_in_mb and len(paths_to_cat) > 0:
             # Size limit would be exceeded, save current accumulation WITHOUT this episode
-            concat_video_files(paths_to_cat, new_root, video_key, chunk_idx, file_idx)
+            concatenate_video_files(
+                paths_to_cat,
+                new_root
+                / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
+            )
 
             # Update episodes metadata for the file we just saved
             for i, _ in enumerate(paths_to_cat):
@@ -319,7 +324,17 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
 
     # Write remaining videos if any
     if paths_to_cat:
-        concat_video_files(paths_to_cat, new_root, video_key, chunk_idx, file_idx)
+        concatenate_video_files(
+            paths_to_cat,
+            new_root
+            / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
+        )
+
+        # Update episodes metadata for the final file
+        for i, _ in enumerate(paths_to_cat):
+            past_ep_idx = ep_idx - len(paths_to_cat) + i
+            episodes_metadata[past_ep_idx][f"videos/{video_key}/chunk_index"] = chunk_idx
+            episodes_metadata[past_ep_idx][f"videos/{video_key}/file_index"] = file_idx
 
         # Update episodes metadata for the final file
         for i, _ in enumerate(paths_to_cat):

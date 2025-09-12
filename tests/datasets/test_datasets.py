@@ -789,3 +789,269 @@ def test_update_chunk_settings_video_dataset(tmp_path):
     dataset.meta.update_chunk_settings(video_files_size_in_mb=new_video_size)
     assert dataset.meta.get_chunk_settings()["video_files_size_in_mb"] == new_video_size
     assert dataset.meta.video_files_size_in_mb == new_video_size
+
+
+def test_episode_index_distribution(tmp_path, empty_lerobot_dataset_factory):
+    """Test that all frames have correct episode indices across multiple episodes."""
+    features = {"state": {"dtype": "float32", "shape": (2,), "names": None}}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+
+    # Create 3 episodes with different lengths
+    num_episodes = 3
+    frames_per_episode = [10, 15, 8]
+
+    for episode_idx in range(num_episodes):
+        for _ in range(frames_per_episode[episode_idx]):
+            dataset.add_frame({"state": torch.randn(2), "task": f"task_{episode_idx}"})
+        dataset.save_episode()
+
+    # Load the dataset and check episode indices
+    loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+
+    # Check specific frames across episode boundaries
+    cumulative = 0
+    for ep_idx, ep_length in enumerate(frames_per_episode):
+        # Check start, middle, and end of each episode
+        start_frame = cumulative
+        middle_frame = cumulative + ep_length // 2
+        end_frame = cumulative + ep_length - 1
+
+        for frame_idx in [start_frame, middle_frame, end_frame]:
+            frame_data = loaded_dataset[frame_idx]
+            actual_ep_idx = frame_data["episode_index"].item()
+            assert actual_ep_idx == ep_idx, (
+                f"Frame {frame_idx} has episode_index {actual_ep_idx}, should be {ep_idx}"
+            )
+
+        cumulative += ep_length
+
+    # Check episode index distribution
+    all_episode_indices = [loaded_dataset[i]["episode_index"].item() for i in range(len(loaded_dataset))]
+    from collections import Counter
+
+    distribution = Counter(all_episode_indices)
+    expected_dist = {i: frames_per_episode[i] for i in range(num_episodes)}
+
+    assert dict(distribution) == expected_dist, (
+        f"Episode distribution {dict(distribution)} != expected {expected_dist}"
+    )
+
+
+def test_multi_episode_metadata_consistency(tmp_path, empty_lerobot_dataset_factory):
+    """Test episode metadata consistency across multiple episodes."""
+    features = {
+        "state": {"dtype": "float32", "shape": (3,), "names": ["x", "y", "z"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["v", "w"]},
+    }
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+
+    num_episodes = 4
+    frames_per_episode = [20, 35, 10, 25]
+    tasks = ["pick", "place", "pick", "place"]
+
+    for episode_idx in range(num_episodes):
+        for _ in range(frames_per_episode[episode_idx]):
+            dataset.add_frame({"state": torch.randn(3), "action": torch.randn(2), "task": tasks[episode_idx]})
+        dataset.save_episode()
+
+    # Load and validate episode metadata
+    loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+
+    assert loaded_dataset.meta.total_episodes == num_episodes
+    assert loaded_dataset.meta.total_frames == sum(frames_per_episode)
+
+    cumulative_frames = 0
+    for episode_idx in range(num_episodes):
+        episode_metadata = loaded_dataset.meta.episodes[episode_idx]
+
+        # Check basic episode properties
+        assert episode_metadata["episode_index"] == episode_idx
+        assert episode_metadata["length"] == frames_per_episode[episode_idx]
+        assert episode_metadata["tasks"] == [tasks[episode_idx]]
+
+        # Check dataset indices
+        expected_from = cumulative_frames
+        expected_to = cumulative_frames + frames_per_episode[episode_idx]
+
+        assert episode_metadata["dataset_from_index"] == expected_from
+        assert episode_metadata["dataset_to_index"] == expected_to
+
+        cumulative_frames += frames_per_episode[episode_idx]
+
+
+def test_data_consistency_across_episodes(tmp_path, empty_lerobot_dataset_factory):
+    """Test that episodes have no gaps or overlaps in their data indices."""
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+
+    num_episodes = 5
+    frames_per_episode = [12, 8, 20, 15, 5]
+
+    for episode_idx in range(num_episodes):
+        for _ in range(frames_per_episode[episode_idx]):
+            dataset.add_frame({"state": torch.randn(1), "task": "consistency_test"})
+        dataset.save_episode()
+
+    loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+
+    # Check data consistency - no gaps or overlaps
+    cumulative_check = 0
+    for episode_idx in range(num_episodes):
+        episode_metadata = loaded_dataset.meta.episodes[episode_idx]
+        from_idx = episode_metadata["dataset_from_index"]
+        to_idx = episode_metadata["dataset_to_index"]
+
+        # Check that episode starts exactly where previous ended
+        assert from_idx == cumulative_check, (
+            f"Episode {episode_idx} starts at {from_idx}, expected {cumulative_check}"
+        )
+
+        # Check that episode length matches expected
+        actual_length = to_idx - from_idx
+        expected_length = frames_per_episode[episode_idx]
+        assert actual_length == expected_length, (
+            f"Episode {episode_idx} length {actual_length} != expected {expected_length}"
+        )
+
+        cumulative_check = to_idx
+
+    # Final check: last episode should end at total frames
+    expected_total_frames = sum(frames_per_episode)
+    assert cumulative_check == expected_total_frames, (
+        f"Final frame count {cumulative_check} != expected {expected_total_frames}"
+    )
+
+
+def test_statistics_metadata_validation(tmp_path, empty_lerobot_dataset_factory):
+    """Test that statistics are properly computed and stored for all features."""
+    features = {
+        "state": {"dtype": "float32", "shape": (2,), "names": ["pos", "vel"]},
+        "action": {"dtype": "float32", "shape": (1,), "names": ["force"]},
+    }
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+
+    # Create controlled data to verify statistics
+    num_episodes = 2
+    frames_per_episode = [10, 10]
+
+    # Use deterministic data for predictable statistics
+    torch.manual_seed(42)
+    for episode_idx in range(num_episodes):
+        for frame_idx in range(frames_per_episode[episode_idx]):
+            state_data = torch.tensor([frame_idx * 0.1, frame_idx * 0.2], dtype=torch.float32)
+            action_data = torch.tensor([frame_idx * 0.05], dtype=torch.float32)
+            dataset.add_frame({"state": state_data, "action": action_data, "task": "stats_test"})
+        dataset.save_episode()
+
+    loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+
+    # Check that statistics exist for all features
+    assert loaded_dataset.meta.stats is not None, "No statistics found"
+
+    for feature_name in features.keys():
+        assert feature_name in loaded_dataset.meta.stats, f"No statistics for feature '{feature_name}'"
+
+        feature_stats = loaded_dataset.meta.stats[feature_name]
+        expected_stats = ["min", "max", "mean", "std", "count"]
+
+        for stat_key in expected_stats:
+            assert stat_key in feature_stats, f"Missing '{stat_key}' statistic for '{feature_name}'"
+
+            stat_value = feature_stats[stat_key]
+            # Basic sanity checks
+            if stat_key == "count":
+                assert stat_value == sum(frames_per_episode), f"Wrong count for '{feature_name}'"
+            elif stat_key in ["min", "max", "mean", "std"]:
+                # Check that statistics are reasonable (not NaN, proper shapes)
+                if hasattr(stat_value, "shape"):
+                    expected_shape = features[feature_name]["shape"]
+                    assert stat_value.shape == expected_shape or len(stat_value) == expected_shape[0], (
+                        f"Wrong shape for {stat_key} of '{feature_name}'"
+                    )
+                # Check no NaN values
+                if hasattr(stat_value, "__iter__"):
+                    assert not any(np.isnan(v) for v in stat_value), f"NaN in {stat_key} for '{feature_name}'"
+                else:
+                    assert not np.isnan(stat_value), f"NaN in {stat_key} for '{feature_name}'"
+
+
+def test_episode_boundary_integrity(tmp_path, empty_lerobot_dataset_factory):
+    """Test frame indices and episode transitions at episode boundaries."""
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+
+    num_episodes = 3
+    frames_per_episode = [7, 12, 5]
+
+    for episode_idx in range(num_episodes):
+        for frame_idx in range(frames_per_episode[episode_idx]):
+            dataset.add_frame({"state": torch.tensor([float(frame_idx)]), "task": f"episode_{episode_idx}"})
+        dataset.save_episode()
+
+    loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+
+    # Test episode boundaries
+    cumulative = 0
+    for ep_idx, ep_length in enumerate(frames_per_episode):
+        if ep_idx > 0:
+            # Check last frame of previous episode
+            prev_frame = loaded_dataset[cumulative - 1]
+            assert prev_frame["episode_index"].item() == ep_idx - 1
+
+        # Check first frame of current episode
+        if cumulative < len(loaded_dataset):
+            curr_frame = loaded_dataset[cumulative]
+            assert curr_frame["episode_index"].item() == ep_idx
+
+        # Check frame_index within episode
+        for i in range(ep_length):
+            if cumulative + i < len(loaded_dataset):
+                frame = loaded_dataset[cumulative + i]
+                assert frame["frame_index"].item() == i, f"Frame {cumulative + i} has wrong frame_index"
+                assert frame["episode_index"].item() == ep_idx, (
+                    f"Frame {cumulative + i} has wrong episode_index"
+                )
+
+        cumulative += ep_length
+
+
+def test_task_indexing_and_validation(tmp_path, empty_lerobot_dataset_factory):
+    """Test that tasks are properly indexed and retrievable."""
+    features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features, use_videos=False)
+
+    # Use multiple tasks, including repeated ones
+    tasks = ["pick", "place", "pick", "navigate", "place"]
+    unique_tasks = list(set(tasks))  # ["pick", "place", "navigate"]
+    frames_per_episode = [5, 8, 3, 10, 6]
+
+    for episode_idx, task in enumerate(tasks):
+        for _ in range(frames_per_episode[episode_idx]):
+            dataset.add_frame({"state": torch.randn(1), "task": task})
+        dataset.save_episode()
+
+    loaded_dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+
+    # Check that all unique tasks are in the tasks metadata
+    stored_tasks = set(loaded_dataset.meta.tasks.index)
+    assert stored_tasks == set(unique_tasks), f"Stored tasks {stored_tasks} != expected {set(unique_tasks)}"
+
+    # Check that task indices are consistent
+    cumulative = 0
+    for episode_idx, expected_task in enumerate(tasks):
+        episode_metadata = loaded_dataset.meta.episodes[episode_idx]
+        assert episode_metadata["tasks"] == [expected_task]
+
+        # Check frames in this episode have correct task
+        for i in range(frames_per_episode[episode_idx]):
+            frame = loaded_dataset[cumulative + i]
+            assert frame["task"] == expected_task, f"Frame {cumulative + i} has wrong task"
+
+            # Check task_index consistency
+            expected_task_index = loaded_dataset.meta.get_task_index(expected_task)
+            assert frame["task_index"].item() == expected_task_index
+
+        cumulative += frames_per_episode[episode_idx]
+
+    # Check total number of tasks
+    assert loaded_dataset.meta.total_tasks == len(unique_tasks)
