@@ -433,7 +433,7 @@ def teleop_listener_thread():
     global LastGoalPositions
 
     # highest_msg_idx records the highest message received
-    highest_msg_idx = 0
+    highest_msg_idx = -1
 
     # bind to the interface, we set the socket to enable reuse in the event the program crashes
     # and need to quickly re-bind to the interface
@@ -444,7 +444,11 @@ def teleop_listener_thread():
     try:
         while True:
             # Receive and Decode the Message
-            data, addr = sock.recvfrom(4096)
+            try:
+                data, addr = sock.recvfrom(4096)
+            except OSError as e:
+                print(f"Operating system returned sock.recvfrom error: {e}")
+                continue
             try:
                 msg = json.loads(data.decode("utf-8"))
             except json.JSONDecodeError as e:
