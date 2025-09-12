@@ -105,6 +105,20 @@ def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (
     return att_2d_masks & pad_2d_masks
 
 
+def pad_vector(vector, new_dim):  # see lerobot pi0 `pad_vector` (exact copy)
+    """Can be (batch_size x sequence_length x features_dimension)
+    or (batch_size x features_dimension)
+    """
+    if vector.shape[-1] == new_dim:
+        return vector
+    shape = list(vector.shape)
+    current_dim = shape[-1]
+    shape[-1] = new_dim
+    new_vector = torch.zeros(*shape, dtype=vector.dtype, device=vector.device)
+    new_vector[..., :current_dim] = vector
+    return new_vector
+
+
 def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     images: torch.Tensor,
     height: int,
@@ -175,8 +189,6 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     # Convert back to original format if needed
     if channels_last:
         padded_images = padded_images.permute(0, 2, 3, 1)  # [b, c, h, w] -> [b, h, w, c]
-        if batch_size == 1 and images.shape[0] == 1:
-            padded_images = padded_images.squeeze(0)  # Remove batch dimension if it was added
 
     return padded_images
 
@@ -491,10 +503,10 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             precision=config.dtype,
         )
 
-        self.action_in_proj = nn.Linear(32, action_expert_config.width)
-        self.action_out_proj = nn.Linear(action_expert_config.width, 32)
+        self.action_in_proj = nn.Linear(config.action_dim, action_expert_config.width)
+        self.action_out_proj = nn.Linear(action_expert_config.width, config.action_dim)
 
-        self.state_proj = nn.Linear(32, action_expert_config.width)
+        self.state_proj = nn.Linear(config.state_dim, action_expert_config.width)
         self.action_time_mlp_in = nn.Linear(2 * action_expert_config.width, action_expert_config.width)
         self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
@@ -727,8 +739,12 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         device = state.device
 
         if noise is None:
-            # Sample noise with padded dimension (32) as expected by action_in_proj
-            actions_shape = (bsize, self.config.chunk_size, 32)  # Use 32 for internal processing
+            # Sample noise with padded dimension as expected by action_in_proj
+            actions_shape = (
+                bsize,
+                self.config.chunk_size,
+                self.config.action_dim,
+            )  # Use config action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
@@ -764,10 +780,6 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
             x_t = x_t + dt * v_t
             time += dt
-
-        # Truncate to actual action dimension before returning
-        if self.config.action_dim < 32:
-            x_t = x_t[:, :, : self.config.action_dim]
 
         return x_t
 
@@ -1052,12 +1064,20 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
 
                 # Resize with padding if needed
                 if img.shape[-2:] != self.config.image_resolution:
-                    # resize_with_pad_torch handles both [B, C, H, W] and [B, H, W, C] formats
-                    # But we need to ensure we pass it in the right format
-                    img = resize_with_pad_torch(
-                        img.permute(0, 2, 3, 1),  # Convert to [B, H, W, C] for resize function
-                        *self.config.image_resolution,
-                    ).permute(0, 3, 1, 2)  # Convert back to [B, C, H, W]
+                    # TODO: This is a hack to handle both [B, C, H, W] and [B, H, W, C] formats
+                    # Handle both [B, C, H, W] and [B, H, W, C] formats
+                    is_channels_first = img.shape[1] == 3  # Check if channels are in dimension 1
+
+                    if is_channels_first:
+                        # Convert [B, C, H, W] to [B, H, W, C] for processing
+                        img = img.permute(0, 2, 3, 1)
+
+                    if img.shape[1:3] != self.config.image_resolution:
+                        img = resize_with_pad_torch(img, *self.config.image_resolution)
+
+                    # Convert back to [B, C, H, W] if we started with channels-first
+                    if is_channels_first:
+                        img = img.permute(0, 3, 1, 2)
 
                 # Normalize from [0, 1] to [-1, 1] for SigLIP/PaliGemma
                 # Check if normalization is needed
@@ -1111,6 +1131,16 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
 
         return lang_tokens, lang_masks
 
+    def prepare_state(self, batch):  # see lerobot pi0 `prepare_state` (exact copy)
+        """Pad state"""
+        state = pad_vector(batch[OBS_STATE], self.config.state_dim)
+        return state
+
+    def prepare_action(self, batch):  # see lerobot pi0 `prepare_action` (exact copy)
+        """Pad action"""
+        actions = pad_vector(batch[ACTION], self.config.action_dim)
+        return actions
+
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:  # see lerobot pi0 `select_action`
         """Select a single action given environment observations."""
@@ -1134,28 +1164,14 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
         lang_tokens, lang_masks = self._tokenize_language(batch)
-        state = batch[OBS_STATE]
-
-        # Validate state dimension
-        if state.shape[-1] > 32:
-            raise ValueError(
-                f"State dimension {state.shape[-1]} exceeds maximum of 32. "
-                f"Please reduce state dimension or modify the model."
-            )
-
-        # Pad state to 32 dimensions if needed (PI0 expects fixed 32-dim); works similar to lerobot pi0 `prepare_state`
-        if state.shape[-1] < 32:
-            padding = torch.zeros(
-                state.shape[0], 32 - state.shape[-1], device=state.device, dtype=state.dtype
-            )
-            state = torch.cat([state, padding], dim=-1)
+        state = self.prepare_state(batch)
 
         # Sample actions using the model
         actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state)
 
-        # Truncate to actual action dimension, works similar to lerobot pi0 `prepare_action`
-        if self.config.action_dim < 32:
-            actions = actions[:, :, : self.config.action_dim]
+        # Unpad actions to actual action dimension, works similar to lerobot pi0 `prepare_action`
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        actions = actions[:, :, :original_action_dim]
 
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
@@ -1168,40 +1184,15 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
         lang_tokens, lang_masks = self._tokenize_language(batch)
-        state = batch[OBS_STATE]
-        actions = batch[ACTION]
-
-        # Validate state and action dimensions
-        if state.shape[-1] > 32:
-            raise ValueError(
-                f"State dimension {state.shape[-1]} exceeds maximum of 32. "
-                f"Please reduce state dimension or modify the model."
-            )
-        if actions.shape[-1] > 32:
-            raise ValueError(
-                f"Action dimension {actions.shape[-1]} exceeds maximum of 32. "
-                f"Please reduce action dimension or modify the model."
-            )
-
-        # Pad state and actions to 32 dimensions if needed (PI0 expects fixed 32-dim)
-        if state.shape[-1] < 32:
-            padding = torch.zeros(
-                state.shape[0], 32 - state.shape[-1], device=state.device, dtype=state.dtype
-            )
-            state = torch.cat([state, padding], dim=-1)
-
-        if actions.shape[-1] < 32:
-            padding = torch.zeros(
-                *actions.shape[:-1], 32 - actions.shape[-1], device=actions.device, dtype=actions.dtype
-            )
-            actions = torch.cat([actions, padding], dim=-1)
+        state = self.prepare_state(batch)
+        actions = self.prepare_action(batch)
 
         # Compute loss
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions)
 
         # Truncate losses to actual action dimensions
-        if self.config.action_dim < 32:
-            losses = losses[:, :, : self.config.action_dim]
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        losses = losses[:, :, :original_action_dim]
 
         loss = losses.mean()
 
