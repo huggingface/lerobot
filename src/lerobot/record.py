@@ -62,6 +62,10 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
+import socket
+import json
+import numbers
+import threading
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -392,6 +396,105 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     log_say("Exiting", cfg.play_sounds)
     return dataset
 
+def validate_arm_positions(name: str, data: dict) -> bool:
+    if not isinstance(data, dict):
+        print(f"{name} is not a dict: {data}")
+        return False
+
+    # Check that joints are properly specified
+    JOINT_NAMES = [
+        "shoulder_pan",
+        "shoulder_lift",
+        "elbow_flex",
+        "wrist_flex",
+        "wrist_roll",
+        "gripper",
+    ]
+    for joint in JOINT_NAMES:
+        if joint not in data:
+            print(f"Missing joint {joint} in {name}")
+            return False
+        value = data[joint]
+        if not isinstance(value, numbers.Real):
+            print(f"Joint {joint} in {name} is not numeric: {value}")
+            return False
+        if not -360.0 <= value <= 360.0:
+            print(f"Joint {joint} in {name} out of range: {value}")
+            return False
+    return True
+
+# Global variables for remote assisted teleop
+RemoteSendingActive = False
+LastRxTime = 0
+LastGoalPositions = None
+
+def teleop_listener_thread():
+    global LastRxTime
+    global LastGoalPositions
+
+    # highest_msg_idx records the highest message received
+    highest_msg_idx = 0
+
+    # bind to the interface, we set the socket to enable reuse in the event the program crashes
+    # and need to quickly re-bind to the interface
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(('0.0.0.0', 5005))
+
+    try:
+        while True:
+            # Receive and Decode the Message
+            data, addr = sock.recvfrom(4096)
+            try:
+                msg = json.loads(data.decode("utf-8"))
+            except json.JSONDecodeError as e:
+                print(f"Bad JSON from {addr}: {e}")
+                continue
+
+            # Parse the Message Index and Ensure it's Correct
+            if "msg_idx" not in msg:
+                print(f"Missing msg_idx in message from {addr}: {msg}")
+                continue
+            msg_idx = msg["msg_idx"]
+            if not isinstance(msg_idx, int):
+                print(f"msg_idx not an int: {msg_idx}")
+                continue
+
+            # Check that the message is fresh
+            if msg_idx <= highest_msg_idx:
+                print(f"Old message received #{msg_idx} <= #{highest_msg_idx}: skipping")
+                continue
+            highest_msg_idx = msg_idx
+
+            # Check that the joint data was received properly
+            if not validate_arm_positions("left_arm_positions", msg.get("left_arm_positions")):
+                print(f"Left arm positions not found proper in message: {msg}")
+                continue
+            if not validate_arm_positions("right_arm_positions", msg.get("right_arm_positions")):
+                print(f"Right arm positions not found proper in message: {msg}")
+                continue
+
+            # Update the global variable corresponding to the most recent arm movement goal
+            LastRxTime = time.monotonic()
+            LastGoalPositions = msg
+    finally:
+        sock.close()
+        print("Teleoperator socket closed")
+
+def teleop_timeout_thread():
+    global RemoteSendingActive
+    global LastRxTime
+
+    # Monitor for a sender timeout on the UDP stream
+    while True:
+        current_time = time.monotonic()
+        if current_time - LastRxTime > 1:
+            RemoteSendingActive = False
+        else:
+            RemoteSendingActive = True
+        time.sleep(0.05)
 
 if __name__ == "__main__":
+    threading.Thread(target=teleop_listener_thread, daemon=True).start()
+    threading.Thread(target=teleop_timeout_thread, daemon=True).start()
     record()
