@@ -50,7 +50,7 @@ To that end, LeRobot provides a pipeline mechanism to implement a sequence of pr
 
 ## How to implement your own processor?
 
-We'll use the `NormalizerProcessor` as a concrete running example because it is central to most policies and demonstrates configuration and state serialization cleanly.
+We'll use the `DeviceProcessorStep` as our main example because it demonstrates essential processor patterns and device/dtype awareness that's crucial for modern multi-GPU setups.
 
 Prepare the sequence of processing steps necessary for your problem. A processor step is a class that implements the following methods:
 
@@ -63,54 +63,91 @@ Prepare the sequence of processing steps necessary for your problem. A processor
 
 ### Implement the `__call__` method
 
-The `__call__` method is the core of your processor step. It takes an `EnvTransition` and returns a modified `EnvTransition`. Here's how the `NormalizerProcessor` conceptually works (simplified):
+The `__call__` method is the core of your processor step. It takes an `EnvTransition` and returns a modified `EnvTransition`. Here's how the `DeviceProcessorStep` works:
 
 ```python
 from dataclasses import dataclass
 import torch
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.processor.pipeline import EnvTransition, TransitionKey
+from lerobot.processor import ProcessorStep, ProcessorStepRegistry
+from lerobot.processor.core import EnvTransition, TransitionKey
 
 @dataclass
-class NormalizerProcessor:
-    features: dict[str, PolicyFeature]
-    norm_map: dict[FeatureType, NormalizationMode]
-    stats: dict[str, dict[str, torch.Tensor]]
-    eps: float = 1e-8
+@ProcessorStepRegistry.register("device_processor")
+class DeviceProcessorStep(ProcessorStep):
+    """Move tensors to specified device with optional dtype conversion."""
+
+    device: str = "cpu"
+    float_dtype: str | None = None
+
+    def __post_init__(self):
+        """Initialize device and dtype mappings."""
+        self.tensor_device = torch.device(self.device)
+        self.non_blocking = "cuda" in str(self.device)
+
+        # Map string dtype to torch dtype
+        if self.float_dtype is not None:
+            dtype_mapping = {
+                "float16": torch.float16, "half": torch.float16,
+                "float32": torch.float32, "float": torch.float32,
+                "bfloat16": torch.bfloat16
+            }
+            self._target_float_dtype = dtype_mapping[self.float_dtype]
+        else:
+            self._target_float_dtype = None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        normalized_info = {}
-
-        obs = transition.get(TransitionKey.OBSERVATION)
-        act = transition.get(TransitionKey.ACTION)
-
-        new_obs = self._normalize_observation(obs, normalized_info)
-        new_act = self._normalize_action(act, normalized_info)
-
         new_transition = transition.copy()
-        new_transition[TransitionKey.OBSERVATION] = new_obs
-        new_transition[TransitionKey.ACTION] = new_act
 
-        # Record what was normalized into complementary_data
-        if normalized_info:
-            comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-            comp = dict(comp)
-            comp["normalized_keys"] = normalized_info
-            new_transition[TransitionKey.COMPLEMENTARY_DATA] = comp
+        # Process simple tensor keys
+        for key in [TransitionKey.ACTION, TransitionKey.REWARD, TransitionKey.DONE, TransitionKey.TRUNCATED]:
+            value = transition.get(key)
+            if isinstance(value, torch.Tensor):
+                new_transition[key] = self._process_tensor(value)
+
+        # Process nested tensor dicts
+        for key in [TransitionKey.OBSERVATION, TransitionKey.COMPLEMENTARY_DATA]:
+            data_dict = transition.get(key)
+            if data_dict is not None:
+                new_data_dict = {
+                    k: self._process_tensor(v) if isinstance(v, torch.Tensor) else v
+                    for k, v in data_dict.items()
+                }
+                new_transition[key] = new_data_dict
 
         return new_transition
+
+    def _process_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Move tensor to target device and convert dtype if needed."""
+        # Smart device handling for multi-GPU compatibility
+        if tensor.is_cuda and self.tensor_device.type == "cuda":
+            # Both on GPU: preserve original GPU (Accelerate compatibility)
+            target_device = tensor.device
+        else:
+            # CPU or different device types: use configured device
+            target_device = self.tensor_device
+
+        # Move if necessary
+        if tensor.device != target_device:
+            tensor = tensor.to(target_device, non_blocking=self.non_blocking)
+
+        # Convert float dtype if specified
+        if self._target_float_dtype is not None and tensor.is_floating_point():
+            tensor = tensor.to(dtype=self._target_float_dtype)
+
+        return tensor
+
+    def get_config(self) -> dict:
+        return {"device": self.device, "float_dtype": self.float_dtype}
 ```
 
-See the full implementation in `src/lerobot/processor/normalize_processor.py` for details on mean/std and min/max modes and key selection.
+See the full implementation in `src/lerobot/processor/device_processor.py` for complete details.
 
 **Key principles:**
 
-- Always check if required data exists before processing
-- Return unchanged transition if no processing is needed
-- Use `transition.copy()` to avoid side effects
-- Only modify the specific keys your processor handles
-
-**Tip**: For observation-only processors, you can inherit from `ObservationProcessor` to avoid writing `__call__` boilerplate. The normalizer is mixed (observations and actions), so it implements `__call__` directly.
+- **Always use `transition.copy()`** to avoid side effects
+- **Handle both simple and nested tensors** systematically
+- **Smart device handling**: Preserve GPU placement for Accelerate compatibility
+- **Validate configurations** in `__post_init__()`
 
 ### Configuration and State Management
 
@@ -201,7 +238,7 @@ def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, Po
 - SO100 follower kinematics (`src/lerobot/robots/so100_follower/robot_kinematic_processor.py`): each processor's `transform_features` method adds or refines feature keys such as `observation.state.ee.{x,y,z,wx,wy,wz}` or `action.gripper.pos`.
 - Rename and tokenizer processors (`src/lerobot/processor/rename_processor.py`, `src/lerobot/processor/tokenizer_processor.py`): demonstrate key renaming and adding language token features to the contract.
 
-In practice, you will often aggregate features by running `RobotProcessor.transform_features(...)` with your initial features to compute the final contract before recording or training.
+In practice, you will often aggregate features by running `DataProcessorPipeline.transform_features(...)` with your initial features to compute the final contract before recording or training.
 
 ## Helper Classes
 
@@ -209,13 +246,13 @@ LeRobot provides pre-built processor classes for common transformations. Below i
 
 ### Core processors (observations, actions, normalization)
 
-- **`VanillaObservationProcessor`** (`observation_processor`): Images and state processing to LeRobot format.
-- **`NormalizerProcessor`** (`normalizer_processor`): Normalize observations/actions (mean/std or min/max to [-1, 1]).
-- **`UnnormalizerProcessor`** (`unnormalizer_processor`): Inverse of the normalizer for model outputs.
-- **`DeviceProcessor`** (`device_processor`): Move tensors to a specific device (CPU/GPU) and optional float dtype.
-- **`ToBatchProcessor`** (`to_batch_processor`): Add batch dimension to observations/actions when missing.
-- **`RenameProcessor`** (`rename_processor`): Rename observation keys using a mapping dictionary.
-- **`TokenizerProcessor`** (`tokenizer_processor`): Tokenize language tasks into `observation.language.*` tensors.
+- **`VanillaObservationProcessorStep`** (`observation_processor`): Images and state processing to LeRobot format.
+- **`NormalizerProcessorStep`** (`normalizer_processor`): Normalize observations/actions (mean/std or min/max to [-1, 1]).
+- **`UnnormalizerProcessorStep`** (`unnormalizer_processor`): Inverse of the normalizer for model outputs.
+- **`DeviceProcessorStep`** (`device_processor`): Move tensors to a specific device (CPU/GPU) and optional float dtype.
+- **`AddBatchDimensionProcessorStep`** (`to_batch_processor`): Add batch dimension to observations/actions when missing.
+- **`RenameObservationsProcessorStep`** (`rename_observations_processor`): Rename observation keys using a mapping dictionary.
+- **`TokenizerProcessorStep`** (`tokenizer_processor`): Tokenize language tasks into `observation.language.*` tensors.
 
 ### Teleoperation mapping processors
 
@@ -239,23 +276,26 @@ LeRobot provides pre-built processor classes for common transformations. Below i
 ### Usage Example
 
 ```python
-from lerobot.processor import NormalizerProcessor, DeviceProcessor, RobotProcessor, ToBatchProcessor
+from lerobot.processor import (
+    NormalizerProcessorStep, DeviceProcessorStep,
+    RobotProcessorPipeline, AddBatchDimensionProcessorStep
+)
 
 # Create a processing pipeline (typical policy preprocessor)
 steps = [
-    NormalizerProcessor(features=features, norm_map=norm_map, stats=stats),
-    ToBatchProcessor(),
-    DeviceProcessor(device="cuda"),
+    NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats),
+    AddBatchDimensionProcessorStep(),
+    DeviceProcessorStep(device="cuda"),
 ]
 
-# Use in RobotProcessor
-processor = RobotProcessor(steps=steps)
+# Use in RobotProcessorPipeline
+processor = RobotProcessorPipeline[dict, dict](steps=steps)
 processed_transition = processor(raw_transition)
 ```
 
 ### Using overrides
 
-You can override step parameters at load-time using `overrides`. This is handy for non-serializable objects or site-specific settings. It works both in policy factories and with `RobotProcessor.from_pretrained(...)`.
+You can override step parameters at load-time using `overrides`. This is handy for non-serializable objects or site-specific settings. It works both in policy factories and with `DataProcessorPipeline.from_pretrained(...)`.
 
 Example: during policy evaluation on the robot, override the device and rename map.
 Use this to run a policy trained on CUDA on a CPU-only robot, or to remap camera keys when the robot uses different names than the dataset.
@@ -275,9 +315,9 @@ preprocessor, postprocessor = make_processor(
 Direct usage with `from_pretrained`:
 
 ```python
-from lerobot.processor import RobotProcessor
+from lerobot.processor import RobotProcessorPipeline
 
-processor = RobotProcessor.from_pretrained(
+processor = RobotProcessorPipeline.from_pretrained(
     "username/my-processor",
     overrides={
         "device_processor": {"device": "cuda:0"},  # registry name for registered steps
@@ -288,36 +328,161 @@ processor = RobotProcessor.from_pretrained(
 
 ## Best Practices
 
-- **Keep processors atomic** - One transformation per processor for reusability and debugging
-- **Use dataclasses** - Clean initialization with `@dataclass`
-- **Always register processors** - Use `@ProcessorStepRegistry.register("name")` for discoverability
-- **Check for None** - Always validate required data exists before processing
-- **Use copy() for safety** - Avoid side effects with `transition.copy()`
-- **Separate config and state** - JSON-serializable config vs tensor state_dict
-- **Use base classes** - Inherit from `ObservationProcessor` for observation-only processing
+Based on analysis of all LeRobot processor implementations, here are the key patterns and practices:
+
+### 1. **Safe Data Handling**
 
 ```python
-@ProcessorStepRegistry.register("my_processor")
-@dataclass
-class MyProcessor(ObservationProcessor):
-    threshold: float = 0.5
+# ✅ Always copy data to avoid side effects
+new_action = action.copy()
+new_obs = observation.copy()
 
-    def observation(self, observation):
-        if observation is None:
-            return observation
-        # Your processing logic here
-        return processed_observation
+# ✅ Check for required data before processing
+if "pixels" not in observation:
+    return observation  # Pass through unchanged
+
+# ✅ Handle None gracefully
+comp = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)
+if comp is None:
+    raise ValueError("Required complementary data missing")
+```
+
+### 2. **Robust Input Validation**
+
+```python
+# ✅ Validate data types and shapes
+if not isinstance(action, dict):
+    raise ValueError(f"Action should be a RobotAction type got {type(action)}")
+
+# ✅ Check tensor properties before processing
+if img_tensor.dtype != torch.uint8:
+    raise ValueError(f"Expected torch.uint8 images, but got {img_tensor.dtype}")
+
+# ✅ Validate required keys exist
+if None in (x, y, z, wx, wy, wz):
+    raise ValueError("Missing required end-effector pose components")
+```
+
+### 3. **Use Appropriate Base Classes**
+
+```python
+# ✅ Observation-only processors
+class MyObsProcessor(ObservationProcessorStep):
+    def observation(self, observation): ...
+
+# ✅ Action-only processors
+class MyActionProcessor(ActionProcessorStep):
+    def action(self, action): ...
+
+# ✅ Robot action processors (dict actions only)
+class MyRobotActionProcessor(RobotActionProcessorStep):
+    def action(self, action: dict[str, Any]): ...
+
+# ✅ Full control processors
+class MyFullProcessor(ProcessorStep):
+    def __call__(self, transition: EnvTransition): ...
+```
+
+### 4. **Registration and Naming**
+
+```python
+# ✅ Always register with namespaced names
+@ProcessorStepRegistry.register("my_company/image_processor")
+@dataclass
+class ImageProcessor(ObservationProcessorStep):
+    ...
+
+# ✅ Use descriptive, unique names
+# Good: "robotics_lab/safety_clipper", "acme_corp/vision_enhancer"
+# Bad: "processor", "step", "my_processor"
+```
+
+### 5. **State Management Patterns**
+
+```python
+# ✅ Use dataclass fields for internal state
+@dataclass
+class StatefulProcessor(ProcessorStep):
+    # Public config
+    window_size: int = 10
+
+    # Internal state (not in config)
+    _buffer: list = field(default_factory=list, init=False, repr=False)
+    _last_value: float | None = field(default=None, init=False, repr=False)
+
+    def reset(self):
+        """Reset internal state between episodes."""
+        self._buffer.clear()
+        self._last_value = None
+```
+
+### 6. **Error Handling**
+
+```python
+# ✅ Early returns for edge cases
+if not self.enabled or action is None:
+    return action
+
+# ✅ Clear error messages for invalid inputs
+if not isinstance(action, dict):
+    raise ValueError(f"Action should be a RobotAction type got {type(action)}")
+
+# ✅ Validate required keys exist
+if "required_key" not in action:
+    raise ValueError("Required key 'required_key' not found in action")
+```
+
+### 7. **Device and Dtype Awareness**
+
+The key principle: **tensors stored in your processor should mimic the dtype and device of input tensors**. This enables seamless operation in multi-GPU setups, Accelerate, and data parallel configurations.
+
+```python
+# ✅ Adapt internal state to match input tensors
+def _apply_transform(self, tensor: torch.Tensor, key: str) -> torch.Tensor:
+    # Check if our internal stats match the input tensor
+    if key in self._tensor_stats:
+        first_stat = next(iter(self._tensor_stats[key].values()))
+        if first_stat.device != tensor.device or first_stat.dtype != tensor.dtype:
+            # Automatically adapt to input tensor's device/dtype
+            self.to(device=tensor.device, dtype=tensor.dtype)
+
+    # Now process with matching device/dtype
+    return self._process_with_stats(tensor, key)
+
+# ✅ Implement to() method for device/dtype migration
+def to(self, device=None, dtype=None):
+    if device is not None:
+        self.device = device
+    if dtype is not None:
+        self.dtype = dtype
+    # Update internal tensor stats to match
+    self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
+    return self
+
+# ✅ This pattern enables:
+# - Multi-GPU training (data on different GPUs)
+# - Mixed precision (float16, bfloat16)
+# - Accelerate compatibility (automatic device placement)
+# - Data parallel setups (distributed training)
 ```
 
 ## Conclusion
 
 You now have all the tools to implement custom processors in LeRobot! The key steps are:
 
-1. **Define your processor** as a dataclass with the required methods (`__call__`, `get_config`, `state_dict`, `load_state_dict`, `reset`, `feature_contract`)
+1. **Define your processor** as a dataclass with the required methods (`__call__`, `get_config`, `state_dict`, `load_state_dict`, `reset`, `transform_features`)
 2. **Register it** using `@ProcessorStepRegistry.register("name")` for discoverability
-3. **Integrate it** into a `RobotProcessor` pipeline with other processing steps
-4. **Use base classes** like `ObservationProcessor` when possible to reduce boilerplate
+3. **Integrate it** into a `DataProcessorPipeline` with other processing steps
+4. **Use base classes** like `ObservationProcessorStep` when possible to reduce boilerplate
+5. **Implement device/dtype awareness** to support multi-GPU and mixed precision setups
 
-The processor system is designed to be modular and composable, allowing you to build complex data processing pipelines from simple, focused components. Whether you're preprocessing sensor data for training or post-processing model outputs for robot execution, custom processors give you the flexibility to handle any data transformation your robotics application requires. Policies like Pi0 and SmolVLA use the same normalization processors described above, so your understanding here will transfer directly when wiring policy preprocessors and postprocessors.
+The processor system is designed to be modular and composable, allowing you to build complex data processing pipelines from simple, focused components. Whether you're preprocessing sensor data for training or post-processing model outputs for robot execution, custom processors give you the flexibility to handle any data transformation your robotics application requires.
 
-Start simple, test thoroughly, and leverage the existing helper classes to build robust data processing pipelines for your robot learning workflows.
+Key principles for robust processors:
+
+- **Device/dtype adaptation**: Internal tensors should match input tensors
+- **Clear error messages**: Help users understand what went wrong
+- **Base class usage**: Leverage specialized base classes to reduce boilerplate
+- **Feature contracts**: Declare data structure changes with `transform_features()`
+
+Start simple, test thoroughly, and ensure your processors work seamlessly across different hardware configurations!

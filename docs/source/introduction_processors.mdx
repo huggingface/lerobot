@@ -1,7 +1,6 @@
 # Introduction to Processors
 
-In robotics, there's a fundamental mismatch between the data that robots and humans produce and what machine learning models expect.
-This creates several translation challenges:
+In robotics, there's a fundamental mismatch between the data that robots and humans produce and what machine learning models expect. This creates several translation challenges:
 
 **Raw Robot Data → Model Input:**
 
@@ -23,7 +22,7 @@ This creates several translation challenges:
 
 **That's where processors come in.** They serve as the universal translators that bridge these gaps, ensuring seamless data flow from sensors to models to actuators.
 
-Processors are the data transformation backbone of LeRobot. They handle all the preprocessing and postprocessing steps needed to convert raw environment data into model-ready inputs and vice versa. This guide will walk you through everything you need to know about processors - from basic concepts to advanced usage patterns.
+Processors are the data transformation backbone of LeRobot. They handle all the preprocessing and postprocessing steps needed to convert raw environment data into model-ready inputs and vice versa.
 
 ## What are Processors?
 
@@ -79,118 +78,63 @@ Each key in the transition has a specific purpose:
 - **REWARD**: Reinforcement learning signal
 - **DONE/TRUNCATED**: Episode boundary indicators
 - **INFO**: Arbitrary metadata
-- **COMPLEMENTARY_DATA**: Task descriptions, indices, padding flags, inter-step data (e.g., you need to compute the velocities and then use this velocity to clip the action)
+- **COMPLEMENTARY_DATA**: Task descriptions, indices, padding flags, inter-step data
 
-### ProcessorStep: The Building Block Interface
+### ProcessorStep: The Building Block
 
-A `ProcessorStep` is a single transformation unit that processes transitions. It's an abstract base class that any processor step must inherit from and implement:
+A `ProcessorStep` is a single transformation unit that processes transitions. It's an abstract base class with two required methods:
 
 ```python
 from lerobot.processor import ProcessorStep, EnvTransition
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from typing import Any
-import torch
 
 class MyProcessorStep(ProcessorStep):
-    """Example processor step - abstract methods must be implemented."""
+    """Example processor step - inherit and implement abstract methods."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Transform the transition - REQUIRED abstract method."""
         # Your processing logic here
         return transition
 
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+    def transform_features(self, features):
         """Declare how this step transforms feature shapes/types - REQUIRED abstract method."""
-        # Most processors return features unchanged
-        return features
-
-    # Optional methods with default implementations:
-    def get_config(self) -> dict[str, Any]:
-        """Return JSON-serializable configuration for saving/loading."""
-        return {}  # Default: empty config
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        """Return any learnable parameters (tensors only)."""
-        return {}  # Default: no learnable state
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """Load learnable parameters from saved state."""
-        pass  # Default: no-op
-
-    def reset(self) -> None:
-        """Reset any internal state between episodes."""
-        pass  # Default: no-op
+        return features  # Most processors return features unchanged
 ```
 
-### DataProcessorPipeline: The Generic Pipeline Orchestrator
+### DataProcessorPipeline: The Generic Orchestrator
 
-The `DataProcessorPipeline` is a generic class `DataProcessorPipeline[TInput, TOutput]` that chains multiple `ProcessorStep` instances together, executing them sequentially. The generic typing provides compile-time safety and clearly indicates what data formats the pipeline expects and returns.
-
-**Key Features:**
-
-- **Generic over input/output types**: `DataProcessorPipeline[TInput, TOutput]`
-- **Automatic format conversion**: Handles both batch dictionaries and EnvTransitions
-- **Type safety**: Compile-time checking of data flow
-- **Two specialized aliases**: `RobotProcessorPipeline` and `PolicyProcessorPipeline`
-
-The pipeline has two main type aliases designed for different data structures:
-
-- **`RobotProcessorPipeline[TInput, TOutput]`**: For robot hardware interfaces (unbatched data)
-- **`PolicyProcessorPipeline[TInput, TOutput]`**: For model training/inference (batched data)
-
-Both provide automatic format conversion to handle different input/output formats:
+The `DataProcessorPipeline[TInput, TOutput]` chains multiple `ProcessorStep` instances together with compile-time type safety:
 
 ```python
-from lerobot.processor import RobotProcessorPipeline, IdentityProcessorStep
-from lerobot.processor.converters import batch_to_transition, transition_to_batch
+from lerobot.processor import RobotProcessorPipeline, PolicyProcessorPipeline
 
-# Create a processing pipeline using the type alias
-processor = RobotProcessorPipeline[
-    dict[str, Any],  # Input type (e.g., batch dict)
-    dict[str, Any]   # Output type (e.g., processed batch dict)
-](
-    steps=[
-        step1,  # First transformation
-        step2,  # Second transformation
-        step3   # Third transformation
-    ],
-    name="my_preprocessing_pipeline",
-
-    # Optional: Custom converters for input/output formats
-    to_transition=batch_to_transition,  # How to convert batch dict → EnvTransition
-    to_output=transition_to_batch       # How to convert EnvTransition → output format
+# For robot hardware (unbatched data)
+robot_processor = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
+    steps=[step1, step2, step3],
+    name="robot_pipeline"
 )
 
-# The processor automatically handles different input formats:
-# 1. If input is a batch dict (from dataset), converts to EnvTransition
-# 2. Passes through each step sequentially
-# 3. Converts back to original format (or custom output format)
-
-# Example with batch dict input (common in training)
-batch_dict = {"observation.state": tensor, "action": tensor}
-output = processor(batch_dict)  # Automatically converted to/from EnvTransition
-
-# Example with EnvTransition input (common in inference)
-transition = {TransitionKey.OBSERVATION: {...}, TransitionKey.ACTION: ...}
-output = processor(transition)  # Stays as EnvTransition throughout
+# For model training/inference (batched data)
+policy_processor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+    steps=[step1, step2, step3],
+    name="policy_pipeline"
+)
 ```
 
-The `to_transition` and `to_output` converters enable seamless integration with existing codebases.
-By default, they handle the standard LeRobot batch format, but you can customize them for different data structures.
+## RobotProcessorPipeline vs PolicyProcessorPipeline
 
-### Type Safety with Generic Pipelines
+The key distinction is in the data structures they handle:
 
-The `DataProcessorPipeline` is generic and provides compile-time type safety. There are two main type aliases, each designed for different data structures and use cases:
+| Aspect          | RobotProcessorPipeline                       | PolicyProcessorPipeline                  |
+| --------------- | -------------------------------------------- | ---------------------------------------- |
+| **Input**       | `dict[str, Any]` - Individual robot values   | `dict[str, Any]` - Batched tensors       |
+| **Output**      | `dict[str, Any]` - Individual robot commands | `torch.Tensor` - Policy predictions      |
+| **Use Case**    | Real-time robot control                      | Model training/inference                 |
+| **Data Format** | Unbatched, heterogeneous                     | Batched, homogeneous                     |
+| **Examples**    | `{"joint_1": 0.5}`                           | `{"observation.state": tensor([[0.5]])}` |
 
-#### RobotProcessorPipeline vs PolicyProcessorPipeline
-
-**Use `RobotProcessorPipeline`** for robot hardware interfaces and real-time control:
+**Use `RobotProcessorPipeline`** for robot hardware interfaces:
 
 ```python
-from lerobot.processor import RobotProcessorPipeline
-
 # Robot data structures: dict[str, Any] for observations and actions
 robot_obs: dict[str, Any] = {
     "joint_1": 0.5,           # Individual joint values
@@ -203,18 +147,11 @@ robot_action: dict[str, Any] = {
     "joint_2": 0.1,
     "gripper": 0.8
 }
-
-# Common RobotProcessorPipeline patterns:
-RobotProcessorPipeline[dict[str, Any], EnvTransition]     # Robot obs → EnvTransition
-RobotProcessorPipeline[EnvTransition, dict[str, Any]]     # EnvTransition → Robot action
-RobotProcessorPipeline[dict[str, Any], dict[str, Any]]    # Robot obs → Robot action
 ```
 
 **Use `PolicyProcessorPipeline`** for model training and batch processing:
 
 ```python
-from lerobot.processor import PolicyProcessorPipeline
-
 # Policy data structures: batch dicts and tensors
 policy_batch: dict[str, Any] = {
     "observation.state": torch.tensor([[0.5, -0.3]]),      # Batched states
@@ -223,1261 +160,265 @@ policy_batch: dict[str, Any] = {
 }
 
 policy_action: torch.Tensor = torch.tensor([[0.2, 0.1, 0.8]])  # Model output tensor
-
-# Common PolicyProcessorPipeline patterns:
-PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]   # Batch dict → Processed batch dict
-PolicyProcessorPipeline[torch.Tensor, torch.Tensor]      # Policy tensor → Policy tensor
 ```
 
-#### Key Differences in Data Structures
+## Converter Functions
 
-| Aspect          | RobotProcessorPipeline                       | PolicyProcessorPipeline                  |
-| --------------- | -------------------------------------------- | ---------------------------------------- |
-| **Input**       | `dict[str, Any]` - Individual robot values   | `dict[str, Any]` - Batched tensors       |
-| **Output**      | `dict[str, Any]` - Individual robot commands | `torch.Tensor` - Policy predictions      |
-| **Use Case**    | Real-time robot control                      | Model training/inference                 |
-| **Data Format** | Unbatched, heterogeneous                     | Batched, homogeneous                     |
-| **Examples**    | `{"joint_1": 0.5}`                           | `{"observation.state": tensor([[0.5]])}` |
-
-This separation ensures type safety and makes it clear which data format each pipeline expects.
-
-### Additional Converter Functions
-
-LeRobot provides several specialized converter functions for common robotics scenarios:
+LeRobot provides converter functions to bridge different data formats:
 
 ```python
 from lerobot.processor.converters import (
     # Robot hardware converters
-    robot_action_to_transition,
-    observation_to_transition,
-    transition_to_robot_action,
+    robot_action_to_transition,    # Robot dict → EnvTransition
+    observation_to_transition,     # Robot obs → EnvTransition
+    transition_to_robot_action,    # EnvTransition → Robot dict
 
     # Policy/training converters
-    transition_to_policy_action,
-    policy_action_to_transition,
-    batch_to_transition,
-    transition_to_batch,
+    batch_to_transition,           # Batch dict → EnvTransition
+    transition_to_batch,           # EnvTransition → Batch dict
+    policy_action_to_transition,   # Policy tensor → EnvTransition
+    transition_to_policy_action,   # EnvTransition → Policy tensor
 
-    # Dataset/utility converters
-    transition_to_dataset_frame,
-    merge_transitions,
-    create_transition,
-    identity_transition
+    # Utilities
+    create_transition,             # Build transitions with defaults
+    merge_transitions,             # Combine multiple transitions
+    identity_transition            # Pass-through converter
 )
 ```
 
-**`robot_action_to_transition`** - Converts robot actions to EnvTransitions:
+## Real-World Examples
+
+### Robot Control Pipeline
 
 ```python
-# Use case: Phone, gamepad, or other teleop device control
-robot_action = {"joint_1": 0.2, "joint_2": 0.1, "gripper": 0.8}
-transition = robot_action_to_transition(robot_action)
-# Creates: {ACTION: {"action.joint_1": 0.2, "action.joint_2": 0.1, "action.gripper": 0.8}, ...}
-```
-
-**`observation_to_transition`** - Converts robot sensor data to EnvTransitions:
-
-```python
-# Use case: Live robot observation during inference
-robot_obs = {
-    "joint_1": 0.5, "joint_2": -0.3,  # joint positions
-    "camera_0": image_array            # camera images
-}
-transition = observation_to_transition(robot_obs)
-# Creates: {OBSERVATION: {"observation.state.joint_1": 0.5, "observation.images.camera_0": image, ...}}
-```
-
-**`transition_to_robot_action`** - Extracts robot-executable actions from EnvTransitions:
-
-```python
-# Use case: Converting model outputs back to robot commands
-model_transition = {TransitionKey.ACTION: {"action.joint_1": 0.2, "action.joint_2": 0.1}}
-robot_action = transition_to_robot_action(model_transition)
-# Returns: {"joint_1": 0.2, "joint_2": 0.1} - ready for robot.send_action()
-```
-
-**`transition_to_policy_action`** - Extracts policy actions from EnvTransitions:
-
-```python
-# Use case: Converting transitions to policy-compatible format
-transition = {TransitionKey.ACTION: {"action.joint_1": 0.2, "action.joint_2": 0.1}}
-policy_action = transition_to_policy_action(transition)
-# Returns: {"action.joint_1": 0.2, "action.joint_2": 0.1} - ready for policy processing
-```
-
-**`batch_to_transition`** - Converts dataset batches to EnvTransitions:
-
-```python
-# Use case: Converting training batches to uniform transition format
-batch_dict = {
-    "observation.state": torch.tensor([[0.5, -0.3]]),
-    "action": torch.tensor([[0.2, 0.1]]),
-    "next.reward": torch.tensor([0.0])
-}
-transition = batch_to_transition(batch_dict)
-# Creates: {OBSERVATION: {...}, ACTION: tensor, REWARD: 0.0, ...}
-```
-
-**`transition_to_batch`** - Converts EnvTransitions back to batch format:
-
-```python
-# Use case: Converting processed transitions back to dataset format
-transition = {TransitionKey.OBSERVATION: {...}, TransitionKey.ACTION: tensor}
-batch_dict = transition_to_batch(transition)
-# Returns: {"observation.state": tensor, "action": tensor, "next.reward": 0.0, ...}
-```
-
-**`transition_to_dataset_frame`** - Converts transitions to dataset-compatible format:
-
-```python
-# Use case: Saving processed data or creating training batches
-features = {
-    "action": {"names": ["joint_1", "joint_2"]},
-    "observation.state": {"names": ["joint_1", "joint_2"]},
-    "observation.images.camera0": {...}
-}
-batch = transition_to_dataset_frame(transition, features)
-# Returns: {"action": [0.2, 0.1], "observation.state": [0.5, -0.3], ...}
-```
-
-**Utility Converters:**
-
-```python
-# create_transition - Build transitions with defaults
-transition = create_transition(
-    observation={"joint_1": 0.5},
-    action={"joint_1": 0.2},
-    reward=1.0
-)
-
-# merge_transitions - Combine multiple transitions
-merged = merge_transitions([transition1, transition2])
-
-# identity_transition - Pass-through converter
-unchanged = identity_transition(transition)
-
-# to_tensor - Convert various data types to PyTorch tensors
-tensor = to_tensor([1, 2, 3], dtype=torch.float32, device="cuda")
-nested_tensors = to_tensor({"obs": np.array([1, 2]), "img": image_array})
-
-# from_tensor_to_numpy - Convert tensors back to numpy/scalars
-numpy_array = from_tensor_to_numpy(torch.tensor([1, 2, 3]))  # Returns np.array
-scalar_value = from_tensor_to_numpy(torch.tensor(5.0))       # Returns 5.0
-```
-
-These converters are particularly useful when integrating with real robots vs. training policies. Here are real examples:
-
-#### RobotProcessorPipeline Examples (Robot Hardware)
-
-```python
-from lerobot.processor.converters import (
-    robot_action_to_transition,
-    observation_to_transition,
-    transition_to_robot_action,
-    identity_transition
-)
-
-# Example 1: Phone teleoperation → Robot control (from examples/phone_to_so100/record.py)
-phone_to_robot_ee_pose = RobotProcessorPipeline[RobotAction, EnvTransition](
+# Phone teleoperation → Robot control (from examples/phone_to_so100/)
+phone_to_robot = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[
-        MapPhoneActionToRobotAction(platform=PhoneOS.IOS),  # Phone pose → robot target
-        AddRobotObservationAsComplimentaryData(robot=robot), # Get current joint positions
-        EEReferenceAndDelta(                               # Convert deltas to absolute pose
-            kinematics=kinematics_solver,
-            end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
-            motor_names=list(robot.bus.motors.keys()),
-        ),
-        EEBoundsAndSafety(                                 # Safety limits
-            end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
-            max_ee_step_m=0.20,
-        ),
+        MapPhoneActionToRobotAction(platform=PhoneOS.IOS),  # Phone → robot targets
+        EEReferenceAndDelta(kinematics=solver, ...),        # Deltas → absolute pose
+        EEBoundsAndSafety(bounds=..., max_step=0.2),        # Safety limits
+        InverseKinematicsEEToJoints(kinematics=solver),     # Pose → joint angles
+        GripperVelocityToJoint(motor_names=motors),         # Gripper control
     ],
-    to_transition=robot_action_to_transition,  # Phone action dict → EnvTransition
-    to_output=identity_transition               # Keep as EnvTransition
+    to_transition=robot_action_to_transition,
+    to_output=transition_to_robot_action
 )
 
-# Example 2: Model output → Robot commands (from examples/phone_to_so100/evaluate.py)
-robot_ee_to_joints = RobotProcessorPipeline[EnvTransition, RobotAction](
-    steps=[
-        AddRobotObservationAsComplimentaryData(robot=robot), # Get current state
-        InverseKinematicsEEToJoints(                        # End-effector → joint angles
-            kinematics=kinematics_solver,
-            motor_names=list(robot.bus.motors.keys()),
-            initial_guess_current_joints=True,
-        ),
-        GripperVelocityToJoint(                             # Gripper velocity → position
-            motor_names=list(robot.bus.motors.keys()),
-            speed_factor=20.0,
-        ),
-    ],
-    to_transition=identity_transition,          # Already EnvTransition
-    to_output=transition_to_robot_action       # EnvTransition → Robot action dict
-)
-
-# Example 3: Robot sensors → Dataset format (from examples/phone_to_so100/record.py)
-robot_joints_to_ee_pose = RobotProcessorPipeline[dict[str, Any], EnvTransition](
-    steps=[
-        ForwardKinematicsJointsToEE(                       # Joint angles → end-effector pose
-            kinematics=kinematics_solver,
-            motor_names=list(robot.bus.motors.keys())
-        )
-    ],
-    to_transition=observation_to_transition,   # Robot obs dict → EnvTransition
-    to_output=identity_transition              # Keep as EnvTransition for dataset
-)
+# Usage: phone_action → robot_joints
+phone_input = {"phone.pos": [0.1, 0.2, 0.0], "phone.rot": rotation}
+robot_joints = phone_to_robot(phone_input)
+robot.send_action(robot_joints)
 ```
 
-#### PolicyProcessorPipeline Examples (Model Training/Inference)
+### Policy Training Pipeline
 
 ```python
-from lerobot.processor.converters import batch_to_transition, transition_to_batch
-
-# Example 1: Training data preprocessing (OPTIMIZED ORDER)
+# Training data preprocessing (optimized order for GPU performance)
 training_preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
     steps=[
-        AddBatchDimensionProcessorStep(),   # Add batch dims if missing
-        DeviceProcessorStep(device="cuda"), # Move to GPU first ⚡
-        NormalizerProcessorStep(...),       # Normalize on GPU - faster! ⚡
-    ],
-    to_transition=batch_to_transition,      # Batch dict → EnvTransition
-    to_output=transition_to_batch           # EnvTransition → Batch dict
+        RenameObservationsProcessorStep(rename_map={}),     # Standardize keys
+        AddBatchDimensionProcessorStep(),                   # Add batch dims
+        TokenizerProcessorStep(tokenizer_name="...", ...),  # Tokenize language
+        DeviceProcessorStep(device="cuda"),                 # Move to GPU first ⚡
+        NormalizerProcessorStep(features=..., stats=...),   # Normalize on GPU ⚡
+    ]
 )
 
-# Example 2: Model output postprocessing
+# Model output postprocessing
 training_postprocessor = PolicyProcessorPipeline[torch.Tensor, torch.Tensor](
     steps=[
-        DeviceProcessorStep(device="cpu"),  # Move to CPU
-        UnnormalizerProcessorStep(...),     # Denormalize to real scales
-    ],
-    to_transition=policy_action_to_transition,  # Policy tensor → EnvTransition
-    to_output=transition_to_policy_action       # EnvTransition → Policy tensor
+        DeviceProcessorStep(device="cpu"),                  # Move to CPU
+        UnnormalizerProcessorStep(features=..., stats=...), # Denormalize
+    ]
 )
 ```
 
-**Key Point**: `RobotProcessorPipeline` handles unbatched robot hardware data (individual sensor readings, single actions), while `PolicyProcessorPipeline` handles batched model data (training batches, tensor operations).
-
-### Data Format Conversion
-
-Different data sources have different formats, but processors need a unified `EnvTransition` structure internally.
-The default converters handle LeRobot datasets, but you can customize them:
+### Mixed Robot + Policy Pipeline
 
 ```python
-# Default: LeRobot batch format
-lerobot_batch = {
-    "observation.state": torch.tensor(...),
-    "action": torch.tensor(...),
-    "next.reward": torch.tensor(...),
-    "task": ["pick cube", ...]
-}
-# → Converts to EnvTransition → Processes → Converts back
-
-# Custom: Live robot data
-robot_data = {
-    "cameras": {"wrist_cam": np.array(...)},
-    "joint_positions": np.array(...),
-    "gripper_state": 0.5
-}
-
-def robot_to_transition(data: dict) -> EnvTransition:
-    return {
-        TransitionKey.OBSERVATION: {
-            "observation.images.wrist": torch.from_numpy(data["cameras"]["wrist_cam"]),
-            "observation.state": torch.from_numpy(data["joint_positions"])
-        },
-        TransitionKey.ACTION: None,
-        # ... other fields with defaults
-    }
-
-# Use custom converter
-processor = RobotProcessorPipeline[dict, EnvTransition](
-    steps=[...],
-    to_transition=robot_to_transition,
-    to_output=identity_transition  # Keep as EnvTransition
-)
-```
-
-**When to customize:** Live robot data, Gymnasium environments, legacy datasets, or any non-LeRobot format.
-
-## Common Processor Steps
-
-LeRobot provides a rich set of pre-built processor steps for common transformations.
-Let's explore each in detail:
-
-### Data Normalization
-
-Normalization is crucial for neural network training and inference.
-The `NormalizerProcessorStep` handles both mean-std normalization and min-max scaling:
-
-```python
-from lerobot.processor import NormalizerProcessorStep, UnnormalizerProcessorStep
-from lerobot.configs.types import PolicyFeature, FeatureType, NormalizationMode
-
-# Define what features exist in your data
-features = {
-    "observation.images.camera0": PolicyFeature(
-        type=FeatureType.IMAGE,
-        shape=(224, 224, 3)
-    ),
-    "observation.state": PolicyFeature(
-        type=FeatureType.STATE,
-        shape=(7,)
-    ),
-    "action": PolicyFeature(
-        type=FeatureType.ACTION,
-        shape=(7,)
-    )
-}
-
-# Define normalization strategy per feature type
-norm_map = {
-    FeatureType.IMAGE: NormalizationMode.MEAN_STD,    # Images: (x - mean) / std
-    FeatureType.STATE: NormalizationMode.MIN_MAX,     # States: scale to [-1, 1]
-    FeatureType.ACTION: NormalizationMode.MIN_MAX     # Actions: scale to [-1, 1]
-}
-
-# Create normalizer with dataset statistics
-normalizer = NormalizerProcessorStep(
-    features=features,
-    norm_map=norm_map,
-    stats=dataset.meta.stats,  # Contains mean, std, min, max per feature
-    normalize_keys={"observation.state", "action"}  # Optional: only normalize specific keys
-)
-
-# For postprocessing: inverse transformation
-unnormalizer = UnnormalizerProcessorStep(
-    features=features,
-    norm_map=norm_map,
-    stats=dataset.meta.stats
-)
-
-# The normalizer automatically:
-# - Detects which normalization to apply based on feature type
-# - Handles device placement of statistics tensors
-# - Skips keys not in stats or not in normalize_keys
-# - Adds metadata about what was normalized
-```
-
-### Device Management
-
-The `DeviceProcessorStep` ensures tensors are on the right device with the right dtype:
-
-```python
-from lerobot.processor import DeviceProcessorStep
-
-# Basic GPU placement
-gpu_processor = DeviceProcessorStep(device="cuda:0")
-
-# Advanced: GPU with half-precision for inference
-efficient_processor = DeviceProcessorStep(
-    device="cuda:0",
-    float_dtype="float16"  # Convert float32 -> float16 for memory efficiency
-)
-
-# The processor:
-# - Moves all tensors to specified device
-# - Preserves non-tensor data unchanged
-# - Optionally converts float dtypes while preserving int/bool types
-# - Uses non_blocking transfers for CUDA devices
-# - Handles nested structures (observations, complementary_data)
-
-# Supported float dtypes:
-# "float16" / "half": 16-bit floating point
-# "float32" / "float": 32-bit floating point (default)
-# "float64" / "double": 64-bit floating point
-# "bfloat16": Brain floating point (better for training)
-```
-
-### Batch Processing
-
-Models expect batched inputs, but robot interactions often produce unbatched data:
-
-```python
-from lerobot.processor import AddBatchDimensionProcessorStep
-
-batch_processor = AddBatchDimensionProcessorStep()
-
-# Automatically adds batch dimensions where needed:
-# State: (7,) -> (1, 7)
-# Image: (224, 224, 3) -> (1, 224, 224, 3)
-# Action: (4,) -> (1, 4)
-# Task: "pick_cube" -> ["pick_cube"]
-# Already batched: (1, 7) -> (1, 7) [unchanged]
-
-# The processor intelligently:
-# - Detects tensor dimensionality
-# - Adds batch dim to 1D states/actions
-# - Adds batch dim to 3D images
-# - Wraps string tasks in lists
-# - Preserves already-batched data
-
-# Example usage in inference:
-single_observation = robot.get_observation()  # Unbatched
-batched_input = batch_processor({"observation": single_observation})
-model_output = model(batched_input)  # Model expects batch dim
-```
-
-### Text Tokenization
-
-For language-conditioned policies, text instructions must be tokenized:
-
-```python
-from lerobot.processor import TokenizerProcessorStep
-from transformers import AutoTokenizer
-
-# Option 1: Auto-load tokenizer by name
-tokenizer_proc = TokenizerProcessorStep(
-    tokenizer_name="google/paligemma-3b-pt-224",
-    max_length=128,
-    task_key="task",           # Where to find text in complementary_data
-    padding="max_length",       # Pad to max_length
-    padding_side="right",
-    truncation=True            # Truncate if longer than max_length
-)
-
-# Option 2: Provide custom tokenizer
-custom_tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-medium")
-custom_proc = TokenizerProcessorStep(
-    tokenizer=custom_tokenizer,
-    max_length=256,
-    padding_side="left"        # For autoregressive models
-)
-
-# The processor:
-# - Extracts task text from complementary_data
-# - Tokenizes using HuggingFace tokenizer
-# - Adds tokens and attention_mask to observations
-# - Handles both single strings and lists of strings
-# - Preserves original task in complementary_data
-
-# Output structure:
-# observation["observation.language.tokens"] = tensor([101, 2032, ...])
-# observation["observation.language.attention_mask"] = tensor([1, 1, 0, ...])
-```
-
-### Key Renaming
-
-Different datasets and models may use different naming conventions.
-The `RenameObservationsProcessorStep` solves this mismatch:
-
-**Why is this useful?**
-
-- When loading a model trained on a different dataset with different key names
-- When using foundation models that expect specific key naming conventions
-- When standardizing datasets from different sources
-- When adapting legacy code to new naming standards
-
-```python
-from lerobot.processor import RenameObservationsProcessorStep
-
-# Example 1: Dataset uses "top"/"wrist", model expects "camera0"/"camera1"
-rename_proc = RenameObservationsProcessorStep(
-    rename_map={
-        "observation.images.top": "observation.images.camera0",
-        "observation.images.wrist": "observation.images.camera1",
-    }
-)
-
-# Example 2: Foundation model compatibility
-# Your dataset: "observation.state", Foundation model: "proprio"
-foundation_rename = RenameObservationsProcessorStep(
-    rename_map={
-        "observation.state": "proprio",
-        "observation.images.main": "rgb",
-    }
-)
-
-# Example 3: Standardizing multiple datasets
-standardize_rename = RenameObservationsProcessorStep(
-    rename_map={
-        # Different robots might use different names
-        "observation.joint_positions": "observation.state",
-        "observation.gripper_state": "observation.end_effector",
-        "observation.arm_camera": "observation.images.wrist",
-    }
-)
-```
-
-## Building Complete Pipelines
-
-Let's build a real-world preprocessing and postprocessing pipeline for a vision-based
-manipulation policy:
-
-```python
-# Consolidated imports
-from lerobot.processor import (
-    RobotProcessorPipeline,
-    NormalizerProcessorStep,
-    UnnormalizerProcessorStep,
-    DeviceProcessorStep,
-    AddBatchDimensionProcessorStep,
-    TokenizerProcessorStep,
-    RenameObservationsProcessorStep
-)
-
-# Step 1: Define the preprocessing pipeline
-preprocessor = RobotProcessorPipeline[dict, dict](
-    steps=[
-        # 1. Standardize naming from dataset
-        RenameObservationsProcessorStep(
-            rename_map={
-                "observation.images.top": "observation.images.camera0",
-                "observation.images.wrist": "observation.images.camera1"
-            }
-        ),
-
-        # 2. Add batch dimensions for model
-        AddBatchDimensionProcessorStep(),
-
-        # 3. Tokenize language instructions if present
-        TokenizerProcessorStep(
-            tokenizer_name="google/paligemma-3b-pt-224",
-            max_length=64,
-            task_key="task"
-        ),
-
-        # 4. Move to GPU first for faster normalization
-        DeviceProcessorStep(
-            device="cuda:0",
-            float_dtype="float16"
-        ),
-
-        # 5. Normalize numerical data on GPU (much faster!)
-        NormalizerProcessorStep(
-            features=policy_features,
-            norm_map={
-                FeatureType.IMAGE: NormalizationMode.MEAN_STD,
-                FeatureType.STATE: NormalizationMode.MIN_MAX,
-                FeatureType.ACTION: NormalizationMode.MIN_MAX
-            },
-            stats=dataset.meta.stats
-        )
-    ],
-    name="robot_preprocessor"
-)
-
-# Step 2: Define the postprocessing pipeline
-postprocessor = RobotProcessorPipeline[dict, dict](
-    steps=[
-        # 1. Move back to CPU for robot hardware
-        DeviceProcessorStep(device="cpu"),
-
-        # 2. Denormalize actions to original scale
-        UnnormalizerProcessorStep(
-            features=policy_features,
-            norm_map={
-                FeatureType.ACTION: NormalizationMode.MIN_MAX
-            },
-            stats=dataset.meta.stats
-        )
-    ],
-    name="robot_postprocessor"
-)
-```
-
-## Using Processors in Practice
-
-### Training Loop Integration
-
-Here's how processors integrate into a training loop. Note the use of `PolicyProcessorPipeline` for handling batched training data:
-
-```python
-from torch.utils.data import DataLoader
-
-# Create dataset and dataloader
-dataset = LeRobotDataset(repo_id="your_dataset")
-dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
-
-# Initialize model and processors for training (PolicyProcessorPipeline)
-model = YourPolicy.from_pretrained("your_model")
-preprocessor = PolicyProcessorPipeline.from_pretrained(
-    "your_model",
-    config_filename="policy_preprocessor.json"  # Note: policy, not robot
-)
-
-# Training loop
-for epoch in range(num_epochs):
-    for batch in dataloader:
-        # Preprocess batch
-        processed_batch = preprocessor(batch)
-
-        # Forward pass - returns loss and optional metrics
-        loss, metrics = model.forward(processed_batch)
-
-        # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # Log metrics if available
-        if metrics:
-            wandb.log(metrics)
-```
-
-### Inference Pipeline
-
-For deployment, processors ensure consistent data handling. Note the mix of `PolicyProcessorPipeline` (for model) and `RobotProcessorPipeline` (for robot hardware):
-
-```python
-# Load model and processors
-policy = YourPolicy.from_pretrained("path/to/model")
-
-# PolicyProcessorPipeline for model input/output (handles batched data)
-policy_preprocessor = PolicyProcessorPipeline.from_pretrained(
-    "path/to/model",
-    config_filename="policy_preprocessor.json"
-)
-policy_postprocessor = PolicyProcessorPipeline.from_pretrained(
-    "path/to/model",
-    config_filename="policy_postprocessor.json"
-)
-
-# RobotProcessorPipeline for robot hardware (handles unbatched robot data)
-robot_obs_processor = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
-    steps=[VanillaObservationProcessorStep()],
-)
-robot_action_processor = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
-    steps=[DeviceProcessorStep(device="cpu")],
-)
-
-# Connect to robot
-robot = make_robot_from_config(robot_config)
-robot.connect()
-
-# Inference loop
-policy.eval()
-# Reset the policy and processors
-policy.reset()
-preprocessor.reset()
-postprocessor.reset()
-
+# Real deployment: Robot sensors → Model → Robot commands
 with torch.no_grad():
     while not done:
-        # 1. Get raw robot observation (unbatched dict)
-        raw_observation = robot.get_observation()  # dict[str, Any]
+        # 1. Get robot observation (unbatched)
+        raw_obs = robot.get_observation()  # dict[str, Any]
 
-        # 2. Process robot observation with RobotProcessorPipeline
-        processed_obs = robot_obs_processor(raw_observation)  # dict[str, Any]
+        # 2. Process for policy (add batching, normalize)
+        policy_input = policy_preprocessor(raw_obs)  # Batched dict
 
-        # 3. Build dataset-compatible frame for policy
-        observation_frame = build_dataset_frame(
-            dataset.features,
-            processed_obs,
-            prefix="observation"
-        )
-        observation_frame["task"] = "pick up the red cube"
+        # 3. Run model
+        policy_output = policy.select_action(policy_input)  # Policy tensor
 
-        # 4. Preprocess for model with PolicyProcessorPipeline (adds batch dims)
-        model_input = policy_preprocessor(observation_frame)  # Batched dict
+        # 4. Postprocess for robot (denormalize, convert to dict)
+        robot_action = policy_postprocessor(policy_output)  # dict[str, Any]
 
-        # 5. Run policy inference
-        raw_action = policy.select_action(model_input)  # Policy tensor
-
-        # 6. Postprocess policy output with PolicyProcessorPipeline
-        processed_policy_action = policy_postprocessor(raw_action)  # Unbatched tensor
-
-        # 7. Convert to robot-compatible format with RobotProcessorPipeline
-        robot_action = robot_action_processor(processed_policy_action)  # dict[str, Any]
-
-        # 8. Execute on robot hardware
+        # 5. Send to robot
         robot.send_action(robot_action)
 ```
 
-## Saving and Loading Processors
+## Feature Contracts: Shape and Type Transformation
 
-Processors can be persisted and shared just like models, making them portable across different
-environments and ensuring reproducibility:
+Processors don't just transform data - they can also **change the data structure itself**. The `transform_features()` method declares these changes, which is crucial for dataset recording and policy creation.
 
-### Local Save/Load
+### Why Feature Contracts Matter
 
-```python
-# Save processor configuration and state
-preprocessor.save_pretrained(
-    "./my_robot_processor",
-    config_filename="preprocessor.json"  # Optional custom name
-)
+When building datasets or policies, LeRobot needs to know:
 
-# The save creates:
-# my_robot_processor/
-# ├── preprocessor.json                    # Configuration
-# ├── preprocessor_step_0_normalizer.safetensors  # Step 0 state (stats)
-# └── preprocessor_step_1_device.safetensors     # Step 1 state (if any)
-
-# Load processor
-loaded = RobotProcessorPipeline.from_pretrained(
-    "./my_robot_processor",
-    config_filename="preprocessor.json"
-)
-```
-
-### HuggingFace Hub Integration
-
-The HuggingFace Hub provides a centralized place to share and version your processors.
-This is particularly useful for sharing preprocessing configurations with models,
-ensuring that anyone who downloads your model can reproduce your exact preprocessing pipeline.
-It also enables versioning and collaboration on preprocessing strategies.
+- **What data fields will exist** after processing
+- **What shapes and types** each field will have
+- **How to configure models** for the expected data structure
 
 ```python
-# Save to HuggingFace Hub
-preprocessor.save_pretrained("username/my-robot-policy")
-
-# Load from Hub with automatic download
-hub_processor = RobotProcessorPipeline.from_pretrained(
-    "username/my-robot-policy",
-    config_filename="robot_preprocessor.json",
-    revision="main",  # Optional: specific revision
-    cache_dir="./cache"  # Optional: local cache directory
-)
-
-# The Hub integration provides:
-# - Automatic versioning with git
-# - Public or private sharing
-# - Download caching for efficiency
-# - Integration with model repositories
-```
-
-### Loading with Overrides
-
-Sometimes you need to modify loaded processors for new environments or datasets.
-The override mechanism allows you to update specific processor configurations without modifying
-the saved files:
-
-```python
-# Load processor with configuration overrides
-processor = RobotProcessorPipeline.from_pretrained(
-    "./saved_processor",
-    overrides={
-        # Change device for different hardware
-        "device_processor": {"device": "cuda:1"},
-
-        # Update statistics for new dataset
-        "normalizer_processor": {"stats": new_dataset.meta.stats},
-
-        # Provide non-serializable objects (like tokenizers)
-        "tokenizer_processor": {"tokenizer": custom_tokenizer}
-    }
-)
-
-# Common override scenarios:
-# 1. Adapting to different hardware (GPU availability)
-# 2. Fine-tuning on new datasets with different statistics
-# 3. Providing runtime dependencies that can't be serialized
-# 4. Testing variations without creating new saved configs
-```
-
-## Creating Custom Processor Steps
-
-Build your own processor steps for specialized transformations.
-The key is implementing the required interface:
-
-### Basic Custom Step with Registration
-
-The registration mechanism allows your custom processors to be saved and loaded by name rather
-than by module path.
-This makes them more portable and easier to share:
-
-```python
-from dataclasses import dataclass
-import torch
-from lerobot.processor import ProcessorStepRegistry, ObservationProcessorStep
-
-# The @register decorator adds your processor to the global registry
-# Use a unique name, preferably namespaced to avoid conflicts
-@dataclass
-@ProcessorStepRegistry.register("my_company/gaussian_noise")
-class GaussianNoiseProcessor(ObservationProcessorStep):
-    """Add Gaussian noise to observations for robustness training."""
-
-    noise_std: float = 0.01
-    training_only: bool = True
-    is_training: bool = True
-
-    def observation(self, observation):
-        """Add noise to observation tensors."""
-        if not self.is_training and self.training_only:
-            return observation
-
-        noisy_obs = {}
-        for key, value in observation.items():
-            if isinstance(value, torch.Tensor) and "image" not in key:
-                # Add noise to non-image observations
-                noise = torch.randn_like(value) * self.noise_std
-                noisy_obs[key] = value + noise
-            else:
-                noisy_obs[key] = value
-
-        return noisy_obs
-
-    def get_config(self):
-        return {
-            "noise_std": self.noise_std,
-            "training_only": self.training_only,
-            "is_training": self.is_training
-        }
-
-# Why register?
-# 1. Enables saving by name: config saves "my_company/gaussian_noise" instead of full module path
-# 2. More portable: Others can use your processor without your exact module structure
-# 3. Version-safe: Module refactoring won't break saved configs
-# 4. Cleaner configs: JSON shows readable names instead of long import paths
-```
-
-### Using Base Classes for Common Patterns
-
-LeRobot provides specialized base classes that handle the boilerplate of extracting and reinserting specific transition components. These base classes implement the `__call__` method for you, so you only need to implement the specific component method:
-
-#### Available Base Classes
-
-```python
-from lerobot.processor import (
-    ObservationProcessorStep,      # Process observation dict only
-    ActionProcessorStep,           # Process any action type
-    RobotActionProcessorStep,      # Process RobotAction (dict) only
-    PolicyActionProcessorStep,     # Process PolicyAction (tensor) only
-    RewardProcessorStep,           # Process reward only
-    DoneProcessorStep,             # Process done flag only
-    TruncatedProcessorStep,        # Process truncated flag only
-    InfoProcessorStep,             # Process info dict only
-    ComplementaryDataProcessorStep # Process complementary_data dict only
-)
-```
-
-#### Example: Action Clipping with Type Safety
-
-```python
-from dataclasses import dataclass
-import torch
-from lerobot.processor import ActionProcessorStep, ProcessorStepRegistry
-
-@dataclass
-@ProcessorStepRegistry.register("my_company/action_clipper")
-class ActionClipProcessor(ActionProcessorStep):
-    """Clip actions to safe ranges - works with any action type."""
-
-    min_value: float = -1.0
-    max_value: float = 1.0
-
-    def action(self, action):
-        """Process only the action component."""
-        # Base class handles transition extraction/insertion
-        if isinstance(action, dict):
-            return {k: torch.clamp(v, self.min_value, self.max_value) if isinstance(v, torch.Tensor) else v
-                    for k, v in action.items()}
-        elif isinstance(action, torch.Tensor):
-            return torch.clamp(action, self.min_value, self.max_value)
-        return action
-
-    def get_config(self):
-        return {"min_value": self.min_value, "max_value": self.max_value}
-```
-
-#### Example: Robot-Specific Action Processing
-
-```python
-@dataclass
-@ProcessorStepRegistry.register("my_company/robot_safety")
-class RobotSafetyProcessor(RobotActionProcessorStep):
-    """Safety limits for robot actions - only handles RobotAction dicts."""
-
-    max_velocity: float = 1.0
-
-    def action(self, action: dict[str, Any]) -> dict[str, Any]:
-        """Process robot action dict with safety limits."""
-        safe_action = action.copy()
-        for key, value in action.items():
-            if "velocity" in key and isinstance(value, (int, float)):
-                safe_action[key] = max(-self.max_velocity, min(self.max_velocity, value))
-        return safe_action
-```
-
-#### Example: Observation Enhancement
-
-```python
-@dataclass
-@ProcessorStepRegistry.register("my_company/observation_enhancer")
-class ObservationEnhancer(ObservationProcessorStep):
-    """Add computed features to observations."""
-
-    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
-        """Add velocity estimates to state observations."""
-        new_obs = observation.copy()
-
-        # Add velocity estimates if we have position data
-        if "observation.state" in observation:
-            state = observation["observation.state"]
-            if hasattr(self, '_prev_state') and self._prev_state is not None:
-                velocity = (state - self._prev_state) / 0.033  # Assume 30 FPS
-                new_obs["observation.velocity"] = velocity
-            self._prev_state = state.clone() if isinstance(state, torch.Tensor) else state
-
+# Example: A processor that adds velocity to observations
+class VelocityProcessor(ObservationProcessorStep):
+    def observation(self, obs):
+        new_obs = obs.copy()
+        if "observation.state" in obs:
+            # Add computed velocity field
+            new_obs["observation.velocity"] = self._compute_velocity(obs["observation.state"])
         return new_obs
 
-    def reset(self):
-        self._prev_state = None
+    def transform_features(self, features):
+        """Declare the new velocity field we're adding."""
+        if PipelineFeatureType.OBSERVATION in features:
+            # Add velocity feature with same shape as state
+            state_feature = features[PipelineFeatureType.OBSERVATION].get("observation.state")
+            if state_feature:
+                features[PipelineFeatureType.OBSERVATION]["observation.velocity"] = PolicyFeature(
+                    type=FeatureType.STATE,
+                    shape=state_feature.shape  # Same shape as position
+                )
+        return features
 ```
 
-For more advanced processor patterns including stateful processors, see [Implement Your Own Processor](implement_your_own_processor.mdx).
+### Real Examples from LeRobot
 
-## Advanced Features
-
-### Debugging with Hooks
-
-Processors support hooks for monitoring and debugging without modifying the pipeline code:
+**Phone Action Mapping** - Transforms action structure:
 
 ```python
-# Define monitoring hooks
-def log_shapes(step_idx: int, transition: EnvTransition):
-    """Log tensor shapes after each step."""
-    obs = transition.get(TransitionKey.OBSERVATION)
-    if obs:
-        print(f"Step {step_idx} shapes:")
-        for key, value in obs.items():
-            if isinstance(value, torch.Tensor):
-                print(f"  {key}: {value.shape}")
+# Input features: {"phone.pos": (3,), "phone.rot": (4,), "phone.enabled": (1,)}
+# Output features: {"target_x": (1,), "target_y": (1,), ..., "gripper": (1,)}
 
-def check_nans(step_idx: int, transition: EnvTransition):
-    """Check for NaN values."""
-    obs = transition.get(TransitionKey.OBSERVATION)
-    if obs:
-        for key, value in obs.items():
-            if isinstance(value, torch.Tensor) and torch.isnan(value).any():
-                print(f"Warning: NaN detected in {key} at step {step_idx}")
+def transform_features(self, features):
+    # Remove phone-specific keys
+    features[PipelineFeatureType.ACTION].pop("phone.pos", None)
+    features[PipelineFeatureType.ACTION].pop("phone.rot", None)
 
-# Register hooks
-processor.register_after_step_hook(log_shapes)
-processor.register_after_step_hook(check_nans)
-
-# Process data - hooks will be called after each step
-output = processor(input_data)
-
-# Remove hooks when done debugging
-processor.unregister_after_step_hook(log_shapes)
-processor.unregister_after_step_hook(check_nans)
+    # Add robot target keys
+    features[PipelineFeatureType.ACTION]["target_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+    features[PipelineFeatureType.ACTION]["target_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+    # ... more target fields
+    return features
 ```
 
-### Step-by-Step Inspection
-
-Use `step_through()` for detailed debugging of the transformation pipeline:
+**Forward Kinematics** - Adds computed observations:
 
 ```python
-# Inspect data at each transformation stage
-for i, intermediate in enumerate(processor.step_through(data)):
-    print(f"\n=== After step {i}: {processor.steps[i].__class__.__name__} ===")
+# Input: Joint positions
+# Output: Joint positions + End-effector pose
 
-    # Check observation shapes and statistics
-    obs = intermediate.get(TransitionKey.OBSERVATION)
-    if obs:
-        for key, value in obs.items():
-            if isinstance(value, torch.Tensor):
-                print(f"{key}: shape={value.shape}, "
-                      f"dtype={value.dtype}, "
-                      f"device={value.device}")
-                if value.numel() > 0:  # Avoid empty tensors
-                    print(f"  range=[{value.min():.3f}, {value.max():.3f}], "
-                          f"mean={value.mean():.3f}, std={value.std():.3f}")
-
-    # Check action if present
-    action = intermediate.get(TransitionKey.ACTION)
-    if action is not None:
-        if isinstance(action, torch.Tensor):
-            print(f"action: shape={action.shape}, dtype={action.dtype}, device={action.device}")
-            if action.numel() > 0:
-                print(f"  range=[{action.min():.3f}, {action.max():.3f}]")
-        elif isinstance(action, dict):
-            print(f"action: dict with {len(action)} keys: {list(action.keys())}")
-
-    # Check complementary data
-    comp = intermediate.get(TransitionKey.COMPLEMENTARY_DATA)
-    if comp:
-        print(f"complementary_data: {list(comp.keys())}")
+def transform_features(self, features):
+    # Add end-effector pose features computed from joints
+    for axis in ["x", "y", "z", "wx", "wy", "wz"]:
+        features[PipelineFeatureType.OBSERVATION][f"observation.state.ee.{axis}"] = PolicyFeature(
+            type=FeatureType.STATE, shape=(1,)
+        )
+    return features
 ```
 
-### Pipeline Slicing
-
-Extract subsets of a pipeline for testing or creating variations:
+**Tokenization** - Adds language features:
 
 ```python
-# Get specific steps
-first_three_steps = processor[:3]  # Returns new DataProcessorPipeline
-middle_step = processor[2]         # Returns single ProcessorStep
+# Input: Text in complementary_data
+# Output: Token IDs and attention mask in observations
 
-# Test individual steps
-test_input = {...}
-step_output = processor[0](test_input)  # Test first step only
-
-# Create variations
-variant_processor = RobotProcessorPipeline[dict, dict](
-    steps=processor.steps[:-1] + [new_final_step],
-    name="variant"
-)
+def transform_features(self, features):
+    features[PipelineFeatureType.OBSERVATION]["observation.language.tokens"] = PolicyFeature(
+        type=FeatureType.LANGUAGE, shape=(self.max_length,)
+    )
+    features[PipelineFeatureType.OBSERVATION]["observation.language.attention_mask"] = PolicyFeature(
+        type=FeatureType.LANGUAGE, shape=(self.max_length,)
+    )
+    return features
 ```
 
-```python
-# Define monitoring hooks
-def log_shapes(step_idx: int, transition: EnvTransition):
-    """Log tensor shapes after each step."""
-    obs = transition.get(TransitionKey.OBSERVATION)
-    if obs:
-        print(f"Step {step_idx} shapes:")
-        for key, value in obs.items():
-            if isinstance(value, torch.Tensor):
-                print(f"  {key}: {value.shape}")
-
-def check_nans(step_idx: int, transition: EnvTransition):
-    """Check for NaN values."""
-    obs = transition.get(TransitionKey.OBSERVATION)
-    if obs:
-        for key, value in obs.items():
-            if isinstance(value, torch.Tensor) and torch.isnan(value).any():
-                print(f"Warning: NaN detected in {key} at step {step_idx}")
-
-# Register hooks
-processor.register_after_step_hook(log_shapes)
-processor.register_after_step_hook(check_nans)
-
-# Process data - hooks will be called after each step
-output = processor(input_data)
-
-# Remove hooks when done debugging
-processor.unregister_after_step_hook(log_shapes)
-processor.unregister_after_step_hook(check_nans)
-```
-
-### Step-by-Step Inspection
-
-Use `step_through()` for detailed debugging of the transformation pipeline:
+### Feature Aggregation in Practice
 
 ```python
-# Inspect data at each transformation stage
-for i, intermediate in enumerate(processor.step_through(data)):
-    print(f"\n=== After step {i}: {processor.steps[i].__class__.__name__} ===")
+from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
 
-    # Check observation shapes and statistics
-    obs = intermediate.get(TransitionKey.OBSERVATION)
-    if obs:
-        for key, value in obs.items():
-            if isinstance(value, torch.Tensor):
-                print(f"{key}: shape={value.shape}, "
-                      f"dtype={value.dtype}, "
-                      f"device={value.device}")
-                if value.numel() > 0:  # Avoid empty tensors
-                    print(f"  range=[{value.min():.3f}, {value.max():.3f}], "
-                          f"mean={value.mean():.3f}, std={value.std():.3f}")
-
-    # Check action if present
-    action = intermediate.get(TransitionKey.ACTION)
-    if action is not None:
-        if isinstance(action, torch.Tensor):
-            print(f"action: shape={action.shape}, dtype={action.dtype}, device={action.device}")
-            if action.numel() > 0:
-                print(f"  range=[{action.min():.3f}, {action.max():.3f}]")
-        elif isinstance(action, dict):
-            print(f"action: dict with {len(action)} keys: {list(action.keys())}")
-
-    # Check complementary data
-    comp = intermediate.get(TransitionKey.COMPLEMENTARY_DATA)
-    if comp:
-        print(f"complementary_data: {list(comp.keys())}")
-```
-
-### Pipeline Slicing
-
-Extract subsets of a pipeline for testing or creating variations:
-
-```python
-# Get specific steps
-first_three_steps = processor[:3]  # Returns new RobotProcessor
-middle_step = processor[2]         # Returns single ProcessorStep
-
-# Test individual steps
-test_input = {...}
-step_output = processor[0](test_input)  # Test first step only
-
-# Create variations
-variant_processor = RobotProcessor(
-    steps=processor.steps[:-1] + [new_final_step],
-    name="variant"
-)
-```
-
-## Best Practices and Tips
-
-### 1. Order Matters
-
-The sequence of processors is crucial. Follow this optimized order for best performance:
-
-```python
-# Preprocessing: Raw → Model-ready (OPTIMIZED ORDER)
-1. Rename (standardize keys)
-2. Batch (add dimensions)
-3. Tokenize (text → tokens)
-4. Device (move to GPU) ⚡ MOVE EARLY
-5. Normalize (scale values) ⚡ NORMALIZE ON GPU - MUCH FASTER!
-
-# Postprocessing: Model → Robot-ready
-1. Device (move to CPU)
-2. Unnormalize (restore scale)
-3. Unbatch (remove dimensions if needed)
-```
-
-**🚀 Performance Tip**: Always move data to GPU **before** normalization! Normalization operations (mean/std calculations, min/max scaling) are significantly faster on GPU, especially for large batches and high-resolution images.
-
-```python
-# ❌ SLOW: Normalize on CPU then move to GPU
-slow_processor = RobotProcessorPipeline[dict, dict](
-    steps=[
-        NormalizerProcessorStep(...),      # CPU normalization - slow
-        DeviceProcessorStep(device="cuda") # Move to GPU after
-    ]
+# Start with robot's raw features
+initial_features = create_initial_features(
+    observation=robot.observation_features,  # {"joint_1.pos": float, "camera_0": (480,640,3)}
+    action=robot.action_features            # {"joint_1.pos": float, "gripper.pos": float}
 )
 
-# ✅ FAST: Move to GPU then normalize
-fast_processor = RobotProcessorPipeline[dict, dict](
-    steps=[
-        DeviceProcessorStep(device="cuda"), # Move to GPU first
-        NormalizerProcessorStep(...)        # GPU normalization - fast!
-    ]
+# Apply processor pipeline to compute final features
+final_features = aggregate_pipeline_dataset_features(
+    pipeline=my_processor_pipeline,
+    initial_features=initial_features,
+    use_videos=True
 )
-```
 
-### 2. Registration Best Practices
+# Result: Complete feature specification for dataset/policy
+# {
+#   "observation.state": {"shape": (7,), "dtype": "float32"},
+#   "observation.images.camera_0": {"shape": (3, 480, 640), "dtype": "uint8"},
+#   "observation.velocity": {"shape": (7,), "dtype": "float32"},  # Added by processor!
+#   "action": {"shape": (7,), "dtype": "float32"}
+# }
 
-```python
-# Always register custom steps for better portability
-@ProcessorStepRegistry.register("my_company/special_processor")
-class SpecialProcessor:
+# Use for dataset creation
+dataset = LeRobotDataset.create(
+    repo_id="my_dataset",
+    features=final_features,  # Knows exactly what data to expect
     ...
-
-# Use namespaced names to avoid conflicts
-# Good: "my_company/augmentation"
-# Bad: "augmentation" (too generic)
-
-# Check registered processors
-print(ProcessorStepRegistry.list())  # See all registered processors
-```
-
-### 3. Common Pitfalls and Solutions
-
-**Tensor Device Mismatch:**
-
-```python
-# Problem: RuntimeError: Expected all tensors on same device
-# Solution: Ensure DeviceProcessorStep is in pipeline
-preprocessor = RobotProcessorPipeline[dict, dict](
-    steps=[
-        NormalizerProcessorStep(...),
-        DeviceProcessorStep(device="cuda")  # Add this
-    ]
 )
 ```
 
-**Missing Statistics:**
+## Common Processor Steps
+
+LeRobot provides many registered processor steps. Here are the most commonly used core processors:
+
+### Essential Processors
+
+- **`normalizer_processor`**: Normalize observations/actions using dataset statistics (mean/std or min/max)
+- **`device_processor`**: Move tensors to CPU/GPU with optional dtype conversion
+- **`to_batch_processor`**: Add batch dimensions to transitions for model compatibility
+- **`rename_observations_processor`**: Rename observation keys using mapping dictionaries
+- **`tokenizer_processor`**: Tokenize natural language task descriptions into tokens and attention masks
+
+## Performance Tips
+
+**🚀 Critical Optimization**: Always move data to GPU **before** normalization for significant speedups:
 
 ```python
-# Problem: NormalizerProcessorStep has no stats
-# Solution 1: Compute stats from dataset
-from lerobot.datasets.compute_stats import compute_stats
-stats = compute_stats(dataset)
+# ✅ FAST: GPU normalization
+steps=[
+    DeviceProcessorStep(device="cuda"),  # Move to GPU first
+    NormalizerProcessorStep(...)         # Normalize on GPU - much faster!
+]
 
-# Solution 2: Load with overrides
-processor = RobotProcessorPipeline.from_pretrained(
-    "model_path",
-    overrides={"normalizer_processor": {"stats": dataset.meta.stats}}
-)
-```
-
-## Available Processor Steps
-
-LeRobot provides a comprehensive set of registered processor steps for various robotics tasks. Here's the complete list organized by category:
-
-### Core Processing Steps
-
-- **`normalizer_processor`** (`NormalizerProcessorStep`): Normalize observations/actions using mean/std or min/max scaling
-- **`unnormalizer_processor`** (`UnnormalizerProcessorStep`): Inverse normalization for model outputs
-- **`device_processor`** (`DeviceProcessorStep`): Move tensors to specified device (CPU/GPU) with optional dtype conversion
-- **`observation_processor`** (`VanillaObservationProcessorStep`): Process standard Gymnasium observations to LeRobot format
-
-### Batch and Data Structure Processing
-
-- **`to_batch_processor`** (`AddBatchDimensionProcessorStep`): Add batch dimensions to entire transitions
-- **`to_batch_processor_action`** (`AddBatchDimensionActionStep`): Add batch dimension to actions only
-- **`to_batch_processor_observation`** (`AddBatchDimensionObservationStep`): Add batch dimension to observations only
-- **`to_batch_processor_complementary_data`** (`AddBatchDimensionComplementaryDataStep`): Add batch dimension to complementary data
-
-### Language and Tokenization
-
-- **`tokenizer_processor`** (`TokenizerProcessorStep`): Tokenize natural language task descriptions
-- **`rename_observations_processor`** (`RenameObservationsProcessorStep`): Rename observation keys using mapping
-- **`pi0_new_line_processor`** (`Pi0NewLineProcessor`): Ensure task descriptions end with newline for PaliGemma tokenizer
-- **`smolvla_new_line_processor`** (`SmolVLANewLineProcessor`): Ensure task descriptions end with newline for SmolVLA tokenizer
-
-### Action Conversion and Mapping
-
-- **`torch2numpy_action_processor`** (`Torch2NumpyActionProcessorStep`): Convert PyTorch tensors to NumPy arrays
-- **`numpy2torch_action_processor`** (`Numpy2TorchActionProcessorStep`): Convert NumPy arrays to PyTorch tensors
-- **`map_tensor_to_delta_action_dict`** (`MapTensorToDeltaActionDictStep`): Map flat tensors to structured delta action dicts
-- **`map_delta_action_to_robot_action`** (`MapDeltaActionToRobotActionStep`): Convert delta actions to robot target actions
-- **`map_phone_action_to_robot_action`** (`MapPhoneActionToRobotAction`): Map calibrated phone pose/buttons to robot targets
-
-### Robot Observation Enhancement
-
-- **`joint_velocity_processor`** (`JointVelocityProcessorStep`): Calculate and append joint velocity information
-- **`current_processor`** (`MotorCurrentProcessorStep`): Read motor currents and add to observation state
-
-### Robot Kinematics and Control
-
-- **`ee_reference_and_delta`** (`EEReferenceAndDelta`): Compute target end-effector pose from relative delta commands
-- **`ee_bounds_and_safety`** (`EEBoundsAndSafety`): Clip end-effector pose to bounds and check for unsafe jumps
-- **`inverse_kinematics_ee_to_joints`** (`InverseKinematicsEEToJoints`): Convert end-effector pose to joint targets via IK
-- **`forward_kinematics_joints_to_ee`** (`ForwardKinematicsJointsToEE`): Compute end-effector pose from joint positions via FK
-- **`gripper_velocity_to_joint`** (`GripperVelocityToJoint`): Convert gripper velocity to joint position commands
-- **`add_robot_observation`** (`AddRobotObservationAsComplimentaryData`): Read robot observation and add raw joint positions
-
-### Teleoperation and HIL (Human-in-the-Loop)
-
-- **`add_teleop_action_as_complementary_data`** (`AddTeleopActionAsComplimentaryDataStep`): Add raw teleop actions to complementary data
-- **`add_teleop_action_as_info`** (`AddTeleopEventsAsInfoStep`): Add teleop control events to transition info
-- **`intervention_action_processor`** (`InterventionActionProcessorStep`): Handle human intervention and episode management
-- **`image_crop_resize_processor`** (`ImageCropResizeProcessorStep`): Crop and resize image observations
-- **`time_limit_processor`** (`TimeLimitProcessorStep`): Track episode steps and enforce time limits
-- **`gripper_penalty_processor`** (`GripperPenaltyProcessorStep`): Apply penalties for inefficient gripper usage
-- **`reward_classifier_processor`** (`RewardClassifierProcessorStep`): Apply pretrained reward classifiers to images
-
-### Usage Pattern
-
-All processors are registered and can be loaded by name:
-
-```python
-from lerobot.processor import ProcessorStepRegistry
-
-# List all available processors
-print(ProcessorStepRegistry.list())
-
-# Load a processor by registry name
-step_class = ProcessorStepRegistry.get("device_processor")
-processor = step_class(device="cuda:0")
+# ❌ SLOW: CPU normalization
+steps=[
+    NormalizerProcessorStep(...),        # Normalize on CPU - slow
+    DeviceProcessorStep(device="cuda")   # Move to GPU after
+]
 ```
 
 ## Next Steps
 
-Now that you understand processors, explore these topics:
-
-- [**Implement Your Own Processor**](implement_your_own_processor.mdx) - Deep dive into creating custom processors with advanced features like stateful processing
-- [**Policy Documentation**](policies.mdx) - Learn how different policies use processors
-- [**Dataset Documentation**](datasets.mdx) - Understand the data format that processors transform
-- [**Training Guide**](training.mdx) - See processors in action during model training
-- [**Evaluation Guide**](evaluation.mdx) - Learn about processor usage during policy evaluation
+- **[Implement Your Own Processor](implement_your_own_processor.mdx)** - Create custom processor steps
+- **[Debug Your Pipeline](debug_processor_pipeline.mdx)** - Troubleshoot and optimize pipelines
+- **[Processors for Robots and Teleoperators](processors_robots_teleop.mdx)** - Real-world integration patterns
 
 ## Summary
 
-Processors are the unsung heroes of robotics pipelines, handling the critical transformations between raw sensor data and model-ready tensors. By understanding and effectively using processors, you can:
+Processors solve the data translation problem in robotics by providing:
 
-- Build robust, reusable data pipelines
-- Share preprocessing configurations across projects
-- Debug data transformations systematically
-- Ensure consistency between training and deployment
-- Create custom transformations for specialized tasks
+- **Modular transformations**: Composable, reusable processing steps
+- **Type safety**: Generic pipelines with compile-time checking
+- **Performance optimization**: GPU-accelerated operations
+- **Robot/Policy distinction**: Separate pipelines for different data structures
+- **Comprehensive ecosystem**: 30+ registered processors for common tasks
 
-Remember: good preprocessing is often the difference between a model that works in theory
-and one that works in practice!
-The modular pipeline approach ensures your transformations are testable, reproducible,
-and portable across different robots and environments.
+The key insight: `RobotProcessorPipeline` handles unbatched robot hardware data, while `PolicyProcessorPipeline` handles batched model data. Choose the right tool for your data structure!
