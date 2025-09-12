@@ -521,7 +521,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         msg = """transformers_replace is not installed correctly.
 Please install it with `pip install transformers==4.53.2`
 and `cp -r ./src/lerobot/policies/pi0_openpi/transformers_replace/* \
-$(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")"""
+$(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")`"""
 
         try:
             from transformers.models.siglip import check
