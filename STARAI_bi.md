@@ -404,8 +404,7 @@ lerobot-record \
 使用键盘快捷键控制数据记录流：
 
 - 按**右方向键(→)** ： 提前停止当前情节或重置时间,然后移动到下一个。
-
-- 按**左方向键 (←)** ：取消当前插曲并重新录制。
+- 按**左方向键(←)** ：取消当前插曲并重新录制。
 - 按**ESC**：立即停止会话,编码视频并上传数据集。
 
 
@@ -436,8 +435,6 @@ lerobot-replay \
     --dataset.episode=0 # choose the episode you want to replay
 ```
 
-
-
 ## 训练
 
 要训练一个控制您机器人策略，以下是一个示例命令：
@@ -455,7 +452,7 @@ lerobot-train \
 
 1. 我们提供了数据集作为参数。`dataset.repo_id=starai/record-test_bi_arm`
 2. 我们为 .这将从 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py) 加载配置。重要的是，此策略将自动适应机器人的电机状态、电机动作和相机的数量已保存在您的数据集中。`policy.type=act` `laptop` `phone`
-4. 我们提供了使用[权重和偏差](https://docs.wandb.ai/quickstart)来可视化训练图。这是可选的，但如果您使用它，请确保您已通过运行 登录。`wandb.enable=true` `wandb login`
+3. 我们提供了使用[权重和偏差](https://docs.wandb.ai/quickstart)来可视化训练图。这是可选的，但如果您使用它，请确保您已通过运行 登录。`wandb.enable=true` `wandb login`
 
 
 
@@ -482,10 +479,6 @@ lerobot-record  \
     --dataset.repo_id=starai/eval_record-test_bi_arm \
     --dataset.single_task="test" \
     --policy.path=outputs/train/act_bi_viola_test/checkpoints/last/pretrained_model
-  # <- Teleop optional if you want to teleoperate in between episodes \
-  # --teleop.type=starai_violin \
-  # --teleop.port=/dev/ttyUSB0 \
-  # --teleop.id=my_awesome_leader_arm \
 ```
 
 
@@ -493,12 +486,6 @@ lerobot-record  \
 ## FAQ
 
 - 如果使用本文档教程，请git clone本文档推荐的github仓库`https://github.com/servodevelop/lerobot.git`。
-
-- 如果遇到以下报错，需要检查对应端口号的机械臂是否接通电源，总线舵机是否出现数据线松动或者脱落。
-
-  ```bash
-  ConnectionError: Read failed due to comunication eror on port /dev/ttyACM0 for group key Present_Position_Shoulder_pan_Shoulder_lift_elbow_flex_wrist_flex_wrist_roll_griper: [TxRxResult] There is no status packet!
-  ```
 
 - 如果遥操作正常，而带Camera的遥操作无法显示图像界面，请参考[这里](https://github.com/huggingface/lerobot/pull/757/files)
 
