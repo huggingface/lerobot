@@ -83,7 +83,7 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
         action["target_wx"] = rotvec[1] if enabled else 0.0
         action["target_wy"] = rotvec[0] if enabled else 0.0
         action["target_wz"] = -rotvec[2] if enabled else 0.0
-        action["gripper"] = gripper  # Still send gripper action when disabled
+        action["phone_gripper_vel_input"] = gripper  # Still send gripper action when disabled
         return action
 
     def transform_features(
@@ -101,5 +101,7 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
         features[PipelineFeatureType.ACTION]["target_wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         features[PipelineFeatureType.ACTION]["target_wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         features[PipelineFeatureType.ACTION]["target_wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["phone_gripper_vel_input"] = PolicyFeature(
+            type=FeatureType.ACTION, shape=(1,)
+        )
         return features

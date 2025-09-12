@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.constants import OBS_STATE
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
@@ -307,11 +306,7 @@ class InverseKinematicsEEToJoints(ProcessorStep):
 
         new_act = dict(act)
         for i, name in enumerate(self.motor_names):
-            if name == "gripper":
-                # TODO(pepijn): Investigate if this is correct
-                # Do we want an observation key in the action field?
-                new_act["gripper.pos"] = float(raw["gripper"])
-            else:
+            if name != "gripper":
                 new_act[f"{name}.pos"] = float(q_target[i])
         new_transition[TransitionKey.ACTION] = new_act
         if not self.initial_guess_current_joints:
@@ -338,7 +333,7 @@ class InverseKinematicsEEToJoints(ProcessorStep):
 
 @ProcessorStepRegistry.register("gripper_velocity_to_joint")
 @dataclass
-class GripperVelocityToJoint(ProcessorStep):
+class GripperVelocityToJoint(RobotActionProcessorStep):
     """
     Converts a gripper velocity command into a target gripper joint position.
 
@@ -354,65 +349,47 @@ class GripperVelocityToJoint(ProcessorStep):
         discrete_gripper: If True, treat the input action as discrete (0: open, 1: close, 2: stay).
     """
 
-    motor_names: list[str]
     speed_factor: float = 20.0
     clip_min: float = 0.0
     clip_max: float = 100.0
     discrete_gripper: bool = False
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        new_transition = transition.copy()
-        obs = new_transition.get(TransitionKey.OBSERVATION) or {}
-        act = new_transition.get(TransitionKey.ACTION) or {}
-        comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+    def action(self, action: RobotAction) -> RobotAction:
+        complementary_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
-        if not isinstance(act, dict):
-            raise ValueError(f"Action should be a RobotAction type got {type(act)}")
+        if "phone_gripper_vel_input" not in action:
+            raise ValueError("Required action key 'phone_gripper_vel_input' not found in transition")
 
-        if "gripper" not in act:
-            raise ValueError("Required action key 'gripper' not found in transition")
+        phone_gripper_vel_input = action.pop("phone_gripper_vel_input", 0.0)
 
-        if "gripper" not in self.motor_names:
+        if "raw_joint_positions" not in complementary_data:
             raise ValueError(
-                f"Required motor name 'gripper' not found in self.motor_names={self.motor_names}"
+                "raw_joint_positions is not in complementary data and is required for GripperVelocityToJoint"
             )
+
+        curr_gripper_pos = complementary_data.get("raw_joint_positions").get("gripper")
 
         if self.discrete_gripper:
             # Discrete gripper actions are in [0, 1, 2]
             # 0: open, 1: close, 2: stay
             # We need to shift them to [-1, 0, 1] and then scale them to clip_max
-            gripper_action = act.get("gripper", 1.0)
-            gripper_action = gripper_action - 1.0
+            gripper_action = phone_gripper_vel_input
             gripper_action *= self.clip_max
-            act["gripper"] = gripper_action
-
-        # Get current gripper position from complementary data
-        raw = comp.get("raw_joint_positions") or {}
-        curr_pos = float(raw.get("gripper"))
+            action["phone_gripper_vel_input"] = gripper_action
 
         # Compute desired gripper velocity
-        u = float(act.get("gripper", 0.0))
-        delta = u * float(self.speed_factor)
-        gripper_pos = float(np.clip(curr_pos + delta, self.clip_min, self.clip_max))
+        delta = phone_gripper_vel_input * float(self.speed_factor)
+        gripper_pos = float(np.clip(curr_gripper_pos + delta, self.clip_min, self.clip_max))
+        action["gripper.pos"] = gripper_pos
 
-        new_act = dict(act)
-        new_act["gripper.pos"] = gripper_pos
-        new_act.pop("gripper", None)
-        new_transition[TransitionKey.ACTION] = new_act
-
-        obs[f"{OBS_STATE}.gripper.pos"] = curr_pos
-        new_transition[TransitionKey.OBSERVATION] = obs
-        return new_transition
+        return action
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        features[PipelineFeatureType.ACTION].pop("gripper", None)
+        features[PipelineFeatureType.ACTION].pop("phone_gripper_vel_input", None)
         features[PipelineFeatureType.ACTION]["gripper.pos"] = PolicyFeature(
             type=FeatureType.ACTION, shape=(1,)
-        )
-        features[PipelineFeatureType.OBSERVATION][f"{OBS_STATE}.gripper.pos"] = PolicyFeature(
-            type=FeatureType.STATE, shape=(1,)
         )
 
         return features
@@ -436,7 +413,6 @@ class ForwardKinematicsJointsToEE(ObservationProcessorStep):
     motor_names: list[str]
 
     def observation(self, observation: dict) -> dict:
-        print("observation in step", observation)
         if not all(f"{n}.pos" in observation for n in self.motor_names):
             raise ValueError(f"Missing required joint positions for motors: {self.motor_names}")
 
@@ -445,22 +421,39 @@ class ForwardKinematicsJointsToEE(ObservationProcessorStep):
         pos = t[:3, 3]
         tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
 
-        observation[f"{OBS_STATE}.ee.x"] = float(pos[0])
-        observation[f"{OBS_STATE}.ee.y"] = float(pos[1])
-        observation[f"{OBS_STATE}.ee.z"] = float(pos[2])
-        observation[f"{OBS_STATE}.ee.wx"] = float(tw[0])
-        observation[f"{OBS_STATE}.ee.wy"] = float(tw[1])
-        observation[f"{OBS_STATE}.ee.wz"] = float(tw[2])
+        if "gripper" not in self.motor_names:
+            raise ValueError(
+                f"Required motor name 'gripper' not found in self.motor_names={self.motor_names}"
+            )
+
+        gripper_pos = observation.get("gripper.pos")
+
+        for n in self.motor_names:
+            observation.pop(f"{n}.pos")
+
+        observation["ee.x"] = float(pos[0])
+        observation["ee.y"] = float(pos[1])
+        observation["ee.z"] = float(pos[2])
+        observation["ee.wx"] = float(tw[0])
+        observation["ee.wy"] = float(tw[1])
+        observation["ee.wz"] = float(tw[2])
+        observation["gripper.pos"] = float(gripper_pos)
         return observation
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We only use the ee pose in the dataset, so we don't need the joint positions
+        for n in self.motor_names:
+            features[PipelineFeatureType.OBSERVATION].pop(f"{n}.pos")
         # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz"]:
-            features[PipelineFeatureType.OBSERVATION][f"{OBS_STATE}.ee.{k}"] = PolicyFeature(
+            features[PipelineFeatureType.OBSERVATION][f"ee.{k}"] = PolicyFeature(
                 type=FeatureType.STATE, shape=(1,)
             )
+        features[PipelineFeatureType.OBSERVATION]["gripper.pos"] = PolicyFeature(
+            type=FeatureType.STATE, shape=(1,)
+        )
         return features
 
 

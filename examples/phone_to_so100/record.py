@@ -28,6 +28,7 @@ from lerobot.processor.converters import (
     robot_action_to_transition,
     transition_to_robot_action,
 )
+from lerobot.processor.pipeline import DataProcessorPipeline
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -75,7 +76,9 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert phone action to ee pose action
-phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, EnvTransition](
+phone_to_robot_ee_pose_processor: DataProcessorPipeline[RobotAction, EnvTransition] = RobotProcessorPipeline[
+    RobotAction, EnvTransition
+](
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         AddRobotObservationAsComplimentaryData(robot=robot),
@@ -89,6 +92,7 @@ phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, EnvTransi
             max_ee_step_m=0.20,
             max_ee_twist_step_rad=0.50,
         ),
+        GripperVelocityToJoint(),
     ],
     to_transition=robot_action_to_transition,
     to_output=identity_transition,
@@ -101,10 +105,6 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[EnvTransition, RobotAction
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
             initial_guess_current_joints=True,
-        ),
-        GripperVelocityToJoint(
-            motor_names=list(robot.bus.motors.keys()),
-            speed_factor=20.0,
         ),
     ],
     to_transition=identity_transition,
@@ -127,13 +127,6 @@ action_ee = aggregate_pipeline_dataset_features(
     use_videos=True,
 )
 
-# Get gripper pos action features
-gripper = aggregate_pipeline_dataset_features(
-    pipeline=robot_ee_to_joints_processor,
-    initial_features=create_initial_features(action=robot.action_features, observation={}),
-    use_videos=True,
-)
-
 # Build dataset ee observation features
 observation_ee = aggregate_pipeline_dataset_features(
     pipeline=robot_joints_to_ee_pose,
@@ -141,7 +134,7 @@ observation_ee = aggregate_pipeline_dataset_features(
     use_videos=True,
 )
 
-dataset_features = combine_feature_dicts(action_ee, gripper, observation_ee)
+dataset_features = combine_feature_dicts(action_ee, observation_ee)
 
 print("All dataset features: ", dataset_features)
 
