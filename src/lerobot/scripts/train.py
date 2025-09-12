@@ -21,6 +21,7 @@ from typing import Any
 
 import torch
 from accelerate import Accelerator
+from accelerate.utils import DistributedDataParallelKwargs
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
@@ -104,12 +105,14 @@ def update_policy(
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
 
-    # Initialize accelerator
+    # Initialize accelerator with DDP configuration for unused parameters
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
         gradient_accumulation_steps=getattr(cfg, "gradient_accumulation_steps", 1),
         mixed_precision=getattr(cfg, "mixed_precision", "no"),
         log_with="wandb" if cfg.wandb.enable and cfg.wandb.project else None,
         project_dir=str(cfg.output_dir) if cfg.wandb.enable and cfg.wandb.project else None,
+        kwargs_handlers=[ddp_kwargs],
     )
 
     # Only log on main process
