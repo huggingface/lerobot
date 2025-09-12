@@ -39,8 +39,27 @@ from .configuration_paligemma import PaliGemmaConfig
 logger = logging.get_logger(__name__)
 
 
+# Workaround for Python 3.10+ UnionType compatibility with transformers auto_docstring
+def safe_auto_docstring(func=None, **kwargs):
+    """Auto docstring decorator that handles Python 3.10+ UnionType gracefully."""
+
+    def decorator(f):
+        try:
+            return auto_docstring(f, **kwargs) if kwargs else auto_docstring(f)
+        except (AttributeError, TypeError):
+            # If auto_docstring fails due to UnionType, just return the function unchanged
+            return f
+
+    if func is None:
+        # Called with arguments, return the decorator
+        return decorator
+    else:
+        # Called without arguments, apply directly
+        return decorator(func)
+
+
 @dataclass
-@auto_docstring(
+@safe_auto_docstring(
     custom_intro="""
     Base class for Paligemma outputs, with hidden states and attentions.
     """
@@ -62,7 +81,7 @@ class PaligemmaModelOutputWithPast(BaseModelOutputWithPast):
 
 
 @dataclass
-@auto_docstring(
+@safe_auto_docstring(
     custom_intro="""
     Base class for PaliGemma causal language model (or autoregressive) outputs.
     """
@@ -105,7 +124,7 @@ class PaliGemmaMultiModalProjector(nn.Module):
         return hidden_states
 
 
-@auto_docstring
+@safe_auto_docstring
 class PaliGemmaPreTrainedModel(PreTrainedModel):
     config_class = PaliGemmaConfig
     base_model_prefix = ""
@@ -131,7 +150,7 @@ class PaliGemmaPreTrainedModel(PreTrainedModel):
                 module.bias.data.zero_()
 
 
-@auto_docstring(
+@safe_auto_docstring(
     custom_intro="""
     The Base Paligemma model which consists of a vision backbone and a language model without language modeling head.,
     """
@@ -258,7 +277,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         return image_features
 
     @can_return_tuple
-    @auto_docstring
+    @safe_auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -390,7 +409,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
 class KwargsForCausalLM(FlashAttentionKwargs, LossKwargs): ...
 
 
-@auto_docstring(
+@safe_auto_docstring(
     custom_intro="""
     The Base Paligemma model which consists of a vision backbone and a language model without language modeling head.,
     """
@@ -445,7 +464,7 @@ class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixi
         return self.model.multi_modal_projector
 
     @can_return_tuple
-    @auto_docstring
+    @safe_auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor = None,
