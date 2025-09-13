@@ -473,9 +473,6 @@ def eval_main(cfg: EvalPipelineConfig):
 
     # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)
-    # login to hf
-
-    # login()
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     set_seed(cfg.seed)

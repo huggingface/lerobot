@@ -261,7 +261,6 @@ class LiberoEnv(gym.Env):
 
     def reset(self, seed=None, **kwargs):
         super().reset(seed=seed)
-
         self._env.seed(seed)
         raw_obs = self._env.reset()
         # Do nothing for the first few timesteps to wait for the simulator drops objects
