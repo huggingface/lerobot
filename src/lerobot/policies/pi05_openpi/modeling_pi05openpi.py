@@ -503,8 +503,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             precision=config.dtype,
         )
 
-        self.action_in_proj = nn.Linear(config.action_dim, action_expert_config.width)
-        self.action_out_proj = nn.Linear(action_expert_config.width, config.action_dim)
+        self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
+        self.action_out_proj = nn.Linear(action_expert_config.width, config.max_action_dim)
 
         self.time_mlp_in = nn.Linear(action_expert_config.width, action_expert_config.width)
         self.time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
@@ -739,8 +739,8 @@ $(python -c "import transformers, os; print(os.path.dirname(transformers.__file_
             actions_shape = (
                 bsize,
                 self.config.chunk_size,
-                self.config.action_dim,
-            )  # Use config action_dim for internal processing
+                self.config.max_action_dim,
+            )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
@@ -875,8 +875,8 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
-        # Create default config
-        config = cls.config_class()
+        # Use provided config if available, otherwise create default config
+        config = kwargs.get("config", cls.config_class())
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
@@ -1236,12 +1236,12 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
 
     def prepare_state(self, batch):  # see lerobot pi0 `prepare_state` (exact copy)
         """Pad state"""
-        state = pad_vector(batch[OBS_STATE], self.config.state_dim)
+        state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
         return state
 
     def prepare_action(self, batch):  # see lerobot pi0 `prepare_action` (exact copy)
         """Pad action"""
-        actions = pad_vector(batch[ACTION], self.config.action_dim)
+        actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
     @torch.no_grad()
@@ -1295,8 +1295,8 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions)
 
         # Truncate losses to actual action dimensions
-        if self.config.action_dim < 32:
-            losses = losses[:, :, : self.config.action_dim]
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        losses = losses[:, :, :original_action_dim]
 
         loss = losses.mean()
 
