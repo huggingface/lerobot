@@ -126,6 +126,7 @@ class SMOLANDFAST(nn.Module):
 
         fast_tokenizer_path = "physical-intelligence/fast"
         self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
+        self.fast_tokenizer.scale = 100
         self.fast_skip_tokens = self.config.fast_skip_tokens
         self.max_input_seq_len = self.config.max_input_seq_len
         self.action_horizon = self.config.chunk_size
@@ -203,8 +204,8 @@ class SMOLANDFAST(nn.Module):
         )
 
         # Move tokenized tensors to GPU once
-        prefix_ids = prefix_out["input_ids"].to(device, non_blocking=True)
-        prefix_mask = prefix_out["attention_mask"].to(device, non_blocking=True)
+        prefix_ids = prefix_out["input_ids"].to(device)
+        prefix_mask = prefix_out["attention_mask"].to(device)
 
         return prefix_ids, prefix_mask
     
@@ -241,11 +242,11 @@ class SMOLANDFAST(nn.Module):
         fast_tokens, act_mask = self.fast_tokenizer_wrapper(actions.detach().cpu())
 
         # Convert to paligemma token IDs (GPU-friendly math)
-        act_ids = fast_tokens.to(device, non_blocking=True)
+        act_ids = fast_tokens.to(device)
         act_ids = self._act_tokens_to_paligemma_tokens(act_ids)
 
         # Convert mask to GPU
-        act_mask = act_mask.to(device, non_blocking=True)
+        act_mask = act_mask.to(device)
 
         return act_ids, act_mask
 
