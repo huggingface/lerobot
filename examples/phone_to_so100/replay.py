@@ -63,8 +63,6 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     to_output=transition_to_robot_action,
 )
 
-robot_ee_to_joints_processor.reset()
-
 log_say(f"Replaying episode {EPISODE_IDX}")
 for idx in range(dataset.num_frames):
     t0 = time.perf_counter()

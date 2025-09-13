@@ -80,18 +80,12 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
     EnvTransition,
-    IdentityProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     RobotAction,
     RobotProcessorPipeline,
     TransitionKey,
-)
-from lerobot.processor.converters import (
-    identity_transition,
-    observation_to_transition,
-    robot_action_to_transition,
-    transition_to_robot_action,
+    make_default_processors,
 )
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
@@ -393,43 +387,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
-    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition] = RobotProcessorPipeline[
-        RobotAction, EnvTransition
-    ](
-        steps=[IdentityProcessorStep()],
-        to_transition=robot_action_to_transition,
-        to_output=identity_transition,
-    )
-    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction] = RobotProcessorPipeline[
-        EnvTransition, RobotAction
-    ](
-        steps=[IdentityProcessorStep()],
-        to_transition=identity_transition,
-        to_output=transition_to_robot_action,
-    )
-    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition] = (
-        RobotProcessorPipeline[dict[str, Any], EnvTransition](
-            steps=[IdentityProcessorStep()],
-            to_transition=observation_to_transition,
-            to_output=identity_transition,
-        )
-    )
-
-    atf = aggregate_pipeline_dataset_features(
-        pipeline=teleop_action_processor,
-        initial_features=create_initial_features(action=teleop.action_features, observation=None),
-        use_videos=cfg.dataset.video,
-    )
-    arf = aggregate_pipeline_dataset_features(
-        pipeline=robot_action_processor,
-        initial_features=create_initial_features(action=robot.action_features, observation=None),
-        use_videos=cfg.dataset.video,
-    )
-    of = aggregate_pipeline_dataset_features(
-        pipeline=robot_observation_processor,
-        initial_features=create_initial_features(observation=robot.observation_features, action=None),
-        use_videos=cfg.dataset.video,
-    )
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     # Add next.* features that are generated during recording
     _transition_features = {
@@ -438,7 +396,20 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         "next.truncated": {"dtype": "bool", "shape": (1,), "names": None},
     }
 
-    dataset_features = {**combine_feature_dicts(atf, arf, of)}  # , **transition_features}
+    dataset_features = {
+        **combine_feature_dicts(
+            aggregate_pipeline_dataset_features(
+                pipeline=teleop_action_processor,
+                initial_features=create_initial_features(action=teleop.action_features, observation=None),
+                use_videos=cfg.dataset.video,
+            ),
+            aggregate_pipeline_dataset_features(
+                pipeline=robot_observation_processor,
+                initial_features=create_initial_features(observation=robot.observation_features, action=None),
+                use_videos=cfg.dataset.video,
+            ),
+        )
+    }  # , **transition_features}
 
     if cfg.resume:
         dataset = LeRobotDataset(
