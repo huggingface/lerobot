@@ -47,7 +47,11 @@ from pprint import pformat
 
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor import IdentityProcessorStep, RobotAction, RobotProcessorPipeline
+from lerobot.processor import (
+    IdentityProcessorStep,
+    RobotAction,
+    RobotProcessorPipeline,
+)
 from lerobot.processor.converters import robot_action_to_transition, transition_to_robot_action
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -92,7 +96,6 @@ def replay(cfg: ReplayConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
-    # Initialize robot action processor with default if not provided
     robot_action_processor = RobotProcessorPipeline[RobotAction, RobotAction](
         steps=[IdentityProcessorStep()],
         to_transition=robot_action_to_transition,
@@ -113,7 +116,6 @@ def replay(cfg: ReplayConfig):
         for i, name in enumerate(dataset.features["action"]["names"]):
             action[name] = action_array[i]
 
-        # Process action through robot action processor
         processed_action = robot_action_processor(action)
 
         robot.send_action(processed_action)

@@ -25,26 +25,35 @@ from .core import EnvTransition, RobotAction
 from .pipeline import IdentityProcessorStep, RobotProcessorPipeline
 
 
-def make_default_processors():
-    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition] = RobotProcessorPipeline[
-        RobotAction, EnvTransition
-    ](
+def make_default_teleop_action_processor() -> RobotProcessorPipeline[RobotAction, EnvTransition]:
+    teleop_action_processor = RobotProcessorPipeline[RobotAction, EnvTransition](
         steps=[IdentityProcessorStep()],
         to_transition=robot_action_to_transition,
         to_output=identity_transition,
     )
-    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction] = RobotProcessorPipeline[
-        EnvTransition, RobotAction
-    ](
+    return teleop_action_processor
+
+
+def make_default_robot_action_processor() -> RobotProcessorPipeline[EnvTransition, RobotAction]:
+    robot_action_processor = RobotProcessorPipeline[EnvTransition, RobotAction](
         steps=[IdentityProcessorStep()],
         to_transition=identity_transition,
         to_output=transition_to_robot_action,
     )
-    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition] = (
-        RobotProcessorPipeline[dict[str, Any], EnvTransition](
-            steps=[IdentityProcessorStep()],
-            to_transition=observation_to_transition,
-            to_output=identity_transition,
-        )
+    return robot_action_processor
+
+
+def make_default_robot_observation_processor() -> RobotProcessorPipeline[dict[str, Any], EnvTransition]:
+    robot_observation_processor = RobotProcessorPipeline[dict[str, Any], EnvTransition](
+        steps=[IdentityProcessorStep()],
+        to_transition=observation_to_transition,
+        to_output=identity_transition,
     )
+    return robot_observation_processor
+
+
+def make_default_processors():
+    teleop_action_processor = make_default_teleop_action_processor()
+    robot_action_processor = make_default_robot_action_processor()
+    robot_observation_processor = make_default_robot_observation_processor()
     return (teleop_action_processor, robot_action_processor, robot_observation_processor)

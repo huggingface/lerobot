@@ -396,20 +396,18 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         "next.truncated": {"dtype": "bool", "shape": (1,), "names": None},
     }
 
-    dataset_features = {
-        **combine_feature_dicts(
-            aggregate_pipeline_dataset_features(
-                pipeline=teleop_action_processor,
-                initial_features=create_initial_features(action=teleop.action_features, observation=None),
-                use_videos=cfg.dataset.video,
-            ),
-            aggregate_pipeline_dataset_features(
-                pipeline=robot_observation_processor,
-                initial_features=create_initial_features(observation=robot.observation_features, action=None),
-                use_videos=cfg.dataset.video,
-            ),
-        )
-    }  # , **transition_features}
+    dataset_features = combine_feature_dicts(
+        aggregate_pipeline_dataset_features(
+            pipeline=teleop_action_processor,
+            initial_features=create_initial_features(action=teleop.action_features),
+            use_videos=cfg.dataset.video,
+        ),
+        aggregate_pipeline_dataset_features(
+            pipeline=robot_observation_processor,
+            initial_features=create_initial_features(observation=robot.observation_features),
+            use_videos=cfg.dataset.video,
+        ),
+    )  # , **transition_features}
 
     if cfg.resume:
         dataset = LeRobotDataset(
