@@ -48,6 +48,5 @@ python src/lerobot/scripts/train.py \
   --save_freq=$SAVE_FREQ \
   --num_workers=$NUM_WORKERS \
   --policy.repo_id=$VLM_REPO_ID \
-  --env.multitask_eval=True \
   --eval.batch_size=1 \
   --eval.n_episodes=1 \

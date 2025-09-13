@@ -30,7 +30,6 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     fps: int = 30
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
-    multitask_eval: bool = False
     max_parallel_tasks: int = 5
 
     @property
@@ -285,7 +284,7 @@ class LiberoEnv(EnvConfig):
     render_mode: str = "rgb_array"
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
-    multitask_eval: bool = True
+    camera_name_mapping: dict[str, str] | None = (None,)
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
@@ -316,6 +315,8 @@ class LiberoEnv(EnvConfig):
             self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(360, 360, 3)
             )
+        else:
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
     @property
     def gym_kwargs(self) -> dict:

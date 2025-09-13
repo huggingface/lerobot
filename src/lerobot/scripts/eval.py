@@ -591,47 +591,82 @@ def eval_policy_all(
             video_paths=task_result.get("video_paths", []),
         )
 
-    # result producer: sequential or threaded, same consumer
-    def iter_task_results() -> Iterator[tuple[str, int, TaskMetrics]]:
-        if max_parallel_tasks == 1:
-            for task_group, tasks in envs.items():
-                for task_id, vec in tasks.items():
-                    yield (
+    def _eval_monotask(
+        envs, policy, n_episodes, max_episodes_rendered, videos_dir, return_episode_data, start_seed
+    ):
+        for task_group, tasks in envs.items():
+            for task_id, vec in tasks.items():
+                yield (
+                    task_group,
+                    task_id,
+                    eval_one(
                         task_group,
                         task_id,
-                        eval_one(
-                            task_group,
-                            task_id,
-                            vec,
-                            policy=policy,
-                            n_episodes=n_episodes,
-                            max_episodes_rendered=max_episodes_rendered,
-                            videos_dir=videos_dir,
-                            return_episode_data=return_episode_data,
-                            start_seed=start_seed,
-                        ),
+                        vec,
+                        policy=policy,
+                        n_episodes=n_episodes,
+                        max_episodes_rendered=max_episodes_rendered,
+                        videos_dir=videos_dir,
+                        return_episode_data=return_episode_data,
+                        start_seed=start_seed,
+                    ),
+                )
+
+    def _eval_parallel(
+        envs,
+        policy,
+        n_episodes,
+        max_episodes_rendered,
+        videos_dir,
+        return_episode_data,
+        start_seed,
+        max_parallel_tasks,
+    ):
+        with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
+            fut2key: dict[cf.Future, tuple[str, int]] = {}
+            for task_group, tasks in envs.items():
+                for task_id, vec in tasks.items():
+                    fut = executor.submit(
+                        eval_one,
+                        task_group,
+                        task_id,
+                        vec,
+                        policy=policy,
+                        n_episodes=n_episodes,
+                        max_episodes_rendered=max_episodes_rendered,
+                        videos_dir=videos_dir,
+                        return_episode_data=return_episode_data,
+                        start_seed=start_seed,
                     )
+                    fut2key[fut] = (task_group, task_id)
+            for fut in cf.as_completed(fut2key):
+                task_group, task_id = fut2key[fut]
+                yield task_group, task_id, fut.result()
+
+    # result producer: sequential or threaded, same consumer
+    def iter_task_results() -> Iterator[tuple[str, int, TaskMetrics]]:
+        """
+        Yield evaluation results for each (task_group, task_id).
+
+        Depending on `max_parallel_tasks`, runs sequentially or in parallel,
+        but always returns a generator of tuples:
+            (task_group, task_id, TaskMetrics).
+        """
+        if max_parallel_tasks == 1:
+            yield from _eval_monotask(
+                envs, policy, n_episodes, max_episodes_rendered, videos_dir, return_episode_data, start_seed
+            )
         else:
-            with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
-                fut2key: dict[cf.Future, tuple[str, int]] = {}
-                for task_group, tasks in envs.items():
-                    for task_id, vec in tasks.items():
-                        fut = executor.submit(
-                            eval_one,
-                            task_group,
-                            task_id,
-                            vec,
-                            policy=policy,
-                            n_episodes=n_episodes,
-                            max_episodes_rendered=max_episodes_rendered,
-                            videos_dir=videos_dir,
-                            return_episode_data=return_episode_data,
-                            start_seed=start_seed,
-                        )
-                        fut2key[fut] = (task_group, task_id)
-                for fut in cf.as_completed(fut2key):
-                    task_group, task_id = fut2key[fut]
-                    yield task_group, task_id, fut.result()
+            yield from _eval_parallel(
+                envs,
+                policy,
+                n_episodes,
+                max_episodes_rendered,
+                videos_dir,
+                return_episode_data,
+                start_seed,
+                max_parallel_tasks,
+            )
 
     # single accumulator path on the main thread
     group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})

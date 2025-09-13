@@ -15,7 +15,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import logging
 import math
 import os
 from collections import defaultdict
@@ -29,8 +28,6 @@ import torch
 from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
-
-logger = logging.getLogger(__name__)
 
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
@@ -46,7 +43,7 @@ def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     return cams
 
 
-def _get_suite(name: str):
+def _get_suite(name: str) -> Any:
     """Instantiate a LIBERO suite by name with clear validation."""
     bench = benchmark.get_benchmark_dict()
     if name not in bench:
@@ -113,7 +110,7 @@ def get_libero_dummy_action():
 OBS_STATE_DIM = 8
 ACTION_DIM = 7
 TASK_SUITE_MAX_STEPS: dict[str, int] = {
-    "libero_spatial": 220,  # longest training demo has 193 steps
+    "libero_spatial": 280,  # longest training demo has 193 steps
     "libero_object": 280,  # longest training demo has 254 steps
     "libero_goal": 300,  # longest training demo has 270 steps
     "libero_10": 520,  # longest training demo has 505 steps
@@ -126,18 +123,19 @@ class LiberoEnv(gym.Env):
 
     def __init__(
         self,
-        task_suite,
-        task_id,
-        task_suite_name,
-        camera_name="agentview_image,robot0_eye_in_hand_image",
-        obs_type="pixels",
-        render_mode="rgb_array",
-        observation_width=256,
-        observation_height=256,
-        visualization_width=640,
-        visualization_height=480,
-        init_states=True,
-        episode_index=0,
+        task_suite: Any,
+        task_id: int,
+        task_suite_name: str,
+        camera_name: str | Sequence[str] = "agentview_image,robot0_eye_in_hand_image",
+        obs_type: str = "pixels",
+        render_mode: str = "rgb_array",
+        observation_width: int = 256,
+        observation_height: int = 256,
+        visualization_width: int = 640,
+        visualization_height: int = 480,
+        init_states: bool = True,
+        episode_index: int = 0,
+        camera_name_mapping: dict[str, str] | None = None,
     ):
         super().__init__()
         self.task_id = task_id
@@ -157,10 +155,12 @@ class LiberoEnv(gym.Env):
         # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
         # This ensures the policy consistently receives observations in the
         # expected format regardless of the original camera naming.
-        self.camera_name_mapping = {
-            "agentview_image": "image",
-            "robot0_eye_in_hand_image": "image2",
-        }
+        if camera_name_mapping is None:
+            camera_name_mapping = {
+                "agentview_image": "image",
+                "robot0_eye_in_hand_image": "image2",
+            }
+        self.camera_name_mapping = camera_name_mapping
 
         self.num_steps_wait = (
             10  # Do nothing for the first few timesteps to wait for the simulator drops objects
@@ -286,7 +286,14 @@ class LiberoEnv(gym.Env):
         observation = self._format_raw_obs(raw_obs)
         if done:
             self.reset()
-            print(self.task, self.task_id, done, is_success)
+            info.update(
+                {
+                    "task": self.task,
+                    "task_id": self.task_id,
+                    "done": done,
+                    "is_success": is_success,
+                }
+            )
         truncated = False
         return observation, reward, terminated, truncated, info
 
@@ -342,7 +349,6 @@ def create_libero_envs(
     camera_name: str | Sequence[str] = "agentview_image,robot0_eye_in_hand_image",
     init_states: bool = True,
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
-    multitask_eval: bool = True,  # kept for signature compatibility; return type is consistent regardless
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized LIBERO environments with a consistent return shape.
@@ -368,8 +374,7 @@ def create_libero_envs(
         raise ValueError("`task` must contain at least one LIBERO suite name.")
 
     print(
-        f"Creating LIBERO envs | suites={suite_names} | n_envs(per task)={n_envs} "
-        f"| init_states={init_states} | multitask_eval={bool(multitask_eval)}"
+        f"Creating LIBERO envs | suites={suite_names} | n_envs(per task)={n_envs} | init_states={init_states}"
     )
     if task_ids_filter is not None:
         print(f"Restricting to task_ids={task_ids_filter}")
@@ -395,7 +400,7 @@ def create_libero_envs(
                 gym_kwargs=gym_kwargs,
             )
             out[suite_name][tid] = env_cls(fns)
-            logger.debug("Built vec env | suite=%s | task_id=%d | n_envs=%d", suite_name, tid, n_envs)
+            print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
 
     # return plain dicts for predictability
     return {suite: dict(task_map) for suite, task_map in out.items()}

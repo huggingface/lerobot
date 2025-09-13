@@ -71,7 +71,6 @@ def make_env(
             init_states=cfg.init_states,
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
-            multitask_eval=cfg.multitask_eval,
         )
 
     package_name = f"gym_{cfg.type}"

@@ -146,14 +146,19 @@ def _close_single_env(env: Any) -> None:
 
 @singledispatch
 def close_envs(obj: Any) -> None:
-    """Default: do nothing if the type is not recognized."""
-    return
+    """Default: raise if the type is not recognized."""
+    raise NotImplementedError(f"close_envs not implemented for type {type(obj).__name__}")
 
 
 @close_envs.register
 def _(env: Mapping) -> None:
     for v in env.values():
-        close_envs(v)
+        if isinstance(v, Mapping):
+            close_envs(v)
+        elif hasattr(v, "close"):
+            _close_single_env(v)
+        else:
+            continue
 
 
 @close_envs.register
@@ -161,10 +166,14 @@ def _(envs: Sequence) -> None:
     if isinstance(envs, (str, bytes)):
         return
     for v in envs:
-        close_envs(v)
+        if isinstance(v, Mapping) or isinstance(v, Sequence) and not isinstance(v, (str, bytes)):
+            close_envs(v)
+        elif hasattr(v, "close"):
+            _close_single_env(v)
+        else:
+            continue
 
 
 @close_envs.register
-def _(env: object) -> None:
-    if hasattr(env, "close"):
-        _close_single_env(env)
+def _(env: gym.Env) -> None:
+    _close_single_env(env)

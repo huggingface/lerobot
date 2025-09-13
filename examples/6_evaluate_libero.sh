@@ -46,8 +46,8 @@ python src/lerobot/scripts/eval.py \
     --env.type="$ENV_TYPE" \
     --eval.batch_size="$BATCH_SIZE" \
     --eval.n_episodes="$N_EPISODES" \
-    --env.multitask_eval=False \
     --env.task=$TASK \
+    --env.max_parallel_tasks=10 \
 # python examples/evaluate_libero.py \
 #     --policy_path "$POLICY_PATH" \
 #     --task_suite_name "$TASK" \
