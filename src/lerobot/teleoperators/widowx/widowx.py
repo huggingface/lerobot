@@ -41,18 +41,19 @@ class WidowX(Teleoperator):
     def __init__(self, config: WidowXConfig):
         super().__init__(config)
         self.config = config
+        norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "waist": Motor(1, "xm430-w350", MotorNormMode.RANGE_M100_100),
-                "shoulder": Motor(2, "xm430-w350", MotorNormMode.RANGE_M100_100),
-                "shoulder_shadow": Motor(3, "xm430-w350", MotorNormMode.RANGE_M100_100),
-                "elbow": Motor(4, "xm430-w350", MotorNormMode.RANGE_M100_100),
-                "elbow_shadow": Motor(5, "xm430-w350", MotorNormMode.RANGE_M100_100),
-                "forearm_roll": Motor(6, "xm430-w350", MotorNormMode.RANGE_M100_100),
-                "wrist_angle": Motor(7, "xm430-w350", MotorNormMode.RANGE_M100_100),
+                "waist": Motor(1, "xm430-w350", norm_mode_body),
+                "shoulder": Motor(2, "xm430-w350", norm_mode_body),
+                "shoulder_shadow": Motor(3, "xm430-w350", norm_mode_body),
+                "elbow": Motor(4, "xm430-w350", norm_mode_body),
+                "elbow_shadow": Motor(5, "xm430-w350", norm_mode_body),
+                "forearm_roll": Motor(6, "xm430-w350", norm_mode_body),
+                "wrist_angle": Motor(7, "xm430-w350", norm_mode_body),
                 "wrist_rotate": Motor(
-                    8, "xm430-w350", MotorNormMode.RANGE_M100_100
+                    8, "xm430-w350", norm_mode_body
                 ),  # This could be xl430-w250 or xm430-w350
                 "gripper": Motor(
                     9, self.config.gripper_motor, MotorNormMode.RANGE_0_100
