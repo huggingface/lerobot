@@ -18,9 +18,7 @@ from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
     batch_to_transition,
     create_transition,
-    merge_transitions,
     transition_to_batch,
-    transition_to_dataset_frame,
 )
 from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
@@ -79,7 +77,6 @@ __all__ = [
     "JointVelocityProcessorStep",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
-    "merge_transitions",
     "MotorCurrentProcessorStep",
     "NormalizerProcessorStep",
     "Numpy2TorchActionProcessorStep",
@@ -102,7 +99,6 @@ __all__ = [
     "TokenizerProcessorStep",
     "Torch2NumpyActionProcessorStep",
     "transition_to_batch",
-    "transition_to_dataset_frame",
     "TransitionKey",
     "TruncatedProcessorStep",
     "UnnormalizerProcessorStep",
