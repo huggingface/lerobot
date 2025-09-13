@@ -16,7 +16,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
@@ -36,23 +36,20 @@ class PI05OpenPIConfig(PreTrainedConfig):
     n_obs_steps: int = 1
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
-    action_dim: int = 32  # Action dimension (will be padded to 32)
-    state_dim: int = 32  # State dimension (will be padded to 32)
+
+    # Shorter state and action vectors will be padded to these dimensions
+    max_state_dim: int = 32  # State dimension (will be padded to 32)
+    max_action_dim: int = 32  # Action dimension (will be padded to 32)
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10  # Number of denoising steps during inference
     time_sampling_beta_alpha: float = 1.5  # Beta distribution alpha parameter for time sampling
     time_sampling_beta_beta: float = 1.0  # Beta distribution beta parameter for time sampling
     min_period: float = 4e-3  # Min period for sinusoidal positional encoding
-    max_period: float = 4.0  # Max period for sinusoidal positional encodingis my
+    max_period: float = 4.0  # Max period for sinusoidal positional encoding
 
     # Image preprocessing
     image_resolution: tuple[int, int] = (224, 224)  # see openpi `preprocessing_pytorch.py`
-    image_keys: tuple[str, ...] = (
-        "observation.images.base_0_rgb",
-        "observation.images.left_wrist_0_rgb",
-        "observation.images.right_wrist_0_rgb",
-    )
 
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -103,26 +100,12 @@ class PI05OpenPIConfig(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
-        # Add image features
-        for key in self.image_keys:
-            if key not in self.input_features:
-                self.input_features[key] = PolicyFeature(
-                    type=FeatureType.VISUAL,
-                    shape=(3, 224, 224),  # Default shape, will be resized
-                )
+        # Image features are now handled dynamically through dataset configuration
+        # No need to auto-add hardcoded image keys
 
-        # Ensure state and action features exist
-        if "observation.state" not in self.input_features:
-            self.input_features["observation.state"] = PolicyFeature(
-                type=FeatureType.STATE,
-                shape=(self.state_dim,),
-            )
-
-        if "action" not in self.output_features:
-            self.output_features["action"] = PolicyFeature(
-                type=FeatureType.ACTION,
-                shape=(self.action_dim,),
-            )
+        # State and action features are also handled dynamically through dataset configuration
+        # The actual dimensions come from the feature shapes, max dimensions are used for padding only
+        pass
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
