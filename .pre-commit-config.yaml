@@ -98,7 +98,6 @@ repos:
           - --config-file=pyproject.toml
           - --install-types
           - --non-interactive
-          - --ignore-missing-imports
 
   ##### Docstring Checks #####
   # - repo: https://github.com/akaihola/darglint2

@@ -21,9 +21,9 @@ The majority of changes here involve removing unused code, unifying naming, and 
 
 import math
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from itertools import chain
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import einops
 import numpy as np
@@ -38,7 +38,19 @@ from lerobot.constants import ACTION, OBS_IMAGES
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import get_device_from_parameters
+
+
+class OptimizerKwargs(TypedDict, total=False):
+    params: list[nn.Parameter]
+    lr: float
+    weight_decay: float
+    momentum: float
+    betas: tuple[float, float]
+    eps: float
+
+
+class ForwardKwargs(TypedDict, total=False):
+    pass
 
 
 class ACTPolicy(PreTrainedPolicy):
@@ -81,7 +93,7 @@ class ACTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> object:
+    def get_optim_params(self) -> Sequence[OptimizerKwargs]:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
         # Should we remove this and just `return self.parameters()`?
         return [
@@ -138,9 +150,6 @@ class ACTPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
-        # Ensure batch tensors are on the same device as the module
-        device = get_device_from_parameters(self)
-        batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
@@ -152,9 +161,6 @@ class ACTPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor], **kwargs: object) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
-        # Ensure batch tensors are on the same device as the module
-        device = get_device_from_parameters(self)
-        batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
