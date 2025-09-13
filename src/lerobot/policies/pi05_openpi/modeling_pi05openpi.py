@@ -875,8 +875,8 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
-        # Create default config
-        config = cls.config_class()
+        # Use provided config if available, otherwise create default config
+        config = kwargs.get("config", cls.config_class())
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
