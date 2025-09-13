@@ -915,11 +915,15 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
 
             # Then add "model." prefix for all keys that don't already have it
+            # Exclude normalization layers as they are direct attributes of the policy, not part of self.model
             remapped_state_dict = {}
             remap_count = 0
 
             for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
+                if not key.startswith("model.") and not any(
+                    key.startswith(prefix)
+                    for prefix in ["normalize_inputs.", "normalize_targets.", "unnormalize_outputs."]
+                ):
                     new_key = f"model.{key}"
                     remapped_state_dict[new_key] = value
                     remap_count += 1
