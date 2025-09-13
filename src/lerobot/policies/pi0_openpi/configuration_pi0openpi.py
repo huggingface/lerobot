@@ -64,7 +64,7 @@ class PI0OpenPIConfig(PreTrainedConfig):
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
     # Pretrained model loading
-    pretrained_path: str | None = None  # Path or repo_id to load pretrained weights from
+    pretrained_path: str | None = "pepijn223/pi0_base_fp32"  # Path or repo_id to load pretrained weights from
 
     # Optimizer settings: see openpi `AdamW` and
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
