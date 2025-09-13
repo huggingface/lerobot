@@ -23,7 +23,12 @@ from .converters import (
 from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
-from .factory import make_default_processors
+from .factory import (
+    make_default_processors,
+    make_default_robot_action_processor,
+    make_default_robot_observation_processor,
+    make_default_teleop_action_processor,
+)
 from .gym_action_processor import Numpy2TorchActionProcessorStep, Torch2NumpyActionProcessorStep
 from .hil_processor import (
     AddTeleopActionAsComplimentaryDataStep,
@@ -77,6 +82,9 @@ __all__ = [
     "InterventionActionProcessorStep",
     "JointVelocityProcessorStep",
     "make_default_processors",
+    "make_default_teleop_action_processor",
+    "make_default_robot_action_processor",
+    "make_default_robot_observation_processor",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "MotorCurrentProcessorStep",
