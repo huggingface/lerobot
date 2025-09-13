@@ -142,8 +142,12 @@ class BiKochFollower(Robot):
         right_norm, right_raw = self.right_arm.get_observation_with_raw()
 
         # Prefix keys
-        obs_norm = {f"left_{k}": v for k, v in left_norm.items()} | {f"right_{k}": v for k, v in right_norm.items()}
-        obs_raw = {f"left_{k}": v for k, v in left_raw.items()} | {f"right_{k}": v for k, v in right_raw.items()}
+        obs_norm = {f"left_{k}": v for k, v in left_norm.items()} | {
+            f"right_{k}": v for k, v in right_norm.items()
+        }
+        obs_raw = {f"left_{k}": v for k, v in left_raw.items()} | {
+            f"right_{k}": v for k, v in right_raw.items()
+        }
 
         # Add cameras only to normalized observations
         for cam_key, cam in self.cameras.items():

@@ -104,8 +104,12 @@ class BiKochLeader(Teleoperator):
         left_norm, left_raw = self.left_arm.get_action_with_raw()
         right_norm, right_raw = self.right_arm.get_action_with_raw()
 
-        norm_prefixed = {f"left_{k}": v for k, v in left_norm.items()} | {f"right_{k}": v for k, v in right_norm.items()}
-        raw_prefixed = {f"left_{k}": v for k, v in left_raw.items()} | {f"right_{k}": v for k, v in right_raw.items()}
+        norm_prefixed = {f"left_{k}": v for k, v in left_norm.items()} | {
+            f"right_{k}": v for k, v in right_norm.items()
+        }
+        raw_prefixed = {f"left_{k}": v for k, v in left_raw.items()} | {
+            f"right_{k}": v for k, v in right_raw.items()
+        }
 
         return norm_prefixed, raw_prefixed
 
