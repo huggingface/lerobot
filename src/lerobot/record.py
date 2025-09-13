@@ -355,7 +355,6 @@ def record_loop(
 
         # Applies a pipeline to the action, default is IdentityProcessor
         # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
-        action_values = {}
         if policy is not None and policy_transition is not None:
             action_values = policy_transition[TransitionKey.ACTION]
             robot_action_to_send = robot_action_processor(policy_transition)

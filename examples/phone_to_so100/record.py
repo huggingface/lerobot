@@ -28,7 +28,6 @@ from lerobot.processor.converters import (
     robot_action_to_transition,
     transition_to_robot_action,
 )
-from lerobot.processor.pipeline import DataProcessorPipeline
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -76,9 +75,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert phone action to ee pose action
-phone_to_robot_ee_pose_processor: DataProcessorPipeline[RobotAction, EnvTransition] = RobotProcessorPipeline[
-    RobotAction, EnvTransition
-](
+phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, EnvTransition](
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
         AddRobotObservationAsComplimentaryData(robot=robot),
