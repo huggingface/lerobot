@@ -85,8 +85,6 @@ class ReplayConfig:
     dataset: DatasetReplayConfig
     # Use vocal synthesis to read events.
     play_sounds: bool = True
-    # Optional processor for actions before sending to robot
-    robot_action_processor: RobotProcessorPipeline[RobotAction, RobotAction] | None = None
 
 
 @parser.wrap()
@@ -95,14 +93,11 @@ def replay(cfg: ReplayConfig):
     logging.info(pformat(asdict(cfg)))
 
     # Initialize robot action processor with default if not provided
-    robot_action_processor = cfg.robot_action_processor or RobotProcessorPipeline[RobotAction, RobotAction](
+    robot_action_processor = RobotProcessorPipeline[RobotAction, RobotAction](
         steps=[IdentityProcessorStep()],
         to_transition=robot_action_to_transition,
         to_output=transition_to_robot_action,
     )
-
-    # Reset processor
-    robot_action_processor.reset()
 
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
@@ -121,7 +116,7 @@ def replay(cfg: ReplayConfig):
         # Process action through robot action processor
         processed_action = robot_action_processor(action)
 
-        robot.send_action(processed_action)  # type: ignore[arg-type]
+        robot.send_action(processed_action)
 
         dt_s = time.perf_counter() - start_episode_t
         busy_wait(1 / dataset.fps - dt_s)
