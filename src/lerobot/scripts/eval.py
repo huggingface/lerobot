@@ -158,8 +158,8 @@ def rollout(
         observation = add_envs_task(env, observation)
         observation = preprocessor(observation)
         with torch.inference_mode():
-            action: PolicyAction = policy.select_action(observation)
-        action: PolicyAction = postprocessor(action)
+            action = policy.select_action(observation)
+        action = postprocessor(action)
 
         # Convert to CPU / numpy.
         action_numpy: np.ndarray = action.to("cpu").numpy()
