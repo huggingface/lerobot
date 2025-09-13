@@ -137,20 +137,15 @@ pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version 
 xarm = ["gym-xarm>=0.1.1"]
 libero = [
     "hydra-core>=1.2,<1.4",
-    "numpy",
-    "wandb",
-    "easydict",
-    "transformers",
-    "opencv-python",
+    "easydict>=1.9",
+    "lerobot[transformers-dep]",
     "robomimic==0.2.0",
-    "einops",
-    "thop",
+    "thop>=0.1.0.post2206102148",
     "robosuite==1.4.0",
     "bddl==1.0.1",
-    "matplotlib",
-    "cloudpickle",
-    "future",
-    "gym",
+    "matplotlib>=3.5.3"
+    "cloudpickle>=2.0.0",
+    "future>=0.18.3",
     "egl_probe @ git+https://github.com/jadechoghari/egl_probe.git#egg=egl_probe",
     "libero @ git+https://github.com/jadechoghari/LIBERO.git@main#egg=libero",
 ]
