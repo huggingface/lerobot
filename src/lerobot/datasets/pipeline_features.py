@@ -23,7 +23,7 @@ from lerobot.processor import DataProcessorPipeline
 
 
 def create_initial_features(
-    action: dict[str, Any] | None, observation: dict[str, Any] | None
+    action: dict[str, Any] | None = None, observation: dict[str, Any] | None = None
 ) -> dict[PipelineFeatureType, dict[str, Any]]:
     """
     Creates the initial features dict for the dataset from action and observation specs.
