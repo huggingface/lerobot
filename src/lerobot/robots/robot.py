@@ -164,6 +164,21 @@ class Robot(abc.ABC):
 
         pass
 
+    def get_observation_with_raw(self) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """
+        Retrieve both normalized observation and, if available, the corresponding raw hardware values.
+
+        Returns:
+            tuple[dict[str, Any], dict[str, Any] | None]:
+                - First element: normalized observation as returned by get_observation().
+                - Second element: raw observation values in device units (e.g., ticks). If not available, None.
+
+        Note:
+            Subclasses can override this to provide raw values without changing the base API of get_observation().
+        """
+        obs = self.get_observation()
+        return obs, None
+
     @abc.abstractmethod
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """

@@ -112,9 +112,20 @@ def teleop_loop(
     start = time.perf_counter()
     while True:
         loop_start = time.perf_counter()
-        action = teleop.get_action()
-        if display_data:
+        # Retrieve normalized action and raw values if available
+        try:
+            action, raw_action = teleop.get_action_with_raw()
+        except Exception:
+            # Fallback to normalized-only in case a specific teleoperator does not support raw values
+            action = teleop.get_action()
+            raw_action = None
+        # Retrieve normalized observation and raw values if available
+        try:
+            observation, raw_observation = robot.get_observation_with_raw()
+        except Exception:
             observation = robot.get_observation()
+            raw_observation = None
+        if display_data:
             log_rerun_data(observation, action)
 
         robot.send_action(action)
@@ -123,16 +134,50 @@ def teleop_loop(
 
         loop_s = time.perf_counter() - loop_start
 
-        print("\n" + "-" * (display_len + 10))
-        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        for motor, value in action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        output_lines: list[str] = []
+        output_lines.append("-" * (display_len + 20))
+
+        # Actions block
+        output_lines.append("ACTIONS")
+        if raw_action is not None:
+            output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7} | {'RAW':>7}")
+            for motor, value in action.items():
+                raw_val = raw_action.get(motor) if isinstance(raw_action, dict) else None
+                raw_display = f"{int(raw_val):>7}" if isinstance(raw_val, (int, float)) else f"{'N/A':>7}"
+                output_lines.append(f"{motor:<{display_len}} | {value:>7.2f} | {raw_display}")
+        else:
+            output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7}")
+            for motor, value in action.items():
+                output_lines.append(f"{motor:<{display_len}} | {value:>7.2f}")
+
+        # Observations block
+        output_lines.append("OBSERVATIONS")
+        if raw_observation is not None:
+            output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7} | {'RAW':>7}")
+            for key, value in observation.items():
+                if not key.endswith('.pos'):
+                    continue
+                raw_val = raw_observation.get(key) if isinstance(raw_observation, dict) else None
+                raw_display = f"{int(raw_val):>7}" if isinstance(raw_val, (int, float)) else f"{'N/A':>7}"
+                output_lines.append(f"{key:<{display_len}} | {value:>7.2f} | {raw_display}")
+        else:
+            output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7}")
+            for key, value in observation.items():
+                if not key.endswith('.pos'):
+                    continue
+                output_lines.append(f"{key:<{display_len}} | {value:>7.2f}")
+
+        # Timing line (keep a blank line before time for readability)
+        output_lines.append("")
+        output_lines.append(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+
+        print("\n".join(output_lines))
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
 
-        move_cursor_up(len(action) + 5)
+        # Move cursor up exactly the number of lines we printed
+        move_cursor_up(len(output_lines))
 
 
 @draccus.wrap()

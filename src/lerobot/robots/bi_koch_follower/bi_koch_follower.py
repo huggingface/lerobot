@@ -136,6 +136,24 @@ class BiKochFollower(Robot):
 
         return obs_dict
 
+    def get_observation_with_raw(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        # Per-arm observations (norm and raw) without cameras
+        left_norm, left_raw = self.left_arm.get_observation_with_raw()
+        right_norm, right_raw = self.right_arm.get_observation_with_raw()
+
+        # Prefix keys
+        obs_norm = {f"left_{k}": v for k, v in left_norm.items()} | {f"right_{k}": v for k, v in right_norm.items()}
+        obs_raw = {f"left_{k}": v for k, v in left_raw.items()} | {f"right_{k}": v for k, v in right_raw.items()}
+
+        # Add cameras only to normalized observations
+        for cam_key, cam in self.cameras.items():
+            start = time.perf_counter()
+            obs_norm[cam_key] = cam.async_read()
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+        return obs_norm, obs_raw
+
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         # Remove "left_" prefix
         left_action = {

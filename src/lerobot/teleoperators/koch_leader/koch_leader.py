@@ -88,6 +88,7 @@ class KochLeader(Teleoperator):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        self.bus.disable_torque()
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
@@ -98,7 +99,6 @@ class KochLeader(Teleoperator):
                 self.bus.write_calibration(self.calibration)
                 return
         logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
@@ -171,6 +171,27 @@ class KochLeader(Teleoperator):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
+
+    def get_action_with_raw(self) -> tuple[dict[str, float], dict[str, int]]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        start = time.perf_counter()
+        # Single device read in raw units, decode sign but do not normalize
+        raw_by_name = self.bus.sync_read("Present_Position", normalize=False)
+
+        # Convert raw-by-name → ids → normalize using calibration
+        ids_values = {self.bus.motors[motor].id: val for motor, val in raw_by_name.items()}
+        norm_by_id = self.bus._normalize(ids_values)
+        norm_by_name = {self.bus._id_to_name(id_): val for id_, val in norm_by_id.items()}
+
+        # Suffix keys with .pos for action dicts
+        action_norm = {f"{motor}.pos": val for motor, val in norm_by_name.items()}
+        action_raw = {f"{motor}.pos": val for motor, val in raw_by_name.items()}
+
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read action (norm+raw): {dt_ms:.1f}ms")
+        return action_norm, action_raw
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # TODO(rcadene, aliberts): Implement force feedback

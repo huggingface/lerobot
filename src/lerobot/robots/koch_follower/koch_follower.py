@@ -110,6 +110,7 @@ class KochFollower(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        self.bus.disable_torque()
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
@@ -120,7 +121,6 @@ class KochFollower(Robot):
                 self.bus.write_calibration(self.calibration)
                 return
         logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
@@ -201,6 +201,34 @@ class KochFollower(Robot):
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
+
+    def get_observation_with_raw(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        # Joint positions in raw ticks
+        start = time.perf_counter()
+        raw_by_name = self.bus.sync_read("Present_Position", normalize=False)
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read state raw: {dt_ms:.1f}ms")
+
+        # Normalize joint positions using current calibration, keep names
+        ids_values = {self.bus.motors[motor].id: val for motor, val in raw_by_name.items()}
+        norm_by_id = self.bus._normalize(ids_values)
+        norm_by_name = {self.bus._id_to_name(id_): val for id_, val in norm_by_id.items()}
+
+        # Build observation dicts with .pos suffix
+        obs_norm: dict[str, Any] = {f"{motor}.pos": val for motor, val in norm_by_name.items()}
+        obs_raw: dict[str, Any] = {f"{motor}.pos": val for motor, val in raw_by_name.items()}
+
+        # Add images only to normalized observations
+        for cam_key, cam in self.cameras.items():
+            start = time.perf_counter()
+            obs_norm[cam_key] = cam.async_read()
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+        return obs_norm, obs_raw
 
     def send_action(self, action: dict[str, float]) -> dict[str, float]:
         """Command arm to move to a target joint configuration.
