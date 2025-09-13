@@ -938,7 +938,10 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
             remap_count = 0
 
             for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
+                if not key.startswith("model.") and not any(
+                    key.startswith(prefix)
+                    for prefix in ["normalize_inputs.", "normalize_targets.", "unnormalize_outputs."]
+                ):
                     new_key = f"model.{key}"
                     remapped_state_dict[new_key] = value
                     remap_count += 1
