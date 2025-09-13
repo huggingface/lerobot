@@ -59,7 +59,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.constants import ACTION, OBS_LANGUAGE, OBS_STATE
+from lerobot.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
@@ -257,8 +257,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-        lang_tokens = batch[f"{OBS_LANGUAGE}.tokens"]
-        lang_masks = batch[f"{OBS_LANGUAGE}.attention_mask"]
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
 
@@ -318,8 +318,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-        lang_tokens = batch[f"{OBS_LANGUAGE}.tokens"]
-        lang_masks = batch[f"{OBS_LANGUAGE}.attention_mask"]
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("actions_id_pad")
         loss_dict = {}

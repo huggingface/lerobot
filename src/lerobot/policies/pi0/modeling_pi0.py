@@ -57,7 +57,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.constants import ACTION, OBS_LANGUAGE, OBS_STATE
+from lerobot.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0.paligemma_with_expert import (
     PaliGemmaWithExpertConfig,
@@ -275,8 +275,8 @@ class PI0Policy(PreTrainedPolicy):
         if len(self._action_queue) == 0:
             images, img_masks = self.prepare_images(batch)
             state = self.prepare_state(batch)
-            lang_tokens = batch[f"{OBS_LANGUAGE}.tokens"]
-            lang_masks = batch[f"{OBS_LANGUAGE}.attention_mask"]
+            lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+            lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
             actions = self.model.sample_actions(
                 images, img_masks, lang_tokens, lang_masks, state, noise=noise
@@ -302,8 +302,8 @@ class PI0Policy(PreTrainedPolicy):
 
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-        lang_tokens = batch[f"{OBS_LANGUAGE}.tokens"]
-        lang_masks = batch[f"{OBS_LANGUAGE}.attention_mask"]
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
