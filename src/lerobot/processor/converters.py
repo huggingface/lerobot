@@ -17,14 +17,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from copy import deepcopy
 from functools import singledispatch
 from typing import Any
 
 import numpy as np
 import torch
 
-from lerobot.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
+from lerobot.constants import OBS_IMAGES
 
 from .core import EnvTransition, PolicyAction, RobotAction, TransitionKey
 
@@ -210,34 +209,6 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     return {**pad_keys, **task_key, **index_key, **task_index_key}
 
 
-def _merge_transitions(base: EnvTransition, other: EnvTransition) -> EnvTransition:
-    """
-    Merge two transitions, with the second one taking precedence in case of conflicts.
-
-    Args:
-        base: The base transition.
-        other: The transition to merge, which will overwrite base values.
-
-    Returns:
-        The merged transition dictionary.
-    """
-    out = deepcopy(base)
-
-    for key in (
-        TransitionKey.OBSERVATION,
-        TransitionKey.ACTION,
-        TransitionKey.INFO,
-        TransitionKey.COMPLEMENTARY_DATA,
-    ):
-        if other.get(key):
-            out.setdefault(key, {}).update(deepcopy(other[key]))
-
-    for k in (TransitionKey.REWARD, TransitionKey.DONE, TransitionKey.TRUNCATED):
-        if k in other:
-            out[k] = other[k]
-    return out
-
-
 # Core Conversion Functions
 
 
@@ -348,115 +319,6 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
     if not isinstance(action, PolicyAction):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return create_transition(action=action)
-
-
-def merge_transitions(transitions: Sequence[EnvTransition] | EnvTransition) -> EnvTransition:
-    """
-    Merge a sequence of transitions into a single one.
-
-    If a single transition is provided, it is returned as is. For a sequence,
-    transitions are merged sequentially, with later transitions in the sequence
-    overwriting earlier ones.
-
-    Args:
-        transitions: A single transition or a sequence of them.
-
-    Returns:
-        A single merged `EnvTransition`.
-
-    Raises:
-        ValueError: If an empty sequence of transitions is provided.
-    """
-
-    if not isinstance(transitions, Sequence):  # Single transition
-        return transitions
-
-    items = list(transitions)
-    if not items:
-        raise ValueError("merge_transitions() requires a non-empty sequence of transitions")
-
-    result = items[0]
-    for t in items[1:]:
-        result = _merge_transitions(result, t)
-    return result
-
-
-# TODO(Steven): Currently unused consider removing after testing
-def transition_to_dataset_frame(
-    transitions_or_transition: EnvTransition | Sequence[EnvTransition], features: dict[str, dict]
-) -> dict[str, Any]:
-    """
-    Convert one or more transitions into a flat dictionary suitable for a dataset frame.
-
-    This function processes `EnvTransition` objects according to a feature
-    specification, producing a format ready for training or evaluation.
-
-    Args:
-        transitions_or_transition: A single `EnvTransition` or a sequence to be merged.
-        features: A feature specification dictionary.
-
-    Returns:
-        A flat dictionary representing a single frame of data for a dataset.
-    """
-    action_names = features.get(ACTION, {}).get("names", [])
-    obs_state_names = features.get(OBS_STATE, {}).get("names", [])
-    image_keys = [k for k in features if k.startswith(OBS_IMAGES)]
-
-    tr = merge_transitions(transitions_or_transition)
-    obs = tr.get(TransitionKey.OBSERVATION, {}) or {}
-    act = tr.get(TransitionKey.ACTION, {}) or {}
-    batch: dict[str, Any] = {}
-
-    # Passthrough for images.
-    for k in image_keys:
-        if k in obs:
-            batch[k] = obs[k]
-
-    # Create observation.state vector.
-    if obs_state_names:
-        vals = [from_tensor_to_numpy(obs.get(f"{OBS_STATE}.{n}", 0.0)) for n in obs_state_names]
-        batch[OBS_STATE] = np.asarray(vals, dtype=np.float32)
-
-    # Create action vector.
-    if action_names:
-        vals = [from_tensor_to_numpy(act.get(f"{ACTION}.{n}", 0.0)) for n in action_names]
-        batch[ACTION] = np.asarray(vals, dtype=np.float32)
-
-    # Add transition metadata.
-    if tr.get(TransitionKey.REWARD) is not None:
-        reward_val = from_tensor_to_numpy(tr[TransitionKey.REWARD])
-        # Check if features expect array format, otherwise keep as scalar.
-        if REWARD in features and features[REWARD].get("shape") == (1,):
-            batch[REWARD] = np.array([reward_val], dtype=np.float32)
-        else:
-            batch[REWARD] = reward_val
-
-    if tr.get(TransitionKey.DONE) is not None:
-        done_val = from_tensor_to_numpy(tr[TransitionKey.DONE])
-        if DONE in features and features[DONE].get("shape") == (1,):
-            batch[DONE] = np.array([done_val], dtype=bool)
-        else:
-            batch[DONE] = done_val
-
-    if tr.get(TransitionKey.TRUNCATED) is not None:
-        truncated_val = from_tensor_to_numpy(tr[TransitionKey.TRUNCATED])
-        if TRUNCATED in features and features[TRUNCATED].get("shape") == (1,):
-            batch[TRUNCATED] = np.array([truncated_val], dtype=bool)
-        else:
-            batch[TRUNCATED] = truncated_val
-
-    # Add complementary data flags and task.
-    comp = tr.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-    if comp:
-        # Padding flags.
-        for k, v in comp.items():
-            if k.endswith("_is_pad"):
-                batch[k] = v
-        # Task label.
-        if comp.get("task") is not None:
-            batch["task"] = comp["task"]
-
-    return batch
 
 
 def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:

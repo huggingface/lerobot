@@ -64,16 +64,10 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.configs import parser
 from lerobot.processor import (
     EnvTransition,
-    IdentityProcessorStep,
     RobotAction,
     RobotProcessorPipeline,
     TransitionKey,
-)
-from lerobot.processor.converters import (
-    identity_transition,
-    observation_to_transition,
-    robot_action_to_transition,
-    transition_to_robot_action,
+    make_default_processors,
 )
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -111,27 +105,17 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
-    # Optional processors for data transformation
-    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition] | None = (
-        None  # runs after teleop
-    )
-    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction] | None = (
-        None  # runs before robot
-    )
-    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition] | None = (
-        None  # runs after robot
-    )
 
 
 def teleop_loop(
     teleop: Teleoperator,
     robot: Robot,
     fps: int,
+    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition],
+    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction],
+    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition],
     display_data: bool = False,
     duration: float | None = None,
-    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition] | None = None,
-    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction] | None = None,
-    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition] | None = None,
 ):
     """
     This function continuously reads actions from a teleoperation device, processes them through optional
@@ -148,36 +132,6 @@ def teleop_loop(
         robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
         robot_observation_processor: An optional pipeline to process raw observations from the robot.
     """
-    # Initialize processors with defaults if not provided
-    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition] = (
-        teleop_action_processor
-        or RobotProcessorPipeline[RobotAction, EnvTransition](
-            steps=[IdentityProcessorStep()],
-            to_transition=robot_action_to_transition,
-            to_output=identity_transition,
-        )
-    )
-    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction] = (
-        robot_action_processor
-        or RobotProcessorPipeline[EnvTransition, RobotAction](
-            steps=[IdentityProcessorStep()],
-            to_transition=identity_transition,
-            to_output=transition_to_robot_action,
-        )
-    )
-    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition] = (
-        robot_observation_processor
-        or RobotProcessorPipeline[dict[str, Any], EnvTransition](
-            steps=[IdentityProcessorStep()],
-            to_transition=observation_to_transition,
-            to_output=identity_transition,
-        )
-    )
-
-    # Reset processors
-    teleop_action_processor.reset()
-    robot_action_processor.reset()
-    robot_observation_processor.reset()
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
@@ -195,7 +149,7 @@ def teleop_loop(
         robot_action_to_send = robot_action_processor(teleop_transition)
 
         # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
-        robot.send_action(robot_action_to_send)  # type: ignore[arg-type]
+        robot.send_action(robot_action_to_send)
 
         if display_data:
             # Get robot observation
@@ -233,6 +187,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     teleop.connect()
     robot.connect()
@@ -244,9 +199,9 @@ def teleoperate(cfg: TeleoperateConfig):
             fps=cfg.fps,
             display_data=cfg.display_data,
             duration=cfg.teleop_time_s,
-            teleop_action_processor=cfg.teleop_action_processor,
-            robot_action_processor=cfg.robot_action_processor,
-            robot_observation_processor=cfg.robot_observation_processor,
+            teleop_action_processor=teleop_action_processor,
+            robot_action_processor=robot_action_processor,
+            robot_observation_processor=robot_observation_processor,
         )
     except KeyboardInterrupt:
         pass

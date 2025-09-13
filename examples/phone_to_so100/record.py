@@ -117,29 +117,22 @@ robot_joints_to_ee_pose = RobotProcessorPipeline[dict[str, Any], EnvTransition](
     to_output=identity_transition,
 )
 
-# Build dataset ee action features
-action_ee = aggregate_pipeline_dataset_features(
-    pipeline=phone_to_robot_ee_pose_processor,
-    initial_features=create_initial_features(action=phone.action_features, observation={}),
-    use_videos=True,
-)
-
-# Build dataset ee observation features
-observation_ee = aggregate_pipeline_dataset_features(
-    pipeline=robot_joints_to_ee_pose,
-    initial_features=create_initial_features(observation=robot.observation_features, action={}),
-    use_videos=True,
-)
-
-dataset_features = combine_feature_dicts(action_ee, observation_ee)
-
-print("All dataset features: ", dataset_features)
-
 # Create the dataset
 dataset = LeRobotDataset.create(
     repo_id=HF_REPO_ID,
     fps=FPS,
-    features=dataset_features,
+    features=combine_feature_dicts(
+        aggregate_pipeline_dataset_features(
+            pipeline=phone_to_robot_ee_pose_processor,
+            initial_features=create_initial_features(action=phone.action_features),
+            use_videos=True,
+        ),
+        aggregate_pipeline_dataset_features(
+            pipeline=robot_joints_to_ee_pose,
+            initial_features=create_initial_features(observation=robot.observation_features),
+            use_videos=True,
+        ),
+    ),
     robot_type=robot.name,
     use_videos=True,
     image_writer_threads=4,

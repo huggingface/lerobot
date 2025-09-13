@@ -23,7 +23,12 @@ from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
-from lerobot.processor import EnvTransition, RobotAction, RobotProcessorPipeline
+from lerobot.processor import (
+    EnvTransition,
+    RobotAction,
+    RobotProcessorPipeline,
+    make_default_teleop_action_processor,
+)
 from lerobot.processor.converters import (
     identity_transition,
     observation_to_transition,
@@ -90,29 +95,23 @@ robot_joints_to_ee_pose_processor = RobotProcessorPipeline[dict[str, Any], EnvTr
     to_output=identity_transition,
 )
 
-# Build dataset action and gripper features
-action_ee_and_gripper = aggregate_pipeline_dataset_features(
-    pipeline=robot_ee_to_joints_processor,
-    initial_features=create_initial_features(action=robot.action_features),
-    use_videos=True,
-)  # Get all ee action features + gripper pos action features
-
-# Build dataset observation features
-obs_ee = aggregate_pipeline_dataset_features(
-    pipeline=robot_joints_to_ee_pose_processor,
-    initial_features=create_initial_features(observation=robot.observation_features),
-    use_videos=True,
-)  # Get all ee observation features
-
-dataset_features = combine_feature_dicts(obs_ee, action_ee_and_gripper)
-
-print("All dataset features: ", dataset_features)
 
 # Create the dataset
 dataset = LeRobotDataset.create(
     repo_id=HF_DATASET_ID,
     fps=FPS,
-    features=dataset_features,
+    features=combine_feature_dicts(
+        aggregate_pipeline_dataset_features(
+            pipeline=robot_joints_to_ee_pose_processor,
+            initial_features=create_initial_features(observation=robot.observation_features),
+            use_videos=True,
+        ),
+        aggregate_pipeline_dataset_features(
+            pipeline=robot_ee_to_joints_processor,
+            initial_features=create_initial_features(action=robot.action_features),
+            use_videos=True,
+        ),
+    ),
     robot_type=robot.name,
     use_videos=True,
     image_writer_threads=4,
@@ -148,6 +147,7 @@ for episode_idx in range(NUM_EPISODES):
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
         display_data=True,
+        teleop_action_processor=make_default_teleop_action_processor(),
         robot_action_processor=robot_ee_to_joints_processor,
         robot_observation_processor=robot_joints_to_ee_pose_processor,
     )
