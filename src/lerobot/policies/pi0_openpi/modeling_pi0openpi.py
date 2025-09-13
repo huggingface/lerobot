@@ -1314,7 +1314,7 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
         loss = losses.mean()
 
         loss_dict = {
-            "l2_loss": loss.item(),
+            "loss": loss.item(),
             "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
         }
 
