@@ -78,7 +78,7 @@ def _trunc_normal_(tensor, mean, std, a, b):
 
     # Uniformly fill tensor with values from [l, u], then translate to
     # [2l-1, 2u-1].
-    tensor.uniform_(2 * l - 1, 2 * u - 1)
+    tensor.uniform_(2 * l - 1, 2 * u - 1)  # noqa: E741
 
     # Use inverse cdf transform for normal distribution to get truncated
     # standard normal

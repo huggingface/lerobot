@@ -374,9 +374,8 @@ class GemmaDecoderLayer(GradientCheckpointingLayer):
         output_attentions: bool | None = False,
         use_cache: bool | None = False,
         cache_position: torch.LongTensor | None = None,
-        position_embeddings: (
-            None | tuple[torch.Tensor, torch.Tensor]
-        ) = None,  # necessary, but kept here for BC
+        position_embeddings: None
+        | (tuple[torch.Tensor, torch.Tensor]) = None,  # necessary, but kept here for BC
         adarms_cond: torch.Tensor | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
@@ -540,7 +539,7 @@ class GemmaModel(GemmaPreTrainedModel):
         # normalized
         # Gemma downcasts the below to float16, causing sqrt(3072)=55.4256 to become 55.5
         # See https://github.com/huggingface/transformers/pull/29402
-        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)  # noqa: F841
+        _normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
         # hidden_states = hidden_states * normalizer
 
         # decoder layers

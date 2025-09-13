@@ -517,6 +517,19 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
 
+        msg = """transformers_replace is not installed correctly.
+Please install it with `pip install transformers==4.53.2`
+and `cp -r ./src/lerobot/policies/pi0_openpi/transformers_replace/* \
+$(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")`"""
+
+        try:
+            from transformers.models.siglip import check
+
+            if not check.check_whether_transformers_replace_is_installed_correctly():
+                raise ValueError(msg)
+        except ImportError:
+            raise ValueError(msg) from None
+
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
@@ -851,41 +864,35 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
 
     @classmethod
     def from_pretrained(
-        cls, *args, **kwargs
+        cls, pretrained_name_or_path: str, strict: bool = True, *args, **kwargs
     ):  # TODO(pepijn): modify this back so we do not have to add model. prefix to all keys in the state dict
         """Override the from_pretrained method to handle key remapping and display important disclaimer."""
         print(
-            "⚠️  DISCLAIMER: The PI05OpenPI model is a direct PyTorch port of the OpenPI implementation. \n"
+            "⚠️  DISCLAIMER: The PI0OpenPI model is a direct PyTorch port of the OpenPI implementation. \n"
             "   This implementation follows the original OpenPI structure for compatibility. \n"
             "   Original implementation: https://github.com/Physical-Intelligence/openpi"
         )
+        if pretrained_name_or_path is None:
+            raise ValueError("pretrained_name_or_path is required")
 
-        # Store original strict mode
-        original_strict = kwargs.get("strict", True)
-        # Temporarily set strict=False to avoid loading issues, we'll handle it manually
-        kwargs["strict"] = False
+        # Create default config
+        config = cls.config_class()
 
-        # Call parent from_pretrained with strict=False
-        model = super().from_pretrained(*args, **kwargs)
-
-        # Extract the pretrained_model_name_or_path from args or kwargs for remapping
-        if len(args) > 0:
-            pretrained_model_name_or_path = args[0]
-        elif "pretrained_model_name_or_path" in kwargs:
-            pretrained_model_name_or_path = kwargs["pretrained_model_name_or_path"]
-        else:
-            return model
+        # Initialize model without loading weights
+        # Check if dataset_stats were provided in kwargs
+        dataset_stats = kwargs.get("dataset_stats")
+        model = cls(config=config, dataset_stats=dataset_stats)
 
         # Now manually load and remap the state dict
         try:
-            from transformers.utils import cached_file
-
             # Try to load the pytorch_model.bin or model.safetensors file
-            print(f"Loading model from: {pretrained_model_name_or_path}")
+            print(f"Loading model from: {pretrained_name_or_path}")
             try:
+                from transformers.utils import cached_file
+
                 # Try safetensors first
                 resolved_file = cached_file(
-                    pretrained_model_name_or_path,
+                    pretrained_name_or_path,
                     "model.safetensors",
                     cache_dir=kwargs.get("cache_dir"),
                     force_download=kwargs.get("force_download", False),
@@ -901,9 +908,10 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
                 print("✓ Loaded state dict from model.safetensors")
             except Exception as e:
                 print(f"Could not load state dict from remote files: {e}")
+                print("Returning model without loading pretrained weights")
                 return model
 
-            # First, fix any key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
+            # First, fix any pi key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
 
             # Then add "model." prefix for all keys that don't already have it
@@ -926,10 +934,10 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
             print(f"Total keys remapped: {remap_count}")
 
             # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=original_strict)
+            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
 
             if missing_keys:
-                print(f"⚠️  Missing keys when loading state dict: {len(missing_keys)} keys")
+                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
                 if len(missing_keys) <= 5:
                     for key in missing_keys:
                         print(f"  - {key}")
@@ -939,7 +947,7 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
                     print(f"  ... and {len(missing_keys) - 5} more")
 
             if unexpected_keys:
-                print(f"⚠️  Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
+                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
                 if len(unexpected_keys) <= 5:
                     for key in unexpected_keys:
                         print(f"  - {key}")
@@ -949,11 +957,10 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
                     print(f"  ... and {len(unexpected_keys) - 5} more")
 
             if not missing_keys and not unexpected_keys:
-                print("✅ All keys loaded successfully!")
+                print("All keys loaded successfully!")
 
         except Exception as e:
-            print(f"⚠️  Warning: Could not remap state dict keys: {e}")
-            print("Using default loading behavior")
+            print(f"Warning: Could not remap state dict keys: {e}")
 
         return model
 
@@ -974,14 +981,22 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
                 r"paligemma_with_expert\.gemma_expert\.model\.layers\.\d+\.(input_layernorm|post_attention_layernorm)\.weight",
                 key,
             ):
-                # This key structure suggests old model without adaRMS - keep as is or skip
-                logging.warning(f"Skipping old layer norm key (no adaRMS support): {key}")
-                continue
+                # Check if the model actually has adaRMS enabled for the expert
+                expert_uses_adarms = getattr(
+                    self.model.paligemma_with_expert.gemma_expert.config, "use_adarms", False
+                )
+                if expert_uses_adarms:
+                    logging.warning(f"Skipping layer norm key (adaRMS mismatch): {key}")
+                    continue
 
             if re.match(r"paligemma_with_expert\.gemma_expert\.model\.norm\.weight", key):
-                # Skip old norm structure
-                logging.warning(f"Skipping old norm key (no adaRMS support): {key}")
-                continue
+                # Check if the model actually has adaRMS enabled for the expert
+                expert_uses_adarms = getattr(
+                    self.model.paligemma_with_expert.gemma_expert.config, "use_adarms", False
+                )
+                if expert_uses_adarms:
+                    logging.warning(f"Skipping norm key (adaRMS mismatch): {key}")
+                    continue
 
             # Handle MLP naming changes for pi05
             # pi05 model expects time_mlp_*, but checkpoint might have action_time_mlp_*
@@ -1232,7 +1247,7 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, train=False)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
             self._action_queue.extend(actions.transpose(0, 1))
 
