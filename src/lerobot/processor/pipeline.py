@@ -827,7 +827,7 @@ class ObservationProcessorStep(ProcessorStep, ABC):
     """An abstract `ProcessorStep` that specifically targets the observation in a transition."""
 
     @abstractmethod
-    def observation(self, observation) -> dict[str, Any]:
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
         """Processes an observation dictionary. Subclasses must implement this method.
 
         Args:

@@ -38,6 +38,7 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
             to determine the correct button mappings for the gripper.
     """
 
+    # TODO(Steven): Gripper vel could be output of phone_teleop directly
     platform: PhoneOS
     _enabled_prev: bool = field(default=False, init=False, repr=False)
 
@@ -67,11 +68,11 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
 
         # Map certain inputs to certain actions
         if self.platform == PhoneOS.IOS:
-            gripper = float(inputs.get("a3", 0.0))
+            gripper_vel = float(inputs.get("a3", 0.0))
         else:
             a = float(inputs.get("reservedButtonA", 0.0))
             b = float(inputs.get("reservedButtonB", 0.0))
-            gripper = (
+            gripper_vel = (
                 a - b
             )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
 
@@ -83,7 +84,7 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
         action["target_wx"] = rotvec[1] if enabled else 0.0
         action["target_wy"] = rotvec[0] if enabled else 0.0
         action["target_wz"] = -rotvec[2] if enabled else 0.0
-        action["gripper"] = gripper  # Still send gripper action when disabled
+        action["gripper_vel"] = gripper_vel  # Still send gripper action when disabled
         return action
 
     def transform_features(
@@ -101,5 +102,7 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
         features[PipelineFeatureType.ACTION]["target_wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         features[PipelineFeatureType.ACTION]["target_wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         features[PipelineFeatureType.ACTION]["target_wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        features[PipelineFeatureType.ACTION]["gripper_vel"] = PolicyFeature(
+            type=FeatureType.ACTION, shape=(1,)
+        )
         return features

@@ -307,7 +307,6 @@ def record_loop(
         obs_transition = robot_observation_processor(obs)
 
         if policy is not None or dataset is not None:
-            # TODO(Steven): We might be able to get rid of this
             observation_frame = build_dataset_frame(
                 dataset.features, obs_transition[TransitionKey.OBSERVATION], prefix="observation"
             )
@@ -357,26 +356,26 @@ def record_loop(
         # Applies a pipeline to the action, default is IdentityProcessor
         # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
         if policy is not None and policy_transition is not None:
+            action_values = policy_transition[TransitionKey.ACTION]
             robot_action_to_send = robot_action_processor(policy_transition)
         else:
+            action_values = teleop_transition[TransitionKey.ACTION]
             robot_action_to_send = robot_action_processor(teleop_transition)
 
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-        # TODO(pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-        sent_action = robot.send_action(robot_action_to_send)
+        # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
+        _sent_action = robot.send_action(robot_action_to_send)
 
         # Write to dataset
         if dataset is not None:
-            action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
+            action_frame = build_dataset_frame(dataset.features, action_values, prefix="action")
             frame = {**observation_frame, **action_frame}
             dataset.add_frame(frame, task=single_task)
 
         if display_data:
-            log_rerun_data(
-                observation=obs_transition.get(TransitionKey.OBSERVATION), action=robot_action_to_send
-            )
+            log_rerun_data(observation=obs_transition[TransitionKey.OBSERVATION], action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
