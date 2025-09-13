@@ -503,10 +503,10 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             precision=config.dtype,
         )
 
-        self.action_in_proj = nn.Linear(config.action_dim, action_expert_config.width)
-        self.action_out_proj = nn.Linear(action_expert_config.width, config.action_dim)
+        self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
+        self.action_out_proj = nn.Linear(action_expert_config.width, config.max_action_dim)
 
-        self.state_proj = nn.Linear(config.state_dim, action_expert_config.width)
+        self.state_proj = nn.Linear(config.max_state_dim, action_expert_config.width)
         self.action_time_mlp_in = nn.Linear(2 * action_expert_config.width, action_expert_config.width)
         self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
@@ -758,8 +758,8 @@ $(python -c "import transformers, os; print(os.path.dirname(transformers.__file_
             actions_shape = (
                 bsize,
                 self.config.chunk_size,
-                self.config.action_dim,
-            )  # Use config action_dim for internal processing
+                self.config.max_action_dim,
+            )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
@@ -1250,12 +1250,12 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
 
     def prepare_state(self, batch):  # see lerobot pi0 `prepare_state` (exact copy)
         """Pad state"""
-        state = pad_vector(batch[OBS_STATE], self.config.state_dim)
+        state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
         return state
 
     def prepare_action(self, batch):  # see lerobot pi0 `prepare_action` (exact copy)
         """Pad action"""
-        actions = pad_vector(batch[ACTION], self.config.action_dim)
+        actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
     @torch.no_grad()
@@ -1314,7 +1314,7 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
         loss = losses.mean()
 
         loss_dict = {
-            "loss": loss.item(),
+            "l2_loss": loss.item(),
             "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
         }
 
