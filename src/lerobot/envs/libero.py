@@ -136,6 +136,7 @@ class LiberoEnv(gym.Env):
         init_states: bool = True,
         episode_index: int = 0,
         camera_name_mapping: dict[str, str] | None = None,
+        num_steps_wait: int = 10,
     ):
         super().__init__()
         self.task_id = task_id
@@ -161,11 +162,11 @@ class LiberoEnv(gym.Env):
                 "robot0_eye_in_hand_image": "image2",
             }
         self.camera_name_mapping = camera_name_mapping
-
-        self.num_steps_wait = (
-            10  # Do nothing for the first few timesteps to wait for the simulator drops objects
-        )
+        self.num_steps_wait = num_steps_wait
         self.episode_index = episode_index
+        # Load once and keep
+        self._init_states = get_task_init_states(task_suite, self.task_id) if self.init_states else None
+        self._init_state_id = self.episode_index  # tie each sub-env to a fixed init state
 
         self._env = self._make_envs_task(task_suite, self.task_id)
         default_steps = 500
@@ -225,12 +226,6 @@ class LiberoEnv(gym.Env):
         }
         env = OffScreenRenderEnv(**env_args)
         env.reset()
-        if self.init_states:
-            init_states = get_task_init_states(task_suite, task_id)
-            # TODO(jadechoghari): For benchmarking we fix a set of initial states here.
-            # Ideally this should be handled in reset() for clarity and consistency.
-            init_state_id = self.episode_index  # episode index
-            env.set_init_state(init_states[init_state_id])
         return env
 
     def _format_raw_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
@@ -262,8 +257,13 @@ class LiberoEnv(gym.Env):
     def reset(self, seed=None, **kwargs):
         super().reset(seed=seed)
         self._env.seed(seed)
+        if self.init_states and self._init_states is not None:
+            self._env.set_init_state(self._init_states[self._init_state_id])
         raw_obs = self._env.reset()
-        # Do nothing for the first few timesteps to wait for the simulator drops objects
+
+        # After reset, objects may be unstable (slightly floating, intersecting, etc.).
+        # Step the simulator with a no-op action for a few frames so everything settles.
+        # Increasing this value can improve determinism and reproducibility across resets.
         for _ in range(self.num_steps_wait):
             raw_obs, _, _, _ = self._env.step(get_libero_dummy_action())
         observation = self._format_raw_obs(raw_obs)

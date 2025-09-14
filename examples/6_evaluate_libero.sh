@@ -19,7 +19,7 @@ export CUDA_VISIBLE_DEVICES=2
 # CONFIGURATION
 POLICY_PATH="/raid/jade/logs/lerobot/lerobot_2_HuggingFaceVLA_libero_smolvla_lr1e-4bs32steps100000/checkpoints/100000/pretrained_model"
 POLICY_PATH="/raid/jade/models/jade_smolvla2"
-TASK=libero_spatial,libero_goal
+TASK=libero_spatial
 ENV_TYPE="libero"
 BATCH_SIZE=1
 N_EPISODES=1
