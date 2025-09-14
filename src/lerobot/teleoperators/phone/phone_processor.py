@@ -56,10 +56,10 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
             ValueError: If 'pos' or 'rot' keys are missing from the input action.
         """
         # Pop them from the action
-        enabled = bool(action.pop("phone.enabled", 0))
-        pos = action.pop("phone.pos", None)
-        rot = action.pop("phone.rot", None)
-        inputs = action.pop("phone.raw_inputs", {})
+        enabled = bool(action.pop("phone.enabled"))
+        pos = action.pop("phone.pos")
+        rot = action.pop("phone.rot")
+        inputs = action.pop("phone.raw_inputs")
 
         if pos is None or rot is None:
             raise ValueError("pos and rot must be present in action")
@@ -90,19 +90,21 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        features[PipelineFeatureType.ACTION].pop("phone.enabled", None)
-        features[PipelineFeatureType.ACTION].pop("phone.pos", None)
-        features[PipelineFeatureType.ACTION].pop("phone.rot", None)
-        features[PipelineFeatureType.ACTION].pop("phone.raw_inputs", None)
+        for feat in ["enabled", "pos", "rot", "raw_inputs"]:
+            features[PipelineFeatureType.ACTION].pop(f"phone.{feat}", None)
 
-        features[PipelineFeatureType.ACTION]["enabled"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["gripper_vel"] = PolicyFeature(
-            type=FeatureType.ACTION, shape=(1,)
-        )
+        for feat in [
+            "enabled",
+            "target_x",
+            "target_y",
+            "target_z",
+            "target_wx",
+            "target_wy",
+            "target_wz",
+            "gripper_vel",
+        ]:
+            features[PipelineFeatureType.ACTION][f"{feat}"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+
         return features

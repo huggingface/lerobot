@@ -59,9 +59,11 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        features[PipelineFeatureType.ACTION]["delta_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["delta_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["delta_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        for axis in ["x", "y", "z"]:
+            features[PipelineFeatureType.ACTION][f"delta_{axis}"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+
         if self.use_gripper:
             features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(
                 type=FeatureType.ACTION, shape=(1,)
@@ -94,10 +96,10 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     def action(self, action: RobotAction) -> RobotAction:
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
         # TODO (maractingi): changing this target_xyz naming convention from the teleop_devices
-        delta_x = action.pop("delta_x", 0.0)
-        delta_y = action.pop("delta_y", 0.0)
-        delta_z = action.pop("delta_z", 0.0)
-        gripper = action.pop("gripper", 1.0)  # Default to "stay" (1.0)
+        delta_x = action.pop("delta_x")
+        delta_y = action.pop("delta_y")
+        delta_z = action.pop("delta_z")
+        gripper = action.pop("gripper")
 
         # Determine if the teleoperator is actively providing input
         # Consider enabled if any significant movement delta is detected
@@ -132,18 +134,12 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """Transform features to match output format."""
-        features[PipelineFeatureType.ACTION].pop("delta_x", None)
-        features[PipelineFeatureType.ACTION].pop("delta_y", None)
-        features[PipelineFeatureType.ACTION].pop("delta_z", None)
-        features[PipelineFeatureType.ACTION].pop("gripper", None)
+        for axis in ["x", "y", "z", "gripper"]:
+            features[PipelineFeatureType.ACTION].pop(f"delta_{axis}", None)
 
-        features[PipelineFeatureType.ACTION]["enabled"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_z"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_wx"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_wy"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["target_wz"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-        features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+        for feat in ["enabled", "target_x", "target_y", "target_z", "target_wx", "target_wy", "target_wz"]:
+            features[PipelineFeatureType.ACTION][f"{feat}"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+
         return features
