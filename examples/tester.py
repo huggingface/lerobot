@@ -1,11 +1,13 @@
 # here we make sure that the libero envs follow the gymnasium API and are reproducible
-from lerobot.envs.libero import create_libero_envs, get_task_init_states
-from gymnasium.utils.env_checker import check_env
+import random
+
 import gymnasium as gym
 import numpy as np
-from lerobot.utils.random_utils import set_seed
 import torch
-import random
+from gymnasium.utils.env_checker import check_env
+
+from lerobot.envs.libero import create_libero_envs
+from lerobot.utils.random_utils import set_seed
 
 
 def control_seed(seed):
@@ -14,6 +16,7 @@ def control_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
+
 
 def validate_libero_env(task: str, seed: int = 123, n_steps: int = 1):
     set_seed(seed)
@@ -69,8 +72,9 @@ def validate_libero_env(task: str, seed: int = 123, n_steps: int = 1):
 
     print(f"✅ {task} passes API and reproducibility check")
 
-import numpy as np
+
 import os
+
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
@@ -92,13 +96,15 @@ env = OffScreenRenderEnv(**env_args)
 init_states = task_suite.get_task_init_states(task_id)
 init_state_id = 0
 
+
 def one_step_pixels(seed):
     env.seed(seed)
     env.reset()
     env.set_init_state(init_states[init_state_id])
-    dummy_action = [0.] * 7
+    dummy_action = [0.0] * 7
     obs, reward, done, info = env.step(dummy_action)
     return obs["agentview_image"].copy()
+
 
 # run twice with the same seed
 pix1 = one_step_pixels(123)
