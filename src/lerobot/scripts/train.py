@@ -292,18 +292,20 @@ def train(cfg: TrainPipelineConfig):
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
-        if cfg.save_checkpoint and is_saving_step and accelerator.is_main_process:
-            # Wait for all processes to finish current step
-            accelerator.wait_for_everyone()
-            logging.info(f"Checkpoint policy after step {step}")
-            checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
+        if cfg.save_checkpoint and is_saving_step:
+            if accelerator.is_main_process:
+                logging.info(f"Checkpoint policy after step {step}")
+                checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
 
-            # Use accelerator to unwrap the model before saving
-            unwrapped_policy = accelerator.unwrap_model(policy)
-            save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
-            update_last_checkpoint(checkpoint_dir)
-            if wandb_logger:
-                wandb_logger.log_policy(checkpoint_dir)
+                # Use accelerator to unwrap the model before saving
+                unwrapped_policy = accelerator.unwrap_model(policy)
+                save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
+                update_last_checkpoint(checkpoint_dir)
+                if wandb_logger:
+                    wandb_logger.log_policy(checkpoint_dir)
+
+            # Wait for all processes after checkpoint is saved
+            accelerator.wait_for_everyone()
 
         if cfg.env and is_eval_step:
             # Only evaluate on main process
