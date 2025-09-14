@@ -1,20 +1,40 @@
+"""
+ALOHA Bimanual Recording Script
+
+This script records episodes using ALOHA dual-arm system (ViperX followers + WidowX leaders).
+
+Usage:
+1. New dataset: Set RESUME = False
+2. Resume/append: Set RESUME = True (will continue from existing episodes)
+
+The script will:
+- Record NUM_EPISODES new episodes
+- Show progress with total episode count
+- Push dataset to HuggingFace Hub when complete
+"""
+
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.record import record_loop
 from lerobot.robots.aloha import Aloha, AlohaConfig
 from lerobot.teleoperators.aloha_teleop import AlohaTeleop, AlohaTeleopConfig
-from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.control_utils import (
+    init_keyboard_listener,
+    sanity_check_dataset_name,
+    sanity_check_dataset_robot_compatibility,
+)
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
 
 # Recording configuration
-NUM_EPISODES = 5
+NUM_EPISODES = 0
 FPS = 30
-EPISODE_TIME_SEC = 60
-RESET_TIME_SEC = 10
-TASK_DESCRIPTION = "ALOHA bimanual manipulation task"
-REPO_ID = "pepijn223/aloha-record-test"
+EPISODE_TIME_SEC = 200
+RESET_TIME_SEC = 30
+TASK_DESCRIPTION = "First put the Hugging Face t shirt with both arms in the box, then place the hat with the right arm in the box."
+REPO_ID = "pepijn223/aloha_box_2"
+RESUME = True  # Set to True to resume/append to existing dataset
 
 # Create camera configuration
 camera_config = {
@@ -55,15 +75,38 @@ action_features = hw_to_dataset_features(robot.action_features, "action")
 obs_features = hw_to_dataset_features(robot.observation_features, "observation")
 dataset_features = {**action_features, **obs_features}
 
-# Create the dataset
-dataset = LeRobotDataset.create(
-    repo_id=REPO_ID,
-    fps=FPS,
-    features=dataset_features,
-    robot_type=robot.name,
-    use_videos=True,
-    image_writer_threads=4,
-)
+# Create or resume the dataset
+if RESUME:
+    print(f"Resuming existing dataset: {REPO_ID}")
+    dataset = LeRobotDataset(
+        repo_id=REPO_ID,
+        root=None,  # Use default root
+    )
+
+    # Start image writer for cameras
+    if hasattr(robot, "cameras") and len(robot.cameras) > 0:
+        dataset.start_image_writer(
+            num_processes=0,  # Use threads only
+            num_threads=4 * len(robot.cameras),  # 4 threads per camera
+        )
+
+    # Sanity check compatibility
+    sanity_check_dataset_robot_compatibility(dataset, robot, FPS, dataset_features)
+    print(f"Resumed dataset with {dataset.num_episodes} existing episodes")
+else:
+    print(f"Creating new dataset: {REPO_ID}")
+    # Sanity check dataset name
+    sanity_check_dataset_name(REPO_ID, None)
+
+    # Create new dataset
+    dataset = LeRobotDataset.create(
+        repo_id=REPO_ID,
+        fps=FPS,
+        features=dataset_features,
+        robot_type=robot.name,
+        use_videos=True,
+        image_writer_threads=4 * len(robot.cameras),  # 4 threads per camera
+    )
 
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
@@ -74,8 +117,12 @@ robot.connect()
 teleop.connect()
 
 episode_idx = 0
+total_episodes_to_record = NUM_EPISODES
+existing_episodes = dataset.num_episodes if RESUME else 0
+
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
-    log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
+    current_episode = existing_episodes + episode_idx + 1
+    log_say(f"Recording episode {current_episode} (batch: {episode_idx + 1}/{NUM_EPISODES})")
 
     record_loop(
         robot=robot,
@@ -115,4 +162,11 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
 log_say("Stop recording")
 robot.disconnect()
 teleop.disconnect()
+
+# Summary
+final_episodes = dataset.num_episodes
+log_say(f"Dataset now contains {final_episodes} episodes total")
+
+# Push to hub
 dataset.push_to_hub()
+log_say(f"Dataset '{REPO_ID}' pushed to HuggingFace Hub")
