@@ -52,8 +52,10 @@ class SMOLANDFASTConfig(PreTrainedConfig):
 
     checkpoint_path: str = None
 
-    llm_checkpoint = "HuggingFaceTB/SmolLM2-135M"
+    # llm_checkpoint = "HuggingFaceTB/SmolLM2-135M"
     # llm_checkpoint = "gpt2"
+    llm_checkpoint = "google/gemma-3-270m"
+
 
     padding_side: str = "right"
     precision: str = "bfloat16"
