@@ -114,6 +114,21 @@ class BiPiper(Robot):
             logger.error(f"Failed to connect to BiPiper robot: {e}")
             raise
 
+    @property
+    def is_calibrated(self) -> bool:
+        """BiPiper robots are assumed to be always calibrated"""
+        return True
+
+    def calibrate(self) -> None:
+        """BiPiper robots don't require manual calibration"""
+        logger.info("BiPiper robot calibration - no action needed, assumed calibrated")
+        pass
+
+    def configure(self) -> None:
+        """Configure the BiPiper robot - no specific configuration needed"""
+        logger.info("BiPiper robot configuration - no action needed")
+        pass
+
     def disconnect(self) -> None:
         """
         Disconnect from both Piper arms and cameras
@@ -143,7 +158,7 @@ class BiPiper(Robot):
         except Exception as e:
             logger.error(f"Error during BiPiper robot disconnect: {e}")
 
-    def capture_observation(self) -> dict:
+    def get_observation(self) -> dict:
         """
         Capture current joint positions and camera images
         """
@@ -262,7 +277,7 @@ class BiPiper(Robot):
             logger.error(f"Error parsing gripper messages: {e}")
             observation[f"{arm_prefix}_gripper.pos"] = 0.0
 
-    def send_action(self, action: dict) -> None:
+    def send_action(self, action: dict) -> dict:
         """
         Send action to both Piper arms
         Note: This is a placeholder since you mentioned the robot movement is handled separately
@@ -274,4 +289,6 @@ class BiPiper(Robot):
         # we don't need to implement actual movement commands here
         # This method is required by the Robot interface but can be a no-op
         logger.debug("send_action called - movement handled separately")
-        pass
+        
+        # Return the action as-is since no modifications are made
+        return action
