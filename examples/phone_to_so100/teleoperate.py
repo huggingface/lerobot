@@ -63,13 +63,12 @@ phone_to_robot_joints_processor = RobotProcessorPipeline[RobotAction, RobotActio
             max_ee_step_m=0.10,
             max_ee_twist_step_rad=0.50,
         ),
+        GripperVelocityToJoint(
+            speed_factor=20.0,
+        ),
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
-        ),
-        GripperVelocityToJoint(
-            motor_names=list(robot.bus.motors.keys()),
-            speed_factor=20.0,
         ),
     ],
     to_transition=robot_action_to_transition,

@@ -17,6 +17,7 @@
 from typing import Any
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import combine_feature_dicts
@@ -106,9 +107,16 @@ dataset = LeRobotDataset.create(
             initial_features=create_initial_features(observation=robot.observation_features),
             use_videos=True,
         ),
+        # User for now should be explicit on the feature keys that were used for record
+        # Alternatively, the user can pass the processor step that has the right features
         aggregate_pipeline_dataset_features(
-            pipeline=robot_ee_to_joints_processor,
-            initial_features=create_initial_features(action=robot.action_features),
+            pipeline=make_default_teleop_action_processor(),
+            initial_features=create_initial_features(
+                action={
+                    f"ee.{k}": PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+                    for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]
+                }
+            ),
             use_videos=True,
         ),
     ),
