@@ -379,14 +379,11 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
         curr_gripper_pos = complementary_data["raw_joint_positions"]["gripper"]
 
-        # TODO(Michel,Adil): Fix this logic
-        # if self.discrete_gripper:
-        #     # Discrete gripper actions are in [0, 1, 2]
-        #     # 0: open, 1: close, 2: stay
-        #     # We need to shift them to [-1, 0, 1] and then scale them to clip_max
-        #     gripper_action = gripper_vel
-        #     gripper_action *= self.clip_max
-        #     action["ee.gripper_pos"] = gripper_action
+        if self.discrete_gripper:
+            # Discrete gripper actions are in [0, 1, 2]
+            # 0: open, 1: close, 2: stay
+            # We need to shift them to [-1, 0, 1] and then scale them to clip_max
+            gripper_vel = (gripper_vel - 1) * self.clip_max
 
         # Compute desired gripper position
         delta = gripper_vel * float(self.speed_factor)

@@ -126,7 +126,7 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
             "target_wx": target_wx,
             "target_wy": target_wy,
             "target_wz": target_wz,
-            "gripper": float(gripper),
+            "gripper_vel": float(gripper),
         }
 
         return action

@@ -29,6 +29,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
+    ActionProcessorStep,
     AddBatchDimensionProcessorStep,
     AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfoStep,
@@ -43,13 +44,17 @@ from lerobot.processor import (
     MapTensorToDeltaActionDictStep,
     MotorCurrentProcessorStep,
     Numpy2TorchActionProcessorStep,
+    PolicyAction,
+    ProcessorStepRegistry,
     RewardClassifierProcessorStep,
+    RobotAction,
     TimeLimitProcessorStep,
     Torch2NumpyActionProcessorStep,
     TransitionKey,
     VanillaObservationProcessorStep,
     create_transition,
 )
+from lerobot.processor.converters import identity_transition
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
@@ -76,6 +81,22 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
 logging.basicConfig(level=logging.INFO)
+
+
+@dataclass
+@ProcessorStepRegistry.register("map_robot_action_to_tensor_processor")
+class MapRobotActionToTensorProcessorStep(ActionProcessorStep):
+    """Processor step to map a dictionary to a tensor action."""
+
+    motor_names: list[str]
+
+    def action(self, action: RobotAction) -> PolicyAction:
+        if len(self.motor_names) != len(action):
+            raise ValueError(f"Action must have {len(self.motor_names)} elements, got {len(action)}")
+        return torch.tensor([action[f"{name}.pos"] for name in self.motor_names])
+
+    def transform_features(self, features):
+        return features
 
 
 @dataclass
@@ -156,15 +177,17 @@ class RobotEnv(gym.Env):
 
         self.use_gripper = use_gripper
 
+        self._joint_names = list(self.robot.bus.motors.keys())
+
         self._setup_spaces()
 
     def _get_observation(self) -> dict[str, Any]:
         """Get current robot observation including joint positions and camera images."""
         obs_dict = self.robot.get_observation()
-        joint_positions = np.array([obs_dict[name] for name in self._joint_names])
+        joint_positions = np.array([obs_dict[f"{name}.pos"] for name in self._joint_names])
 
         images = {key: obs_dict[key] for key in self._image_keys}
-        return {"agent_pos": joint_positions, "pixels": images}
+        return {"agent_pos": joint_positions, "pixels": images, **obs_dict}
 
     def _setup_spaces(self) -> None:
         """Configure observation and action spaces based on robot capabilities."""
@@ -241,14 +264,12 @@ class RobotEnv(gym.Env):
         obs = self._get_observation()
         return obs, {
             TeleopEvents.IS_INTERVENTION: False,
-            "raw_joint_positions": obs["agent_pos"],
+            "raw_joint_positions": {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names},
         }
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
-        joint_targets_dict = {
-            f"{key}.pos": action[f"action.{key}.pos"] for key in self.robot.bus.motors.keys()
-        }
+        joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
 
         self.robot.send_action(joint_targets_dict)
 
@@ -268,7 +289,10 @@ class RobotEnv(gym.Env):
             reward,
             terminated,
             truncated,
-            {TeleopEvents.IS_INTERVENTION: False, "raw_joint_positions": obs["agent_pos"]},
+            {
+                TeleopEvents.IS_INTERVENTION: False,
+                "raw_joint_positions": {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names},
+            },
         )
 
     def render(self) -> None:
@@ -344,7 +368,9 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
 
 def make_processors(
     env: gym.Env, teleop_device: Teleoperator | None, cfg: HILSerlRobotEnvConfig, device: str = "cpu"
-) -> tuple[Any, Any]:
+) -> tuple[
+    DataProcessorPipeline[EnvTransition, EnvTransition], DataProcessorPipeline[EnvTransition, EnvTransition]
+]:
     """Create environment and action processors.
 
     Args:
@@ -422,7 +448,7 @@ def make_processors(
         )
 
     # Add gripper penalty processor if gripper config exists and enabled
-    if cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
+    if False and cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
         env_pipeline_steps.append(
             GripperPenaltyProcessorStep(
                 penalty=cfg.processor.gripper.gripper_penalty,
@@ -474,30 +500,34 @@ def make_processors(
             EEBoundsAndSafety(
                 end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
             ),
+            GripperVelocityToJoint(
+                clip_max=cfg.processor.max_gripper_pos,
+                speed_factor=1.0,
+                discrete_gripper=True,
+            ),
             InverseKinematicsEEToJoints(
                 kinematics=kinematics_solver,
                 motor_names=motor_names,
                 initial_guess_current_joints=False,
             ),
-            GripperVelocityToJoint(
-                motor_names=motor_names,
-                clip_max=cfg.processor.max_gripper_pos,
-                speed_factor=1.0,
-                discrete_gripper=True,
-            ),
         ]
         action_pipeline_steps.extend(inverse_kinematics_steps)
+        action_pipeline_steps.append(MapRobotActionToTensorProcessorStep(motor_names=motor_names))
 
-    return DataProcessorPipeline(steps=env_pipeline_steps), DataProcessorPipeline(steps=action_pipeline_steps)
+    return DataProcessorPipeline(
+        steps=env_pipeline_steps, to_transition=identity_transition, to_output=identity_transition
+    ), DataProcessorPipeline(
+        steps=action_pipeline_steps, to_transition=identity_transition, to_output=identity_transition
+    )
 
 
 def step_env_and_process_transition(
     env: gym.Env,
     transition: EnvTransition,
     action: torch.Tensor,
-    env_processor: DataProcessorPipeline,
-    action_processor: DataProcessorPipeline,
-):
+    env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
+    action_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
+) -> EnvTransition:
     """
     Execute one step with processor pipeline.
 
@@ -545,8 +575,8 @@ def step_env_and_process_transition(
 
 def control_loop(
     env: gym.Env,
-    env_processor: DataProcessorPipeline,
-    action_processor: DataProcessorPipeline,
+    env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
+    action_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
     teleop_device: Teleoperator,
     cfg: GymManipulatorConfig,
 ) -> None:
@@ -578,7 +608,7 @@ def control_loop(
 
     # Process initial observation
     transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
-    transition = env_processor(transition)
+    transition = env_processor(data=transition)
 
     # Determine if gripper is used
     use_gripper = cfg.env.processor.gripper.use_gripper if cfg.env.processor.gripper is not None else True
