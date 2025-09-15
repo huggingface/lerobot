@@ -254,6 +254,8 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+            print("action_values", action_values)
+            print("action", action)
         elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
         elif policy is None and isinstance(teleop, list):
