@@ -691,8 +691,10 @@ def control_loop(
             if use_gripper:
                 discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
                 frame["complementary_info.discrete_penalty"] = np.array([discrete_penalty], dtype=np.float32)
+
             if dataset is not None:
-                dataset.add_frame(frame, task=cfg.dataset.task)
+                frame["task"] = cfg.dataset.task
+                dataset.add_frame(frame)
 
         episode_step += 1
 
