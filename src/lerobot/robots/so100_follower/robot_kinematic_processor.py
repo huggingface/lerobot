@@ -458,6 +458,58 @@ class ForwardKinematicsJointsToEE(ObservationProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register("forward_kinematics_joints_to_ee_action")
+@dataclass
+class ForwardKinematicsJointsToEEACTION(RobotActionProcessorStep):
+    """
+    Computes the end-effector pose from joint positions using forward kinematics (FK).
+
+    This step is typically used to add the robot's Cartesian pose to the observation space,
+    which can be useful for visualization or as an input to a policy.
+
+    Attributes:
+        kinematics: The robot's kinematic model.
+    """
+
+    kinematics: RobotKinematics
+    motor_names: list[str]
+
+    def action(self, action: RobotAction) -> RobotAction:
+        motor_joint_values = [action[f"{n}.pos"] for n in self.motor_names]
+
+        q = np.array(motor_joint_values, dtype=float)
+        t = self.kinematics.forward_kinematics(q)
+        pos = t[:3, 3]
+        tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
+
+        gripper_pos = action["gripper.pos"]
+
+        for n in self.motor_names:
+            action.pop(f"{n}.pos")
+
+        action["ee.x"] = float(pos[0])
+        action["ee.y"] = float(pos[1])
+        action["ee.z"] = float(pos[2])
+        action["ee.wx"] = float(tw[0])
+        action["ee.wy"] = float(tw[1])
+        action["ee.wz"] = float(tw[2])
+        action["ee.gripper_pos"] = float(gripper_pos)
+        return action
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We only use the ee pose in the dataset, so we don't need the joint positions
+        for n in self.motor_names:
+            features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
+        # We specify the dataset features of this step that we want to be stored in the dataset
+        for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
+            features[PipelineFeatureType.ACTION][f"ee.{k}"] = PolicyFeature(
+                type=FeatureType.STATE, shape=(1,)
+            )
+        return features
+
+
 @ProcessorStepRegistry.register("add_robot_observation")
 @dataclass
 class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessorStep):
