@@ -35,7 +35,6 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     ForwardKinematicsJointsToEE,
-    ForwardKinematicsJointsToEEACTION,
     InverseKinematicsEEToJoints,
 )
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
@@ -86,7 +85,7 @@ follower_joints_to_ee = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
 
 leader_joints_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[
-        ForwardKinematicsJointsToEEACTION(
+        ForwardKinematicsJointsToEE(
             kinematics=leader_kinematics_solver, motor_names=list(leader.bus.motors.keys())
         ),
     ],

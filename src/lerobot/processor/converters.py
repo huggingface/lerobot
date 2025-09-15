@@ -262,7 +262,7 @@ def robot_action_to_transition(action: RobotAction) -> EnvTransition:
         An `EnvTransition` containing the formatted action.
     """
 
-    return create_transition(observation={}, action=action)
+    return create_transition(action=action)
 
 
 def observation_to_transition(observation: RobotObservation) -> EnvTransition:
@@ -283,7 +283,7 @@ def observation_to_transition(observation: RobotObservation) -> EnvTransition:
 
     image_observations = {f"{OBS_IMAGES}.{cam}": img for cam, img in images.items()}
 
-    return create_transition(observation={**state, **image_observations}, action={})
+    return create_transition(observation={**state, **image_observations})
 
 
 def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
