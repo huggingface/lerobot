@@ -25,7 +25,7 @@ import torch
 
 from lerobot.constants import OBS_IMAGES
 
-from .core import EnvTransition, PolicyAction, RobotAction, TransitionKey, RobotObservation
+from .core import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 
 @singledispatch
