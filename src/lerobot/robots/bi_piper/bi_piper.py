@@ -273,6 +273,6 @@ class BiPiper(Robot):
         # we don't need to implement actual movement commands here
         # This method is required by the Robot interface but can be a no-op
         logger.debug("send_action called - movement handled separately")
-        
+
         # Return the action as-is since no modifications are made
         return action
