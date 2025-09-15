@@ -29,7 +29,6 @@ import PIL.Image
 import torch
 import torch.utils
 from huggingface_hub import HfApi, snapshot_download
-from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.constants import HF_LEROBOT_HOME
