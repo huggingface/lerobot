@@ -336,12 +336,6 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
             episodes_metadata[past_ep_idx][f"videos/{video_key}/chunk_index"] = chunk_idx
             episodes_metadata[past_ep_idx][f"videos/{video_key}/file_index"] = file_idx
 
-        # Update episodes metadata for the final file
-        for i, _ in enumerate(paths_to_cat):
-            past_ep_idx = ep_idx - len(paths_to_cat) + i
-            episodes_metadata[past_ep_idx][f"videos/{video_key}/chunk_index"] = chunk_idx
-            episodes_metadata[past_ep_idx][f"videos/{video_key}/file_index"] = file_idx
-
     return episodes_metadata
 
 

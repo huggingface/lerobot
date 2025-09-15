@@ -980,10 +980,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
         """
-        if not episode_data:
-            episode_buffer = self.episode_buffer
-        else:
-            episode_buffer = episode_data
+        episode_buffer = episode_data if episode_data is not None else self.episode_buffer
 
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 
