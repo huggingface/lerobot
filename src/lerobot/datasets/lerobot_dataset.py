@@ -671,11 +671,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             hub_api.upload_folder(**upload_kwargs)
 
-        if not hub_api.file_exists(self.repo_id, REPOCARD_NAME, repo_type="dataset", revision=branch):
-            card = create_lerobot_dataset_card(
-                tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
-            )
-            card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
+        card = create_lerobot_dataset_card(
+            tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
+        )
+        card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
 
         if tag_version:
             with contextlib.suppress(RevisionNotFoundError):
