@@ -79,6 +79,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_piper,
     bi_so100_follower,
     hope_jr,
     koch_follower,
