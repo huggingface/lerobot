@@ -175,7 +175,7 @@ class VideoDecoderCache:
     """Thread-safe cache for video decoders to avoid expensive re-initialization."""
 
     def __init__(self):
-        self._cache: dict[str, Any] = {}
+        self._cache: dict[str, tuple[Any, Any]] = {}
         self._lock = Lock()
 
     def get_decoder(self, video_path: str):
@@ -191,13 +191,15 @@ class VideoDecoderCache:
             if video_path not in self._cache:
                 file_handle = fsspec.open(video_path).__enter__()
                 decoder = VideoDecoder(file_handle, seek_mode="approximate")
-                self._cache[video_path] = decoder
+                self._cache[video_path] = (decoder, file_handle)
 
-            return self._cache[video_path]
+            return self._cache[video_path][0]
 
     def clear(self):
-        """Clear the cache."""
+        """Clear the cache and close file handles."""
         with self._lock:
+            for _, file_handle in self._cache.values():
+                file_handle.close()
             self._cache.clear()
 
     def size(self) -> int:

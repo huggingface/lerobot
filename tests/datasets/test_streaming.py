@@ -1,8 +1,24 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import numpy as np
 import pytest
 import torch
 
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets.utils import safe_shard
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 
@@ -330,7 +346,7 @@ def test_frames_with_delta_consistency_with_shards(
     num_shards = 4
     shards_indices = []
     for shard_idx in range(num_shards):
-        shard = streaming_ds.hf_dataset.shard(num_shards, index=shard_idx)
+        shard = safe_shard(streaming_ds.hf_dataset, shard_idx, num_shards)
         shard_indices = [item["index"] for item in shard]
         shards_indices.append(shard_indices)
 

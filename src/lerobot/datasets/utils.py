@@ -149,65 +149,6 @@ def get_video_size_in_mb(mp4_path: Path) -> float:
     return file_size_mb
 
 
-def get_parquet_file_size_in_mb(parquet_path: str | Path) -> float:
-    metadata = pq.read_metadata(parquet_path)
-    total_uncompressed_size = 0
-    for row_group in range(metadata.num_row_groups):
-        rg_metadata = metadata.row_group(row_group)
-        for column in range(rg_metadata.num_columns):
-            col_metadata = rg_metadata.column(column)
-            total_uncompressed_size += col_metadata.total_uncompressed_size
-    return total_uncompressed_size / (1024**2)
-
-
-def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
-    return hf_ds.data.nbytes // (1024**2)
-
-
-def get_hf_dataset_cache_dir(hf_ds: Dataset) -> Path | None:
-    if hf_ds.cache_files is None or len(hf_ds.cache_files) == 0:
-        return None
-    return Path(hf_ds.cache_files[0]["filename"]).parents[2]
-
-
-def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -> tuple[int, int]:
-    if file_idx == chunks_size - 1:
-        file_idx = 0
-        chunk_idx += 1
-    else:
-        file_idx += 1
-    return chunk_idx, file_idx
-
-
-def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None) -> Dataset:
-    """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
-    Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
-    Concatenate all pyarrow references to return HF Dataset format
-
-    Args:
-        pq_dir: Directory containing parquet files
-        features: Optional features schema to ensure consistent loading of complex types like images
-    """
-    paths = sorted(pq_dir.glob("*/*.parquet"))
-    if len(paths) == 0:
-        raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
-
-    # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
-    datasets = [Dataset.from_parquet(str(path), features=features) for path in paths]
-    return concatenate_datasets(datasets)
-
-
-def get_parquet_num_frames(parquet_path: str | Path) -> int:
-    metadata = pq.read_metadata(parquet_path)
-    return metadata.num_rows
-
-
-def get_video_size_in_mb(mp4_path: Path) -> float:
-    file_size_bytes = mp4_path.stat().st_size
-    file_size_mb = file_size_bytes / (1024**2)
-    return file_size_mb
-
-
 def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     """Flatten a nested dictionary structure by collapsing nested keys into one key with a separator.
 
@@ -310,18 +251,11 @@ def write_tasks(tasks: pandas.DataFrame, local_dir: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tasks.to_parquet(path)
 
-def load_tasks(local_dir: Path) -> pandas.DataFrame:
-    tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
-    return tasks
 
 def load_tasks(local_dir: Path) -> pandas.DataFrame:
     tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
     return tasks
 
-def write_episodes(episodes: Dataset, local_dir: Path) -> None:
-    """Write episode metadata to a parquet file in the LeRobot v3.0 format.
-    This function writes episode-level metadata to a single parquet file.
-    Used primarily during dataset conversion (v2.1 → v3.0) and in test fixtures.
 
 def write_episodes(episodes: Dataset, local_dir: Path) -> None:
     """Write episode metadata to a parquet file in the LeRobot v3.0 format.
@@ -343,6 +277,7 @@ def write_episodes(episodes: Dataset, local_dir: Path) -> None:
     fpath = local_dir / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
     fpath.parent.mkdir(parents=True, exist_ok=True)
     episodes.to_parquet(fpath)
+
 
 def load_episodes(local_dir: Path) -> datasets.Dataset:
     episodes = load_nested_dataset(local_dir / EPISODES_DIR)
@@ -845,6 +780,7 @@ def to_parquet_with_hf_images(df: pandas.DataFrame, path: Path) -> None:
     # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
     datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
 
+
 def item_to_torch(item: dict) -> dict:
     """Convert all items in a dictionary to PyTorch tensors where appropriate.
 
@@ -856,9 +792,6 @@ def item_to_torch(item: dict) -> dict:
     Returns:
         dict: Dictionary with all tensor-like items converted to torch.Tensor.
     """
-    import numpy as np
-    import torch
-
     for key, val in item.items():
         if isinstance(val, (np.ndarray, list)) and key not in ["task"]:
             # Convert numpy arrays and lists to torch tensors
@@ -1064,3 +997,12 @@ class Backtrackable(Generic[T]):
         self._source = iter(new_source)
         self.clear_ahead_buffer()
         self.reset_cursor()
+
+
+def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:
+    """
+    Safe shards the dataset.
+    """
+    shard_idx = min(dataset.num_shards, index + 1) - 1
+
+    return dataset.shard(num_shards, index=shard_idx)

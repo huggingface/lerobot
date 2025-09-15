@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 
@@ -6,7 +21,7 @@ import numpy as np
 import torch
 from datasets import load_dataset
 
-from lerobot.constants import HF_LEROBOT_HOME
+from lerobot.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.utils import (
     Backtrackable,
@@ -17,6 +32,7 @@ from lerobot.datasets.utils import (
     get_delta_indices,
     is_float_in_list,
     item_to_torch,
+    safe_shard,
 )
 from lerobot.datasets.video_utils import (
     VideoDecoderCache,
@@ -116,10 +132,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
         self.video_decoder_cache = None
 
-        # Unused attributes
-        self.image_writer = None
-        self.episode_buffer = None
-
         self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
@@ -185,11 +197,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         buffer_indices_generator = self._iter_random_indices(rng, self.buffer_size)
 
         idx_to_backtrack_dataset = {
-            idx: self._make_backtrackable_dataset(self.hf_dataset.shard(self.num_shards, index=idx))
+            idx: self._make_backtrackable_dataset(safe_shard(self.hf_dataset, idx, self.num_shards))
             for idx in range(self.num_shards)
         }
 
         # This buffer is populated while iterating on the dataset's shards
+        # the logic is to add 2 levels of randomness:
+        # (1) sample one shard at random from the ones available, and
+        # (2) sample one frame from the shard sampled at (1)
         frames_buffer = []
         while available_shards := list(idx_to_backtrack_dataset.keys()):
             shard_key = next(self._infinite_generator_over_elements(rng, available_shards))
@@ -215,15 +230,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         yield from frames_buffer
 
     def _get_window_steps(
-        self, delta_timestamps: dict[list[float]] | None = None, dynamic_bounds: bool = False
+        self, delta_timestamps: dict[str, list[float]] | None = None, dynamic_bounds: bool = False
     ) -> tuple[int, int]:
         if delta_timestamps is None:
             return 1, 1
 
         if not dynamic_bounds:
             # Fix the windows
-            lookback = 100
-            lookahead = 100
+            lookback = LOOKBACK_BACKTRACKTABLE
+            lookahead = LOOKAHEAD_BACKTRACKTABLE
         else:
             # Dynamically adjust the windows based on the given delta_timesteps
             all_timestamps = sum(delta_timestamps.values(), [])
@@ -261,7 +276,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         video_frames: dict[str, torch.Tensor],
         query_timestamps: dict[str, list[float]],
         original_timestamps: dict[str, list[float]],
-    ) -> tuple[dict[str, torch.BoolTensor]]:
+    ) -> dict[str, torch.BoolTensor]:
         padding_mask = {}
 
         for video_key, timestamps in original_timestamps.items():
@@ -383,9 +398,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
 
         return item
-
-    def _make_padding_frame(self, key: str) -> tuple[torch.Tensor, bool]:
-        return torch.zeros(self.meta.info["features"][key]["shape"]), True
 
     def _get_delta_frames(self, dataset_iterator: Backtrackable, current_item: dict):
         # TODO(fracapuano): Modularize this function, refactor the code
@@ -521,23 +533,3 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 f"The following delta_timestamp keys do not correspond to dataset features: {invalid_keys}. "
                 f"Available features are: {sorted(available_features)}"
             )
-
-
-# Example usage
-if __name__ == "__main__":
-    repo_id = "lerobot/aloha_mobile_cabinet"
-
-    camera_key = "observation.images.cam_right_wrist"
-    fps = 50
-
-    delta_timestamps = {
-        # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
-        camera_key: [-1, -0.5, -0.20, 0],
-        # loads 6 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
-        "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
-        # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
-        "action": [t / fps for t in range(64)],
-    }
-
-    dataset = StreamingLeRobotDataset(repo_id, delta_timestamps=delta_timestamps)
-    frame = next(iter(dataset))
