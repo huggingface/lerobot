@@ -21,6 +21,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from functools import partial
 
 import gymnasium as gym
 import numpy as np
@@ -312,31 +313,23 @@ def _make_env_fns(
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
     joined_cams = ",".join(camera_names)  # keep backward-compat: downstream expects a string
-    fns: list[Callable[[], LiberoEnv]] = []
-    for i in range(n_envs):
 
-        def _make(
-            i=i,
-            suite=suite,
+    def _make_env(episode_index: int, **kwargs) -> LiberoEnv:
+        local_kwargs = dict(kwargs)
+        return LiberoEnv(
+            task_suite=suite,
             task_id=task_id,
-            suite_name=suite_name,
-            joined_cams=joined_cams,
+            task_suite_name=suite_name,
+            camera_name=joined_cams,
             init_states=init_states,
-        ):
-            local_kwargs = dict(gym_kwargs)
-            return LiberoEnv(
-                task_suite=suite,
-                task_id=task_id,
-                task_suite_name=suite_name,
-                camera_name=joined_cams,
-                init_states=init_states,
-                episode_index=i,
-                **local_kwargs,
-            )
+            episode_index=episode_index,
+            **local_kwargs,
+        )
 
-        fns.append(_make)
+    fns: list[Callable[[], LiberoEnv]] = []
+    for episode_index in range(n_envs):
+        fns.append(partial(_make_env, episode_index, **gym_kwargs))
     return fns
-
 
 # ---- Main API ----------------------------------------------------------------
 

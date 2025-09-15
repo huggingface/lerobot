@@ -53,8 +53,9 @@ def make_env(
     Returns:
         dict[str, dict[int, gym.vector.VectorEnv]]:
             A mapping from suite name to indexed vectorized environments.
-            - For LIBERO: one entry per suite, one vec env per task_id.
-            - For non-LIBERO envs: a single suite entry (cfg.type) with task_id=0.
+            - For multi-task benchmarks (e.g., LIBERO): one entry per suite, and one vec env per task_id.
+            - For single-task environments: a single suite entry (cfg.type) with task_id=0.
+
     """
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")

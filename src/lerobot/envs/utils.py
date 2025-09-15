@@ -157,8 +157,6 @@ def _(env: Mapping) -> None:
             close_envs(v)
         elif hasattr(v, "close"):
             _close_single_env(v)
-        else:
-            continue
 
 
 @close_envs.register
@@ -170,8 +168,6 @@ def _(envs: Sequence) -> None:
             close_envs(v)
         elif hasattr(v, "close"):
             _close_single_env(v)
-        else:
-            continue
 
 
 @close_envs.register
