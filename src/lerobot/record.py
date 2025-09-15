@@ -365,8 +365,8 @@ def record_loop(
         # Write to dataset
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix="action")
-            frame = {**observation_frame, **action_frame}
-            dataset.add_frame(frame, task=single_task)
+            frame = {**observation_frame, **action_frame, "task": single_task}
+            dataset.add_frame(frame)
 
         if display_data:
             log_rerun_data(observation=obs_transition[TransitionKey.OBSERVATION], action=action_values)
