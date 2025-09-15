@@ -279,7 +279,7 @@ def record_loop(
                     action[action_key] = observation[action_key]
                 else:
                     logging.warning(f"Action key '{action_key}' not found in observation. Skipping.")
-            
+
             if not action:
                 logging.info(
                     "No valid action data found in observation for direct recording mode. "
