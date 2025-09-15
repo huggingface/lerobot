@@ -9,7 +9,8 @@ from typing import Any
 
 from lerobot.utils.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from fashionstar_uart_sdk import *
+from fashionstar_uart_sdk.uart_pocket_handler import PortHandler as starai_PortHandler
+from fashionstar_uart_sdk.uart_pocket_handler import SyncPositionControlOptions
 
 from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address,MotorNormMode
 from .tables import (
@@ -27,21 +28,6 @@ DEFAULT_MOTION_TIME = 100
 NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
 
 logger = logging.getLogger(__name__)
-
-
-class OperatingMode(Enum):
-    # position servo mode
-    POSITION = 0
-    # The motor is in constant speed mode, which is controlled by parameter 0x2e, and the highest bit 15 is
-    # the direction bit
-    VELOCITY = 1
-    # PWM open-loop speed regulation mode, with parameter 0x2c running time parameter control, bit11 as
-    # direction bit
-    PWM = 2
-    # In step servo mode, the number of step progress is represented by parameter 0x2a, and the highest bit 15
-    # is the direction bit
-    STEP = 3
-
 
 class DriveMode(Enum):
     NON_INVERTED = 0
@@ -73,14 +59,14 @@ class StaraiMotorsBus(MotorsBus):
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
         self.apply_drive_mode = True
-        # self.port_handler: PortHandler
-        self.port_handler = PortHandler(port,1000000)
+        self.starai_port_handler = starai_PortHandler(port,1000000)
+
         self.default_motion_time = default_motion_time
 
     @property
     def is_connected(self) -> bool:
         """bool: `True` if the underlying serial port is open."""
-        return self.port_handler.is_open
+        return self.starai_port_handler.is_open
 
     def set_half_turn_homings(self, motors: NameOrID | list[NameOrID] | None = None) -> dict[NameOrID, Value]:
         if motors is None:
@@ -106,12 +92,12 @@ class StaraiMotorsBus(MotorsBus):
         self._assert_motors_exist()
 
     def connect(self, handshake: bool = True) -> None:
-        self.port_handler.openPort()
+        self.starai_port_handler.openPort()
         for motor in self.motors:
-            if (self.port_handler.ping(self.motors[motor].id)!= True):
+            if (self.starai_port_handler.ping(self.motors[motor].id)!= True):
                 raise Exception(f"motor not found id:{self.motors[motor].id}")
         self.disable_torque()
-        self.port_handler.ResetLoop(0xff)
+        self.starai_port_handler.ResetLoop(0xff)
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         raise NotImplementedError(f"this function should never be called")
@@ -131,7 +117,7 @@ class StaraiMotorsBus(MotorsBus):
         read_data = {}
         if data_name == "Monitor" or data_name == "Present_Position":
             servos_id = dict(zip(names, ids))
-            monitor_data = self.port_handler.sync_read["Monitor"](servos_id)
+            monitor_data = self.starai_port_handler.sync_read["Monitor"](servos_id)
             for name in names:
                 if monitor_data[name].current_position >=180:
                     monitor_data[name].current_position = 180
@@ -163,9 +149,6 @@ class StaraiMotorsBus(MotorsBus):
                         normalized_values[name] = 100 - norm if drive_mode else norm
                     elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
                         raise NotImplementedError
-                        mid = (min_ + max_) / 2
-                        max_res = self.model_resolution_table[self._id_to_model(self.motors[motor].id)] - 1
-                        normalized_values[name] = (val - mid) * 360 / max_res
                     else:
                         raise NotImplementedError
 
@@ -173,7 +156,6 @@ class StaraiMotorsBus(MotorsBus):
 
         return read_data
     
-        # models = [self.motors[motor].model for motor in names]
 
     def sync_write(
         self,
@@ -200,7 +182,6 @@ class StaraiMotorsBus(MotorsBus):
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
             )
 
-        ids_values = self._get_ids_values_dict(values)
 
         write_data = {} 
         values_ ={}
@@ -241,7 +222,7 @@ class StaraiMotorsBus(MotorsBus):
             else:
                 write_data["gripper"].power=1000
 
-            self.port_handler.sync_write["Goal_Position"](write_data)
+            self.starai_port_handler.sync_write["Goal_Position"](write_data)
 
 
 
@@ -295,73 +276,13 @@ class StaraiMotorsBus(MotorsBus):
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id,"unlocked",0)
+            self.starai_port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id,"unlocked",0)
 
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
-        pass
-    #     addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
-    #     self._write(addr, length, motor_id, TorqueMode.DISABLED.value, num_retry=num_retry)
-    #     addr, length = get_address(self.model_ctrl_table, model, "Lock")
-    #     self._write(addr, length, motor_id, 0, num_retry=num_retry)
-
+        return
+    
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.port_handler.write["Stop_On_Control_Mode"](motor, "locked",0)
+            self.starai_port_handler.write["Stop_On_Control_Mode"](motor, "locked",0)
 
-    def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
-        for id_ in ids_values:
-            model = self._id_to_model(id_)
-            encoding_table = self.model_encoding_table.get(model)
-            if encoding_table and data_name in encoding_table:
-                sign_bit = encoding_table[data_name]
-                ids_values[id_] = encode_sign_magnitude(ids_values[id_], sign_bit)
-
-        return ids_values
-
-    def _decode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
-        for id_ in ids_values:
-            model = self._id_to_model(id_)
-            encoding_table = self.model_encoding_table.get(model)
-            if encoding_table and data_name in encoding_table:
-                sign_bit = encoding_table[data_name]
-                ids_values[id_] = decode_sign_magnitude(ids_values[id_], sign_bit)
-
-        return ids_values
-
-    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
-        return _split_into_byte_chunks(value, length)
-
-
-    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
-        self._assert_protocol_is_compatible("broadcast_ping")
-        for n_try in range(1 + num_retry):
-            ids_status, comm = self._broadcast_ping()
-            if self._is_comm_success(comm):
-                break
-            logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
-            logger.debug(self.packet_handler.getTxRxResult(comm))
-
-        if not self._is_comm_success(comm):
-            if raise_on_error:
-                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-            return
-
-        ids_errors = {id_: status for id_, status in ids_status.items() if self._is_error(status)}
-        if ids_errors:
-            display_dict = {id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()}
-            logger.error(f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}")
-
-        return self._read_model_number(list(ids_status), raise_on_error)
-
-
-    def _read_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
-        model_numbers = {}
-        for id_ in motor_ids:
-            model_nb, comm, error = self._read(*MODEL_NUMBER, id_, raise_on_error=raise_on_error)
-            if not self._is_comm_success(comm) or self._is_error(error):
-                continue
-
-            model_numbers[id_] = model_nb
-
-        return model_numbers

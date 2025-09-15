@@ -217,5 +217,3 @@ class StaraiCello(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
-
-
