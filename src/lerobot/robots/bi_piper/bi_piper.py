@@ -245,15 +245,15 @@ class BiPiper(Robot):
     def _parse_gripper_messages(self, gripper_msgs, arm_prefix: str, observation: dict) -> None:
         """
         Parse gripper messages from piper SDK format.
-        Expected format: gripper_state object with grippers_angle attribute
-        grippers_angle is in 0.001° units, needs conversion to degrees.
+        Expected format: ArmGripper object with gripper_state.grippers_angle attribute
+        grippers_angle is in 0.001mm units, needs conversion to mm.
         """
         try:
-            # Direct object access - convert from 0.001° to degrees
-            angle_raw = gripper_msgs.grippers_angle
-            angle_degrees = float(angle_raw) / 1000.0
-            observation[f"{arm_prefix}_gripper.pos"] = angle_degrees
-            logger.debug(f"{arm_prefix} gripper angle: {angle_degrees}° (raw: {angle_raw})")
+            # Access gripper_state.grippers_angle - convert from 0.001mm to mm
+            angle_raw = gripper_msgs.gripper_state.grippers_angle
+            angle_mm = float(angle_raw) / 1000.0
+            observation[f"{arm_prefix}_gripper.pos"] = angle_mm
+            logger.debug(f"{arm_prefix} gripper position: {angle_mm}mm (raw: {angle_raw})")
 
         except Exception as e:
             logger.error(f"Error parsing {arm_prefix} gripper messages: {e}")
