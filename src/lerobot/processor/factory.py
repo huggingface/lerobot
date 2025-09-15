@@ -21,7 +21,7 @@ from .converters import (
     transition_to_observation,
     transition_to_robot_action,
 )
-from .core import RobotAction
+from .core import RobotAction, RobotObservation
 from .pipeline import IdentityProcessorStep, RobotProcessorPipeline
 
 
@@ -43,8 +43,8 @@ def make_default_robot_action_processor() -> RobotProcessorPipeline[RobotAction,
     return robot_action_processor
 
 
-def make_default_robot_observation_processor() -> RobotProcessorPipeline[dict[str, Any], dict[str, Any]]:
-    robot_observation_processor = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
+def make_default_robot_observation_processor() -> RobotProcessorPipeline[RobotObservation, RobotObservation]:
+    robot_observation_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
         steps=[IdentityProcessorStep()],
         to_transition=observation_to_transition,
         to_output=transition_to_observation,
