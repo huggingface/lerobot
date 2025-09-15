@@ -17,6 +17,7 @@ import glob
 import importlib
 import logging
 import shutil
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -263,7 +264,11 @@ def encode_video_frames(
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
 
-    video_path.parent.mkdir(parents=True, exist_ok=overwrite)
+    if video_path.exists() and not overwrite:
+        logging.warning(f"Video file already exists: {video_path}. Skipping encoding.")
+        return
+
+    video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Encoders/pixel formats incompatibility check
     if (vcodec == "libsvtav1" or vcodec == "hevc") and pix_fmt == "yuv444p":
@@ -273,9 +278,9 @@ def encode_video_frames(
         pix_fmt = "yuv420p"
 
     # Get input frames
-    template = "frame_" + ("[0-9]" * 6) + ".png"
+    template = "frame-" + ("[0-9]" * 6) + ".png"
     input_list = sorted(
-        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("_")[-1].split(".")[0])
+        glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
     )
 
     # Define video output frame size (assuming all input frames are the same size)
@@ -300,7 +305,7 @@ def encode_video_frames(
 
     # Set logging level
     if log_level is not None:
-        # "While less efficient, it is generally preferable to modify logging with Python’s logging"
+        # "While less efficient, it is generally preferable to modify logging with Python's logging"
         logging.getLogger("libav").setLevel(log_level)
 
     # Create and open output file (overwrite by default)
@@ -329,6 +334,89 @@ def encode_video_frames(
 
     if not video_path.exists():
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")
+
+
+def concatenate_video_files(
+    input_video_paths: list[Path | str], output_video_path: Path, overwrite: bool = True
+):
+    """
+    Concatenate multiple video files into a single video file using pyav.
+
+    This function takes a list of video input file paths and concatenates them into a single
+    output video file. It uses ffmpeg's concat demuxer with stream copy mode for fast
+    concatenation without re-encoding.
+
+    Args:
+        input_video_paths: Ordered list of input video file paths to concatenate.
+        output_video_path: Path to the output video file.
+        overwrite: Whether to overwrite the output video file if it already exists. Default is True.
+
+    Note:
+        - Creates a temporary directory for intermediate files that is cleaned up after use.
+        - Uses ffmpeg's concat demuxer which requires all input videos to have the same
+          codec, resolution, and frame rate for proper concatenation.
+    """
+
+    output_video_path = Path(output_video_path)
+
+    if output_video_path.exists() and not overwrite:
+        logging.warning(f"Video file already exists: {output_video_path}. Skipping concatenation.")
+        return
+
+    output_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if len(input_video_paths) == 0:
+        raise FileNotFoundError("No input video paths provided.")
+
+    # Create a temporary .ffconcat file to list the input video paths
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
+        tmp_concatenate_file.write("ffconcat version 1.0\n")
+        for input_path in input_video_paths:
+            tmp_concatenate_file.write(f"file '{str(input_path)}'\n")
+        tmp_concatenate_file.flush()
+        tmp_concatenate_path = tmp_concatenate_file.name
+
+    # Create input and output containers
+    input_container = av.open(
+        tmp_concatenate_path, mode="r", format="concat", options={"safe": "0"}
+    )  # safe = 0 allows absolute paths as well as relative paths
+
+    tmp_output_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+    output_container = av.open(
+        tmp_output_video_path, mode="w", options={"movflags": "faststart"}
+    )  # faststart is to move the metadata to the beginning of the file to speed up loading
+
+    # Replicate input streams in output container
+    stream_map = {}
+    for input_stream in input_container.streams:
+        if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible streams
+            stream_map[input_stream.index] = output_container.add_stream_from_template(
+                template=input_stream, opaque=True
+            )
+            stream_map[
+                input_stream.index
+            ].time_base = (
+                input_stream.time_base
+            )  # set the time base to the input stream time base (missing in the codec context)
+
+    # Demux + remux packets (no re-encode)
+    for packet in input_container.demux():
+        # Skip packets from un-mapped streams
+        if packet.stream.index not in stream_map:
+            continue
+
+        # Skip demux flushing packets
+        if packet.dts is None:
+            continue
+
+        output_stream = stream_map[packet.stream.index]
+        packet.stream = output_stream
+        output_container.mux(packet)
+
+    input_container.close()
+    output_container.close()
+    shutil.move(tmp_output_video_path, output_video_path)
+    Path(tmp_concatenate_path).unlink()
 
 
 @dataclass
@@ -454,6 +542,28 @@ def get_image_pixel_channels(image: Image):
         raise ValueError("Unknown format")
 
 
+def get_video_duration_in_s(video_path: Path | str) -> float:
+    """
+    Get the duration of a video file in seconds using PyAV.
+
+    Args:
+        video_path: Path to the video file.
+
+    Returns:
+        Duration of the video in seconds.
+    """
+    with av.open(str(video_path)) as container:
+        # Get the first video stream
+        video_stream = container.streams.video[0]
+        # Calculate duration: stream.duration * stream.time_base gives duration in seconds
+        if video_stream.duration is not None:
+            duration = float(video_stream.duration * video_stream.time_base)
+        else:
+            # Fallback to container duration if stream duration is not available
+            duration = float(container.duration / av.time_base)
+    return duration
+
+
 class VideoEncodingManager:
     """
     Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
@@ -487,7 +597,7 @@ class VideoEncodingManager:
                 f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
                 f"from episode {start_ep} to {end_ep - 1}"
             )
-            self.dataset.batch_encode_videos(start_ep, end_ep)
+            self.dataset._batch_save_episode_video(start_ep, end_ep)
 
         # Clean up episode images if recording was interrupted
         if exc_type is not None:

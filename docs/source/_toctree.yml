@@ -21,6 +21,8 @@
     title: Use Async Inference
   - local: libero
     title: Using Libero
+  - local: porting_datasets_v3
+    title: Porting Large Datasets
   title: "Tutorials"
 - sections:
   - local: smolvla
