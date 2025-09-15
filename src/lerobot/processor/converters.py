@@ -317,7 +317,7 @@ def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
 
 def transition_to_observation(transition: EnvTransition) -> dict[str, Any]:
     """
-    Convert an `EnvTransition` to a `PolicyAction`.
+    Convert an `EnvTransition` to a `Observation.
     """
     observation = transition.get(TransitionKey.OBSERVATION)
     if not isinstance(observation, dict):

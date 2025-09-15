@@ -82,6 +82,7 @@ from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
     RobotAction,
+    RobotObservation,
     RobotProcessorPipeline,
     make_default_processors,
 )
@@ -236,7 +237,9 @@ def record_loop(
     fps: int,
     teleop_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],  # runs after teleop
     robot_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],  # runs before robot
-    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], dict[str, Any]],  # runs after robot
+    robot_observation_processor: RobotProcessorPipeline[
+        RobotObservation, RobotObservation
+    ],  # runs after robot
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,

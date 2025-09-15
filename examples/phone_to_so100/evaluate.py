@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -26,6 +25,7 @@ from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import (
     RobotAction,
+    RobotObservation,
     RobotProcessorPipeline,
     make_default_teleop_action_processor,
 )
@@ -88,7 +88,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
 )
 
 # Build pipeline to convert joint observation to ee pose observation
-robot_joints_to_ee_pose_processor = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
+robot_joints_to_ee_pose_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
