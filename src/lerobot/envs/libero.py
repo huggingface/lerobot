@@ -19,9 +19,9 @@ import math
 import os
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import Any
-from functools import partial
 
 import gymnasium as gym
 import numpy as np
@@ -330,6 +330,7 @@ def _make_env_fns(
     for episode_index in range(n_envs):
         fns.append(partial(_make_env, episode_index, **gym_kwargs))
     return fns
+
 
 # ---- Main API ----------------------------------------------------------------
 
