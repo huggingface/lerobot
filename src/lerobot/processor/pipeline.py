@@ -844,10 +844,10 @@ class ObservationProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         observation = new_transition.get(TransitionKey.OBSERVATION)
-        if observation is None:
+        if observation is None or not isinstance(observation, dict):
             raise ValueError("ObservationProcessorStep requires an observation in the transition.")
 
-        processed_observation = self.observation(observation)
+        processed_observation = self.observation(observation.copy())
         new_transition[TransitionKey.OBSERVATION] = processed_observation
         return new_transition
 
@@ -904,10 +904,10 @@ class RobotActionProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         action = new_transition.get(TransitionKey.ACTION)
-        if not isinstance(action, dict):
+        if action is None or not isinstance(action, dict):
             raise ValueError(f"Action should be a RobotAction type (dict), but got {type(action)}")
 
-        processed_action = self.action(action=action)
+        processed_action = self.action(action.copy())
         new_transition[TransitionKey.ACTION] = processed_action
         return new_transition
 
@@ -1049,10 +1049,10 @@ class InfoProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         info = new_transition.get(TransitionKey.INFO)
-        if info is None:
+        if info is None or not isinstance(info, dict):
             raise ValueError("InfoProcessorStep requires an info dictionary in the transition.")
 
-        processed_info = self.info(info)
+        processed_info = self.info(info.copy())
         new_transition[TransitionKey.INFO] = processed_info
         return new_transition
 
@@ -1078,10 +1078,10 @@ class ComplementaryDataProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
-        if complementary_data is None:
+        if complementary_data is None or not isinstance(complementary_data, dict):
             raise ValueError("ComplementaryDataProcessorStep requires complementary data in the transition.")
 
-        processed_complementary_data = self.complementary_data(complementary_data)
+        processed_complementary_data = self.complementary_data(complementary_data.copy())
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = processed_complementary_data
         return new_transition
 
