@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # config
-REPO_ID=jadechoghari/smol-libero3
+REPO_ID=HuggingfaceVLA/libero
 TASK=libero_10,libero_spatial
 OUTPUT_DIR=./outputs/
 
@@ -39,6 +39,7 @@ echo -e "\033[1;33m[WARNING]\033[0m LIBERO is not yet fully supported in this PR
 python src/lerobot/scripts/train.py \
   --policy.type=$POLICY \
   --dataset.repo_id=$REPO_ID \
+  --dataset.root='/raid/jade/.cache/huggingface/lerobot/HuggingFaceVLA/libero/data' \
   --env.type=libero \
   --env.task=$TASK \
   --output_dir=$OUTPUT_DIR \
@@ -50,3 +51,4 @@ python src/lerobot/scripts/train.py \
   --policy.repo_id=$VLM_REPO_ID \
   --eval.batch_size=1 \
   --eval.n_episodes=1 \
+  --policy.repo_id=None \
