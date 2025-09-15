@@ -18,7 +18,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TypeVar
+from typing import ClassVar, TypeVar
 
 import packaging
 import safetensors
@@ -41,8 +41,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     Base class for policy models.
     """
 
-    config_class: None
-    name: None
+    config_class: ClassVar[type[PreTrainedConfig]]
+    name: ClassVar[str]
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()
@@ -103,6 +103,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
+            assert config.device is not None
             policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
         else:
             try:
@@ -117,6 +118,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     token=token,
                     local_files_only=local_files_only,
                 )
+                assert config.device is not None
                 policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
@@ -130,10 +132,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
         # Create base kwargs
-        kwargs = {"strict": strict}
+        kwargs: dict[str, object] = {"strict": strict}
 
         # Add device parameter for newer versions that support it
-        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
+        ver_str = getattr(safetensors, "__version__", "0.0.0")
+        if packaging.version.parse(ver_str) >= packaging.version.parse("0.4.3"):
             kwargs["device"] = map_location
 
         # Load the model with appropriate kwargs
@@ -152,7 +155,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return model
 
     @abc.abstractmethod
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> object:
         """
         Returns the policy-specific parameters dict to be passed on to the optimizer.
         """
@@ -168,15 +171,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
-        """_summary_
+    def forward(self, batch: dict[str, Tensor], **kwargs: object) -> object:
+        """Run a forward pass.
 
-        Args:
-            batch (dict[str, Tensor]): _description_
-
-        Returns:
-            tuple[Tensor, dict | None]: The loss and potentially other information. Apart from the loss which
-                is a Tensor, all other items should be logging-friendly, native Python types.
+        Returns an object whose structure may vary by policy. When used for training
+        the first element is typically a loss tensor, followed by optional metadata.
         """
         raise NotImplementedError
 

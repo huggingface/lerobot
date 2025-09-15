@@ -346,7 +346,7 @@ class PI0Policy(PreTrainedPolicy):
         log_model_loading_keys(msg.missing_keys, msg.unexpected_keys)
         return model
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> object:
         return self.parameters()
 
     @classmethod

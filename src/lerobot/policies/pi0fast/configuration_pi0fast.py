@@ -72,7 +72,7 @@ class PI0FASTConfig(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    checkpoint_path: str = None
+    checkpoint_path: str | None = None
 
     padding_side: str = "right"
 
