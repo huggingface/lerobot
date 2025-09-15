@@ -29,7 +29,7 @@
 
 ## 规格参数
 
-![image-20250709072845215](media/starai/1-114090080-fashionstar-star-arm-cello-violin.jpg)
+![image-20250709072845215](../../media/starai/1-114090080-fashionstar-star-arm-cello-violin.jpg)
 
 | Item                 | Follower Arm \| Viola                             | Leder Arm \|Violin                                |
 | -------------------- | ------------------------------------------------- | ------------------------------------------------- |
@@ -127,8 +127,7 @@ For Ubuntu X86:
 5. 安装带有 fashionstar 电机依赖的 LeRobot：
 
     ```bash
-    cd ~/lerobot && pip install -e ".[dynamixel]"
-    pip install fashionstar-uart-sdk
+    cd ~/lerobot && pip install -e ".[starai]"
     ```
 6. 检查 Pytorch 和 Torchvision
 
@@ -170,7 +169,7 @@ lerobot-find-port
 > lsusb
 > ```
 >
-> <img src="./media/starai/image-20241230112928879-1749511998299-1.png" alt="image-20241230112928879-1749511998299-1" style="zoom:80%;" />
+> <img src="./../../media/starai/image-20241230112928879-1749511998299-1.png" alt="image-20241230112928879-1749511998299-1" style="zoom:80%;" />
 >
 > 识别成功，查看ttyusb的信息
 >
@@ -178,7 +177,7 @@ lerobot-find-port
 > sudo dmesg | grep ttyUSB
 > ```
 >
-> <img src="./media/starai/image-20241230113058856-1749512093309-2.png" alt="image-20241230113058856" style="zoom:80%;" />
+> <img src="./../../media/starai/image-20241230113058856-1749512093309-2.png" alt="image-20241230113058856" style="zoom:80%;" />
 >
 > 最后一行显示断连，因为brltty在占用该USB设备号，移除掉就可以了
 >
@@ -186,7 +185,7 @@ lerobot-find-port
 > sudo apt remove brltty
 > ```
 >
-> <img src="./media/starai/image-20241230113211143-1749512102599-4.png" alt="image-20241230113211143" style="zoom: 80%;" />
+> <img src="./../../media/starai/image-20241230113211143-1749512102599-4.png" alt="image-20241230113211143" style="zoom: 80%;" />
 >
 > 最后，赋予权限
 >
