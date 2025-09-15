@@ -130,16 +130,7 @@ for i, intermediate in enumerate(processor.step_through(data)):
 Add monitoring hooks without modifying your pipeline code:
 
 ```python
-# Define monitoring hooks
-def log_shapes(step_idx: int, transition: EnvTransition):
-    """Log tensor shapes after each step."""
-    obs = transition.get(TransitionKey.OBSERVATION)
-    if obs:
-        print(f"Step {step_idx} shapes:")
-        for key, value in obs.items():
-            if isinstance(value, torch.Tensor):
-                print(f"  {key}: {value.shape}")
-
+# Define monitoring hook
 def check_nans(step_idx: int, transition: EnvTransition):
     """Check for NaN values."""
     obs = transition.get(TransitionKey.OBSERVATION)
@@ -148,29 +139,14 @@ def check_nans(step_idx: int, transition: EnvTransition):
             if isinstance(value, torch.Tensor) and torch.isnan(value).any():
                 print(f"Warning: NaN detected in {key} at step {step_idx}")
 
-def measure_performance(step_idx: int, transition: EnvTransition):
-    """Measure processing time per step."""
-    import time
-    start_time = getattr(measure_performance, 'start_time', time.time())
-    if step_idx == 0:
-        measure_performance.start_time = time.time()
-    else:
-        elapsed = time.time() - start_time
-        print(f"Step {step_idx-1} took {elapsed*1000:.2f}ms")
-        measure_performance.start_time = time.time()
-
-# Register hooks
-processor.register_after_step_hook(log_shapes)
+# Register hook
 processor.register_after_step_hook(check_nans)
-processor.register_after_step_hook(measure_performance)
 
-# Process data - hooks will be called after each step
+# Process data - hook will be called after each step
 output = processor(input_data)
 
-# Remove hooks when done debugging
-processor.unregister_after_step_hook(log_shapes)
+# Remove hook when done debugging
 processor.unregister_after_step_hook(check_nans)
-processor.unregister_after_step_hook(measure_performance)
 ```
 
 ## Pipeline Testing and Validation
@@ -264,12 +240,13 @@ class PerformanceProfiler:
         print("\n=== Performance Report ===")
         for step_name, times in self.step_times.items():
             avg_time = sum(times) / len(times) * 1000  # ms
-            print(f"{step_name}: {avg_time:.2f}ms avg ({len(times)} calls)")
+            max_time = max(times) * 1000
+            print(f"{step_name}: {avg_time:.2f}ms avg, {max_time:.2f}ms max")
 
 profiler = PerformanceProfiler()
 processor.register_after_step_hook(profiler)
 
-# Run your pipeline
+# Run your pipeline multiple times
 for _ in range(100):
     output = processor(test_data)
 

@@ -52,7 +52,7 @@ from lerobot.processor import TransitionKey, EnvTransition, PolicyAction, RobotA
 
 # Example transition from a robot collecting data
 transition: EnvTransition = {
-    TransitionKey.OBSERVATION: {                           # dict[str, Any] | None
+    TransitionKey.OBSERVATION: {
         "observation.images.camera0": camera0_image_tensor,  # Shape: (H, W, C)
         "observation.images.camera1": camera1_image_tensor,  # Shape: (H, W, C)
         "observation.state": joint_positions_tensor,         # Shape: (7,) for 7-DOF arm
@@ -63,10 +63,8 @@ transition: EnvTransition = {
     TransitionKey.DONE: False,                            # bool | torch.Tensor | None
     TransitionKey.TRUNCATED: False,                       # bool | torch.Tensor | None
     TransitionKey.INFO: {"success": False},               # dict[str, Any] | None
-    TransitionKey.COMPLEMENTARY_DATA: {                   # dict[str, Any] | None
+    TransitionKey.COMPLEMENTARY_DATA: {
         "task": "pick up the red cube",                    # Language instruction
-        "task_index": 0,                                   # Task identifier
-        "index": 42                                        # Frame index
     }
 }
 ```
@@ -100,9 +98,12 @@ class MyProcessorStep(ProcessorStep):
         return features  # Most processors return features unchanged
 ```
 
+`__call__` is the core of your processor step. It takes an `EnvTransition` and returns a modified `EnvTransition`.
+`transform_features` is used to declare how this step transforms feature shapes/types.
+
 ### DataProcessorPipeline: The Generic Orchestrator
 
-The `DataProcessorPipeline[TInput, TOutput]` chains multiple `ProcessorStep` instances together with compile-time type safety:
+The `DataProcessorPipeline[TInput, TOutput]` chains multiple `ProcessorStep` instances together:
 
 ```python
 from lerobot.processor import RobotProcessorPipeline, PolicyProcessorPipeline
@@ -229,6 +230,8 @@ training_postprocessor = PolicyProcessorPipeline[torch.Tensor, torch.Tensor](
         DeviceProcessorStep(device="cpu"),                  # Move to CPU
         UnnormalizerProcessorStep(features=..., stats=...), # Denormalize
     ]
+    to_transition=policy_action_to_transition,
+    to_output=transition_to_policy_action,
 )
 ```
 
@@ -272,75 +275,26 @@ class VelocityProcessor(ObservationProcessorStep):
     def observation(self, obs):
         new_obs = obs.copy()
         if "observation.state" in obs:
-            # Add computed velocity field
-            new_obs["observation.velocity"] = self._compute_velocity(obs["observation.state"])
+            # concatenate computed velocity field to the state
+            new_obs["observation.state"] = self._compute_velocity(obs["observation.state"])
         return new_obs
 
     def transform_features(self, features):
         """Declare the new velocity field we're adding."""
-        if PipelineFeatureType.OBSERVATION in features:
-            # Add velocity feature with same shape as state
-            state_feature = features[PipelineFeatureType.OBSERVATION].get("observation.state")
-            if state_feature:
-                features[PipelineFeatureType.OBSERVATION]["observation.velocity"] = PolicyFeature(
-                    type=FeatureType.STATE,
-                    shape=state_feature.shape  # Same shape as position
-                )
+        state_feature = features[PipelineFeatureType.OBSERVATION].get("observation.state")
+        if state_feature:
+            double_shape = (state_feature.shape[0] * 2,) if state_feature.shape else (2,)
+            features[PipelineFeatureType.OBSERVATION]["observation.state"] = PolicyFeature(
+                type=FeatureType.STATE, shape=double_shape
+            )
         return features
 ```
 
-### Real Examples from LeRobot
+### Feature Specification Functions
 
-**Phone Action Mapping** - Transforms action structure:
-
-```python
-# Input features: {"phone.pos": (3,), "phone.rot": (4,), "phone.enabled": (1,)}
-# Output features: {"target_x": (1,), "target_y": (1,), ..., "gripper": (1,)}
-
-def transform_features(self, features):
-    # Remove phone-specific keys
-    features[PipelineFeatureType.ACTION].pop("phone.pos", None)
-    features[PipelineFeatureType.ACTION].pop("phone.rot", None)
-
-    # Add robot target keys
-    features[PipelineFeatureType.ACTION]["target_x"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-    features[PipelineFeatureType.ACTION]["target_y"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-    # ... more target fields
-    return features
-```
-
-**Forward Kinematics** - Adds computed observations:
-
-```python
-# Input: Joint positions
-# Output: Joint positions + End-effector pose
-
-def transform_features(self, features):
-    # Add end-effector pose features computed from joints
-    for axis in ["x", "y", "z", "wx", "wy", "wz"]:
-        features[PipelineFeatureType.OBSERVATION][f"observation.state.ee.{axis}"] = PolicyFeature(
-            type=FeatureType.STATE, shape=(1,)
-        )
-    return features
-```
-
-**Tokenization** - Adds language features:
-
-```python
-# Input: Text in complementary_data
-# Output: Token IDs and attention mask in observations
-
-def transform_features(self, features):
-    features[PipelineFeatureType.OBSERVATION]["observation.language.tokens"] = PolicyFeature(
-        type=FeatureType.LANGUAGE, shape=(self.max_length,)
-    )
-    features[PipelineFeatureType.OBSERVATION]["observation.language.attention_mask"] = PolicyFeature(
-        type=FeatureType.LANGUAGE, shape=(self.max_length,)
-    )
-    return features
-```
-
-### Feature Aggregation in Practice
+`create_initial_features()` and `aggregate_pipeline_dataset_features()` solve a critical dataset creation problem: determining the exact final data structure before any data is processed.
+Since processor pipelines can add new features (like velocity fields), change tensor shapes (like cropping images), or rename keys, datasets need to know the complete output specification upfront to allocate proper storage and define schemas.
+These functions work together by starting with robot hardware specifications (`create_initial_features()`) then simulating the entire pipeline transformation (`aggregate_pipeline_dataset_features()`) to compute the final feature dictionary that gets passed to `LeRobotDataset.create()`, ensuring perfect alignment between what processors output and what datasets expect to store.
 
 ```python
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
@@ -386,25 +340,7 @@ LeRobot provides many registered processor steps. Here are the most commonly use
 - **`rename_observations_processor`**: Rename observation keys using mapping dictionaries
 - **`tokenizer_processor`**: Tokenize natural language task descriptions into tokens and attention masks
 
-## Performance Tips
-
-**🚀 Critical Optimization**: Always move data to GPU **before** normalization for significant speedups:
-
-```python
-# ✅ FAST: GPU normalization
-steps=[
-    DeviceProcessorStep(device="cuda"),  # Move to GPU first
-    NormalizerProcessorStep(...)         # Normalize on GPU - much faster!
-]
-
-# ❌ SLOW: CPU normalization
-steps=[
-    NormalizerProcessorStep(...),        # Normalize on CPU - slow
-    DeviceProcessorStep(device="cuda")   # Move to GPU after
-]
-```
-
-## Next Steps
+### Next Steps
 
 - **[Implement Your Own Processor](implement_your_own_processor.mdx)** - Create custom processor steps
 - **[Debug Your Pipeline](debug_processor_pipeline.mdx)** - Troubleshoot and optimize pipelines
