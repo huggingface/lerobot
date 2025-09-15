@@ -272,7 +272,7 @@ class InverseKinematicsEEToJoints(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         new_transition = transition.copy()
-        act = new_transition.get(TransitionKey.ACTION) or {}
+        act = new_transition.get(TransitionKey.ACTION).copy()
 
         if not isinstance(act, dict):
             raise ValueError(f"Action should be a RobotAction type got {type(act)}")
