@@ -1,28 +1,42 @@
 # Introduction to Processors
 
-In robotics, there's a fundamental mismatch between the data that robots and humans produce and what machine learning models expect. This creates several translation challenges:
+In robotics, there's a fundamental mismatch between the data that robots and humans produce and what machine learning models expect.
+Robots output raw sensor data like camera images and joint positions that need normalization, batching, and device placement before models can process them.
+Language instructions from humans must be tokenized into numerical representations, and different robots use different coordinate systems that need standardization.
 
-**Raw Robot Data → Model Input:**
+The challenge extends to model outputs as well.
+Models might output end-effector positions while robots need joint-space commands, or teleoperators produce relative movements while robots expect absolute commands.
+Model predictions are often normalized and need conversion back to real-world scales.
 
-- Robots output raw sensor data (camera images, joint positions, force readings) that need normalization, batching, and device placement before models can process them
-- Language instructions from humans ("pick up the red cube") must be tokenized into numerical representations
-- Different robots use different coordinate systems and units that need standardization
+Cross-domain translation adds another layer of complexity.
+Training data from one robot setup needs adaptation for deployment on different hardware, models trained with specific camera configurations must work with new arrangements, and datasets with different naming conventions need harmonization.
 
-**Model Output → Robot Commands:**
+**That's where processors come in.** They serve as universal translators that bridge these gaps, ensuring seamless data flow from sensors to models to actuators.
+Processors handle all the preprocessing and postprocessing steps needed to convert raw environment data into model-ready inputs and vice versa.
 
-- Models might output end-effector positions, but robots need joint-space commands
-- Teleoperators (like gamepads) produce relative movements (delta positions), but robots expect absolute commands
-- Model predictions are often normalized and need to be converted back to real-world scales
+Now your favorite policy can be used like this:
 
-**Cross-Domain Translation:**
+```python
+import torch
 
-- Training data from one robot setup needs adaptation for deployment on different hardware
-- Models trained with specific camera configurations must work with new camera arrangements
-- Datasets with different naming conventions need harmonization
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies.your_policy import YourPolicy
+from lerobot.processor.pipeline import RobotProcessorPipeline, PolicyProcessorPipeline
+dataset = LeRobotDataset("hf_user/dataset", episodes=[0])
+sample = dataset[10]
 
-**That's where processors come in.** They serve as the universal translators that bridge these gaps, ensuring seamless data flow from sensors to models to actuators.
+model = YourPolicy.from_pretrained(
+    "hf_user/model",
+)
+model.eval()
+model.to("cuda")
+preprocessor, postprocessor = make_pre_post_processors(model.config, pretrained_path="hf_user/model", dataset_stats=dataset.meta.stats)
 
-Processors are the data transformation backbone of LeRobot. They handle all the preprocessing and postprocessing steps needed to convert raw environment data into model-ready inputs and vice versa.
+preprocessed_sample = preprocessor(sample)
+action = model.select_action(preprocessed_sample)
+postprocessed_action = postprocessor(action)
+```
 
 ## What are Processors?
 
@@ -40,36 +54,8 @@ Processors handle these transformations through composable, reusable steps that 
 
 ### EnvTransition: The Universal Data Container
 
-The `EnvTransition` is the fundamental data structure that flows through all processors. It's a strongly-typed dictionary that represents a complete robot-environment interaction:
-
-```python
-from lerobot.processor import TransitionKey, EnvTransition, PolicyAction, RobotAction
-
-# EnvTransition is precisely typed to handle different action types:
-# - PolicyAction: torch.Tensor (for model inputs/outputs)
-# - RobotAction: dict[str, Any] (for robot hardware)
-# - EnvAction: np.ndarray (for gym environments)
-
-# Example transition from a robot collecting data
-transition: EnvTransition = {
-    TransitionKey.OBSERVATION: {
-        "observation.images.camera0": camera0_image_tensor,  # Shape: (H, W, C)
-        "observation.images.camera1": camera1_image_tensor,  # Shape: (H, W, C)
-        "observation.state": joint_positions_tensor,         # Shape: (7,) for 7-DOF arm
-        "observation.environment_state": env_state_tensor    # Shape: (3,) for object position
-    },
-    TransitionKey.ACTION: action_tensor,                   # PolicyAction | RobotAction | EnvAction | None
-    TransitionKey.REWARD: 0.0,                            # float | torch.Tensor | None
-    TransitionKey.DONE: False,                            # bool | torch.Tensor | None
-    TransitionKey.TRUNCATED: False,                       # bool | torch.Tensor | None
-    TransitionKey.INFO: {"success": False},               # dict[str, Any] | None
-    TransitionKey.COMPLEMENTARY_DATA: {
-        "task": "pick up the red cube",                    # Language instruction
-    }
-}
-```
-
-Each key in the transition has a specific purpose:
+The `EnvTransition` is the fundamental data structure that flows through all processors.
+It's a typed dictionary that represents a complete robot-environment interaction:
 
 - **OBSERVATION**: All sensor data (images, states, proprioception)
 - **ACTION**: The action to execute or that was executed
@@ -99,6 +85,7 @@ class MyProcessorStep(ProcessorStep):
 ```
 
 `__call__` is the core of your processor step. It takes an `EnvTransition` and returns a modified `EnvTransition`.
+
 `transform_features` is used to declare how this step transforms feature shapes/types.
 
 ### DataProcessorPipeline: The Generic Orchestrator
@@ -109,7 +96,7 @@ The `DataProcessorPipeline[TInput, TOutput]` chains multiple `ProcessorStep` ins
 from lerobot.processor import RobotProcessorPipeline, PolicyProcessorPipeline
 
 # For robot hardware (unbatched data)
-robot_processor = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
+robot_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[step1, step2, step3],
     name="robot_pipeline"
 )
@@ -165,52 +152,27 @@ policy_action: torch.Tensor = torch.tensor([[0.2, 0.1, 0.8]])  # Model output te
 
 ## Converter Functions
 
-LeRobot provides converter functions to bridge different data formats:
+LeRobot provides converter functions to bridge different data formats in `lerobot.processor.converters`. These functions handle the crucial translations between robot hardware data structures, policy model formats, and the internal `EnvTransition` representation that flows through processor pipelines.
 
-```python
-from lerobot.processor.converters import (
-    # Robot hardware converters
-    robot_action_to_transition,    # Robot dict → EnvTransition
-    observation_to_transition,     # Robot obs → EnvTransition
-    transition_to_robot_action,    # EnvTransition → Robot dict
+| Category                       | Function                      | Description                     |
+| ------------------------------ | ----------------------------- | ------------------------------- |
+| **Robot Hardware Converters**  | `robot_action_to_transition`  | Robot dict → EnvTransition      |
+|                                | `observation_to_transition`   | Robot obs → EnvTransition       |
+|                                | `transition_to_robot_action`  | EnvTransition → Robot dict      |
+| **Policy/Training Converters** | `batch_to_transition`         | Batch dict → EnvTransition      |
+|                                | `transition_to_batch`         | EnvTransition → Batch dict      |
+|                                | `policy_action_to_transition` | Policy tensor → EnvTransition   |
+|                                | `transition_to_policy_action` | EnvTransition → Policy tensor   |
+| **Utilities**                  | `create_transition`           | Build transitions with defaults |
+|                                | `identity_transition`         | Pass-through converter          |
 
-    # Policy/training converters
-    batch_to_transition,           # Batch dict → EnvTransition
-    transition_to_batch,           # EnvTransition → Batch dict
-    policy_action_to_transition,   # Policy tensor → EnvTransition
-    transition_to_policy_action,   # EnvTransition → Policy tensor
+The key insight is that **robot hardware converters** work with individual values and dictionaries, while **policy/training converters** work with batched tensors and model outputs. The converter functions automatically handle the structural differences, so your processor steps can focus on the core transformations without worrying about data format compatibility.
 
-    # Utilities
-    create_transition,             # Build transitions with defaults
-    identity_transition            # Pass-through converter
-)
-```
+## Processor Examples
 
-## Real-World Examples
+The following examples demonstrate real-world processor configurations for policy training and inference.
 
-### Robot Control Pipeline
-
-```python
-# Phone teleoperation → Robot control (from examples/phone_to_so100/)
-phone_to_robot = RobotProcessorPipeline[RobotAction, RobotAction](
-    steps=[
-        MapPhoneActionToRobotAction(platform=PhoneOS.IOS),  # Phone → robot targets
-        EEReferenceAndDelta(kinematics=solver, ...),        # Deltas → absolute pose
-        EEBoundsAndSafety(bounds=..., max_step=0.2),        # Safety limits
-        InverseKinematicsEEToJoints(kinematics=solver),     # Pose → joint angles
-        GripperVelocityToJoint(motor_names=motors),         # Gripper control
-    ],
-    to_transition=robot_action_to_transition,
-    to_output=transition_to_robot_action
-)
-
-# Usage: phone_action → robot_joints
-phone_input = {"phone.pos": [0.1, 0.2, 0.0], "phone.rot": rotation}
-robot_joints = phone_to_robot(phone_input)
-robot.send_action(robot_joints)
-```
-
-### Policy Training Pipeline
+Here is an example processor for policy training and inference:
 
 ```python
 # Training data preprocessing (optimized order for GPU performance)
@@ -235,26 +197,27 @@ training_postprocessor = PolicyProcessorPipeline[torch.Tensor, torch.Tensor](
 )
 ```
 
-### Mixed Robot + Policy Pipeline
+### An interaction between a robot and a policy with processors
+
+The most common real-world scenario combines both pipeline types robot hardware generates observations that need policy processing, and policy outputs need robot-compatible postprocessing:
 
 ```python
 # Real deployment: Robot sensors → Model → Robot commands
 with torch.no_grad():
     while not done:
-        # 1. Get robot observation (unbatched)
         raw_obs = robot.get_observation()  # dict[str, Any]
 
-        # 2. Process for policy (add batching, normalize)
+        # Add your robot observation to policy observation processor
+
         policy_input = policy_preprocessor(raw_obs)  # Batched dict
 
-        # 3. Run model
         policy_output = policy.select_action(policy_input)  # Policy tensor
 
-        # 4. Postprocess for robot (denormalize, convert to dict)
-        robot_action = policy_postprocessor(policy_output)  # dict[str, Any]
+        policy_action = policy_postprocessor(policy_output)
 
-        # 5. Send to robot
-        robot.send_action(robot_action)
+        # Add your robot action to policy action processor
+
+        robot.send_action(policy_action)
 ```
 
 ## Feature Contracts: Shape and Type Transformation
@@ -311,14 +274,6 @@ final_features = aggregate_pipeline_dataset_features(
     initial_features=initial_features,
     use_videos=True
 )
-
-# Result: Complete feature specification for dataset/policy
-# {
-#   "observation.state": {"shape": (7,), "dtype": "float32"},
-#   "observation.images.camera_0": {"shape": (3, 480, 640), "dtype": "uint8"},
-#   "observation.velocity": {"shape": (7,), "dtype": "float32"},  # Added by processor!
-#   "action": {"shape": (7,), "dtype": "float32"}
-# }
 
 # Use for dataset creation
 dataset = LeRobotDataset.create(
