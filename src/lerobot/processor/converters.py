@@ -299,6 +299,9 @@ def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
     Returns:
         A dictionary representing the raw robot action.
     """
+    action = transition.get(TransitionKey.ACTION)
+    if not isinstance(action, dict):
+        raise ValueError(f"Action should be a RobotAction type (dict) got {type(action)}")
     return transition.get(TransitionKey.ACTION)
 
 
@@ -310,6 +313,16 @@ def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
     if not isinstance(action, PolicyAction):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return action
+
+
+def transition_to_observation(transition: EnvTransition) -> dict[str, Any]:
+    """
+    Convert an `EnvTransition` to a `PolicyAction`.
+    """
+    observation = transition.get(TransitionKey.OBSERVATION)
+    if not isinstance(observation, dict):
+        raise ValueError(f"Observation should be a dict type got {type(observation)}")
+    return observation
 
 
 def policy_action_to_transition(action: PolicyAction) -> EnvTransition:

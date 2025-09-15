@@ -79,12 +79,10 @@ from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
-    EnvTransition,
     PolicyAction,
     PolicyProcessorPipeline,
     RobotAction,
     RobotProcessorPipeline,
-    TransitionKey,
     make_default_processors,
 )
 from lerobot.processor.rename_processor import rename_stats
@@ -236,9 +234,9 @@ def record_loop(
     robot: Robot,
     events: dict,
     fps: int,
-    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition],  # runs after teleop
-    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction],  # runs before robot
-    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition],  # runs after robot
+    teleop_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],  # runs after teleop
+    robot_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],  # runs before robot
+    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], dict[str, Any]],  # runs after robot
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
@@ -281,10 +279,6 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
-    policy_transition = None
-    teleop_transition = None
-    obs_transition = None
-
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -298,12 +292,10 @@ def record_loop(
         obs = robot.get_observation()
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
-        obs_transition = robot_observation_processor(obs)
+        obs_processed = robot_observation_processor(obs)
 
         if policy is not None or dataset is not None:
-            observation_frame = build_dataset_frame(
-                dataset.features, obs_transition[TransitionKey.OBSERVATION], prefix="observation"
-            )
+            observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix="observation")
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
@@ -319,10 +311,8 @@ def record_loop(
             )
 
             action_names = dataset.features["action"]["names"]
-            policy_action = {f"{name}": float(action_values[i]) for i, name in enumerate(action_names)}
-            policy_transition = {
-                TransitionKey.ACTION: policy_action,
-                TransitionKey.COMPLEMENTARY_DATA: {},
+            act_processed_policy: RobotAction = {
+                f"{name}": float(action_values[i]) for i, name in enumerate(action_names)
             }
 
         elif isinstance(teleop, Teleoperator):
@@ -330,7 +320,7 @@ def record_loop(
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             # TODO(Steven): This assumes that the processor passed by the user should have identity_transition as to_output.
-            teleop_transition = teleop_action_processor(act)
+            act_processed_teleop = teleop_action_processor(act)
 
         elif isinstance(teleop, list):
             arm_action = teleop_arm.get_action()
@@ -338,7 +328,7 @@ def record_loop(
             keyboard_action = teleop_keyboard.get_action()
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-            teleop_transition = teleop_action_processor(act)
+            act_processed_teleop = teleop_action_processor(act)
         else:
             logging.info(
                 "No policy or teleoperator provided, skipping action generation. "
@@ -349,12 +339,12 @@ def record_loop(
 
         # Applies a pipeline to the action, default is IdentityProcessor
         # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
-        if policy is not None and policy_transition is not None:
-            action_values = policy_transition[TransitionKey.ACTION]
-            robot_action_to_send = robot_action_processor(policy_transition)
+        if policy is not None and act_processed_policy is not None:
+            action_values = act_processed_policy
+            robot_action_to_send = robot_action_processor(act_processed_policy)
         else:
-            action_values = teleop_transition[TransitionKey.ACTION]
-            robot_action_to_send = robot_action_processor(teleop_transition)
+            action_values = act_processed_teleop
+            robot_action_to_send = robot_action_processor(act_processed_teleop)
 
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
@@ -369,7 +359,7 @@ def record_loop(
             dataset.add_frame(frame)
 
         if display_data:
-            log_rerun_data(observation=obs_transition[TransitionKey.OBSERVATION], action=action_values)
+            log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
