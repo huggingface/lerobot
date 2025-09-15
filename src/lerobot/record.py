@@ -399,7 +399,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(
             pipeline=teleop_action_processor,
-            initial_features=create_initial_features(action=teleop.action_features),
+            initial_features=create_initial_features(
+                action=robot.action_features
+            ),  # TODO(steven, pepijn): in future this should be come from teleop or policy
             use_videos=cfg.dataset.video,
         ),
         aggregate_pipeline_dataset_features(
@@ -448,7 +450,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             dataset_stats=rename_stats(dataset.meta.stats, cfg.dataset.rename_map),
             preprocessor_overrides={
                 "device_processor": {"device": cfg.policy.device},
-                "rename_processor": {"rename_map": cfg.dataset.rename_map},
+                "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
             },
         )
 
