@@ -71,7 +71,11 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
         },
     }
     info = info_factory(
-        total_episodes=1, total_frames=1, camera_features=camera_features, motor_features=motor_features
+        total_episodes=1,
+        total_frames=1,
+        total_tasks=1,
+        camera_features=camera_features,
+        motor_features=motor_features,
     )
     ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
     return ds_meta
@@ -140,7 +144,6 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     Note: We test various combinations of policy and dataset. The combinations are by no means exhaustive,
           and for now we add tests as we see fit.
     """
-
     train_cfg = TrainPipelineConfig(
         # TODO(rcadene, aliberts): remove dataset download
         dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
