@@ -130,6 +130,10 @@ class LeRobotDatasetMetadata:
         )
 
     @property
+    def url_root(self) -> str:
+        return f"hf://datasets/{self.repo_id}"
+
+    @property
     def _version(self) -> packaging.version.Version:
         """Codebase version used to create this dataset."""
         return packaging.version.parse(self.info["codebase_version"])
