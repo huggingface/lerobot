@@ -1175,4 +1175,4 @@ def test_task_processing_creates_new_transition():
     # The task should be processed correctly (wrapped in list)
     assert result[TransitionKey.COMPLEMENTARY_DATA]["task"] == ["sort_objects"]
     # Original complementary data is also modified (current behavior)
-    assert original_comp_data["task"] == ["sort_objects"]
+    assert original_comp_data["task"] == "sort_objects"
