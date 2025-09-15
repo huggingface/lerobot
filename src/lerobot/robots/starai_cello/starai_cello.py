@@ -24,7 +24,6 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.starai import (
     StaraiMotorsBus,
-    OperatingMode,
 )
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position

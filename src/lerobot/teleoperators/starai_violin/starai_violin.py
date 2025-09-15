@@ -22,7 +22,6 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.starai import (
     StaraiMotorsBus,
-    OperatingMode,
 )
 
 from ..teleoperator import Teleoperator

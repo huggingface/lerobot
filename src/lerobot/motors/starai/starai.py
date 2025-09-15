@@ -59,14 +59,14 @@ class StaraiMotorsBus(MotorsBus):
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
         self.apply_drive_mode = True
-        self.starai_port_handler = starai_PortHandler(port,1000000)
+        self.port_handler = starai_PortHandler(port,1000000)
 
         self.default_motion_time = default_motion_time
 
     @property
     def is_connected(self) -> bool:
         """bool: `True` if the underlying serial port is open."""
-        return self.starai_port_handler.is_open
+        return self.port_handler.is_open
 
     def set_half_turn_homings(self, motors: NameOrID | list[NameOrID] | None = None) -> dict[NameOrID, Value]:
         if motors is None:
@@ -92,12 +92,12 @@ class StaraiMotorsBus(MotorsBus):
         self._assert_motors_exist()
 
     def connect(self, handshake: bool = True) -> None:
-        self.starai_port_handler.openPort()
+        self.port_handler.openPort()
         for motor in self.motors:
-            if (self.starai_port_handler.ping(self.motors[motor].id)!= True):
+            if (not self.port_handler.ping(self.motors[motor].id)):
                 raise Exception(f"motor not found id:{self.motors[motor].id}")
         self.disable_torque()
-        self.starai_port_handler.ResetLoop(0xff)
+        self.port_handler.ResetLoop(0xff)
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         raise NotImplementedError(f"this function should never be called")
@@ -117,7 +117,7 @@ class StaraiMotorsBus(MotorsBus):
         read_data = {}
         if data_name == "Monitor" or data_name == "Present_Position":
             servos_id = dict(zip(names, ids))
-            monitor_data = self.starai_port_handler.sync_read["Monitor"](servos_id)
+            monitor_data = self.port_handler.sync_read["Monitor"](servos_id)
             for name in names:
                 if monitor_data[name].current_position >=180:
                     monitor_data[name].current_position = 180
@@ -188,7 +188,7 @@ class StaraiMotorsBus(MotorsBus):
         if data_name == "Goal_Position":
 
             if normalize and data_name in self.normalized_data:
-                for motor, data in values.items():
+                for motor,_ in values.items():
                     min_ = self.calibration[motor].range_min
                     max_ = self.calibration[motor].range_max
                     drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
@@ -222,7 +222,7 @@ class StaraiMotorsBus(MotorsBus):
             else:
                 write_data["gripper"].power=1000
 
-            self.starai_port_handler.sync_write["Goal_Position"](write_data)
+            self.port_handler.sync_write["Goal_Position"](write_data)
 
 
 
@@ -276,7 +276,7 @@ class StaraiMotorsBus(MotorsBus):
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.starai_port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id,"unlocked",0)
+            self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id,"unlocked",0)
 
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
@@ -284,5 +284,39 @@ class StaraiMotorsBus(MotorsBus):
     
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.starai_port_handler.write["Stop_On_Control_Mode"](motor, "locked",0)
+            self.port_handler.write["Stop_On_Control_Mode"](motor, "locked",0)
 
+    def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
+        for id_ in ids_values:
+            model = self._id_to_model(id_)
+            encoding_table = self.model_encoding_table.get(model)
+            if encoding_table and data_name in encoding_table:
+                sign_bit = encoding_table[data_name]
+                ids_values[id_] = encode_sign_magnitude(ids_values[id_], sign_bit)
+
+        return ids_values
+
+    def _decode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
+        for id_ in ids_values:
+            model = self._id_to_model(id_)
+            encoding_table = self.model_encoding_table.get(model)
+            if encoding_table and data_name in encoding_table:
+                sign_bit = encoding_table[data_name]
+                ids_values[id_] = decode_sign_magnitude(ids_values[id_], sign_bit)
+
+        return ids_values
+
+    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
+        tmp =[]
+        return tmp 
+
+
+    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
+
+        return None
+
+
+    def _read_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
+        model_numbers = {}
+
+        return model_numbers
