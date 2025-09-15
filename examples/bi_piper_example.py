@@ -31,44 +31,20 @@ from lerobot.robots.bi_piper.config_bi_piper import BiPiperConfig
 
 def create_bi_piper_config():
     """Create a sample BiPiper configuration"""
-    
+
     # Basic configuration for BiPiper robot
     config = BiPiperConfig(
         type="bi_piper",
         left_arm_can_port="can_0",  # Adjust to your actual CAN port
-        right_arm_can_port="can_1", # Adjust to your actual CAN port
+        right_arm_can_port="can_1",  # Adjust to your actual CAN port
         cameras={
-            "front": {
-                "type": "opencv",
-                "index_or_path": 0,
-                "width": 640,
-                "height": 480,
-                "fps": 30
-            },
-            "right": {
-                "type": "opencv", 
-                "index_or_path": 1,
-                "width": 640,
-                "height": 480,
-                "fps": 30
-            },
-            "top": {
-                "type": "opencv",
-                "index_or_path": 2, 
-                "width": 640,
-                "height": 480,
-                "fps": 30
-            },
-            "left": {
-                "type": "opencv",
-                "index_or_path": 3,
-                "width": 640,
-                "height": 480,
-                "fps": 30
-            }
-        }
+            "front": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
+            "right": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
+            "top": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
+            "left": {"type": "opencv", "index_or_path": 3, "width": 640, "height": 480, "fps": 30},
+        },
     )
-    
+
     return config
 
 
@@ -80,6 +56,8 @@ if __name__ == "__main__":
     print(f"  Right arm CAN port: {config.right_arm_can_port}")
     print(f"  Number of cameras: {len(config.cameras)}")
     print(f"  Camera names: {list(config.cameras.keys())}")
-    
+
     print("\nTo record data with this robot, run:")
-    print("python -m lerobot.record --robot.type=bi_piper --robot.left_arm_can_port=can_0 --robot.right_arm_can_port=can_1 ...")
+    print(
+        "python -m lerobot.record --robot.type=bi_piper --robot.left_arm_can_port=can_0 --robot.right_arm_can_port=can_1 ..."
+    )

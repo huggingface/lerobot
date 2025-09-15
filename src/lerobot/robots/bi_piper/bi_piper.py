@@ -40,6 +40,7 @@ class BiPiper(Robot):
         # Import piper_sdk here to avoid import errors if not installed
         try:
             from piper_sdk import C_PiperInterface_V2
+
             self.C_PiperInterface_V2 = C_PiperInterface_V2
         except ImportError as e:
             raise ImportError(
@@ -206,7 +207,7 @@ class BiPiper(Robot):
                     # Find the value after "Joint {i}:"
                     value_start = start_idx + len(pattern)
                     # Find the end of the value (next newline or end of string)
-                    value_end = msg_str.find('\n', value_start)
+                    value_end = msg_str.find("\n", value_start)
                     if value_end == -1:
                         value_end = len(msg_str)
 
@@ -244,7 +245,7 @@ class BiPiper(Robot):
                 value_start = start_idx + len(pattern)
                 # Find the end of the value (comma or whitespace)
                 value_end = value_start
-                while value_end < len(msg_str) and msg_str[value_end] not in [',', '\n', ' ']:
+                while value_end < len(msg_str) and msg_str[value_end] not in [",", "\n", " "]:
                     value_end += 1
 
                 value_str = msg_str[value_start:value_end].strip()
