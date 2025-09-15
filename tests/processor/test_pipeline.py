@@ -1736,12 +1736,14 @@ def test_from_pretrained_nonexistent_path():
     with pytest.raises(FileNotFoundError):
         DataProcessorPipeline.from_pretrained("/path/that/does/not/exist")
 
-    # Test with a Hub repo format that would be a local path (too many slashes)
+    # Test with a path that doesn't exist as a directory
     with pytest.raises(FileNotFoundError):
         DataProcessorPipeline.from_pretrained("user/repo/extra/path")
 
-    # Test with a non-existent but valid Hub repo format (now requires config_filename)
-    with pytest.raises(ValueError, match="you must specify the config_filename parameter"):
+    # Test with a Hub repo without specifying config_filename (should raise ValueError)
+    with pytest.raises(
+        ValueError, match="When loading from Hugging Face Hub, 'config_filename' must be specified"
+    ):
         DataProcessorPipeline.from_pretrained("nonexistent-user/nonexistent-repo")
 
     # Test with a non-existent Hub repo when config_filename is provided
@@ -1752,7 +1754,8 @@ def test_from_pretrained_nonexistent_path():
 
     # Test with a local directory that exists but has no config files
     with tempfile.TemporaryDirectory() as tmp_dir:
-        with pytest.raises(FileNotFoundError, match="No .json configuration files found"):
+        # Since the directory exists but has no config, it will try Hub and fail
+        with pytest.raises(FileNotFoundError):
             DataProcessorPipeline.from_pretrained(tmp_dir)
 
 
