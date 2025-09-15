@@ -39,6 +39,7 @@ class TransitionKey(str, Enum):
 PolicyAction: TypeAlias = torch.Tensor
 RobotAction: TypeAlias = dict[str, Any]
 EnvAction: TypeAlias = np.ndarray
+RobotObservation: TypeAlias = dict[str, Any]
 
 
 EnvTransition = TypedDict(

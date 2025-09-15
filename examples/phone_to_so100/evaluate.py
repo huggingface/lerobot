@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -25,14 +24,15 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import (
-    EnvTransition,
     RobotAction,
+    RobotObservation,
     RobotProcessorPipeline,
     make_default_teleop_action_processor,
 )
 from lerobot.processor.converters import (
-    identity_transition,
     observation_to_transition,
+    robot_action_to_transition,
+    transition_to_observation,
     transition_to_robot_action,
 )
 from lerobot.record import record_loop
@@ -74,7 +74,7 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert ee pose action to joint action
-robot_ee_to_joints_processor = RobotProcessorPipeline[EnvTransition, RobotAction](
+robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[
         AddRobotObservationAsComplimentaryData(robot=robot),
         InverseKinematicsEEToJoints(
@@ -83,17 +83,17 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[EnvTransition, RobotAction
             initial_guess_current_joints=True,
         ),
     ],
-    to_transition=identity_transition,
+    to_transition=robot_action_to_transition,
     to_output=transition_to_robot_action,
 )
 
 # Build pipeline to convert joint observation to ee pose observation
-robot_joints_to_ee_pose_processor = RobotProcessorPipeline[dict[str, Any], EnvTransition](
+robot_joints_to_ee_pose_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
     ],
     to_transition=observation_to_transition,
-    to_output=identity_transition,
+    to_output=transition_to_observation,
 )
 
 

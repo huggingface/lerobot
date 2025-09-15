@@ -20,7 +20,14 @@ from .converters import (
     create_transition,
     transition_to_batch,
 )
-from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
+from .core import (
+    EnvAction,
+    EnvTransition,
+    PolicyAction,
+    RobotAction,
+    RobotObservation,
+    TransitionKey,
+)
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .device_processor import DeviceProcessorStep
 from .factory import (
@@ -99,6 +106,7 @@ __all__ = [
     "ProcessorStepRegistry",
     "RobotAction",
     "RobotActionProcessorStep",
+    "RobotObservation",
     "RenameObservationsProcessorStep",
     "RewardClassifierProcessorStep",
     "RewardProcessorStep",

@@ -25,7 +25,7 @@ import torch
 
 from lerobot.constants import OBS_IMAGES
 
-from .core import EnvTransition, PolicyAction, RobotAction, TransitionKey
+from .core import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 
 @singledispatch
@@ -265,7 +265,7 @@ def robot_action_to_transition(action: RobotAction) -> EnvTransition:
     return create_transition(observation={}, action=action)
 
 
-def observation_to_transition(observation: dict[str, Any]) -> EnvTransition:
+def observation_to_transition(observation: RobotObservation) -> EnvTransition:
     """
     Convert a raw robot observation dictionary into a standardized `EnvTransition`.
 
@@ -299,6 +299,9 @@ def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
     Returns:
         A dictionary representing the raw robot action.
     """
+    action = transition.get(TransitionKey.ACTION)
+    if not isinstance(action, dict):
+        raise ValueError(f"Action should be a RobotAction type (dict) got {type(action)}")
     return transition.get(TransitionKey.ACTION)
 
 
@@ -310,6 +313,16 @@ def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
     if not isinstance(action, PolicyAction):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return action
+
+
+def transition_to_observation(transition: EnvTransition) -> RobotObservation:
+    """
+    Convert an `EnvTransition` to a `RobotObservation`.
+    """
+    observation = transition.get(TransitionKey.OBSERVATION)
+    if not isinstance(observation, dict):
+        raise ValueError(f"Observation should be a RobotObservation (dict) type got {type(observation)}")
+    return observation
 
 
 def policy_action_to_transition(action: PolicyAction) -> EnvTransition:

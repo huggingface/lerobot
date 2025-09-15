@@ -13,41 +13,40 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any
 
 from .converters import (
-    identity_transition,
     observation_to_transition,
     robot_action_to_transition,
+    transition_to_observation,
     transition_to_robot_action,
 )
-from .core import EnvTransition, RobotAction
+from .core import RobotAction, RobotObservation
 from .pipeline import IdentityProcessorStep, RobotProcessorPipeline
 
 
-def make_default_teleop_action_processor() -> RobotProcessorPipeline[RobotAction, EnvTransition]:
-    teleop_action_processor = RobotProcessorPipeline[RobotAction, EnvTransition](
+def make_default_teleop_action_processor() -> RobotProcessorPipeline[RobotAction, RobotAction]:
+    teleop_action_processor = RobotProcessorPipeline[RobotAction, RobotAction](
         steps=[IdentityProcessorStep()],
         to_transition=robot_action_to_transition,
-        to_output=identity_transition,
+        to_output=transition_to_robot_action,
     )
     return teleop_action_processor
 
 
-def make_default_robot_action_processor() -> RobotProcessorPipeline[EnvTransition, RobotAction]:
-    robot_action_processor = RobotProcessorPipeline[EnvTransition, RobotAction](
+def make_default_robot_action_processor() -> RobotProcessorPipeline[RobotAction, RobotAction]:
+    robot_action_processor = RobotProcessorPipeline[RobotAction, RobotAction](
         steps=[IdentityProcessorStep()],
-        to_transition=identity_transition,
+        to_transition=robot_action_to_transition,
         to_output=transition_to_robot_action,
     )
     return robot_action_processor
 
 
-def make_default_robot_observation_processor() -> RobotProcessorPipeline[dict[str, Any], EnvTransition]:
-    robot_observation_processor = RobotProcessorPipeline[dict[str, Any], EnvTransition](
+def make_default_robot_observation_processor() -> RobotProcessorPipeline[RobotObservation, RobotObservation]:
+    robot_observation_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
         steps=[IdentityProcessorStep()],
         to_transition=observation_to_transition,
-        to_output=identity_transition,
+        to_output=transition_to_observation,
     )
     return robot_observation_processor
 
