@@ -29,6 +29,14 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .so100_follower import SO100Follower
 
         return SO100Follower(config)
+    elif config.type == "starai_viola":
+        from .starai_viola import StaraiViola
+
+        return StaraiViola(config)
+    elif config.type == "starai_cello":
+        from .starai_cello import StaraiCello
+
+        return StaraiCello(config)
     elif config.type == "so100_follower_end_effector":
         from .so100_follower import SO100FollowerEndEffector
 
@@ -65,6 +73,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .reachy2 import Reachy2Robot
 
         return Reachy2Robot(config)
+    elif config.type =="bi_starai_follower":
+        from .bi_starai_follower import BiStaraiFollower
+
+        return BiStaraiFollower(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 

@@ -101,6 +101,7 @@ grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0"]
 dynamixel = ["dynamixel-sdk>=3.7.31"]
+starai =["fashionstar-uart-sdk"]
 
 # Robots
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0"]
@@ -154,7 +155,8 @@ all = [
     "lerobot[video_benchmark]",
     "lerobot[aloha]",
     "lerobot[pusht]",
-    "lerobot[xarm]"
+    "lerobot[xarm]",
+    "lerobot[starai]"
 ]
 
 [project.scripts]
