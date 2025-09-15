@@ -233,7 +233,7 @@ Under the hood, the `LeRobotDataset` format makes use of several ways to seriali
 
 Here are the important details and internal structure organization of a typical `LeRobotDataset` instantiated with `dataset = LeRobotDataset("lerobot/aloha_static_coffee")`. The exact features will change from dataset to dataset but not the main aspects:
 
-```
+````
 dataset attributes:
   ├ hf_dataset: a Hugging Face dataset (backed by Arrow/parquet). Typical features example:
   │  ├ observation.images.cam_high (VideoFrame):
@@ -246,20 +246,30 @@ dataset attributes:
   │  ├ timestamp (float32): timestamp in the episode
   │  ├ next.done (bool): indicates the end of an episode ; True for the last frame in each episode
   │  └ index (int64): general index in the whole dataset
-  ├ episode_data_index: contains 2 tensors with the start and end indices of each episode
-  │  ├ from (1D int64 tensor): first frame index for each episode — shape (num episodes,) starts with 0
-  │  └ to: (1D int64 tensor): last frame index for each episode — shape (num episodes,)
-  ├ stats: a dictionary of statistics (max, mean, min, std) for each feature in the dataset, for instance
-  │  ├ observation.images.cam_high: {'max': tensor with same number of dimensions (e.g. `(c, 1, 1)` for images, `(c,)` for states), etc.}
-  │  ...
-  ├ info: a dictionary of metadata on the dataset
-  │  ├ codebase_version (str): this is to keep track of the codebase version the dataset was created with
-  │  ├ fps (float): frame per second the dataset is recorded/synchronized to
-  │  ├ video (bool): indicates if frames are encoded in mp4 video files to save space or stored as png files
-  │  └ encoding (dict): if video, this documents the main options that were used with ffmpeg to encode the videos
-  ├ videos_dir (Path): where the mp4 videos or png images are stored/accessed
-  └ camera_keys (list of string): the keys to access camera features in the item returned by the dataset (e.g. `["observation.images.cam_high", ...]`)
-```
+  ├ meta: a LeRobotDatasetMetadata object containing:
+  │  ├ info: a dictionary of metadata on the dataset
+  │  │  ├ codebase_version (str): this is to keep track of the codebase version the dataset was created with
+  │  │  ├ fps (int): frame per second the dataset is recorded/synchronized to
+  │  │  ├ features (dict): all features contained in the dataset with their shapes and types
+  │  │  ├ total_episodes (int): total number of episodes in the dataset
+  │  │  ├ total_frames (int): total number of frames in the dataset
+  │  │  ├ robot_type (str): robot type used for recording
+  │  │  ├ data_path (str): formattable string for the parquet files
+  │  │  └ video_path (str): formattable string for the video files (if using videos)
+  │  ├ episodes: a DataFrame containing episode metadata with columns:
+  │  │  ├ episode_index (int): index of the episode
+  │  │  ├ tasks (list): list of tasks for this episode
+  │  │  ├ length (int): number of frames in this episode
+  │  │  ├ dataset_from_index (int): start index of this episode in the dataset
+  │  │  └ dataset_to_index (int): end index of this episode in the dataset
+  │  ├ stats: a dictionary of statistics (max, mean, min, std) for each feature in the dataset, for instance
+  │  │  ├ observation.images.front_cam: {'max': tensor with same number of dimensions (e.g. `(c, 1, 1)` for images, `(c,)` for states), etc.}
+  │  │  └ ...
+  │  └ tasks: a DataFrame containing task information with task names as index and task_index as values
+  ├ root (Path): local directory where the dataset is stored
+  ├ image_transforms (Callable): optional image transformations to apply to visual modalities
+  └ delta_timestamps (dict): optional delta timestamps for temporal queries
+decoding videos (e.g., 'pyav', 'torchcodec')
 
 A `LeRobotDataset` is serialised using several widespread file formats for each of its parts, namely:
 
@@ -283,7 +293,7 @@ lerobot-eval \
     --eval.n_episodes=10 \
     --policy.use_amp=false \
     --policy.device=cuda
-```
+````
 
 Note: After training your own policy, you can re-evaluate the checkpoints with:
 

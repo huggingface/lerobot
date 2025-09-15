@@ -2129,7 +2129,8 @@ def record_dataset(env, policy, cfg):
             frame["complementary_info.discrete_penalty"] = torch.tensor(
                 [info.get("discrete_penalty", 0.0)], dtype=torch.float32
             )
-            dataset.add_frame(frame, task=cfg.task)
+            frame["task"] = cfg.task
+            dataset.add_frame(frame)
 
             # Maintain consistent timing
             if cfg.fps:
