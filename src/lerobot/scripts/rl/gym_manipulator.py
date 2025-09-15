@@ -29,7 +29,6 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
-    ActionProcessorStep,
     AddBatchDimensionProcessorStep,
     AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfoStep,
@@ -44,10 +43,8 @@ from lerobot.processor import (
     MapTensorToDeltaActionDictStep,
     MotorCurrentProcessorStep,
     Numpy2TorchActionProcessorStep,
-    PolicyAction,
-    ProcessorStepRegistry,
     RewardClassifierProcessorStep,
-    RobotAction,
+    RobotActionToPolicyActionProcessorStep,
     TimeLimitProcessorStep,
     Torch2NumpyActionProcessorStep,
     TransitionKey,
@@ -81,22 +78,6 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
 logging.basicConfig(level=logging.INFO)
-
-
-@dataclass
-@ProcessorStepRegistry.register("map_robot_action_to_tensor_processor")
-class MapRobotActionToTensorProcessorStep(ActionProcessorStep):
-    """Processor step to map a dictionary to a tensor action."""
-
-    motor_names: list[str]
-
-    def action(self, action: RobotAction) -> PolicyAction:
-        if len(self.motor_names) != len(action):
-            raise ValueError(f"Action must have {len(self.motor_names)} elements, got {len(action)}")
-        return torch.tensor([action[f"{name}.pos"] for name in self.motor_names])
-
-    def transform_features(self, features):
-        return features
 
 
 @dataclass
@@ -514,7 +495,7 @@ def make_processors(
             ),
         ]
         action_pipeline_steps.extend(inverse_kinematics_steps)
-        action_pipeline_steps.append(MapRobotActionToTensorProcessorStep(motor_names=motor_names))
+        action_pipeline_steps.append(RobotActionToPolicyActionProcessorStep(motor_names=motor_names))
 
     return DataProcessorPipeline(
         steps=env_pipeline_steps, to_transition=identity_transition, to_output=identity_transition

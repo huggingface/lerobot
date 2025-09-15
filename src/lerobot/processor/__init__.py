@@ -67,6 +67,10 @@ from .pipeline import (
     RobotProcessorPipeline,
     TruncatedProcessorStep,
 )
+from .policy_robot_bridge import (
+    PolicyActionToRobotActionProcessorStep,
+    RobotActionToPolicyActionProcessorStep,
+)
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import TokenizerProcessorStep
 
@@ -116,6 +120,8 @@ __all__ = [
     "RobotProcessorPipeline",
     "TokenizerProcessorStep",
     "Torch2NumpyActionProcessorStep",
+    "RobotActionToPolicyActionProcessorStep",
+    "PolicyActionToRobotActionProcessorStep",
     "transition_to_batch",
     "TransitionKey",
     "TruncatedProcessorStep",
