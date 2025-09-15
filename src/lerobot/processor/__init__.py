@@ -100,7 +100,6 @@ __all__ = [
     "ObservationProcessorStep",
     "PolicyAction",
     "PolicyActionProcessorStep",
-    "PolicyObservation",
     "PolicyProcessorPipeline",
     "ProcessorKwargs",
     "ProcessorStep",
