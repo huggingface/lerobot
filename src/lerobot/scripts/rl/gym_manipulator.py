@@ -184,10 +184,12 @@ class RobotEnv(gym.Env):
     def _get_observation(self) -> dict[str, Any]:
         """Get current robot observation including joint positions and camera images."""
         obs_dict = self.robot.get_observation()
-        joint_positions = np.array([obs_dict[f"{name}.pos"] for name in self._joint_names])
+        raw_joint_joint_position = {f"{name}.pos": obs_dict[f"{name}.pos"] for name in self._joint_names}
+        joint_positions = np.array([raw_joint_joint_position[f"{name}.pos"] for name in self._joint_names])
 
         images = {key: obs_dict[key] for key in self._image_keys}
-        return {"agent_pos": joint_positions, "pixels": images, **obs_dict}
+
+        return {"agent_pos": joint_positions, "pixels": images, **raw_joint_joint_position}
 
     def _setup_spaces(self) -> None:
         """Configure observation and action spaces based on robot capabilities."""
@@ -677,7 +679,11 @@ def control_loop(
         truncated = transition.get(TransitionKey.TRUNCATED, False)
 
         if cfg.mode == "record":
-            observations = {k: v.squeeze(0).cpu() for k, v in transition[TransitionKey.OBSERVATION].items()}
+            observations = {
+                k: v.squeeze(0).cpu()
+                for k, v in transition[TransitionKey.OBSERVATION].items()
+                if isinstance(v, torch.Tensor)
+            }
             # Use teleop_action if available, otherwise use the action from the transition
             action_to_record = transition[TransitionKey.COMPLEMENTARY_DATA].get(
                 "teleop_action", transition[TransitionKey.ACTION]
