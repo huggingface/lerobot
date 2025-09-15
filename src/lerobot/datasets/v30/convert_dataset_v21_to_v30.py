@@ -26,9 +26,17 @@ This script will help you convert any LeRobot dataset already pushed to the hub 
 
 Usage:
 
+Convert a dataset from the hub:
 ```bash
 python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht
+```
+
+Convert a local dataset (works in place):
+```bash
+python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+    --repo-id=lerobot/pusht \
+    --local-dataset-path=/path/to/local/dataset
 ```
 
 """
@@ -141,6 +149,49 @@ def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
     tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
     task_to_task_index = {task: task_index for task_index, task in tasks.items()}
     return tasks, task_to_task_index
+
+
+def validate_local_dataset_structure(local_path: Path) -> None:
+    """Validate that the local dataset has the expected v2.1 structure."""
+    required_files = [
+        "meta/info.json",
+        LEGACY_EPISODES_PATH,
+        LEGACY_EPISODES_STATS_PATH,
+        LEGACY_TASKS_PATH,
+    ]
+
+    missing_files = []
+    for file_path in required_files:
+        full_path = local_path / file_path
+        if not full_path.exists():
+            missing_files.append(file_path)
+
+    if missing_files:
+        raise FileNotFoundError(
+            f"Local dataset is missing required files: {missing_files}. Expected v2.1 dataset structure."
+        )
+
+    try:
+        info = load_info(local_path)
+        dataset_version = info.get("codebase_version", "unknown")
+        if dataset_version != V21:
+            raise ValueError(
+                f"Local dataset has codebase version '{dataset_version}', expected '{V21}'. "
+                f"This script is specifically for converting v2.1 datasets to v3.0."
+            )
+    except Exception as e:
+        raise ValueError(f"Failed to read or parse info.json in local dataset: {e}") from e
+
+    data_dir = local_path / "data"
+    if not data_dir.exists():
+        raise FileNotFoundError(f"Local dataset is missing 'data' directory at {data_dir}")
+
+    episode_files = list(data_dir.glob("*/episode_*.parquet"))
+    if not episode_files:
+        raise FileNotFoundError(
+            "Local dataset does not contain v2.1 episode files (data/chunk-*/episode_*.parquet). "
+            "Found data directory but no episode files with expected naming pattern."
+        )
 
 
 def convert_tasks(root, new_root):
@@ -418,29 +469,40 @@ def convert_dataset(
     branch: str | None = None,
     data_file_size_in_mb: int | None = None,
     video_file_size_in_mb: int | None = None,
+    local_dataset_path: str | Path | None = None,
 ):
-    root = HF_LEROBOT_HOME / repo_id
-    old_root = HF_LEROBOT_HOME / f"{repo_id}_old"
-    new_root = HF_LEROBOT_HOME / f"{repo_id}_v30"
-
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_file_size_in_mb is None:
         video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
 
-    if old_root.is_dir() and root.is_dir():
+    # Set root based on whether local dataset path is provided
+    if local_dataset_path is not None:
+        local_dataset_path = Path(local_dataset_path)
+        validate_local_dataset_structure(local_dataset_path)
+        root = local_dataset_path
+    else:
+        # Use default HF cache location
+        root = HF_LEROBOT_HOME / repo_id
+
+    old_root = root.parent / f"{root.name}_old"
+    new_root = root.parent / f"{root.name}_v30"
+
+    # Only handle old_root cleanup if we're not using a local dataset path
+    if local_dataset_path is None and old_root.is_dir() and root.is_dir():
         shutil.rmtree(str(root))
         shutil.move(str(old_root), str(root))
 
     if new_root.is_dir():
         shutil.rmtree(new_root)
 
-    snapshot_download(
-        repo_id,
-        repo_type="dataset",
-        revision=V21,
-        local_dir=root,
-    )
+    if local_dataset_path is None:
+        snapshot_download(
+            repo_id,
+            repo_type="dataset",
+            revision=V21,
+            local_dir=root,
+        )
 
     convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb)
     convert_tasks(root, new_root)
@@ -494,6 +556,12 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="File size in MB. Defaults to 100 for data and 500 for videos.",
+    )
+    parser.add_argument(
+        "--local-dataset-path",
+        type=str,
+        default=None,
+        help="Path to a local dataset directory to convert in place instead of downloading from the hub.",
     )
 
     args = parser.parse_args()
