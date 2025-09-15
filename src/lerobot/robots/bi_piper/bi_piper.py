@@ -192,7 +192,7 @@ class BiPiper(Robot):
 
             # Capture camera images
             for cam_name, cam in self.cameras.items():
-                observation[cam_name] = cam.capture()
+                observation[cam_name] = cam.async_read()
 
         except Exception as e:
             logger.error(f"Error capturing observation: {e}")
