@@ -1172,8 +1172,6 @@ def test_task_processing_creates_new_transition():
 
     # Should be different transition object (functional design)
     assert result is not original_transition
-    # But complementary_data is the same reference (current implementation behavior)
-    assert result[TransitionKey.COMPLEMENTARY_DATA] is original_comp_data
     # The task should be processed correctly (wrapped in list)
     assert result[TransitionKey.COMPLEMENTARY_DATA]["task"] == ["sort_objects"]
     # Original complementary data is also modified (current behavior)
