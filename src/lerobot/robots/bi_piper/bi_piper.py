@@ -245,36 +245,20 @@ class BiPiper(Robot):
     def _parse_gripper_messages(self, gripper_msgs, arm_prefix: str, observation: dict) -> None:
         """
         Parse gripper messages from piper SDK format.
-        Expected format includes grippers_angle value.
+        Expected format: gripper_state object with grippers_angle attribute
+        grippers_angle is in 0.001° units, needs conversion to degrees.
         """
         try:
-            # Convert message to string to parse it
-            msg_str = str(gripper_msgs)
-
-            # Look for "grippers_angle:" pattern
-            pattern = "grippers_angle:"
-            start_idx = msg_str.find(pattern)
-
-            if start_idx != -1:
-                # Find the value after "grippers_angle:"
-                value_start = start_idx + len(pattern)
-                # Find the end of the value (comma or whitespace)
-                value_end = value_start
-                while value_end < len(msg_str) and msg_str[value_end] not in [",", "\n", " "]:
-                    value_end += 1
-
-                value_str = msg_str[value_start:value_end].strip()
-                try:
-                    observation[f"{arm_prefix}_gripper.pos"] = float(value_str)
-                except ValueError:
-                    logger.warning(f"Could not parse gripper value: {value_str}")
-                    observation[f"{arm_prefix}_gripper.pos"] = 0.0
-            else:
-                logger.warning("grippers_angle not found in gripper message")
-                observation[f"{arm_prefix}_gripper.pos"] = 0.0
+            # Direct object access - convert from 0.001° to degrees
+            angle_raw = gripper_msgs.grippers_angle
+            angle_degrees = float(angle_raw) / 1000.0
+            observation[f"{arm_prefix}_gripper.pos"] = angle_degrees
+            logger.debug(f"{arm_prefix} gripper angle: {angle_degrees}° (raw: {angle_raw})")
 
         except Exception as e:
-            logger.error(f"Error parsing gripper messages: {e}")
+            logger.error(f"Error parsing {arm_prefix} gripper messages: {e}")
+            logger.error(f"Gripper message type: {type(gripper_msgs)}")
+            logger.error(f"Gripper message content: {gripper_msgs}")
             observation[f"{arm_prefix}_gripper.pos"] = 0.0
 
     def send_action(self, action: dict) -> dict:
