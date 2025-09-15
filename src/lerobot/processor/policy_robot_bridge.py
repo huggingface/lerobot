@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from typing import Any
 
 import torch
 
@@ -18,6 +19,9 @@ class RobotActionToPolicyActionProcessorStep(ActionProcessorStep):
             raise ValueError(f"Action must have {len(self.motor_names)} elements, got {len(action)}")
         return torch.tensor([action[f"{name}.pos"] for name in self.motor_names])
 
+    def get_config(self) -> dict[str, Any]:
+        return asdict(self)
+
     def transform_features(self, features):
         features[PipelineFeatureType.ACTION]["action"] = PolicyFeature(
             type=FeatureType.ACTION, shape=(len(self.motor_names),)
@@ -36,6 +40,9 @@ class PolicyActionToRobotActionProcessorStep(ActionProcessorStep):
         if len(self.motor_names) != len(action):
             raise ValueError(f"Action must have {len(self.motor_names)} elements, got {len(action)}")
         return {f"{name}.pos": action[i] for i, name in enumerate(self.motor_names)}
+
+    def get_config(self) -> dict[str, Any]:
+        return asdict(self)
 
     def transform_features(self, features):
         for name in self.motor_names:
