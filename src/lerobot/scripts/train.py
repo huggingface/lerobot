@@ -178,10 +178,11 @@ def train(cfg: TrainPipelineConfig):
         dataset,
         num_workers=cfg.num_workers,
         batch_size=cfg.batch_size,
-        shuffle=shuffle,
+        shuffle=shuffle and not cfg.dataset.streaming,
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
+        prefetch_factor=2,
     )
     dl_iter = cycle(dataloader)
 
@@ -205,6 +206,9 @@ def train(cfg: TrainPipelineConfig):
         train_tracker.dataloading_s = time.perf_counter() - start_time
         for key in batch:
             if isinstance(batch[key], torch.Tensor):
+                if batch[key].dtype != torch.bool:
+                    batch[key] = batch[key].type(torch.float32) if device.type == "mps" else batch[key]
+
                 batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")
 
         train_tracker, output_dict = update_policy(
