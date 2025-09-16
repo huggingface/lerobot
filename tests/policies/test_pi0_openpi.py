@@ -6,8 +6,10 @@ import torch
 
 from lerobot.policies.factory import make_policy_config
 from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy
+from tests.utils import require_nightly_gpu
 
 
+@require_nightly_gpu
 def test_policy_instantiation():
     """Test basic policy instantiation."""
     print("Testing PI0OpenPI policy instantiation...")
@@ -63,6 +65,7 @@ def test_policy_instantiation():
     return True
 
 
+@require_nightly_gpu
 def test_config_creation():
     """Test policy config creation through factory."""
     print("\nTesting config creation through factory...")
@@ -81,29 +84,3 @@ def test_config_creation():
     except Exception as e:
         print(f"✗ Config creation failed: {e}")
         return False
-
-
-def main():
-    """Run all tests."""
-    print("=" * 60)
-    print("PI0OpenPI Policy Integration Test")
-    print("=" * 60)
-
-    # Test config creation
-    config_test = test_config_creation()
-
-    print("\n" + "-" * 60)
-
-    # Test policy instantiation
-    policy_test = test_policy_instantiation()
-
-    print("\n" + "=" * 60)
-    if config_test and policy_test:
-        print("✓ All tests passed!")
-    else:
-        print("✗ Some tests failed.")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
-    main()

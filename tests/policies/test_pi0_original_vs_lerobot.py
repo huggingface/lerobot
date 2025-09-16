@@ -10,6 +10,7 @@ from openpi.models_pytorch.pi0_pytorch import PI0Pytorch
 from transformers import AutoTokenizer
 
 from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy
+from tests.utils import require_nightly_gpu
 
 DUMMY_ACTION_DIM = 32
 DUMMY_STATE_DIM = 32
@@ -311,7 +312,9 @@ def create_original_observation_from_lerobot(lerobot_pi0, batch):
     )
 
 
-def main():
+@require_nightly_gpu
+def test_pi0_original_vs_lerobot():
+    """Test PI0 original implementation vs LeRobot implementation."""
     print("Initializing models...")
     lerobot_pi0 = instantiate_lerobot_pi0(from_pretrained=True)  # Load pretrained LeRobot model
     original_pi0 = instantiate_original_pi0(
@@ -376,21 +379,18 @@ def main():
     print(f"OpenPI (LeRobot preprocessing) Actions std: {openpi_actions_lerobot_preproc.std().item():.6f}")
 
     print("\nComparing models with same preprocessing:")
-    print(
-        f"Actions close (atol=1e-4): {torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-4)}"
-    )
-    print(
-        f"Actions close (atol=1e-2): {torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-2)}"
-    )
-    print(
-        f"Max absolute difference: {torch.abs(lerobot_actions_own - openpi_actions_lerobot_preproc).max().item():.6f}"
-    )
+    is_close_1e4 = torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-4)
+    is_close_1e2 = torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-2)
+    max_diff = torch.abs(lerobot_actions_own - openpi_actions_lerobot_preproc).max().item()
+
+    print(f"Actions close (atol=1e-4): {is_close_1e4}")
+    print(f"Actions close (atol=1e-2): {is_close_1e2}")
+    print(f"Max absolute difference: {max_diff:.6f}")
+
+    # Add assertions for pytest
+    assert is_close_1e2, f"Models should produce similar results (atol=1e-2), max diff: {max_diff}"
 
     print("\n=== SUMMARY ===")
     print("Test 1 compares end-to-end pipelines (each model with its own preprocessing)")
     print("Test 2 isolates model differences (both models with LeRobot preprocessing)")
     print("Both tests completed successfully!")
-
-
-if __name__ == "__main__":
-    main()
