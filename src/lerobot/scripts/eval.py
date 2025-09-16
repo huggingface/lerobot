@@ -538,7 +538,7 @@ def eval_policy_all(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
-    max_parallel_tasks: int = 5,
+    max_parallel_tasks: int = 1,
     verbose: bool = True,
 ) -> dict:
     """
