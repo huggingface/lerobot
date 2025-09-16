@@ -84,7 +84,6 @@ dependencies = [
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
-    "flask>=3.0.3,<4.0.0",
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
     "termcolor>=2.4.0,<4.0.0",
 ]
