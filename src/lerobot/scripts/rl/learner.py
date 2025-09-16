@@ -1441,10 +1441,9 @@ def run_conrft_offline_training(
                 policy=policy, observations=observations, next_observations=next_observations
             )
 
-            # Get cached action embeddings for performance
-            action_embedding, next_action_embeddings = get_action_embeddings(
-                policy=policy, observations=observations, next_observations=next_observations
-            )
+            # Use precomputed action embeddings from recorded dataset (now in state)
+            action_embedding = observations.get("action_embedding")
+            next_action_embeddings = next_observations.get("action_embedding")
 
             # Create forward batch
             forward_batch = {
@@ -1492,10 +1491,9 @@ def run_conrft_offline_training(
             policy=policy, observations=observations, next_observations=next_observations
         )
 
-        # Get cached action embeddings for performance
-        action_embedding, next_action_embeddings = get_action_embeddings(
-            policy=policy, observations=observations, next_observations=next_observations
-        )
+        # Use precomputed action embeddings from recorded dataset (now in state)
+        action_embedding = observations.get("action_embedding")
+        next_action_embeddings = next_observations.get("action_embedding")
 
         forward_batch = {
             "action": actions,
@@ -1507,11 +1505,8 @@ def run_conrft_offline_training(
             "next_observation_feature": next_observation_features,
             "action_embeddings": action_embedding,
             "next_action_embeddings": next_action_embeddings,
+            "complementary_info": batch.get("complementary_info"),
         }
-
-        if "complementary_info" in batch and batch["complementary_info"] is not None:
-            if "mc_returns" in batch["complementary_info"]:
-                forward_batch["mc_returns"] = batch["complementary_info"]["mc_returns"]
 
         # Critic update
         critic_output = policy.forward(forward_batch, model="cal_ql")
@@ -1747,6 +1742,10 @@ def run_conrft_online_training(
                 policy=policy, observations=observations, next_observations=next_observations
             )
 
+            # Use precomputed action embeddings from recorded dataset (now in state)
+            action_embeddings = observations.get("action_embedding")
+            next_action_embeddings = next_observations.get("action_embedding")
+
             forward_batch = {
                 "action": actions,
                 "reward": rewards,
@@ -1755,11 +1754,10 @@ def run_conrft_online_training(
                 "done": done,
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
+                "action_embeddings": action_embeddings,
+                "next_action_embeddings": next_action_embeddings,
+                "complementary_info": batch.get("complementary_info"),
             }
-            if observation_features is not None:
-                forward_batch["observation_features"] = observation_features
-            if next_observation_features is not None:
-                forward_batch["next_observation_features"] = next_observation_features
 
             critic_output = policy.forward(forward_batch, model="critic")
             loss_critic = critic_output["loss_critic"]
@@ -1796,6 +1794,10 @@ def run_conrft_online_training(
             policy=policy, observations=observations, next_observations=next_observations
         )
 
+        # Use precomputed action embeddings from recorded dataset (now in state)
+        action_embeddings = observations.get("action_embedding")
+        next_action_embeddings = next_observations.get("action_embedding")
+
         forward_batch = {
             "action": actions,
             "reward": rewards,
@@ -1804,11 +1806,10 @@ def run_conrft_online_training(
             "done": done,
             "observation_feature": observation_features,
             "next_observation_feature": next_observation_features,
+            "action_embeddings": action_embeddings,
+            "next_action_embeddings": next_action_embeddings,
+            "complementary_info": batch.get("complementary_info"),
         }
-        if observation_features is not None:
-            forward_batch["observation_features"] = observation_features
-        if next_observation_features is not None:
-            forward_batch["next_observation_features"] = next_observation_features
 
         critic_output = policy.forward(forward_batch, model="critic")
         loss_critic = critic_output["loss_critic"]

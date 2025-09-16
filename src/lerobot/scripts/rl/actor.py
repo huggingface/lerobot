@@ -298,16 +298,27 @@ def act_with_policy(
             logging.info("[ACTOR] Shutting down act_with_policy")
             return
 
+        # Initialize action embedding as None
+        current_action_embedding = None
+
         if interaction_step >= cfg.policy.online_step_before_learning:
             # Time policy inference and check if it meets FPS requirement
             with policy_timer:
-                action = policy.select_action(batch=obs)
+                if isinstance(policy, ConRFTPolicy) and hasattr(policy, 'select_action_with_embedding'):
+                    action, current_action_embedding = policy.select_action_with_embedding(batch=obs)
+                    if current_action_embedding is not None:
+                        current_action_embedding = current_action_embedding.cpu()
+                else:
+                    action = policy.select_action(batch=obs)
             policy_fps = policy_timer.fps_last
 
-            log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
+            # log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 
         else:
-            action = online_env.action_space.sample()
+            action, current_action_embedding = policy.select_action_with_embedding(batch=obs)
+            if current_action_embedding is not None:
+                current_action_embedding = current_action_embedding.cpu()
+            # action = online_env.action_space.sample()
 
         next_obs, reward, done, truncated, info = online_env.step(action)
 
@@ -324,15 +335,19 @@ def act_with_policy(
             # Increment intervention steps counter
             episode_intervention_steps += 1
 
+        # Add action embedding to state dictionary if available
+        state_with_embedding = obs.copy()
+        if current_action_embedding is not None:
+            state_with_embedding["action_embedding"] = current_action_embedding
+
         transition = Transition(
-            state=obs,
+            state=state_with_embedding,
             action=action,
             reward=reward,
-            next_state=next_obs,
+            next_state=next_obs,  # next_action_embeddings will be added later by add_next_embeddings_to_trajectory
             done=done,
             truncated=truncated,  # TODO: (azouitine) Handle truncation properly
             complementary_info=info,
-            mc_returns=None,
         )
         trajectory.append(transition)
         # assign obs to the next obs and continue the rollout
@@ -351,7 +366,6 @@ def act_with_policy(
                     reward_neg=cfg.policy.reward_neg,
                     is_sparse_reward=cfg.policy.is_sparse_reward,
                 )
-            # trajectory = add_next_embeddings_to_trajectory(trajectory)
 
             update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
