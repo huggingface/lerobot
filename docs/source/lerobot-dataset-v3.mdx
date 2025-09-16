@@ -43,7 +43,7 @@ lerobot-record \
   --dataset.single_task="Grab the black cube"
 ```
 
-See the [recording guide](https://huggingface.co/docs/lerobot/il_robots#record-a-dataset) for more details.
+See the [recording guide](./il_robots#record-a-dataset) for more details.
 
 ## Format design
 
@@ -57,17 +57,6 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 
 > To scale to millions of episodes, tabular rows and video frames from multiple episodes are **concatenated** into larger files. Episode‑specific views are reconstructed **via metadata**, not file boundaries.
 
-### Directory layout (simplified)
-
-- **`meta/info.json`**: canonical schema (features, shapes/dtypes), FPS, codebase version, and **path templates** to locate data/video shards.
-- **`meta/stats.json`**: global feature statistics (mean/std/min/max) used for normalization; exposed as `dataset.meta.stats`.
-- **`meta/tasks.jsonl`**: natural‑language task descriptions mapped to integer IDs for task‑conditioned policies.
-- **`meta/episodes/`**: per‑episode records (lengths, tasks, offsets) stored as **chunked Parquet** for scalability.
-- **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
-- **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
-
-### From episode‑based to file‑based
-
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
   <figure style="margin:0; text-align:center;">
     <img
@@ -80,6 +69,15 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
     </figcaption>
   </figure>
 </div>
+
+### Directory layout (simplified)
+
+- **`meta/info.json`**: canonical schema (features, shapes/dtypes), FPS, codebase version, and **path templates** to locate data/video shards.
+- **`meta/stats.json`**: global feature statistics (mean/std/min/max) used for normalization; exposed as `dataset.meta.stats`.
+- **`meta/tasks.jsonl`**: natural‑language task descriptions mapped to integer IDs for task‑conditioned policies.
+- **`meta/episodes/`**: per‑episode records (lengths, tasks, offsets) stored as **chunked Parquet** for scalability.
+- **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
+- **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
 
 ## Load a dataset for training
 
@@ -128,6 +126,17 @@ for batch in data_loader:
     # model.forward(batch)
 ```
 
+## Stream a dataset (no downloads)
+
+Use `StreamingLeRobotDataset` to iterate directly from the Hub without local copies.
+
+```python
+from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+
+repo_id = "yaak-ai/L2D-v3"
+dataset = StreamingLeRobotDataset(repo_id)  # streams directly from the Hub
+```
+
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
   <figure style="margin:0; text-align:center;">
     <img
@@ -140,17 +149,6 @@ for batch in data_loader:
     </figcaption>
   </figure>
 </div>
-
-## Stream a dataset (no downloads)
-
-Use `StreamingLeRobotDataset` to iterate directly from the Hub without local copies.
-
-```python
-from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
-
-repo_id = "yaak-ai/L2D-v3"
-dataset = StreamingLeRobotDataset(repo_id)  # streams directly from the Hub
-```
 
 ## Migrate `v2.1` → `v3.0`
 
