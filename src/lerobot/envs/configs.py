@@ -30,7 +30,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     fps: int = 30
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
-    max_parallel_tasks: int = 5
+    max_parallel_tasks: int = 1
 
     @property
     def type(self) -> str:
