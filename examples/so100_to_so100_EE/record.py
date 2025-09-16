@@ -14,14 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import combine_feature_dicts
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotProcessorPipeline
+from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
     observation_to_transition,
     robot_action_to_transition,
@@ -76,7 +75,7 @@ leader_kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert follower joints to EE observation
-follower_joints_to_ee = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
+follower_joints_to_ee = RobotProcessorPipeline[RobotObservation, RobotObservation](
     steps=[
         ForwardKinematicsJointsToEE(
             kinematics=follower_kinematics_solver, motor_names=list(follower.bus.motors.keys())

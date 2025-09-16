@@ -221,7 +221,8 @@ def robot_action_to_transition(action: RobotAction) -> EnvTransition:
     Returns:
         An `EnvTransition` containing the formatted action.
     """
-
+    if not isinstance(action, RobotAction):
+        raise ValueError(f"Action should be a RobotAction type got {type(action)}")
     return create_transition(action=action)
 
 
@@ -239,7 +240,8 @@ def observation_to_transition(observation: RobotObservation) -> EnvTransition:
     Returns:
         An `EnvTransition` containing the formatted observation.
     """
-
+    if not isinstance(observation, RobotObservation):
+        raise ValueError(f"Observation should be a RobotObservation type got {type(observation)}")
     return create_transition(observation=observation)
 
 
@@ -256,6 +258,9 @@ def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
     Returns:
         A dictionary representing the raw robot action.
     """
+    if not isinstance(transition, dict):
+        raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
+
     action = transition.get(TransitionKey.ACTION)
     if not isinstance(action, dict):
         raise ValueError(f"Action should be a RobotAction type (dict) got {type(action)}")
@@ -266,6 +271,9 @@ def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
     """
     Convert an `EnvTransition` to a `PolicyAction`.
     """
+    if not isinstance(transition, dict):
+        raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
+
     action = transition.get(TransitionKey.ACTION)
     if not isinstance(action, PolicyAction):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
@@ -276,6 +284,9 @@ def transition_to_observation(transition: EnvTransition) -> RobotObservation:
     """
     Convert an `EnvTransition` to a `RobotObservation`.
     """
+    if not isinstance(transition, dict):
+        raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
+
     observation = transition.get(TransitionKey.OBSERVATION)
     if not isinstance(observation, dict):
         raise ValueError(f"Observation should be a RobotObservation (dict) type got {type(observation)}")
@@ -343,6 +354,9 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
     Returns:
         A batch dictionary with canonical LeRobot field names.
     """
+    if not isinstance(transition, dict):
+        raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
+
     batch = {
         "action": transition.get(TransitionKey.ACTION),
         "next.reward": transition.get(TransitionKey.REWARD, 0.0),
@@ -364,7 +378,7 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
     return batch
 
 
-def identity_transition(tr: EnvTransition) -> EnvTransition:
+def identity_transition(transition: EnvTransition) -> EnvTransition:
     """
     An identity function for transitions, returning the input unchanged.
 
@@ -376,4 +390,4 @@ def identity_transition(tr: EnvTransition) -> EnvTransition:
     Returns:
         The same `EnvTransition`.
     """
-    return tr
+    return transition

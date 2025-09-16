@@ -55,7 +55,6 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
-from typing import Any
 
 import rerun as rr
 
@@ -63,10 +62,9 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # no
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.processor import (
-    EnvTransition,
     RobotAction,
+    RobotObservation,
     RobotProcessorPipeline,
-    TransitionKey,
     make_default_processors,
 )
 from lerobot.robots import (  # noqa: F401
@@ -111,9 +109,9 @@ def teleop_loop(
     teleop: Teleoperator,
     robot: Robot,
     fps: int,
-    teleop_action_processor: RobotProcessorPipeline[RobotAction, EnvTransition],
-    robot_action_processor: RobotProcessorPipeline[EnvTransition, RobotAction],
-    robot_observation_processor: RobotProcessorPipeline[dict[str, Any], EnvTransition],
+    teleop_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],
+    robot_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],
+    robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
     display_data: bool = False,
     duration: float | None = None,
 ):
@@ -143,13 +141,13 @@ def teleop_loop(
         raw_action = teleop.get_action()
 
         # Process teleop action through pipeline
-        teleop_transition = teleop_action_processor(raw_action)
+        teleop_action = teleop_action_processor(raw_action)
 
         # Process action for robot through pipeline
-        robot_action_to_send = robot_action_processor(teleop_transition)
+        robot_action_to_send = robot_action_processor(teleop_action)
 
         # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
-        robot.send_action(robot_action_to_send)
+        _ = robot.send_action(robot_action_to_send)
 
         if display_data:
             # Get robot observation
@@ -158,8 +156,8 @@ def teleop_loop(
             obs_transition = robot_observation_processor(obs)
 
             log_rerun_data(
-                observation=obs_transition.get(TransitionKey.OBSERVATION),
-                action=teleop_transition.get(TransitionKey.ACTION),
+                observation=obs_transition,
+                action=teleop_action,
             )
 
             print("\n" + "-" * (display_len + 10))

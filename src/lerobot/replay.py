@@ -48,11 +48,8 @@ from pprint import pformat
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor import (
-    IdentityProcessorStep,
-    RobotAction,
-    RobotProcessorPipeline,
+    make_default_robot_action_processor,
 )
-from lerobot.processor.converters import robot_action_to_transition, transition_to_robot_action
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -96,11 +93,7 @@ def replay(cfg: ReplayConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
-    robot_action_processor = RobotProcessorPipeline[RobotAction, RobotAction](
-        steps=[IdentityProcessorStep()],
-        to_transition=robot_action_to_transition,
-        to_output=transition_to_robot_action,
-    )
+    robot_action_processor = make_default_robot_action_processor()
 
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
@@ -122,7 +115,7 @@ def replay(cfg: ReplayConfig):
 
         processed_action = robot_action_processor(action)
 
-        robot.send_action(processed_action)
+        _ = robot.send_action(processed_action)
 
         dt_s = time.perf_counter() - start_episode_t
         busy_wait(1 / dataset.fps - dt_s)
