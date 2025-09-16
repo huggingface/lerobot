@@ -128,7 +128,7 @@ for batch in data_loader:
 
 ## Stream a dataset (no downloads)
 
-Use `StreamingLeRobotDataset` to iterate directly from the Hub without local copies.
+Use `StreamingLeRobotDataset` to iterate directly from the Hub without local copies. This allows to stream large datasets without the need to downloading them onto disk or loading them onto memory, and is a key feature of the new dataset format.
 
 ```python
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
