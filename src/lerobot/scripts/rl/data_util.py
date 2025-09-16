@@ -55,21 +55,6 @@ def add_mc_returns_to_trajectory(trajectory, gamma, reward_scale, reward_bias, r
 
     for i, transition in enumerate(trajectory):
         # Ensure mc_returns is a float, not a numpy array
-        transition["mc_returns"] = float(mc_returns[i])
-
-    return trajectory
-
-
-def add_next_embeddings_to_trajectory(trajectory):
-    """
-    Update every transition in the trajectory and add next_embeddings
-    return the updated trajectory
-    """
-    for i in range(len(trajectory)):
-        if i == len(trajectory) - 1:
-            # For the last transition, next_embeddings is the same as current embeddings
-            trajectory[i]["next_action_embeddings"] = trajectory[i]["action_embeddings"]
-        else:
-            trajectory[i]["next_action_embeddings"] = trajectory[i + 1]["action_embeddings"]
+        transition["complementary_info"]["mc_returns"] = float(mc_returns[i])
 
     return trajectory
