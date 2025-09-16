@@ -88,6 +88,10 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
         "unnormalize.",  # Must come after unnormalize_* patterns
         "input_normalizer.",
         "output_normalizer.",
+        "normalalize_inputs.",
+        "unnormalize_outputs.",
+        "normalize_targets.",
+        "unnormalize_targets.",
     ]
 
     # Process each key in state_dict
@@ -168,6 +172,8 @@ def detect_features_and_norm_modes(
                     mode = NormalizationMode.MEAN_STD
                 elif mode_str == "MIN_MAX":
                     mode = NormalizationMode.MIN_MAX
+                elif mode_str == "IDENTITY":
+                    mode = NormalizationMode.IDENTITY
                 else:
                     print(
                         f"Warning: Unknown normalization mode '{mode_str}' for feature type '{feature_type_str}'"
@@ -273,6 +279,26 @@ def remove_normalization_layers(state_dict: dict[str, torch.Tensor]) -> dict[str
         if not should_remove:
             new_state_dict[key] = tensor
 
+    return new_state_dict
+
+
+def clean_state_dict(
+    state_dict: dict[str, torch.Tensor], remove_str: str = "._orig_mod"
+) -> dict[str, torch.Tensor]:
+    """
+    Remove a substring (e.g. '._orig_mod') from all keys in a state dict.
+
+    Args:
+        state_dict (dict): The original state dict.
+        remove_str (str): The substring to remove from the keys.
+
+    Returns:
+        dict: A new state dict with cleaned keys.
+    """
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        new_k = k.replace(remove_str, "")
+        new_state_dict[new_k] = v
     return new_state_dict
 
 
@@ -405,6 +431,7 @@ def main():
     # Remove normalization layers from state_dict
     print("Removing normalization layers from model...")
     new_state_dict = remove_normalization_layers(state_dict)
+    new_state_dict = clean_state_dict(new_state_dict, remove_str="._orig_mod")
 
     removed_keys = set(state_dict.keys()) - set(new_state_dict.keys())
     if removed_keys:
