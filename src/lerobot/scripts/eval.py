@@ -720,6 +720,10 @@ def eval_policy_all(
     return results
 
 
-if __name__ == "__main__":
+def main():
     init_logging()
     eval_main()
+
+
+if __name__ == "__main__":
+    main()
