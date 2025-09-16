@@ -5,8 +5,9 @@ import os
 import pytest
 import torch
 
-# Skip entire module if openpi is not available
+# Skip entire module if openpi or transformers is not available
 pytest.importorskip("openpi")
+pytest.importorskip("transformers")
 
 from openpi.models_pytorch import preprocessing_pytorch as openpi_preprocessing
 
