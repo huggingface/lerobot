@@ -166,7 +166,8 @@ def train(cfg: TrainPipelineConfig):
     if hasattr(cfg.policy, "drop_n_last_frames"):
         shuffle = False
         sampler = EpisodeAwareSampler(
-            dataset.episode_data_index,
+            dataset.meta.episodes["dataset_from_index"],
+            dataset.meta.episodes["dataset_to_index"],
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
         )
@@ -178,10 +179,11 @@ def train(cfg: TrainPipelineConfig):
         dataset,
         num_workers=cfg.num_workers,
         batch_size=cfg.batch_size,
-        shuffle=shuffle,
+        shuffle=shuffle and not cfg.dataset.streaming,
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
+        prefetch_factor=2,
     )
     dl_iter = cycle(dataloader)
 
@@ -207,6 +209,9 @@ def train(cfg: TrainPipelineConfig):
 
         for key in batch:
             if isinstance(batch[key], torch.Tensor):
+                if batch[key].dtype != torch.bool:
+                    batch[key] = batch[key].type(torch.float32) if device.type == "mps" else batch[key]
+
                 batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")
 
         train_tracker, output_dict = update_policy(
