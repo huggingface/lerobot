@@ -14,11 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import os
+import time
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.constants import (
+    CHECKPOINTS_DIR,
+    LAST_CHECKPOINT_LINK,
+    PRETRAINED_MODEL_DIR,
+)
 from lerobot.policies.factory import make_policy
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
@@ -30,21 +36,29 @@ from lerobot.teleoperators import (
     gamepad,  # noqa: F401
     so101_leader,  # noqa: F401
 )
+from lerobot.utils.robot_utils import busy_wait
 
 logging.basicConfig(level=logging.INFO)
 
 
-def eval_policy(env, policy, n_episodes):
+def eval_policy(env, policy, n_episodes, fps=None):
     sum_reward_episode = []
     for _ in range(n_episodes):
+        policy.reset()
         obs, _ = env.reset()
         episode_reward = 0.0
         while True:
+            start_time = time.perf_counter()
             action = policy.select_action(obs)
             obs, reward, terminated, truncated, _ = env.step(action)
             episode_reward += reward
             if terminated or truncated:
                 break
+
+            if fps is not None:
+                dt_time = time.perf_counter() - start_time
+                busy_wait(1 / fps - dt_time)
+
         sum_reward_episode.append(episode_reward)
 
     logging.info(f"Success after 20 steps {sum_reward_episode}")
@@ -55,19 +69,31 @@ def eval_policy(env, policy, n_episodes):
 def main(cfg: TrainRLServerPipelineConfig):
     env_cfg = cfg.env
     env = make_robot_env(env_cfg)
-    dataset_cfg = cfg.dataset
-    dataset = LeRobotDataset(repo_id=dataset_cfg.repo_id)
-    dataset_meta = dataset.meta
+    # dataset_cfg = cfg.dataset
+    # dataset = LeRobotDataset(repo_id=dataset_cfg.repo_id)
+    # dataset_meta = dataset.meta
+
+    if env_cfg.pretrained_policy_name_or_path is not None:
+        cfg.policy.pretrained_path = env_cfg.pretrained_policy_name_or_path
+    else:
+        # Construct path to the last checkpoint directory
+        checkpoint_dir = os.path.join(cfg.output_dir, CHECKPOINTS_DIR, LAST_CHECKPOINT_LINK)
+        logging.info(f"Loading training state from {checkpoint_dir}")
+
+        pretrained_policy_name_or_path = os.path.join(checkpoint_dir, PRETRAINED_MODEL_DIR)
+        cfg.policy.pretrained_path = pretrained_policy_name_or_path
+
+    logging.info(f"Using pretrained policy from {cfg.policy.pretrained_path}")
 
     policy = make_policy(
         cfg=cfg.policy,
-        # env_cfg=cfg.env,
-        ds_meta=dataset_meta,
+        env_cfg=cfg.env,
+        # ds_meta=dataset_meta,
     )
-    policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
+    # policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
     policy.eval()
 
-    eval_policy(env, policy=policy, n_episodes=10)
+    eval_policy(env, policy=policy, n_episodes=10, fps=env_cfg.fps)
 
 
 if __name__ == "__main__":

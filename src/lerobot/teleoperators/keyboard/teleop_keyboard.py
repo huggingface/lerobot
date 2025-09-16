@@ -208,14 +208,14 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 delta_x = int(val)
             elif key == keyboard.Key.right:
                 delta_x = -int(val)
-            elif key == keyboard.Key.shift:
+            elif key == "n":
                 delta_z = -int(val)
-            elif key == keyboard.Key.shift_r:
+            elif key == "m":
                 delta_z = int(val)
-            elif key == keyboard.Key.ctrl_r:
+            elif key == "h":
                 # Gripper actions are expected to be between 0 (close), 1 (stay), 2 (open)
                 gripper_action = int(val) + 1
-            elif key == keyboard.Key.ctrl_l:
+            elif key == "j":
                 gripper_action = int(val) - 1
             elif val:
                 # If the key is pressed, add it to the misc_keys_queue

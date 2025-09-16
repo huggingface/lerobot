@@ -153,7 +153,7 @@ def create_dummy_action() -> torch.Tensor:
 
 
 def dict_properties() -> list:
-    return ["state", "next_state"]
+    return ["state", "next_state", "next_state_nsteps"]
 
 
 @pytest.fixture
@@ -251,6 +251,8 @@ def test_sample_with_1_transition(replay_buffer, dummy_state, next_dummy_state, 
         next_state=clone_state(next_dummy_state),
         done=False,
         truncated=False,
+        next_state_nsteps=clone_state(next_dummy_state),
+        # action_nsteps=dummy_action.clone().repeat(1, 4),
     )
 
     for buffer_property in dict_properties():
@@ -290,6 +292,7 @@ def test_sample_with_batch_bigger_than_buffer_size(
         next_state=next_dummy_state,
         done=False,
         truncated=False,
+        next_state_nsteps=next_dummy_state,
     )
 
     for buffer_property in dict_properties():
