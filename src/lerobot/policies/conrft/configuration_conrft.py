@@ -133,19 +133,11 @@ class ConRFTConfig(PreTrainedConfig):
     rho: float = 7.0
     num_scales: int = 40
     time_dim: int = 16
-    hidden_dim: int = 1024
-    num_blocks: int = 3
     use_layer_norm: bool = True
     clip_denoised: bool = True
 
     consistency_hidden_dim: int = 256
     offline_steps: int = 2000  # Number of offline pretraining steps
-
-    # Loss weights
-    bc_weight: float = 1.0
-    q_weight: float = 1.0
-    recon_weight: float = 1.0  # CP reconstruction
-    snr_clip: float = 5.0
 
     # Critic (ensemble + CQL/CalQL)
     critic_hidden_dim: int = 256
@@ -155,7 +147,7 @@ class ConRFTConfig(PreTrainedConfig):
     # Number of subsampled critics for training
     num_subsample_critics: int | None = None
 
-    cql_alpha: float = 0.5
+    cql_alpha: float = 0.1
     cql_n_actions: int = 10
     cql_action_sample_method: str = "uniform"
     cql_clip_diff_min: float = -np.inf
@@ -170,8 +162,8 @@ class ConRFTConfig(PreTrainedConfig):
 
     # stage weights
     bc_weight_offline: float = 1.0
-    q_weight_offline: float = 1.0
-    bc_weight_online: float = 0.5
+    q_weight_offline: float = 0.1
+    bc_weight_online: float = 0.1
     q_weight_online: float = 1.0
 
     # target update
@@ -181,7 +173,7 @@ class ConRFTConfig(PreTrainedConfig):
     cql_temp: float = 1.0
 
     # Required VLA model (ConRFT always uses Octo)
-    base_vla_model_path: str = "lerobot/octo_base"
+    base_vla_model_path: str = "lilkm/octo-small-test"
     freeze_base_vla: bool = True
 
     # Proprioception settings
@@ -208,7 +200,6 @@ class ConRFTConfig(PreTrainedConfig):
     online_step_before_learning: int = 100
     policy_update_freq: int = 1
     utd_ratio: int = 2
-    state_encoder_hidden_dim: int = 256
     grad_clip_norm: float = 10.0
 
     actor_lr: float = 3e-4
