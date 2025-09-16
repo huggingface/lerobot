@@ -420,7 +420,7 @@ class ACT(nn.Module):
             batch_size = batch["observation.environment_state"].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
-        if self.config.use_vae and "action" in batch:
+        if self.config.use_vae and "action" in batch and self.training:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size

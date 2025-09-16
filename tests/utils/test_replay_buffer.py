@@ -384,7 +384,7 @@ def test_to_lerobot_dataset(tmp_path):
             elif feature == "next.done":
                 assert torch.equal(value, buffer.dones[i])
             elif feature == "observation.image":
-                # Tenssor -> numpy is not precise, so we have some diff there
+                # Tensor -> numpy is not precise, so we have some diff there
                 # TODO: Check and fix it
                 torch.testing.assert_close(value, buffer.states["observation.image"][i], rtol=0.3, atol=0.003)
             elif feature == "observation.state":
