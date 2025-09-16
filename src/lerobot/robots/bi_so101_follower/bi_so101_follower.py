@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 class BiSO101Follower(Robot):
     """
-    [Bimanual SO-101 Follower Arms](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
-    This bimanual robot can also be easily adapted to use SO-101 follower arms, just replace the SO100Follower class with SO101Follower and SO100FollowerConfig with SO101FollowerConfig.
+    Implementation based on src/lerobot/robots/bi_so100_follower/bi_so100_follower.py
+    [Bimanual SO-101 Follower Arms (in the same repository as so 100)](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
 
     config_class = BiSO101FollowerConfig

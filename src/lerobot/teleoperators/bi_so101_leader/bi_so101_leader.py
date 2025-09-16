@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 class BiSO101Leader(Teleoperator):
     """
-    [Bimanual SO-100 Leader Arms](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
-    This bimanual leader arm can also be easily adapted to use SO-101 leader arms, just replace the SO100Leader class with SO101Leader and SO100LeaderConfig with SO101LeaderConfig.
+    Implementation based on src/lerobot/teleoperators/bi_so100_leader/bi_so100_leader.py
+    [Bimanual SO-101 Leader Arms (in the same repository as so 100)](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
 
     config_class = BiSO101LeaderConfig
