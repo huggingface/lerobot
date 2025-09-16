@@ -68,6 +68,7 @@ def keep_datasets_with_the_same_features_per_robot_type(ls_datasets: list) -> li
             for ds in ls_datasets
             if ds.meta.info["robot_type"] == robot_type
             for ep_stats in ds.meta.episodes_stats.values()
+            if ep_stats is not None  # Filter out None values
         ]
         if not stats_list:
             continue
@@ -133,10 +134,16 @@ def aggregate_stats_per_robot_type(ls_datasets) -> dict[str, dict[str, torch.Ten
         robot_type_datasets = []
         for ds in ls_datasets:
             if ds.meta.info["robot_type"] == robot_type:
-                robot_type_datasets.extend(list(ds.meta.episodes_stats.values()))
+                # Filter out None values from episodes_stats to handle missing stats
+                valid_episodes_stats = [stats for stats in ds.meta.episodes_stats.values() if stats is not None]
+                robot_type_datasets.extend(valid_episodes_stats)
         # robot_type_datasets = [list(ds.episodes_stats.values()) for ds in ls_datasets if ds.meta.info["robot_type"] == robot_type]
-        stat = aggregate_stats(robot_type_datasets)
-        stats[robot_type] = stat
+        if robot_type_datasets:  # Only aggregate if we have valid stats
+            stat = aggregate_stats(robot_type_datasets)
+            stats[robot_type] = stat
+        else:
+            print(f"Warning: No valid episode stats found for robot type {robot_type}, skipping aggregation")
+            stats[robot_type] = {}
     return stats
 
 

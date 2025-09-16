@@ -163,12 +163,13 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
     delta_means = means - total_mean
     weighted_variances = (variances + delta_means**2) * counts
     total_variance = weighted_variances.sum(axis=0) / total_count
+    total_std = np.sqrt(total_variance)
 
     return {
         "min": np.min(np.stack([s["min"] for s in valid_stats]), axis=0),
         "max": np.max(np.stack([s["max"] for s in valid_stats]), axis=0),
         "mean": total_mean,
-        "std": np.sqrt(total_variance),
+        "std": total_std,
         "count": total_count,
     }
 

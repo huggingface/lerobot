@@ -243,7 +243,11 @@ def eval_policy(
     if max_episodes_rendered > 0 and not videos_dir:
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
-    if not isinstance(policy, PreTrainedPolicy):
+    # Handle accelerate-wrapped models by unwrapping them
+    if hasattr(policy, 'module') and isinstance(policy.module, PreTrainedPolicy):
+        # This is likely an accelerate-wrapped model (DistributedDataParallel)
+        policy = policy.module
+    elif not isinstance(policy, PreTrainedPolicy):
         raise ValueError(
             f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
         )

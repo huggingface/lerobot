@@ -43,14 +43,32 @@ def convert_episode_stats(dataset: LeRobotDataset, ep_idx: int):
         else:
             ep_ft_data = np.array(ep_data[key])
 
-        axes_to_reduce = (0, 2, 3) if ft["dtype"] in ["image", "video"] else 0
-        keepdims = True if ft["dtype"] in ["image", "video"] else ep_ft_data.ndim == 1
+        if ft["dtype"] in ["image", "video"]:
+            # Handle variable dimensions for image/video data
+            # Expected formats: (frames, channels, height, width) or (channels, height, width)
+            if ep_ft_data.ndim == 4:
+                # Standard case: (frames, channels, height, width)
+                axes_to_reduce = (0, 2, 3)  # reduce over frames, height, width
+            elif ep_ft_data.ndim == 3:
+                # Squeezed case: (channels, height, width) - single frame
+                axes_to_reduce = (1, 2)  # reduce over height, width
+            else:
+                raise ValueError(f"Unexpected dimensions for {ft['dtype']} data: {ep_ft_data.shape}")
+            keepdims = True
+        else:
+            axes_to_reduce = 0
+            keepdims = ep_ft_data.ndim == 1
         ep_stats[key] = get_feature_stats(ep_ft_data, axis=axes_to_reduce, keepdims=keepdims)
 
         if ft["dtype"] in ["image", "video"]:  # remove batch dim
-            ep_stats[key] = {
-                k: v if k == "count" else np.squeeze(v, axis=0) for k, v in ep_stats[key].items()
-            }
+            if ep_ft_data.ndim == 4:
+                # For 4D data, squeeze the first axis (batch/frames)
+                ep_stats[key] = {
+                    k: v if k == "count" else np.squeeze(v, axis=0) for k, v in ep_stats[key].items()
+                }
+            elif ep_ft_data.ndim == 3:
+                # For 3D data, the stats already have correct shape (channels,)
+                pass
 
     dataset.meta.episodes_stats[ep_idx] = ep_stats
 

@@ -155,12 +155,13 @@ class LeRobotDatasetMetadata:
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
-        if self._version < packaging.version.parse("v2.1"):
-            self.stats = load_stats(self.root)
-            self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
-        else:
-            self.episodes_stats = load_episodes_stats(self.root)
-            self.stats = aggregate_stats(list(self.episodes_stats.values()))
+        # Force all datasets to use v2.1 format (episodes_stats.jsonl) to avoid missing stats.json issues, because I converted all the datasets to v2.1 format. 
+        # if self._version < packaging.version.parse("v2.1"):
+        #     self.stats = load_stats(self.root)
+        #     self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
+        # else:
+        self.episodes_stats = load_episodes_stats(self.root)
+        self.stats = aggregate_stats(list(self.episodes_stats.values()))
 
     def pull_from_repo(
         self,
@@ -400,6 +401,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
+        local_files_only: bool = False,
         # new thing by M
         feature_keys_mapping: dict[str, str] | None = None,
         max_action_dim: int = None,
@@ -550,7 +552,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id,
             self.root,
-            self.revision,
+            local_files_only=local_files_only,
+            revision=self.revision,
             force_cache_sync=force_cache_sync,
             feature_keys_mapping=feature_keys_mapping,
         )
@@ -787,6 +790,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return get_hf_features_from_features(self.features)
 
     def _get_query_indices(self, idx: int, ep_idx: int) -> tuple[dict[str, list[int | bool]]]:
+        # Bounds check to prevent IndexError when episode_index is out of range
+        if ep_idx >= len(self.episode_data_index["from"]):
+            # Fall back to the last valid episode
+            ep_idx = len(self.episode_data_index["from"]) - 1
+            
         ep_start = self.episode_data_index["from"][ep_idx]
         ep_end = self.episode_data_index["to"][ep_idx]
         query_indices = {

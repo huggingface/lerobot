@@ -33,7 +33,16 @@ def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[st
         f"seed:{cfg.seed}",
     ]
     if cfg.dataset is not None:
-        lst.append(f"dataset:{cfg.dataset.repo_id}")
+        # Create shorter dataset tag to avoid wandb 64-char limit
+        repo_id = cfg.dataset.repo_id
+        if "," in repo_id:
+            # Multiple datasets - use count
+            dataset_count = len(repo_id.split(","))
+            lst.append(f"datasets:{dataset_count}")
+        else:
+            # Single dataset - use last part of path
+            dataset_name = repo_id.split("/")[-1][:20]  # Truncate to 20 chars
+            lst.append(f"dataset:{dataset_name}")
     if cfg.env is not None:
         lst.append(f"env:{cfg.env.type}")
     return lst if return_list else "-".join(lst)

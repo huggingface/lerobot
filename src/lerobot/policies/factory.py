@@ -154,7 +154,18 @@ def make_policy(
     kwargs = {}
     if ds_meta is not None:
         features = dataset_to_policy_features(ds_meta.features)
-        kwargs["dataset_stats"] = ds_meta.stats
+        # Handle robot-type grouped stats - flatten to feature-level stats  
+        if ds_meta.stats and len(ds_meta.stats) == 1:
+            # Single robot type - use its stats directly
+            robot_type = list(ds_meta.stats.keys())[0]
+            kwargs["dataset_stats"] = ds_meta.stats[robot_type]
+        elif ds_meta.stats and len(ds_meta.stats) > 1:
+            # Multiple robot types - need to aggregate across all robot types
+            # For now, use the first robot type (TODO: proper multi-robot handling)
+            robot_type = list(ds_meta.stats.keys())[0]
+            kwargs["dataset_stats"] = ds_meta.stats[robot_type]
+        else:
+            kwargs["dataset_stats"] = ds_meta.stats
     else:
         if not cfg.pretrained_path:
             logging.warning(

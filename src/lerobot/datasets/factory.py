@@ -155,7 +155,15 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
     if cfg.dataset.use_imagenet_stats:
+        # Initialize stats structure if it doesn't exist
+        if dataset.meta.stats is None:
+            dataset.meta.stats = {}
+        
         for key in dataset.meta.camera_keys:
+            # Initialize stats for this camera key if it doesn't exist
+            if key not in dataset.meta.stats or dataset.meta.stats[key] is None:
+                dataset.meta.stats[key] = {}
+                
             for stats_type, stats in IMAGENET_STATS.items():
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 

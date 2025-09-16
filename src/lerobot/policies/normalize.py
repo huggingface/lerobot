@@ -79,7 +79,7 @@ def create_stats_buffers(
             )
 
         # TODO(aliberts, rcadene): harmonize this to only use one framework (np or torch)
-        if stats:
+        if stats and key in stats:
             if isinstance(stats[key]["mean"], np.ndarray):
                 if norm_mode is NormalizationMode.MEAN_STD:
                     buffer["mean"].data = torch.from_numpy(stats[key]["mean"]).to(dtype=torch.float32)

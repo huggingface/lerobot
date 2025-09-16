@@ -76,9 +76,14 @@ class SmolVLMWithExpertModel(nn.Module):
         super().__init__()
         if load_vlm_weights:
             print(f"Loading  {model_id} weights ...")
+            # Disable device_map when using Accelerate for multi-GPU training
+            import os
+            use_accelerate = os.environ.get('ACCELERATE_USE_FSDP', 'false').lower() != 'true' and \
+                           'ACCELERATE_CONFIG_FILE' in os.environ
+            device_map = None if use_accelerate else "auto"
             self.vlm = AutoModelForImageTextToText.from_pretrained(
                 model_id,
-                device_map="auto",
+                device_map=device_map,
                 torch_dtype="bfloat16",
                 low_cpu_mem_usage=True,
             )
