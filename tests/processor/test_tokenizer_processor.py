@@ -205,8 +205,9 @@ def test_none_complementary_data(mock_auto_tokenizer):
 
     transition = create_transition(observation={}, complementary_data=None)
 
-    result = processor(transition)
-    assert result == transition  # Should return unchanged
+    # create_transition converts None complementary_data to empty dict, so task key is missing
+    with pytest.raises(KeyError, match="task"):
+        processor(transition)
 
 
 @require_package("transformers")
@@ -220,8 +221,8 @@ def test_missing_task_key(mock_auto_tokenizer):
 
     transition = create_transition(observation={}, complementary_data={"other_field": "some value"})
 
-    result = processor(transition)
-    assert result == transition  # Should return unchanged
+    with pytest.raises(KeyError, match="task"):
+        processor(transition)
 
 
 @require_package("transformers")
@@ -235,8 +236,8 @@ def test_none_task_value(mock_auto_tokenizer):
 
     transition = create_transition(observation={}, complementary_data={"task": None})
 
-    result = processor(transition)
-    assert result == transition  # Should return unchanged
+    with pytest.raises(ValueError, match="Task extracted from Complementary data is None"):
+        processor(transition)
 
 
 @require_package("transformers")
@@ -248,17 +249,17 @@ def test_unsupported_task_type(mock_auto_tokenizer):
 
     processor = TokenizerProcessorStep(tokenizer_name="test-tokenizer")
 
-    # Test with integer task
+    # Test with integer task - get_task returns None, observation raises ValueError
     transition = create_transition(observation={}, complementary_data={"task": 123})
 
-    result = processor(transition)
-    assert result == transition  # Should return unchanged
+    with pytest.raises(ValueError, match="Task cannot be None"):
+        processor(transition)
 
-    # Test with mixed list
+    # Test with mixed list - get_task returns None, observation raises ValueError
     transition = create_transition(observation={}, complementary_data={"task": ["text", 123, "more text"]})
 
-    result = processor(transition)
-    assert result == transition  # Should return unchanged
+    with pytest.raises(ValueError, match="Task cannot be None"):
+        processor(transition)
 
 
 @require_package("transformers")
