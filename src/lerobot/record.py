@@ -180,10 +180,10 @@ class RecordConfig:
             self.policy.pretrained_path = policy_path
 
         # Allow recording without teleop/policy for robots that support direct position reading
-        # (e.g., kinesthetic teaching where actions are current joint positions)
+        # (e.g., Agilex Piper arms (https://global.agilex.ai/products/piper) support direct teleoperation by connecting
+        # leader and follower arms to the same CAN port)
         if self.teleop is None and self.policy is None:
-            # Check if robot supports direct recording by reading current positions
-            if self.robot.type not in ["bi_piper"]:  # Add other robots that support this mode
+            if self.robot.type not in ["bi_piper"]:
                 raise ValueError("Choose a policy, a teleoperator or both to control the robot")
 
     @classmethod
@@ -271,7 +271,8 @@ def record_loop(
 
             action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
         elif policy is None and teleop is None:
-            # Direct recording mode: use current joint positions as actions (kinesthetic teaching)
+            # (e.g., Agilex Piper arms (https://global.agilex.ai/products/piper) support direct teleoperation
+            # by connecting leader and follower arms to the same CAN port)
             # Extract position values from observation for action features
             action = {}
             for action_key in robot.action_features:
