@@ -195,7 +195,6 @@ def train(cfg: TrainPipelineConfig):
 
     if cfg.resume:
         step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
-        # Note: preprocessor and postprocessor state is already loaded via pretrained_path above
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
