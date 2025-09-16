@@ -118,14 +118,11 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         """
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
         if complementary_data is None:
-            return None
-
-        if self.task_key not in complementary_data:
-            return None
+            raise ValueError("Complementary data is None so no task can be extracted from it")
 
         task = complementary_data[self.task_key]
         if task is None:
-            return None
+            raise ValueError("Task extracted from Complementary data is None")
 
         # Standardize to a list of strings for the tokenizer
         if isinstance(task, str):
@@ -150,7 +147,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         """
         task = self.get_task(self.transition)
         if task is None:
-            return observation
+            raise ValueError("Task cannot be None")
 
         # Tokenize the task (this will create CPU tensors)
         tokenized_prompt = self._tokenize_text(task)
