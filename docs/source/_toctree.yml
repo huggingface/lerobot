@@ -20,7 +20,7 @@
   - local: async
     title: Use Async Inference
   - local: lerobot-dataset-v3
-    title: LeRobotDataset v3.0
+    title: LeRobotDataset
   - local: porting_datasets_v3
     title: Porting Large Datasets
   title: "Tutorials"
