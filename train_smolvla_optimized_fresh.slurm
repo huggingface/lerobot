@@ -39,13 +39,13 @@ export NCCL_P2P_DISABLE=1
 cd /fsx/dana_aubakirova/vla
 
 # FRESH START 8-GPU training configuration - NEW OUTPUT DIRECTORY
-export OUTPUT_DIR="/fsx/dana_aubakirova/vla/outputs/train_smolvla_optimized_8gpu_fresh_$(date +%Y%m%d_%H%M%S)"
+export OUTPUT_DIR="/fsx/dana_aubakirova/vla/outputs/test_smolvla_2datasets_$(date +%Y%m%d_%H%M%S)"
 # Use ALL datasets from relative_datasets_list.txt - full scale training
-export REPO_IDS=$(cat dataset_lists/all_datasets_relative.txt)
+export REPO_IDS="AndrejOrsula/lerobot_double_ball_stacking_random, koenvanwijk/orange50-variation-2"
 
 # Model configuration - optimized for 8-GPU with global batch size 32
 export VLM_REPO_ID=HuggingFaceTB/SmolVLM2-500M-Video-Instruct
-export STEPS=200000   # Full training steps
+export STEPS=100   # Quick test run
 export BATCH_SIZE=8  # 4 per GPU = 32 global batch size (prevent hanging)
 export EVAL_FREQ=-1 # Disable evaluation for faster training
 export NUM_WORKERS=0  # MEMORY FIX: Disable workers to prevent memory exhaustion
@@ -105,7 +105,7 @@ export ACCELERATE_CONFIG_FILE="/fsx/dana_aubakirova/vla/accelerate_configs/optim
 # Wandb configuration - FRESH START
 export WANDB_PROJECT="smolvla2-training"
 export WANDB_NOTES="8-GPU optimized training FRESH START - same parameters as previous run but from scratch"
-export WANDB_MODE="online"
+export WANDB_MODE="disabled"
 
 # Print comprehensive optimization info
 echo "🚀 =============================================="
@@ -167,7 +167,7 @@ accelerate launch --config_file /fsx/dana_aubakirova/vla/accelerate_configs/opti
     lerobot/src/lerobot/scripts/train.py \
     --policy.type=$POLICY \
     --dataset.repo_id="$REPO_IDS" \
-    --dataset.root="/fsx/dana_aubakirova/vla" \
+    --dataset.root="/fsx/dana_aubakirova/vla/community_dataset_v1" \
     --dataset.use_imagenet_stats=$USE_IMAGENET_STATS \
     --dataset.image_transforms.enable=$ENABLE_IMG_TRANSFORM \
     --dataset.train_on_all_features=$TRAIN_ON_ALL_FEATURES \
@@ -195,7 +195,7 @@ accelerate launch --config_file /fsx/dana_aubakirova/vla/accelerate_configs/opti
     --dataset.max_image_dim=$MAX_IMAGE_DIM \
     --dataset.video_backend=pyav \
     --num_workers=$NUM_WORKERS \
-    --wandb.enable=true \
+    --wandb.enable=false \
     --wandb.project=$WANDB_PROJECT \
     --wandb.notes="$WANDB_NOTES" \
     --dataset.min_fps=$FPS_MIN \
