@@ -144,6 +144,7 @@ libero = [
     "bddl==1.0.1",
     "matplotlib>=3.5.3",
     "cloudpickle>=2.0.0",
+    "gym>=0.25,<0.27",
     "future>=0.18.3",
     "egl_probe @ git+https://github.com/jadechoghari/egl_probe.git#egg=egl_probe",
     "libero @ git+https://github.com/jadechoghari/LIBERO.git@main#egg=libero",
