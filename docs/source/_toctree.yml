@@ -19,10 +19,16 @@
     title: Train RL in Simulation
   - local: async
     title: Use Async Inference
+  - local: porting_datasets_v3
+    title: Porting Large Datasets
   title: "Tutorials"
 - sections:
   - local: smolvla
-    title: Finetune SmolVLA
+    title: SmolVLA
+  - local: pi0
+    title: π₀ (Pi0)
+  - local: pi05
+    title: π₀.₅ (Pi05)
   title: "Policies"
 - sections:
   - local: hope_jr
