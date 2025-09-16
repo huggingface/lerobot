@@ -539,12 +539,15 @@ class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
+        half_dim = dim // 2
+
+        # Precompute the embedding frequencies
+        emb = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, dtype=torch.float) * -emb)
+        self.register_buffer('emb', emb)
 
     def forward(self, time):
-        half_dim = self.dim // 2
-        embeddings = torch.log(torch.tensor(10000.0, device=time.device)) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim, device=time.device) * -embeddings)
-        embeddings = time[:, None] * embeddings
+        embeddings = time[:, None] * self.emb
         return torch.cat([torch.sin(embeddings), torch.cos(embeddings)], dim=-1)
 
 
