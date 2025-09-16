@@ -44,7 +44,6 @@ def test_robot_to_policy_basic_action_conversion():
 
     policy_action = processor.action(robot_action)
 
-    # Check that output is a tensor with correct values
     assert isinstance(policy_action, torch.Tensor)
     assert policy_action.shape == (3,)
     torch.testing.assert_close(policy_action, torch.tensor([1.0, 2.0, 3.0]))
@@ -63,7 +62,6 @@ def test_robot_to_policy_action_conversion_preserves_order():
 
     policy_action = processor.action(robot_action)
 
-    # Output should follow motor_names order: gripper, arm, wrist
     expected = torch.tensor([5.0, 10.0, 15.0])
     torch.testing.assert_close(policy_action, expected)
 
@@ -95,7 +93,6 @@ def test_robot_to_policy_action_length_mismatch_error():
     with pytest.raises(ValueError, match="Action must have 3 elements, got 2"):
         processor.action(robot_action)
 
-    # Too many actions
     robot_action = {
         "joint1.pos": 1.0,
         "joint2.pos": 2.0,
@@ -114,7 +111,7 @@ def test_robot_to_policy_missing_motor_key_error():
 
     robot_action = {
         "joint1.pos": 1.0,
-        "wrong_key.pos": 2.0,  # Wrong key
+        "wrong_key.pos": 2.0,
     }
 
     with pytest.raises(KeyError):
@@ -137,18 +134,15 @@ def test_robot_to_policy_transform_features():
 
     transformed = processor.transform_features(features)
 
-    # Should have new 'action' key with correct shape
     assert "action" in transformed[PipelineFeatureType.ACTION]
     action_feature = transformed[PipelineFeatureType.ACTION]["action"]
     assert action_feature.type == FeatureType.ACTION
     assert action_feature.shape == (3,)
 
-    # Original motor keys should still be present
     assert "joint1.pos" in transformed[PipelineFeatureType.ACTION]
     assert "joint2.pos" in transformed[PipelineFeatureType.ACTION]
     assert "joint3.pos" in transformed[PipelineFeatureType.ACTION]
 
-    # Other data should be preserved
     assert "other_data" in transformed[PipelineFeatureType.ACTION]
 
 
@@ -168,7 +162,6 @@ def test_robot_to_policy_state_dict():
     state = processor.state_dict()
     assert state == {}
 
-    # Load state dict should work
     processor.load_state_dict({})
 
 
@@ -183,9 +176,6 @@ def test_robot_to_policy_single_motor():
     torch.testing.assert_close(policy_action, torch.tensor([42.0]))
 
 
-# Tests for PolicyActionToRobotActionProcessorStep
-
-
 def test_policy_to_robot_basic_action_conversion():
     """Test basic policy action to robot action conversion."""
     motor_names = ["joint1", "joint2", "joint3"]
@@ -194,7 +184,6 @@ def test_policy_to_robot_basic_action_conversion():
     policy_action = torch.tensor([1.0, 2.0, 3.0])
     robot_action = processor.action(policy_action)
 
-    # Check that output is a dictionary with correct structure
     assert isinstance(robot_action, dict)
     assert len(robot_action) == 3
 
@@ -206,7 +195,6 @@ def test_policy_to_robot_basic_action_conversion():
 
     for key, expected_value in expected.items():
         assert key in robot_action
-        # Convert tensor values to float for comparison
         actual_value = robot_action[key]
         if isinstance(actual_value, torch.Tensor):
             actual_value = actual_value.item()
@@ -221,7 +209,6 @@ def test_policy_to_robot_action_conversion_preserves_order():
     policy_action = torch.tensor([5.0, 10.0, 15.0])
     robot_action = processor.action(policy_action)
 
-    # Values should map according to motor_names order
     assert robot_action["gripper.pos"] == pytest.approx(5.0)
     assert robot_action["arm.pos"] == pytest.approx(10.0)
     assert robot_action["wrist.pos"] == pytest.approx(15.0)
@@ -246,13 +233,11 @@ def test_policy_to_robot_action_length_mismatch_error():
     motor_names = ["joint1", "joint2", "joint3"]
     processor = PolicyActionToRobotActionProcessorStep(motor_names=motor_names)
 
-    # Too few actions
     policy_action = torch.tensor([1.0, 2.0])
 
     with pytest.raises(ValueError, match="Action must have 3 elements, got 2"):
         processor.action(policy_action)
 
-    # Too many actions
     policy_action = torch.tensor([1.0, 2.0, 3.0, 4.0])
 
     with pytest.raises(ValueError, match="Action must have 3 elements, got 4"):
@@ -273,7 +258,6 @@ def test_policy_to_robot_transform_features():
 
     transformed = processor.transform_features(features)
 
-    # Should have new motor position keys
     assert "joint1.pos" in transformed[PipelineFeatureType.ACTION]
     assert "joint2.pos" in transformed[PipelineFeatureType.ACTION]
 
@@ -282,10 +266,8 @@ def test_policy_to_robot_transform_features():
         assert motor_feature.type == FeatureType.ACTION
         assert motor_feature.shape == (1,)
 
-    # Original action key should still be present
     assert "action" in transformed[PipelineFeatureType.ACTION]
 
-    # Other data should be preserved
     assert "other_data" in transformed[PipelineFeatureType.ACTION]
 
 
@@ -305,7 +287,6 @@ def test_policy_to_robot_state_dict():
     state = processor.state_dict()
     assert state == {}
 
-    # Load state dict should work
     processor.load_state_dict({})
 
 
@@ -320,19 +301,13 @@ def test_policy_to_robot_single_motor():
     assert robot_action["single_joint.pos"] == pytest.approx(42.0)
 
 
-# Registry functionality tests
-
-
 def test_robot_to_policy_registry():
     """Test RobotActionToPolicyActionProcessorStep registry."""
-    # Check registration
     assert "robot_action_to_policy_action_processor" in ProcessorStepRegistry.list()
 
-    # Get from registry
     retrieved_class = ProcessorStepRegistry.get("robot_action_to_policy_action_processor")
     assert retrieved_class is RobotActionToPolicyActionProcessorStep
 
-    # Create instance from registry
     instance = retrieved_class(motor_names=["test"])
     assert isinstance(instance, RobotActionToPolicyActionProcessorStep)
     assert instance.motor_names == ["test"]
@@ -340,20 +315,14 @@ def test_robot_to_policy_registry():
 
 def test_policy_to_robot_registry():
     """Test PolicyActionToRobotActionProcessorStep registry."""
-    # Check registration
     assert "policy_action_to_robot_action_processor" in ProcessorStepRegistry.list()
 
-    # Get from registry
     retrieved_class = ProcessorStepRegistry.get("policy_action_to_robot_action_processor")
     assert retrieved_class is PolicyActionToRobotActionProcessorStep
 
-    # Create instance from registry
     instance = retrieved_class(motor_names=["test"])
     assert isinstance(instance, PolicyActionToRobotActionProcessorStep)
     assert instance.motor_names == ["test"]
-
-
-# Save/load functionality tests
 
 
 def test_save_and_load_robot_to_policy():
@@ -404,12 +373,10 @@ def test_save_and_load_policy_to_robot():
             tmp_dir, to_transition=identity_transition, to_output=identity_transition
         )
 
-        # Check loaded processor
         loaded_processor = loaded_pipeline.steps[0]
         assert isinstance(loaded_processor, PolicyActionToRobotActionProcessorStep)
         assert loaded_processor.motor_names == motor_names
 
-        # Test functionality after loading
         policy_action = torch.tensor([10.0, 20.0])
         robot_action = loaded_processor.action(policy_action)
         assert robot_action["motor_a.pos"] == pytest.approx(10.0)
@@ -425,18 +392,15 @@ def test_round_trip_conversion():
     robot_to_policy = RobotActionToPolicyActionProcessorStep(motor_names=motor_names)
     policy_to_robot = PolicyActionToRobotActionProcessorStep(motor_names=motor_names)
 
-    # Original robot action
     original_robot_action = {
         "joint1.pos": 1.5,
         "joint2.pos": -2.3,
         "joint3.pos": 0.7,
     }
 
-    # Convert robot -> policy -> robot
     policy_action = robot_to_policy.action(original_robot_action)
     final_robot_action = policy_to_robot.action(policy_action)
 
-    # Values should be preserved
     for key in original_robot_action:
         original_val = original_robot_action[key]
         final_val = final_robot_action[key]
@@ -457,20 +421,9 @@ def test_chained_processors_in_pipeline():
         to_output=identity_transition,
     )
 
-    # Test with mock transition containing robot action
-    from lerobot.processor.converters import create_transition
-
-    robot_action = {"joint1.pos": 3.0, "joint2.pos": 4.0}
-    transition = create_transition(action=robot_action)
-
-    # This would test integration if the pipeline supported action processing
-    # For now, just test that the pipeline was created successfully
     assert len(pipeline.steps) == 2
     assert isinstance(pipeline.steps[0], RobotActionToPolicyActionProcessorStep)
     assert isinstance(pipeline.steps[1], PolicyActionToRobotActionProcessorStep)
-
-
-# Feature contract compliance tests
 
 
 def test_robot_to_policy_features_contract(policy_feature_factory):
@@ -486,10 +439,8 @@ def test_robot_to_policy_features_contract(policy_feature_factory):
 
     out = processor.transform_features(features.copy())
 
-    # Check contract compliance
     assert_contract_is_typed(out)
 
-    # Check action feature is added
     assert "action" in out[PipelineFeatureType.ACTION]
     action_feature = out[PipelineFeatureType.ACTION]["action"]
     assert action_feature.type == FeatureType.ACTION
@@ -508,19 +459,14 @@ def test_policy_to_robot_features_contract(policy_feature_factory):
 
     out = processor.transform_features(features.copy())
 
-    # Check contract compliance
     assert_contract_is_typed(out)
 
-    # Check motor features are added
     for motor in ["m1", "m2", "m3"]:
         key = f"{motor}.pos"
         assert key in out[PipelineFeatureType.ACTION]
         motor_feature = out[PipelineFeatureType.ACTION][key]
         assert motor_feature.type == FeatureType.ACTION
         assert motor_feature.shape == (1,)
-
-
-# Edge cases tests
 
 
 def test_empty_motor_names_list():

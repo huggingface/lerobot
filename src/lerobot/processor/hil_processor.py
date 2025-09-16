@@ -349,7 +349,7 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
             return complementary_data
 
         # Gripper action is a PolicyAction at this stage
-        gripper_action = action[-1].item() 
+        gripper_action = action[-1].item()
         gripper_action_normalized = gripper_action / self.max_gripper_pos
 
         # Normalize gripper state and action
