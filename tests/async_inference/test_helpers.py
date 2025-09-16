@@ -17,7 +17,6 @@ import pickle
 import time
 
 import numpy as np
-import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -298,7 +297,6 @@ def test_resize_robot_observation_image():
     assert resized.max() <= 255
 
 
-@pytest.mark.skip("TODO(Steven): Skipping test - Check new feature manipulation")
 def test_prepare_raw_observation():
     """Test the preparation of raw robot observation to lerobot format."""
     robot_obs = _create_mock_robot_observation()
@@ -329,7 +327,6 @@ def test_prepare_raw_observation():
     assert isinstance(phone_img, torch.Tensor)
 
 
-@pytest.mark.skip("TODO(Steven): Skipping test - Check new feature manipulation")
 def test_raw_observation_to_observation_basic():
     """Test the main raw_observation_to_observation function."""
     robot_obs = _create_mock_robot_observation()
@@ -369,7 +366,6 @@ def test_raw_observation_to_observation_basic():
     assert phone_img.min() >= 0.0 and phone_img.max() <= 1.0
 
 
-@pytest.mark.skip("TODO(Steven): Skipping test - Check new feature manipulation")
 def test_raw_observation_to_observation_with_non_tensor_data():
     """Test that non-tensor data (like task strings) is preserved."""
     robot_obs = _create_mock_robot_observation()
@@ -387,7 +383,6 @@ def test_raw_observation_to_observation_with_non_tensor_data():
     assert isinstance(observation["task"], str)
 
 
-@pytest.mark.skip("TODO(Steven): Skipping test - Check new feature manipulation")
 @torch.no_grad()
 def test_raw_observation_to_observation_device_handling():
     """Test that tensors are properly moved to the specified device."""
@@ -405,7 +400,6 @@ def test_raw_observation_to_observation_device_handling():
             assert value.device.type == device, f"Tensor {key} not on {device}"
 
 
-@pytest.mark.skip("TODO(Steven): Skipping test - Check new feature manipulation")
 def test_raw_observation_to_observation_deterministic():
     """Test that the function produces consistent results for the same input."""
     robot_obs = _create_mock_robot_observation()
@@ -427,7 +421,6 @@ def test_raw_observation_to_observation_deterministic():
             assert obs1[key] == obs2[key]
 
 
-@pytest.mark.skip("TODO(Steven): Skipping test - Check new feature manipulation")
 def test_image_processing_pipeline_preserves_content():
     """Test that the image processing pipeline preserves recognizable patterns."""
     # Create an image with a specific pattern

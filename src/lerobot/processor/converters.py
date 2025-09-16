@@ -23,8 +23,6 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.constants import OBS_IMAGES
-
 from .core import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 
@@ -154,41 +152,6 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
     return x
 
 
-def _is_image(arr: Any) -> bool:
-    """
-    Check if a given array is likely an image (uint8, 3D).
-
-    Args:
-        arr: The array to check.
-
-    Returns:
-        True if the array matches the image criteria, False otherwise.
-    """
-    return isinstance(arr, np.ndarray) and arr.dtype == np.uint8 and arr.ndim == 3
-
-
-def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """
-    Separate an observation dictionary into state and image components.
-
-    Args:
-        obs: The observation dictionary.
-
-    Returns:
-        A tuple containing two dictionaries: one for state and one for images.
-    """
-    state, images = {}, {}
-    for k, v in obs.items():
-        if "image" in k.lower() or _is_image(v):
-            images[k] = v
-        else:
-            state[k] = v
-    return state, images
-
-
-# Private Helper Functions (Common Logic)
-
-
 def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     """
     Extract complementary data from a batch dictionary.
@@ -207,9 +170,6 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
 
     return {**pad_keys, **task_key, **index_key, **task_index_key}
-
-
-# Core Conversion Functions
 
 
 def create_transition(
@@ -279,11 +239,8 @@ def observation_to_transition(observation: RobotObservation) -> EnvTransition:
     Returns:
         An `EnvTransition` containing the formatted observation.
     """
-    state, images = _split_obs_to_state_and_images(observation)
 
-    image_observations = {f"{OBS_IMAGES}.{cam}": img for cam, img in images.items()}
-
-    return create_transition(observation={**state, **image_observations})
+    return create_transition(observation=observation)
 
 
 def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
