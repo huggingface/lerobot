@@ -177,37 +177,22 @@ class BiPiper(Robot):
     def _parse_joint_messages(self, joint_msgs, arm_prefix: str, observation: dict) -> None:
         """
         Parse joint messages from piper SDK format.
-        Expected format includes Joint 1-6 values in the message.
+        Expected format: joint_msgs.joint_state.joint_1, joint_msgs.joint_state.joint_2, etc.
         """
         try:
-            # Convert message to string to parse it
-            msg_str = str(joint_msgs)
-
-            # Extract joint values using string parsing
-            # Looking for patterns like "Joint 1:value", "Joint 2:value", etc.
+            # Extract joint values using direct attribute access
             for i in range(1, 7):
                 joint_key = f"{arm_prefix}_joint_{i}.pos"
-
-                # Look for "Joint {i}:" pattern in the message
-                pattern = f"Joint {i}:"
-                start_idx = msg_str.find(pattern)
-
-                if start_idx != -1:
-                    # Find the value after "Joint {i}:"
-                    value_start = start_idx + len(pattern)
-                    # Find the end of the value (next newline or end of string)
-                    value_end = msg_str.find("\n", value_start)
-                    if value_end == -1:
-                        value_end = len(msg_str)
-
-                    value_str = msg_str[value_start:value_end].strip()
-                    try:
-                        observation[joint_key] = float(value_str)
-                    except ValueError:
-                        logger.warning(f"Could not parse joint {i} value: {value_str}")
-                        observation[joint_key] = 0.0
-                else:
-                    logger.warning(f"Joint {i} not found in message")
+                try:
+                    # Access joint value using joint_msgs.joint_state.joint_{i}
+                    joint_attr = f"joint_{i}"
+                    joint_value = getattr(joint_msgs.joint_state, joint_attr)
+                    observation[joint_key] = float(joint_value)
+                except AttributeError:
+                    logger.warning(f"Joint {i} attribute not found in joint_state")
+                    observation[joint_key] = 0.0
+                except (ValueError, TypeError):
+                    logger.warning(f"Could not parse joint {i} value")
                     observation[joint_key] = 0.0
 
         except Exception as e:
