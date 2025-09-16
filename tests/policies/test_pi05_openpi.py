@@ -7,8 +7,10 @@ import torch
 from lerobot.policies.pi0_openpi.configuration_pi0openpi import PI0OpenPIConfig
 from lerobot.policies.pi0_openpi.modeling_pi0openpi import PI0OpenPIPolicy
 from lerobot.policies.pi05_openpi import PI05OpenPIConfig, PI05OpenPIPolicy
+from tests.utils import require_nightly_gpu
 
 
+@require_nightly_gpu
 def test_pi05_model_architecture():
     """Test that pi05=True creates the correct model architecture."""
     print("Testing PI0.5 model architecture...")
@@ -75,9 +77,8 @@ def test_pi05_model_architecture():
     )
     print("✓ AdaRMS correctly configured: PaliGemma=False, Expert=True")
 
-    return True
 
-
+@require_nightly_gpu
 def test_pi05_forward_pass():
     """Test forward pass with"""
     print("\nTesting PI0.5 forward pass...")
@@ -126,7 +127,7 @@ def test_pi05_forward_pass():
         assert loss.item() >= 0, "Loss should be non-negative"
     except Exception as e:
         print(f"✗ Forward pass failed: {e}")
-        return False
+        raise
 
     # Test action prediction
     try:
@@ -138,11 +139,10 @@ def test_pi05_forward_pass():
         assert not torch.isnan(action).any(), "Action contains NaN values"
     except Exception as e:
         print(f"✗ Action prediction failed: {e}")
-        return False
-
-    return True
+        raise
 
 
+@require_nightly_gpu
 def test_pi0_vs_pi05_differences():
     """Test key differences between pi0 and pi05 modes."""
     print("\nComparing PI0 vs PI0.5 architectures...")
@@ -183,44 +183,3 @@ def test_pi0_vs_pi05_differences():
     print(f"  - PI0: {pi0_params:,}")
     print(f"  - PI0.5: {pi05_params:,}")
     print(f"  - Difference: {pi0_params - pi05_params:,} (PI0.5 has fewer params due to no state embedding)")
-
-    return True
-
-
-def main():
-    """Run all PI0.5 tests."""
-    print("=" * 60)
-    print("PI0.5 Support Test Suite")
-    print("=" * 60)
-
-    tests = [
-        ("Model Architecture", test_pi05_model_architecture),
-        ("Forward Pass", test_pi05_forward_pass),
-        ("PI0 vs PI0.5 Comparison", test_pi0_vs_pi05_differences),
-    ]
-
-    all_passed = True
-    for test_name, test_func in tests:
-        print(f"\n[{test_name}]")
-        print("-" * 40)
-        try:
-            if not test_func():
-                all_passed = False
-                print(f"✗ {test_name} failed")
-        except Exception as e:
-            all_passed = False
-            print(f"✗ {test_name} failed with exception: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    print("\n" + "=" * 60)
-    if all_passed:
-        print("✅ All PI0.5 tests passed!")
-    else:
-        print("❌ Some tests failed.")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
-    main()

@@ -6,6 +6,7 @@ import torch
 
 from lerobot.policies.pi0_openpi import PI0OpenPIPolicy
 from lerobot.policies.pi05_openpi.modeling_pi05openpi import PI05OpenPIPolicy
+from tests.utils import require_nightly_gpu
 
 
 def create_dummy_stats(config):
@@ -31,8 +32,20 @@ def create_dummy_stats(config):
     return dummy_stats
 
 
-def test_hub_loading(model_id="pepijn223/pi0_base_fp32", model_name="PI0"):
-    """Test loading model from HuggingFace hub.
+@require_nightly_gpu
+def test_pi0_hub_loading():
+    """Test loading PI0 model from HuggingFace hub."""
+    _test_hub_loading(model_id="pepijn223/pi0_base_fp32", model_name="PI0")
+
+
+@require_nightly_gpu
+def test_pi05_hub_loading():
+    """Test loading PI0.5 model from HuggingFace hub."""
+    _test_hub_loading(model_id="pepijn223/pi05_base_fp32", model_name="PI0.5")
+
+
+def _test_hub_loading(model_id, model_name):
+    """Internal helper function for testing hub loading.
 
     Args:
         model_id: HuggingFace model ID to load
@@ -119,7 +132,7 @@ def test_hub_loading(model_id="pepijn223/pi0_base_fp32", model_name="PI0"):
 
     except Exception as e:
         print(f"✗ Failed to load model: {e}")
-        return False
+        raise
 
     print("\n" + "-" * 60)
     print("Testing forward pass with loaded model...")
@@ -197,7 +210,7 @@ def test_hub_loading(model_id="pepijn223/pi0_base_fp32", model_name="PI0"):
         import traceback
 
         traceback.print_exc()
-        return False
+        raise
 
     print("\n" + "-" * 60)
     print("Testing inference with loaded model...")
@@ -216,58 +229,8 @@ def test_hub_loading(model_id="pepijn223/pi0_base_fp32", model_name="PI0"):
         import traceback
 
         traceback.print_exc()
-        return False
+        raise
 
     print("\n" + "=" * 60)
     print(f"✓ All tests passed for {model_name}!")
     print("=" * 60)
-    return True
-
-
-def main():
-    """Run tests for both PI0 and PI0.5 models."""
-    print("\n")
-    print("╔" + "═" * 58 + "╗")
-    print("║" + "  PI0 & PI0.5 HuggingFace Hub Loading Test Suite  ".center(58) + "║")
-    print("╚" + "═" * 58 + "╝")
-    print()
-
-    results = []
-
-    # Test PI0 model
-    print("\n[Test 1/2] Testing PI0 model...")
-    print("─" * 60)
-    pi0_success = test_hub_loading(model_id="pepijn223/pi0_base_fp32", model_name="PI0")
-    results.append(("PI0", pi0_success))
-
-    # Test PI0.5 model
-    print("\n\n[Test 2/2] Testing PI0.5 model...")
-    print("─" * 60)
-    pi05_success = test_hub_loading(model_id="pepijn223/pi05_base_fp32", model_name="PI0.5")
-    results.append(("PI0.5", pi05_success))
-
-    # Summary
-    print("\n\n")
-    print("╔" + "═" * 58 + "╗")
-    print("║" + "  TEST SUMMARY  ".center(58) + "║")
-    print("╚" + "═" * 58 + "╝")
-
-    all_passed = True
-    for model_name, success in results:
-        status = "✅ PASSED" if success else "❌ FAILED"
-        print(f"  {model_name:10} : {status}")
-        if not success:
-            all_passed = False
-
-    print()
-    if all_passed:
-        print("🎉 All models loaded and tested successfully!")
-    else:
-        print("⚠️  Some tests failed. Check the output above for details.")
-
-    return all_passed
-
-
-if __name__ == "__main__":
-    success = main()
-    exit(0 if success else 1)
