@@ -221,7 +221,7 @@ def robot_action_to_transition(action: RobotAction) -> EnvTransition:
     Returns:
         An `EnvTransition` containing the formatted action.
     """
-    if not isinstance(action, RobotAction):
+    if not isinstance(action, dict):
         raise ValueError(f"Action should be a RobotAction type got {type(action)}")
     return create_transition(action=action)
 
@@ -240,7 +240,7 @@ def observation_to_transition(observation: RobotObservation) -> EnvTransition:
     Returns:
         An `EnvTransition` containing the formatted observation.
     """
-    if not isinstance(observation, RobotObservation):
+    if not isinstance(observation, dict):
         raise ValueError(f"Observation should be a RobotObservation type got {type(observation)}")
     return create_transition(observation=observation)
 

@@ -29,6 +29,7 @@ from lerobot.processor import (
     hotswap_stats,
 )
 from lerobot.processor.converters import create_transition, identity_transition, to_tensor
+from lerobot.utils.utils import auto_select_torch_device
 
 
 def test_numpy_conversion():
@@ -1772,7 +1773,7 @@ def test_dtype_adaptation_device_processor_bfloat16_normalizer_float32():
     stats = {"observation.state": {"mean": np.array([0.0, 0.0, 0.0]), "std": np.array([1.0, 1.0, 1.0])}}
 
     # Create pipeline: DeviceProcessor(bfloat16) → NormalizerProcessor(float32)
-    device_processor = DeviceProcessorStep(device="cuda", float_dtype="bfloat16")
+    device_processor = DeviceProcessorStep(device=str(auto_select_torch_device()), float_dtype="bfloat16")
     normalizer = NormalizerProcessorStep(
         features=features, norm_map=norm_map, stats=stats, dtype=torch.float32
     )
@@ -1788,7 +1789,7 @@ def test_dtype_adaptation_device_processor_bfloat16_normalizer_float32():
     processed_1 = device_processor(transition)
     intermediate_tensor = processed_1[TransitionKey.OBSERVATION]["observation.state"]
     assert intermediate_tensor.dtype == torch.bfloat16
-    assert intermediate_tensor.device.type == "cuda"
+    assert intermediate_tensor.device.type == str(auto_select_torch_device())
 
     # Step 2: NormalizerProcessor receives bfloat16 input and adapts
     final_result = normalizer(processed_1)
@@ -1796,13 +1797,13 @@ def test_dtype_adaptation_device_processor_bfloat16_normalizer_float32():
 
     # Verify final output is bfloat16 (automatic adaptation worked)
     assert final_tensor.dtype == torch.bfloat16
-    assert final_tensor.device.type == "cuda"
+    assert final_tensor.device.type == str(auto_select_torch_device())
 
     # Verify normalizer adapted its internal state
     assert normalizer.dtype == torch.bfloat16
     for stat_tensor in normalizer._tensor_stats["observation.state"].values():
         assert stat_tensor.dtype == torch.bfloat16
-        assert stat_tensor.device.type == "cuda"
+        assert stat_tensor.device.type == str(auto_select_torch_device())
 
 
 def test_stats_reconstruction_after_load_state_dict():
