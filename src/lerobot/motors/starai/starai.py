@@ -1,18 +1,16 @@
-
-
 import logging
-import time
 from copy import deepcopy
 from enum import Enum
-from pprint import pformat
-from typing import Any
 
+from fashionstar_uart_sdk.uart_pocket_handler import (
+    PortHandler as starai_PortHandler,
+    SyncPositionControlOptions,
+)
+
+from lerobot.errors import DeviceNotConnectedError
 from lerobot.utils.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from fashionstar_uart_sdk.uart_pocket_handler import PortHandler as starai_PortHandler
-from fashionstar_uart_sdk.uart_pocket_handler import SyncPositionControlOptions
 
-from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address,MotorNormMode
+from ..motors_bus import Motor, MotorCalibration, MotorNormMode, MotorsBus, NameOrID, Value
 from .tables import (
     MODEL_NUMBER_TABLE,
 )
@@ -21,13 +19,14 @@ DEFAULT_PROTOCOL_VERSION = 0
 DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
-DEFAULT_ACC_TIME =50
-DEFAULT_DEC_TIME =50
+DEFAULT_ACC_TIME = 50
+DEFAULT_DEC_TIME = 50
 DEFAULT_MOTION_TIME = 100
 
 NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
 
 logger = logging.getLogger(__name__)
+
 
 class DriveMode(Enum):
     NON_INVERTED = 0
@@ -38,9 +37,8 @@ class TorqueMode(Enum):
     ENABLED = 1
     DISABLED = 0
 
+
 class StaraiMotorsBus(MotorsBus):
-
-
     default_baudrate = DEFAULT_BAUDRATE
     default_timeout = DEFAULT_TIMEOUT_MS
     model_number_table = deepcopy(MODEL_NUMBER_TABLE)
@@ -52,14 +50,12 @@ class StaraiMotorsBus(MotorsBus):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
         protocol_version: int = DEFAULT_PROTOCOL_VERSION,
-        default_motion_time:int = DEFAULT_MOTION_TIME
-
-
+        default_motion_time: int = DEFAULT_MOTION_TIME,
     ):
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
         self.apply_drive_mode = True
-        self.port_handler = starai_PortHandler(port,1000000)
+        self.port_handler = starai_PortHandler(port, 1000000)
 
         self.default_motion_time = default_motion_time
 
@@ -77,16 +73,11 @@ class StaraiMotorsBus(MotorsBus):
             raise TypeError(motors)
 
         list_of_homing_offsets = [0 for motor in motors]
-        homing_offsets = dict(zip(motors,list_of_homing_offsets))
+        homing_offsets = dict(zip(motors, list_of_homing_offsets, strict=False))
         return homing_offsets
-
-
 
     def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
         return
-
-
-
 
     def _handshake(self) -> None:
         self._assert_motors_exist()
@@ -94,18 +85,18 @@ class StaraiMotorsBus(MotorsBus):
     def connect(self, handshake: bool = True) -> None:
         self.port_handler.openPort()
         for motor in self.motors:
-            if (not self.port_handler.ping(self.motors[motor].id)):
+            if not self.port_handler.ping(self.motors[motor].id):
                 raise Exception(f"motor not found id:{self.motors[motor].id}")
         self.disable_torque()
-        self.port_handler.ResetLoop(0xff)
+        self.port_handler.ResetLoop(0xFF)
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
-        raise NotImplementedError(f"this function should never be called")
+        raise NotImplementedError("this function should never be called")
 
     def configure_motors(self, return_delay_time=0, maximum_acceleration=254, acceleration=254) -> None:
-        raise NotImplementedError(f"this function should never be called")
-    
-    def sync_read(self, data_name, motors = None, *, normalize = True, num_retry = 0):
+        raise NotImplementedError("this function should never be called")
+
+    def sync_read(self, data_name, motors=None, *, normalize=True, num_retry=0):
         if not self.is_connected:
             raise DeviceNotConnectedError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
@@ -116,16 +107,18 @@ class StaraiMotorsBus(MotorsBus):
 
         read_data = {}
         if data_name == "Monitor" or data_name == "Present_Position":
-            servos_id = dict(zip(names, ids))
+            servos_id = dict(zip(names, ids, strict=False))
             monitor_data = self.port_handler.sync_read["Monitor"](servos_id)
             for name in names:
-                if monitor_data[name].current_position >=180:
+                if monitor_data[name].current_position >= 180:
                     monitor_data[name].current_position = 180
-                elif monitor_data[name].current_position <=-180:
+                elif monitor_data[name].current_position <= -180:
                     monitor_data[name].current_position = -180
-                monitor_data[name].current_position = int(monitor_data[name].current_position+180)/360.0*4096
+                monitor_data[name].current_position = (
+                    int(monitor_data[name].current_position + 180) / 360.0 * 4096
+                )
             for name in names:
-                read_data[name]=int(monitor_data[name].current_position)
+                read_data[name] = int(monitor_data[name].current_position)
 
             if normalize:
                 if not self.calibration:
@@ -155,7 +148,6 @@ class StaraiMotorsBus(MotorsBus):
                 read_data = normalized_values
 
         return read_data
-    
 
     def sync_write(
         self,
@@ -182,13 +174,11 @@ class StaraiMotorsBus(MotorsBus):
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
             )
 
-
-        write_data = {} 
-        values_ ={}
+        write_data = {}
+        values_ = {}
         if data_name == "Goal_Position":
-
             if normalize and data_name in self.normalized_data:
-                for motor,_ in values.items():
+                for motor, _ in values.items():
                     min_ = self.calibration[motor].range_min
                     max_ = self.calibration[motor].range_max
                     drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
@@ -209,22 +199,22 @@ class StaraiMotorsBus(MotorsBus):
                         raise NotImplementedError
 
             for motor in values_:
-                data=SyncPositionControlOptions(self.motors[motor].id,
-                                                int(((values_[motor]/4096*360)-180)*10),
-                                                self.default_motion_time,
-                                                0,
-                                                DEFAULT_ACC_TIME,
-                                                DEFAULT_DEC_TIME)
+                data = SyncPositionControlOptions(
+                    self.motors[motor].id,
+                    int(((values_[motor] / 4096 * 360) - 180) * 10),
+                    self.default_motion_time,
+                    0,
+                    DEFAULT_ACC_TIME,
+                    DEFAULT_DEC_TIME,
+                )
                 write_data[motor] = data
 
             if self.motors["gripper"].model == "rx8-u50":
-                write_data["gripper"].power=100
+                write_data["gripper"].power = 100
             else:
-                write_data["gripper"].power=1000
+                write_data["gripper"].power = 1000
 
             self.port_handler.sync_write["Goal_Position"](write_data)
-
-
 
     @property
     def is_calibrated(self) -> bool:
@@ -249,11 +239,9 @@ class StaraiMotorsBus(MotorsBus):
     def read_calibration(self) -> dict[str, MotorCalibration]:
         offsets, mins, maxes = {}, {}, {}
         for motor in self.motors:
-            mins[motor] = -1024*360.0
-            maxes[motor] = 1024*360.0
-            offsets[motor] = (
-                0
-            )
+            mins[motor] = -1024 * 360.0
+            maxes[motor] = 1024 * 360.0
+            offsets[motor] = 0
 
         calibration = {}
         for motor, m in self.motors.items():
@@ -270,21 +258,19 @@ class StaraiMotorsBus(MotorsBus):
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
         return
 
-
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         return
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id,"unlocked",0)
-
+            self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id, "unlocked", 0)
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
         return
-    
+
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
-            self.port_handler.write["Stop_On_Control_Mode"](motor, "locked",0)
+            self.port_handler.write["Stop_On_Control_Mode"](motor, "locked", 0)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:
@@ -307,14 +293,11 @@ class StaraiMotorsBus(MotorsBus):
         return ids_values
 
     def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
-        tmp =[]
-        return tmp 
-
+        tmp = []
+        return tmp
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
-
         return None
-
 
     def _read_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
         model_numbers = {}

@@ -73,7 +73,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .reachy2 import Reachy2Robot
 
         return Reachy2Robot(config)
-    elif config.type =="bi_starai_follower":
+    elif config.type == "bi_starai_follower":
         from .bi_starai_follower import BiStaraiFollower
 
         return BiStaraiFollower(config)
