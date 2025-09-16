@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from typing import Any
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
@@ -49,30 +48,34 @@ FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 30
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "imstevenpmwork/kin_chadil" + str(time.time())
+HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
 
+# Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
 follower_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem5A460814411", id="my_awesome_follower_arm", cameras=camera_config, use_degrees=True
 )
-
 leader_config = SO100LeaderConfig(port="/dev/tty.usbmodem5A460819811", id="my_awesome_leader_arm")
 
+# Initialize the robot and teleoperator
 follower = SO100Follower(follower_config)
 leader = SO100Leader(leader_config)
 
+# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 follower_kinematics_solver = RobotKinematics(
     urdf_path="./examples/phone_to_so100/SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(follower.bus.motors.keys()),
 )
 
+# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 leader_kinematics_solver = RobotKinematics(
     urdf_path="./examples/phone_to_so100/SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(leader.bus.motors.keys()),
 )
 
+# Build pipeline to convert follower joints to EE observation
 follower_joints_to_ee = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
     steps=[
         ForwardKinematicsJointsToEE(
@@ -83,6 +86,7 @@ follower_joints_to_ee = RobotProcessorPipeline[dict[str, Any], dict[str, Any]](
     to_output=transition_to_observation,
 )
 
+# Build pipeline to convert leader joints to EE action
 leader_joints_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[
         ForwardKinematicsJointsToEE(
@@ -93,7 +97,7 @@ leader_joints_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
     to_output=transition_to_robot_action,
 )
 
-
+# Build pipeline to convert EE action to follower joints
 ee_to_follower_joints = RobotProcessorPipeline[RobotAction, RobotAction](
     [
         AddRobotObservationAsComplimentaryData(robot=follower),
@@ -116,6 +120,8 @@ dataset = LeRobotDataset.create(
     repo_id=HF_REPO_ID,
     fps=FPS,
     features=combine_feature_dicts(
+        # Run the feature contract of the pipelines
+        # This tells you how the features would look like after the pipeline steps
         aggregate_pipeline_dataset_features(
             pipeline=leader_joints_to_ee,
             initial_features=create_initial_features(action=leader.action_features),
@@ -132,18 +138,24 @@ dataset = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
-# Initialize the keyboard listener and rerun visualization
-_, events = init_keyboard_listener()
-_init_rerun(session_name="recording_phone")
 
 # Connect the robot and teleoperator
 leader.connect()
 follower.connect()
 
+# Initialize the keyboard listener and rerun visualization
+listener, events = init_keyboard_listener()
+_init_rerun(session_name="recording_phone")
+
+if not leader.is_connected or not follower.is_connected:
+    raise ValueError("Robot or teleop is not connected!")
+
+print("Starting record loop...")
 episode_idx = 0
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
+    # Main record loop
     record_loop(
         robot=follower,
         events=events,
@@ -181,6 +193,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         dataset.clear_episode_buffer()
         continue
 
+    # Save episode
     dataset.save_episode()
     episode_idx += 1
 
@@ -188,4 +201,5 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
 log_say("Stop recording")
 leader.disconnect()
 follower.disconnect()
+listener.stop()
 dataset.push_to_hub()

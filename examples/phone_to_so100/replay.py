@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import time
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -33,14 +32,13 @@ from lerobot.utils.utils import log_say
 EPISODE_IDX = 0
 HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
 
+# Initialize the robot config
 robot_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", use_degrees=True
 )
-robot = SO100Follower(robot_config)
-robot.connect()
 
-dataset = LeRobotDataset(HF_REPO_ID, episodes=[EPISODE_IDX])
-actions = dataset.hf_dataset.select_columns("action")
+# Initialize the robot
+robot = SO100Follower(robot_config)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 kinematics_solver = RobotKinematics(
@@ -49,7 +47,7 @@ kinematics_solver = RobotKinematics(
     joint_names=list(robot.bus.motors.keys()),
 )
 
-# Build pipeline to convert ee pose action to joint action
+# Build pipeline to convert EE action to joints action
 robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[
         AddRobotObservationAsComplimentaryData(robot=robot),
@@ -63,17 +61,33 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     to_output=transition_to_robot_action,
 )
 
+# Fetch the dataset to replay
+dataset = LeRobotDataset(HF_REPO_ID, episodes=[EPISODE_IDX])
+actions = dataset.hf_dataset.select_columns("action")
+
+# Connect to the robot
+robot.connect()
+
+if not robot.is_connected:
+    raise ValueError("Robot is not connected!")
+
+print("Starting replay loop...")
 log_say(f"Replaying episode {EPISODE_IDX}")
 for idx in range(dataset.num_frames):
     t0 = time.perf_counter()
 
+    # Get recorded action from dataset
     ee_action = {
         name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
     }
 
+    # Dataset EE -> robot joints
     joint_action = robot_ee_to_joints_processor(ee_action)
-    action_sent = robot.send_action(joint_action)
+
+    # Send action to robot
+    _ = robot.send_action(joint_action)
 
     busy_wait(1.0 / dataset.fps - (time.perf_counter() - t0))
 
+# Clean up
 robot.disconnect()

@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -54,7 +53,7 @@ TASK_DESCRIPTION = "My task description"
 HF_MODEL_ID = "<hf_username>/<model_repo_id>"
 HF_DATASET_ID = "<hf_username>/<dataset_repo_id>"
 
-# Initialize the robot with degrees
+# Create the robot configuration & robot
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
 robot_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem5A460814411",
@@ -63,8 +62,10 @@ robot_config = SO100FollowerConfig(
     use_degrees=True,
 )
 
-# Initialize the robot
 robot = SO100Follower(robot_config)
+
+# Create policy
+policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 kinematics_solver = RobotKinematics(
@@ -73,7 +74,7 @@ kinematics_solver = RobotKinematics(
     joint_names=list(robot.bus.motors.keys()),
 )
 
-# Build pipeline to convert ee pose action to joint action
+# Build pipeline to convert EE action to joints action
 robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[
         AddRobotObservationAsComplimentaryData(robot=robot),
@@ -87,7 +88,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     to_output=transition_to_robot_action,
 )
 
-# Build pipeline to convert joint observation to ee pose observation
+# Build pipeline to convert joints observation to EE observation
 robot_joints_to_ee_pose_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
@@ -125,31 +126,35 @@ dataset = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
-# Initialize the keyboard listener and rerun visualization
-_, events = init_keyboard_listener()
-_init_rerun(session_name="recording_phone")
-
-# Connect the robot and teleoperator
-robot.connect()
-
-episode_idx = 0
-
-policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
+# Build Policy Processors
 preprocessor, postprocessor = make_pre_post_processors(
     policy_cfg=policy,
     pretrained_path=HF_MODEL_ID,
     dataset_stats=dataset.meta.stats,
 )
 
+# Connect the robot and teleoperator
+robot.connect()
+
+# Initialize the keyboard listener and rerun visualization
+listener, events = init_keyboard_listener()
+_init_rerun(session_name="so100_so100_evaluate")
+
+if not robot.is_connected:
+    raise ValueError("Robot is not connected!")
+
+print("Starting evaluate loop...")
+episode_idx = 0
 for episode_idx in range(NUM_EPISODES):
     log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
 
+    # Main record loop
     record_loop(
         robot=robot,
         events=events,
         fps=FPS,
         policy=policy,
-        preprocessor=preprocessor,
+        preprocessor=preprocessor,  # Pass the pre and post policy processors
         postprocessor=postprocessor,
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
@@ -159,9 +164,35 @@ for episode_idx in range(NUM_EPISODES):
         robot_action_processor=robot_ee_to_joints_processor,
         robot_observation_processor=robot_joints_to_ee_pose_processor,
     )
+
+    # Reset the environment if not stopping or re-recording
+    if not events["stop_recording"] and ((episode_idx < NUM_EPISODES - 1) or events["rerecord_episode"]):
+        log_say("Reset the environment")
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=FPS,
+            control_time_s=EPISODE_TIME_SEC,
+            single_task=TASK_DESCRIPTION,
+            display_data=True,
+            teleop_action_processor=make_default_teleop_action_processor(),
+            robot_action_processor=robot_ee_to_joints_processor,
+            robot_observation_processor=robot_joints_to_ee_pose_processor,
+        )
+
+    if events["rerecord_episode"]:
+        log_say("Re-record episode")
+        events["rerecord_episode"] = False
+        events["exit_early"] = False
+        dataset.clear_episode_buffer()
+        continue
+
+    # Save episode
     dataset.save_episode()
+    episode_idx += 1
 
 # Clean up
 log_say("Stop recording")
 robot.disconnect()
+listener.stop()
 dataset.push_to_hub()
