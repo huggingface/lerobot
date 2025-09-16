@@ -1,7 +1,7 @@
 # π₀ (pi0)
 
 This repository contains the Hugging Face port of **π₀**, adapted from [OpenPI](https://github.com/Physical-Intelligence/openpi) by the Physical Intelligence.
-It is designed as a **Vision-Language-Action flow model for general robot control**.
+It is designed as a **Vision-Language-Action model for general robot control**.
 
 ---
 
