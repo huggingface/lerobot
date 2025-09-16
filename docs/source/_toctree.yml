@@ -19,6 +19,8 @@
     title: Train RL in Simulation
   - local: async
     title: Use Async Inference
+  - local: v3
+    title: LeRobotDataset v3.0
   - local: porting_datasets_v3
     title: Porting Large Datasets
   title: "Tutorials"
