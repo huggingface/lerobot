@@ -147,6 +147,9 @@ class ConRFTPolicy(PreTrainedPolicy):
             consistency_hidden_dim=self.config.consistency_hidden_dim,
         )
 
+        if self.config.use_torch_compile:
+            self.consistency_policy = torch.compile(self.consistency_policy)
+
     def _init_critics(self, continuous_action_dim):
         """Build critic ensemble, targets, and optional discrete critic."""
         heads = [
@@ -175,7 +178,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         if self.config.use_torch_compile:
             self.critic_ensemble = torch.compile(self.critic_ensemble)
             self.critic_ensemble_target = torch.compile(self.critic_ensemble_target)
-            self.consistency_policy = torch.compile(self.consistency_policy)
+
 
     def _encode_state(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
         """Encode observations into state representation using VLA"""
@@ -208,16 +211,24 @@ class ConRFTPolicy(PreTrainedPolicy):
         self.eval()
 
         # Normalize inputs
-        st = batch["state"] if "state" in batch else batch
-        st = self.normalize_inputs(st)
+        # st = batch["state"] if "state" in batch else batch
+        # st = self.normalize_inputs(st)
 
         # Generate action using consistency policy
-        action, _ = self.consistency_policy(st)
+        action, _ = self.consistency_policy(batch)
 
         # Unnormalize action
-        action = self.unnormalize_outputs({ACTION: action})[ACTION]
+        # action = self.unnormalize_outputs({ACTION: action})[ACTION]
 
         return action
+
+    @torch.no_grad()
+    def select_action_with_embedding(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
+        """Select action and return embedding for recording"""
+        self.eval()
+        action, embedding = self.consistency_policy(batch)
+        # print(f"[ConRFTPolicy] Selected action: {action.cpu().numpy()}")
+        return action, embedding
 
     def forward(
         self,
@@ -441,7 +452,7 @@ class ConRFTPolicy(PreTrainedPolicy):
             "cql_loss": cql_loss,
             "cql_alpha": self.config.cql_alpha,
             "cql_diff": cql_q_diff.mean(),
-            "calql_bound_rate": calql_bound_rate,
+            "calql_bound_rate": calql_bound_rate.item(),
             "cql_ood_values": cql_ood_values.mean(),
             "predicted_qs": current_q_values.mean(),
             "target_qs": target_values_expanded.mean(),
@@ -517,7 +528,7 @@ class ConRFTPolicy(PreTrainedPolicy):
         return {
             "loss_actor": loss_actor,
             "bc_loss": bc_loss,
-            "q_loss": q_loss,
+            "q_loss": q_loss.item(),
             "bc_weight": self.bc_weight,
             "q_weight": self.q_weight,
             "q_mean": q_value.mean(),
@@ -581,7 +592,7 @@ class OctoEncodingWrapper(nn.Module):
             )
 
     def get_cached_action_embeddings(
-        self, observations: dict[str, Tensor], normalize: bool = False
+        self, observations: dict[str, Tensor], tasks: dict[str, Tensor] | None = None
     ) -> dict[str, Tensor]:
         """Extract and cache action embeddings from Octo transformer.
 
@@ -596,11 +607,12 @@ class OctoEncodingWrapper(nn.Module):
         Returns:
             Tensor containing the cached action embeddings
         """
+
         # Get batch size from observations
         batch_size = next(iter(observations.values())).shape[0]
-
         # Create empty tasks for the entire batch
-        raw_tasks = [""] * batch_size
+        # raw_tasks = tasks["language_instruction"]
+        raw_tasks = ["Pick the pink cube up."] * batch_size
 
         # Prepare batch in Octo format with proper batch size
         prepared_batch = self.octo_policy._prepare_batch(observations, raw_tasks=raw_tasks)
@@ -640,7 +652,7 @@ class OctoEncodingWrapper(nn.Module):
                 raw_tasks = tasks["language_instruction"]
             else:
                 # Create empty tasks for the entire batch
-                raw_tasks = [""] * batch_size
+                raw_tasks = ["Pick the pink cube up."] * batch_size
 
             prepared_batch = self.octo_policy._prepare_batch(observations, raw_tasks=raw_tasks)
             obs, task_dict, _, _, timestep_pad_mask = prepared_batch
