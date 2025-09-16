@@ -104,8 +104,11 @@ python src/lerobot/scripts/train.py \
 - **`--policy.compile_model=true`**: Enables model compilation for faster training
 - **`--policy.gradient_checkpointing=true`**: Reduces memory usage significantly during training
 - **`--policy.dtype=bfloat16`**: Use mixed precision training for efficiency
-- **`--policy.pretrained_path=pepijn223/pi05_base_fp32`**: The base π₀.₅ model to finetune, options are: `pepijn223/pi05_base_fp32`, `pepijn223/pi05_libero_fp32`, `pepijn223/pi05_droid_fp32`
 - **`--batch_size=32`**: Batch size for training, adapt this based on your GPU memory
+- **`--policy.pretrained_path=pepijn223/pi05_base_fp32`**: The base π₀.₅ model you want to finetune, options are:
+  - \*\* [pepijn223/pi05_base_fp32](https://huggingface.co/pepijn223/pi05_base_fp32)
+  - \*\* [pepijn223/pi05_libero_fp32](https://huggingface.co/pepijn223/pi05_libero_fp32) (specifically trained on the Libero dataset)
+  - \*\* [pepijn223/pi05_droid_fp32](https://huggingface.co/pepijn223/pi05_droid_fp32) (specifically trained on the Droid dataset)
 
 ## Performance Results
 
