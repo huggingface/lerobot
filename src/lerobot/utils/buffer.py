@@ -485,11 +485,9 @@ class ReplayBuffer:
                 elif isinstance(v, torch.Tensor):
                     data[k] = v.to(storage_device)
 
-            action = data["action"]
-
             replay_buffer.add(
                 state=data["state"],
-                action=action,
+                action=data["action"],
                 reward=data["reward"],
                 next_state=data["next_state"],
                 done=data["done"],
