@@ -488,8 +488,8 @@ def convert_dataset(
     old_root = root.parent / f"{root.name}_old"
     new_root = root.parent / f"{root.name}_v30"
 
-    # Only handle old_root cleanup if we're not using a local dataset path
-    if local_dataset_path is None and old_root.is_dir() and root.is_dir():
+    # Handle old_root cleanup if both old_root and root exist
+    if old_root.is_dir() and root.is_dir():
         shutil.rmtree(str(root))
         shutil.move(str(old_root), str(root))
 
