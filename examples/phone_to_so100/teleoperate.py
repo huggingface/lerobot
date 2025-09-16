@@ -30,6 +30,10 @@ from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
 from lerobot.teleoperators.phone.teleop_phone import Phone
+from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+
+FPS = 30
 
 # Initialize the robot and teleoperator
 robot_config = SO100FollowerConfig(
@@ -75,18 +79,30 @@ phone_to_robot_joints_processor = RobotProcessorPipeline[RobotAction, RobotActio
     to_output=transition_to_robot_action,
 )
 
+# Connect to the robot and teleoperator
 robot.connect()
 teleop_device.connect()
 
-print("Starting teleop loop. Move your phone to teleoperate the robot.")
+# Init rerun viewer
+_init_rerun(session_name="phone_so100_teleop")
+
+if not robot.is_connected or not teleop_device.is_connected:
+    raise ValueError("Robot or teleop is not connected!")
+
+print("Starting teleop loop. Move your phone to teleoperate the robot...")
 while True:
-    # Get teleop observation
+    t0 = time.perf_counter()
+
+    # Get teleop action
     phone_obs = teleop_device.get_action()
 
     # Phone -> EE pose -> Joints transition
     joint_action = phone_to_robot_joints_processor(phone_obs)
 
-    if joint_action:
-        robot.send_action(joint_action)
+    # Send action to robot
+    _ = robot.send_action(joint_action)
 
-    time.sleep(0.01)
+    # Visualize
+    log_rerun_data(observation=phone_obs, action=joint_action)
+
+    busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))

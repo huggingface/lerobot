@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
@@ -52,7 +51,7 @@ RESET_TIME_SEC = 30
 TASK_DESCRIPTION = "My task description"
 HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
 
-# Initialize the robot and teleoperator
+# Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
 robot_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem58760434471",
@@ -73,7 +72,7 @@ kinematics_solver = RobotKinematics(
     joint_names=list(robot.bus.motors.keys()),
 )
 
-# Build pipeline to convert phone action to ee pose action
+# Build pipeline to convert phone action to EE action
 phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
@@ -94,7 +93,7 @@ phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, RobotActi
     to_output=transition_to_robot_action,
 )
 
-# Build pipeline to convert ee pose action to joint action
+# Build pipeline to convert EE action to joints action
 robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     steps=[
         InverseKinematicsEEToJoints(
@@ -107,7 +106,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
     to_output=transition_to_robot_action,
 )
 
-# Build pipeline to convert joint observation to ee pose observation
+# Build pipeline to convert joint observation to EE observation
 robot_joints_to_ee_pose = RobotProcessorPipeline[RobotObservation, RobotObservation](
     steps=[
         ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
@@ -121,6 +120,8 @@ dataset = LeRobotDataset.create(
     repo_id=HF_REPO_ID,
     fps=FPS,
     features=combine_feature_dicts(
+        # Run the feature contract of the pipelines
+        # This tells you how the features would look like after the pipeline steps
         aggregate_pipeline_dataset_features(
             pipeline=phone_to_robot_ee_pose_processor,
             initial_features=create_initial_features(action=phone.action_features),
@@ -137,18 +138,24 @@ dataset = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
-# Initialize the keyboard listener and rerun visualization
-_, events = init_keyboard_listener()
-_init_rerun(session_name="recording_phone")
-
 # Connect the robot and teleoperator
 robot.connect()
 phone.connect()
 
+# Initialize the keyboard listener and rerun visualization
+listener, events = init_keyboard_listener()
+_init_rerun(session_name="phone_so100_record")
+
+if not robot.is_connected or not phone.is_connected:
+    raise ValueError("Robot or teleop is not connected!")
+
+
+print("Starting record loop. Move your phone to teleoperate the robot...")
 episode_idx = 0
 while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
+    # Main record loop
     record_loop(
         robot=robot,
         events=events,
@@ -186,6 +193,7 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
         dataset.clear_episode_buffer()
         continue
 
+    # Save episode
     dataset.save_episode()
     episode_idx += 1
 
@@ -193,4 +201,5 @@ while episode_idx < NUM_EPISODES and not events["stop_recording"]:
 log_say("Stop recording")
 robot.disconnect()
 phone.disconnect()
+listener.stop()
 dataset.push_to_hub()
