@@ -255,6 +255,27 @@ def act_with_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
+
+    # Load from pretrained checkpoint if specified (for online training after offline training)
+    if hasattr(cfg.policy, 'pretrained_path') and cfg.policy.pretrained_path is not None:
+        import os
+        pretrained_path = cfg.policy.pretrained_path
+        if os.path.exists(pretrained_path):
+            logging.info(f"Loading pretrained policy from: {pretrained_path}")
+            try:
+                # Load the pretrained policy using from_pretrained
+                pretrained_policy = ConRFTPolicy.from_pretrained(pretrained_path)
+
+                # Copy the state dict from pretrained policy to current policy
+                policy.load_state_dict(pretrained_policy.state_dict(), strict=True)
+                logging.info("Successfully loaded pretrained policy weights")
+            except Exception as e:
+                logging.warning(f"Failed to load pretrained policy: {e}")
+                logging.info("Continuing with randomly initialized policy")
+        else:
+            logging.warning(f"Pretrained model path does not exist: {pretrained_path}")
+            logging.info("Continuing with randomly initialized policy")
+
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
