@@ -382,13 +382,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
-    # Add next.* features that are generated during recording
-    _transition_features = {
-        "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
-        "next.done": {"dtype": "bool", "shape": (1,), "names": None},
-        "next.truncated": {"dtype": "bool", "shape": (1,), "names": None},
-    }
-
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(
             pipeline=teleop_action_processor,
