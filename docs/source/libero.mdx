@@ -1,8 +1,9 @@
 # LIBERO
 
 **LIBERO** is a benchmark designed to study **lifelong robot learning**. The idea is that robots won’t just be pretrained once in a factory, they’ll need to keep learning and adapting with their human users over time. This ongoing adaptation is called **lifelong learning in decision making (LLDM)**, and it’s a key step toward building robots that become truly personalized helpers.
-- 📄 [LIBERO paper](https://arxiv.org/abs/2306.03310)  
-- 💻 [Original LIBERO repo](https://github.com/Lifelong-Robot-Learning/LIBERO) 
+
+- 📄 [LIBERO paper](https://arxiv.org/abs/2306.03310)
+- 💻 [Original LIBERO repo](https://github.com/Lifelong-Robot-Learning/LIBERO)
 
 To make progress on this challenge, LIBERO provides a set of standardized tasks that focus on **knowledge transfer**: how well a robot can apply what it has already learned to new situations. By evaluating on LIBERO, different algorithms can be compared fairly and researchers can build on each other’s work.
 
@@ -73,7 +74,7 @@ When using LIBERO through LeRobot, policies interact with the environment via **
   ⚠️ **Note:** LeRobot enforces the `.images.*` prefix for any multi-modal visual features. Always ensure that your policy config `input_features` use the same naming keys, and that your dataset metadata keys follow this convention during evaluation.
   If your data contains different keys, you must rename the observations to match what the policy expects, since naming keys are encoded inside the normalization statistics layer.
   This will be fixed with the upcoming Pipeline PR.
-  
+
 - **Actions**
   - Continuous control values in a `Box(-1, 1, shape=(7,))` space.
 
@@ -91,11 +92,12 @@ The environment expects:
 - `observation.images.image2` → wrist camera (`robot0_eye_in_hand_image`)
 
 ⚠️ Cleaning the dataset upfront is **cleaner and more efficient** than remapping keys inside the code.
-To avoid potential mismatches and key errors, we provide a **preprocessed LIBERO dataset** that is fully compatible with the current LeRobot codebase and requires no additional manipulation:  
-👉 [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero)  
+To avoid potential mismatches and key errors, we provide a **preprocessed LIBERO dataset** that is fully compatible with the current LeRobot codebase and requires no additional manipulation:
+👉 [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero)
 
-For reference, here is the **original dataset** published by Physical Intelligence:  
-👉 [physical-intelligence/libero](https://huggingface.co/datasets/physical-intelligence/libero)  
+For reference, here is the **original dataset** published by Physical Intelligence:
+👉 [physical-intelligence/libero](https://huggingface.co/datasets/physical-intelligence/libero)
+
 ---
 
 ### Example training command
@@ -122,4 +124,3 @@ python src/lerobot/scripts/train.py \
 LeRobot uses MuJoCo for simulation. You need to set the rendering backend before training or evaluation:
 
 - `export MUJOCO_GL=egl` → for headless servers (e.g. HPC, cloud)
-
