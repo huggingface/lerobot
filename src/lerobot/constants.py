@@ -23,6 +23,7 @@ OBS_IMAGE = "observation.image"
 OBS_IMAGES = "observation.images"
 ACTION = "action"
 REWARD = "next.reward"
+LANG_INSTRUCTION = "task"
 
 ROBOTS = "robots"
 ROBOT_TYPE = "robot_type"
