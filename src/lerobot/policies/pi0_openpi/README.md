@@ -47,11 +47,10 @@ pip install transformers==4.53.2
 
 | Feature              | π₀                                                     | π₀.₅                                      |
 | -------------------- | ------------------------------------------------------ | ----------------------------------------- |
-| State Embedding      | Uses `state_proj` layer                                | No state embedding                        |
 | Time Conditioning    | Concatenates time with actions via `action_time_mlp_*` | Uses `time_mlp_*` for AdaRMS conditioning |
 | AdaRMS               | Not used                                               | Used in action expert                     |
 | Tokenizer Length     | 48 tokens                                              | 200 tokens                                |
-| Discrete State Input | False                                                  | True                                      |
+| Discrete State Input | False (Uses `state_proj` layer)                        | True                                      |
 | Parameter Count      | Higher (includes state embedding)                      | Lower (no state embedding)                |
 
 ---
@@ -86,7 +85,3 @@ If you use this work, please cite both **OpenPI** and the π₀ paper:
 ## License
 
 This port follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi).
-
-```
-
-```

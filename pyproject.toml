@@ -119,6 +119,7 @@ intelrealsense = [
 
 # Policies
 pi0 = ["lerobot[transformers-dep]"]
+pi05 = ["lerobot[transformers-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.9", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
@@ -145,6 +146,7 @@ all = [
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     "lerobot[pi0]",
+    "lerobot[pi05]",
     "lerobot[smolvla]",
     "lerobot[hilserl]",
     "lerobot[async]",

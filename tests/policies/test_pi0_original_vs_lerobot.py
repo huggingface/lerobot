@@ -2,7 +2,12 @@
 
 import os
 
+import pytest
 import torch
+
+# Skip entire module if openpi is not available
+pytest.importorskip("openpi")
+
 from openpi.models_pytorch import preprocessing_pytorch as openpi_preprocessing
 
 # NOTE: Assumes PYTHONPATH is set to include OpenPI src as per instructions.
