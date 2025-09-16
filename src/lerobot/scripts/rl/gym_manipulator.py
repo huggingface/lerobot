@@ -62,7 +62,7 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
     AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     EEReferenceAndDelta,
-    ForwardKinematicsJointsToEE,
+    ForwardKinematicsJointsToEEObservation,
     GripperVelocityToJoint,
     InverseKinematicsEEToJoints,
 )
@@ -410,7 +410,7 @@ def make_processors(
 
     if kinematics_solver is not None:
         env_pipeline_steps.append(
-            ForwardKinematicsJointsToEE(
+            ForwardKinematicsJointsToEEObservation(
                 kinematics=kinematics_solver,
                 motor_names=motor_names,
             )
@@ -431,7 +431,7 @@ def make_processors(
         )
 
     # Add gripper penalty processor if gripper config exists and enabled
-    if False and cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
+    if cfg.processor.gripper is not None and cfg.processor.gripper.use_gripper:
         env_pipeline_steps.append(
             GripperPenaltyProcessorStep(
                 penalty=cfg.processor.gripper.gripper_penalty,

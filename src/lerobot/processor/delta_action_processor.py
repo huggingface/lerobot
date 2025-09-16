@@ -48,12 +48,12 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
 
         # TODO (maractingi): add rotation
         delta_action = {
-            "delta_x": action[0],
-            "delta_y": action[1],
-            "delta_z": action[2],
+            "delta_x": action[0].item(),
+            "delta_y": action[1].item(),
+            "delta_z": action[2].item(),
         }
         if self.use_gripper:
-            delta_action["gripper"] = action[3]
+            delta_action["gripper"] = action[3].item()
         return delta_action
 
     def transform_features(

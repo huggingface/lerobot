@@ -340,11 +340,16 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
         """
         action = self.transition.get(TransitionKey.ACTION)
 
-        current_gripper_pos = complementary_data.get("raw_joint_positions", None).get(GRIPPER_KEY, None)
+        raw_joint_positions = complementary_data.get("raw_joint_positions", None)
+        if raw_joint_positions is None:
+            return complementary_data
+
+        current_gripper_pos = raw_joint_positions.get(GRIPPER_KEY, None)
         if current_gripper_pos is None:
             return complementary_data
 
-        gripper_action = action[f"{GRIPPER_KEY}.pos"]
+        # Gripper action is a PolicyAction at this stage
+        gripper_action = action[-1].item() 
         gripper_action_normalized = gripper_action / self.max_gripper_pos
 
         # Normalize gripper state and action
