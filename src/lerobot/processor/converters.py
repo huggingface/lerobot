@@ -23,8 +23,6 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.constants import OBS_IMAGES
-
 from .core import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 
@@ -279,11 +277,8 @@ def observation_to_transition(observation: RobotObservation) -> EnvTransition:
     Returns:
         An `EnvTransition` containing the formatted observation.
     """
-    state, images = _split_obs_to_state_and_images(observation)
 
-    image_observations = {f"{OBS_IMAGES}.{cam}": img for cam, img in images.items()}
-
-    return create_transition(observation={**state, **image_observations})
+    return create_transition(observation=observation)
 
 
 def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
