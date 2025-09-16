@@ -670,6 +670,10 @@ class ReplayBuffer:
                 val = current_sample[key]
                 current_state[key] = val.unsqueeze(0)  # Add batch dimension
 
+            # Add action embedding to current state if it exists in the dataset
+            if "action_embedding" in current_sample:
+                current_state["action_embedding"] = current_sample["action_embedding"].unsqueeze(0)
+
             # ----- 2) Action -----
             action = current_sample["action"].unsqueeze(0)  # Add batch dimension
 
@@ -704,6 +708,10 @@ class ReplayBuffer:
                     for key in state_keys:
                         val = next_sample[key]
                         next_state_data[key] = val.unsqueeze(0)  # Add batch dimension
+
+                    if "action_embedding" in next_sample:
+                        next_state_data["action_embedding"] = next_sample["action_embedding"].unsqueeze(0)
+
                     next_state = next_state_data
 
             # ----- 5) Complementary info (if available) -----
