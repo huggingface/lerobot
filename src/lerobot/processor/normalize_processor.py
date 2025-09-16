@@ -209,7 +209,7 @@ class _NormalizationMixin:
                 new_observation[key] = self._apply_transform(tensor, key, feature.type, inverse=inverse)
         return new_observation
 
-    def _normalize_action(self, action: Any, inverse: bool) -> Tensor:
+    def _normalize_action(self, action: Tensor, inverse: bool) -> Tensor:
         # Convert to tensor but preserve original dtype for adaptation logic
         """
         Applies (un)normalization to an action tensor.
@@ -221,8 +221,7 @@ class _NormalizationMixin:
         Returns:
             The transformed action tensor.
         """
-        tensor = torch.as_tensor(action)
-        processed_action = self._apply_transform(tensor, "action", FeatureType.ACTION, inverse=inverse)
+        processed_action = self._apply_transform(action, "action", FeatureType.ACTION, inverse=inverse)
         return processed_action
 
     def _apply_transform(
