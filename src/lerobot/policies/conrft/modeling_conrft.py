@@ -403,15 +403,25 @@ class ConRFTPolicy(PreTrainedPolicy):
         # Combine all sampled actions [random, current, next]
         all_sampled_actions = torch.cat([random_actions, policy_actions, next_actions_cql], dim=1)
 
-        # Compute Q-values for all sampled actions
-        cql_q_samples = []
-        for i in range(all_sampled_actions.shape[1]):
-            q_vals = self.critic_ensemble(observations, all_sampled_actions[:, i], observation_features)
-            # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
-            if self.config.num_subsample_critics is not None:
-                q_vals = q_vals[indices]
-            cql_q_samples.append(q_vals.unsqueeze(-1))
-        cql_q_samples = torch.cat(cql_q_samples, dim=-1)  # Shape: [critic_size, batch_size, n_actions*3]
+        # Compute Q-values for all sampled actions (vectorized)
+        # Data preparation for vectorized Q computation
+        num_actions = all_sampled_actions.shape[1]
+        expanded_obs = {k: torch.repeat_interleave(v, num_actions, dim=0) for k, v in observations.items()}
+        flat_actions = all_sampled_actions.reshape(-1, all_sampled_actions.shape[-1])
+
+        if observation_features is not None:
+            expanded_obs_features = {k: torch.repeat_interleave(v, num_actions, dim=0) for k, v in observation_features.items()}
+        else:
+            expanded_obs_features = None
+
+        # Actual Q-value computation
+        q_vals_flat = self.critic_ensemble(expanded_obs, flat_actions, expanded_obs_features)
+
+        # Reshape Q-values
+        cql_q_samples = q_vals_flat.reshape(critic_size, batch_size, num_actions)
+        # TODO(lilkm): Get indices before forward pass to avoid unnecessary computation
+        if self.config.num_subsample_critics is not None:
+            cql_q_samples = cql_q_samples[indices]
 
         # Cal-QL: Apply lower bound using MC returns
         n_actions_for_calql = num_random * 3
