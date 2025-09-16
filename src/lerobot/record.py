@@ -205,7 +205,7 @@ class RecordConfig:
            V
      [ robot.get_observation() ] ---> raw_obs
            V
-     [ robot_observation_processor ] ---> obs_transition
+     [ robot_observation_processor ] ---> processed_obs
            V
      .-----( ACTION LOGIC )------------------.
      V                                       V
@@ -216,7 +216,7 @@ class RecordConfig:
      |          V                            |          V
      | [teleop_action_processor]             |          |
      |          |                            |          |
-     '---> teleop_transition                 '---> policy_transition
+     '---> processed_teleop_action           '---> processed_policy_action
      |                                       |
      '-------------------------.-------------'
                                V
@@ -224,7 +224,7 @@ class RecordConfig:
                                V
                     [ robot.send_action() ] -- (Robot Executes)
                                V
-        ( Transitions are merged & added to Dataset )
+                    ( Save to Dataset )
                                V
                   ( Rerun Log / Loop Wait )
 """
@@ -253,7 +253,7 @@ def record_loop(
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
     teleop_arm = teleop_keyboard = None
-    if isinstance(teleop, list):  # For LeKiwi
+    if isinstance(teleop, list):
         teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
         teleop_arm = next(
             (
@@ -318,14 +318,13 @@ def record_loop(
                 f"{name}": float(action_values[i]) for i, name in enumerate(action_names)
             }
 
-        elif isinstance(teleop, Teleoperator):
+        elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
-            # TODO(Steven): This assumes that the processor passed by the user should have identity_transition as to_output.
             act_processed_teleop = teleop_action_processor(act)
 
-        elif isinstance(teleop, list):
+        elif policy is None and isinstance(teleop, list):
             arm_action = teleop_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
             keyboard_action = teleop_keyboard.get_action()
@@ -334,14 +333,13 @@ def record_loop(
             act_processed_teleop = teleop_action_processor(act)
         else:
             logging.info(
-                "No policy or teleoperator provided, skipping action generation. "
+                "No policy or teleoperator provided, skipping action generation."
                 "This is likely to happen when resetting the environment without a teleop device."
                 "The robot won't be at its rest position at the start of the next episode."
             )
             continue
 
         # Applies a pipeline to the action, default is IdentityProcessor
-        # IMPORTANT: action_pipeline.to_output must return a dict suitable for robot.send_action()
         if policy is not None and act_processed_policy is not None:
             action_values = act_processed_policy
             robot_action_to_send = robot_action_processor(act_processed_policy)
@@ -395,7 +393,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             initial_features=create_initial_features(observation=robot.observation_features),
             use_videos=cfg.dataset.video,
         ),
-    )  # , **transition_features}
+    )
 
     if cfg.resume:
         dataset = LeRobotDataset(
