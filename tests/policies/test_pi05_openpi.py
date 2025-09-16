@@ -2,7 +2,11 @@
 
 """Test script to verify PI0.5 (pi05) support in PI0OpenPI policy."""
 
+import pytest
 import torch
+
+# Skip entire module if transformers is not available
+pytest.importorskip("transformers")
 
 from lerobot.policies.pi0_openpi.configuration_pi0openpi import PI0OpenPIConfig
 from lerobot.policies.pi0_openpi.modeling_pi0openpi import PI0OpenPIPolicy

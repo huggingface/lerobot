@@ -2,7 +2,11 @@
 
 """Test script to verify PI0OpenPI policy integration with LeRobot."""
 
+import pytest
 import torch
+
+# Skip entire module if transformers is not available
+pytest.importorskip("transformers")
 
 from lerobot.policies.factory import make_policy_config
 from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy
