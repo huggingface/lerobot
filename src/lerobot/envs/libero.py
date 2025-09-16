@@ -271,7 +271,7 @@ class LiberoEnv(gym.Env):
         info = {"is_success": False}
         return observation, info
 
-    def step(self, action: np.ndarray) -> tuple[dict[str, Any], dict[str, Any]]:
+    def step(self, action: np.ndarray) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
         if action.ndim != 1:
             raise ValueError(
                 f"Expected action to be 1-D (shape (action_dim,)), "
@@ -281,7 +281,7 @@ class LiberoEnv(gym.Env):
 
         is_success = self._env.check_success()
         terminated = done or is_success
-        info["is_success"] = done  # is_success
+        info["is_success"] = is_success
 
         observation = self._format_raw_obs(raw_obs)
         if done:
