@@ -137,7 +137,15 @@ def train(cfg: TrainPipelineConfig):
 
     if accelerator.is_main_process:
         logging.info("Creating dataset")
-    dataset = make_dataset(cfg)
+        # Main process downloads/loads the dataset first
+        dataset = make_dataset(cfg)
+
+    # Wait for main process to finish downloading dataset
+    accelerator.wait_for_everyone()
+
+    # Now all processes can safely load the dataset
+    if not accelerator.is_main_process:
+        dataset = make_dataset(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -146,14 +154,21 @@ def train(cfg: TrainPipelineConfig):
     if cfg.eval_freq > 0 and cfg.env is not None:
         if accelerator.is_main_process:
             logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+            eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+        else:
+            eval_env = None
 
     if accelerator.is_main_process:
         logging.info("Creating policy")
+
+    # All processes create the policy, but we ensure dataset metadata is available
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
+
+    # Wait for all processes to finish policy creation before continuing
+    accelerator.wait_for_everyone()
 
     if accelerator.is_main_process:
         logging.info("Creating optimizer and scheduler")
@@ -233,6 +248,9 @@ def train(cfg: TrainPipelineConfig):
         drop_last=False,
         prefetch_factor=2,
     )
+
+    # Ensure all processes are synchronized before preparing with accelerator
+    accelerator.wait_for_everyone()
 
     # Prepare model, optimizer, scheduler, and dataloader with accelerator
     policy, optimizer, dataloader = accelerator.prepare(policy, optimizer, dataloader)
