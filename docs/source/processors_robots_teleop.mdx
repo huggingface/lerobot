@@ -17,7 +17,7 @@ We use the Phone to SO‑100 follower examples for concreteness, but the same pa
 
 The examples in this guide use absolute end effector (EE) poses because they are easy to reason about. In practice, relative EE deltas or joint position are often preferred as learning features.
 
-You can choose what you save and learn from the teleop and robot action spaces, joints, absolute EE, or relative EE by using/implementing the right steps (and `transform_features()`) in your pipelines.
+With processors, you choose the learning features you want to use for your policy. This could be joints positions/velocities, absolute EE, or relative EE positions. You can also choose to store other features, such as joint torques, motor currents, etc.
 
 ## Three pipelines
 
@@ -31,99 +31,103 @@ Each of these pipelines handle different conversions between different action an
 Below is an example of the three pipelines that we use in the phone to SO-100 follower examples:
 
 ```69:90:examples/phone_so100_record.py
-phone_to_robot_ee_pose = RobotProcessor(  # teleop -> dataset action
-    steps=[MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
-           AddRobotObservationAsComplimentaryData(robot=robot),
-            EEReferenceAndDelta(kinematics=kinematics_solver,
-                               end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
-                               motor_names=list(robot.bus.motors.keys())),
-           EEBoundsAndSafety(end_effector_bounds={"min": [-1, -1, -1], "max": [1, 1, 1]},
-                             max_ee_step_m=0.20, max_ee_twist_step_rad=0.50)],
-    to_transition=to_transition_teleop_action,
-    to_output=lambda tr: tr,
+phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, RobotAction]( # teleop -> dataset action
+    steps=[
+        MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
+        AddRobotObservationAsComplimentaryData(robot=robot),
+        EEReferenceAndDelta(
+            kinematics=kinematics_solver, end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5}, motor_names=list(robot.bus.motors.keys()),
+        ),
+        EEBoundsAndSafety(
+            end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]}, max_ee_step_m=0.20, max_ee_twist_step_rad=0.50,
+        ),
+        GripperVelocityToJoint(),
+    ],
+    to_transition=robot_action_to_transition,
+    to_output=transition_to_robot_action,
 )
 
-robot_ee_to_joints = RobotProcessor(      # dataset action -> robot
-    steps=[InverseKinematicsEEToJoints(kinematics=kinematics_solver,
-                                       motor_names=list(robot.bus.motors.keys()),
-                                       initial_guess_current_joints=True),
-           GripperVelocityToJoint(motor_names=list(robot.bus.motors.keys()), speed_factor=20.0)],
-    to_transition=lambda tr: tr,
-    to_output=to_output_robot_action,
+robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction]( # dataset action -> robot
+    steps=[
+        InverseKinematicsEEToJoints(
+            kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()), initial_guess_current_joints=True,
+        ),
+    ],
+    to_transition=robot_action_to_transition,
+    to_output=transition_to_robot_action,
 )
 
-robot_joints_to_ee_pose = RobotProcessor( # robot obs -> dataset obs
-    steps=[ForwardKinematicsJointsToEE(kinematics=kinematics_solver,
-                                       motor_names=list(robot.bus.motors.keys()))],
-    to_transition=to_transition_robot_observation,
-    to_output=lambda tr: tr,
+robot_joints_to_ee_pose = RobotProcessorPipeline[RobotObservation, RobotObservation]( # robot obs -> dataset obs
+    steps=[
+        ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
+    ],
+    to_transition=observation_to_transition,
+    to_output=transition_to_observation,
 )
 ```
 
 ## Why to_transition / to_output
 
 To convert from robot/teleoperator to pipeline and back, we use the `to_transition` and `to_output` pipeline adapters.
-They standardize conversions to reduce boilerplate code, and form the bridge between the robot and teleoperators raw dicts and the pipeline’s `EnvTransition` format.
+They standardize conversions to reduce boilerplate code, and form the bridge between the robot and teleoperators raw dictionaries and the pipeline’s `EnvTransition` format.
 In the phone to SO-100 follower examples we use the following adapters:
 
-- `to_transition_teleop_action`: transforms the teleop action dict to a pipeline transition (puts keys under `action.*`, converts scalars/arrays to tensors, keeps objects like `Rotation` intact)
-- `to_output_robot_action`: transforms the pipeline transition to a robot action dict (extracts keys ending with `.pos`/`.vel` and strips `action.` prefix)
-- `to_transition_robot_observation`: transforms the robot observation dict to a pipeline transition (splits state vs images; stores state under `observation.state.*` and images under `observation.images.*`)
+- `robot_action_to_transition`: transforms the teleop action dict to a pipeline transition.
+- `transition_to_robot_action`: transforms the pipeline transition to a robot action dict.
+- `observation_to_transition`: transforms the robot observation dict to a pipeline transition.
+- `transition_to_observation`: transforms the pipeline transition to a observation dict.
 
-See `src/lerobot/processor/converters.py` for more details.
+Checkout [src/lerobot/processor/converters.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/processor/converters.py) for more details.
 
 ## Dataset feature contracts
 
-Dataset features are the keys saved in the dataset. Each step can declare what its dataset features are via `transform_features(...)`. We can then aggregate features per pipeline with `aggregate_pipeline_dataset_features()` and merge multiple groups with `merge_features(...)`.
+Dataset features are determined by the keys saved in the dataset. Each step can declare what features it modifies in a contract called `transform_features(...)`. Once you build a processor, the processor can then aggregate all of these features with `aggregate_pipeline_dataset_features()` and merge multiple feature dicts with `combine_feature_dicts(...)`.
 
 Below is and example of how we declare features with the `transform_features` method in the phone to SO-100 follower examples:
 
-```203:211:src/lerobot/robots/so100_follower/robot_kinematic_processor.py
-def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-    # Because this is last step we specify the dataset features of this step that we want to be stored in the dataset
-    features["action.ee.x"] = float
-    features["action.ee.y"] = float
-    features["action.ee.z"] = float
-    features["action.ee.wx"] = float
-    features["action.ee.wy"] = float
-    features["action.ee.wz"] = float
-    return features
+```src/lerobot/robots/so100_follower/robot_kinematic_processor.py
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We only use the ee pose in the dataset, so we don't need the joint positions
+        for n in self.motor_names:
+            features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
+        # We specify the dataset features of this step that we want to be stored in the dataset
+        for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
+            features[PipelineFeatureType.ACTION][f"ee.{k}"] = PolicyFeature(
+                type=FeatureType.STATE, shape=(1,)
+            )
+        return features
 ```
 
-Tip: declare features at the last step that produces them (e.g., `EEBoundsAndSafety` declares `action.ee.*`, `ForwardKinematicsJointsToEE` declares `observation.state.ee.*`).
+Here we declare what PolicyFeatures we modify in this step, so we know what features we can expect when we run the processor. These features can then be aggregated and used to create the dataset features.
 
-Below is an example of how we aggregate and merge features in the phone to SO-100 follower examples:
+Below is an example of how we aggregate and merge features in the phone to SO-100 record example:
 
 ```121:145:examples/phone_so100_record.py
-action_ee = aggregate_pipeline_dataset_features(
-    pipeline=phone_to_robot_ee_pose,
-    initial_features=phone.action_features,
-    use_videos=True,
-    patterns=["action.ee"],
-)
+features=combine_feature_dicts(
+        # Run the feature contract of the pipelines
+        # This tells you how the features would look like after the pipeline steps
+        aggregate_pipeline_dataset_features(
+            pipeline=phone_to_robot_ee_pose_processor,
+            initial_features=create_initial_features(action=phone.action_features), # <- Action features we can expect, these come from our teleop device (phone) and action processor
+            use_videos=True,
+        ),
+        aggregate_pipeline_dataset_features(
+            pipeline=robot_joints_to_ee_pose,
+            initial_features=create_initial_features(observation=robot.observation_features), # <- Observation features we can expect, these come from our robot and observation processor
+            use_videos=True,
+            patterns=["observation.state.ee"], # <- Here you could optionally filter the features we want to store in the dataset, with a specific pattern
 
-gripper = aggregate_pipeline_dataset_features(
-    pipeline=robot_ee_to_joints,
-    initial_features={},
-    use_videos=True,
-    patterns=["action.gripper.pos", "observation.state.gripper.pos"],
-)
-
-observation_ee = aggregate_pipeline_dataset_features(
-    pipeline=robot_joints_to_ee_pose,
-    initial_features=robot.observation_features,
-    use_videos=True,
-    patterns=["observation.state.ee"],
-)
-
-dataset_features = merge_features(action_ee, gripper, observation_ee)
+        ),
+    ),
 ```
 
 How it works:
 
-- `aggregate_pipeline_dataset_features(...)`: applies `transform_features` across the pipeline and filters by patterns (images included when `use_videos=True`).
-- `merge_features(...)`: combine multiple feature dicts.
-- Recording uses `to_dataset_frame(...)` to build frames consistent with `dataset.features` before we call `add_frame(...)` to add the frame to the dataset.
+- `aggregate_pipeline_dataset_features(...)`: applies `transform_features` across the pipeline and filters by patterns (images included when `use_videos=True`, and state features included when `patterns` is specified).
+- `combine_feature_dicts(...)`: combine multiple feature dicts.
+- Recording with `record_loop(...)` uses `build_dataset_frame(...)` to build frames consistent with `dataset.features` before we call `add_frame(...)` to add the frame to the dataset.
 
 ## Guidance when customizing robot pipelines
 
@@ -132,17 +136,17 @@ You can store any of the following features as your action/observation space:
 - Joint positions
 - Absolute EE poses
 - Relative EE deltas
-- Other features: joint velocity, etc.
+- Other features: joint velocity, torques, etc.
 
 Pick what you want to use for your policy action and observation space and configure/modify the pipelines and steps accordingly.
 
 ### Different robots
 
-- Swap `RobotKinematics` URDF and `motor_names`. Ensure `target_frame_name` points to your gripper/wrist.
+- You can easily reuse pipelines, for example to use another robot with phone teleop, modify the examples and swap the robot `RobotKinematics` (URDF) and `motor_names` to use your own robot with Phone teleop. Additionally you should ensure `target_frame_name` points to your gripper/wrist.
 
 ### Safety first
 
 - When changing pipelines, start with tight bounds, implement safety steps when working with real robots.
 - Its advised to start with simulation first and then move to real robots.
 
-Hope this guide helps you get started with customizing your robot pipelines, If you run into any issues at any point, jump into our [Discord community](https://discord.com/invite/s3KuuzsPFb) for support.
+Thats it! We hope this guide helps you get started with customizing your robot pipelines, If you run into any issues at any point, jump into our [Discord community](https://discord.com/invite/s3KuuzsPFb) for support.

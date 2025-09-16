@@ -73,10 +73,10 @@ def make_diffusion_pre_post_processors(
         ),
     ]
     output_steps = [
-        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
+        DeviceProcessorStep(device="cpu"),
     ]
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](

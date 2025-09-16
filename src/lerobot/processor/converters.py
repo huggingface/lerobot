@@ -23,8 +23,6 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.constants import OBS_IMAGES
-
 from .core import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 
@@ -154,41 +152,6 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
     return x
 
 
-def _is_image(arr: Any) -> bool:
-    """
-    Check if a given array is likely an image (uint8, 3D).
-
-    Args:
-        arr: The array to check.
-
-    Returns:
-        True if the array matches the image criteria, False otherwise.
-    """
-    return isinstance(arr, np.ndarray) and arr.dtype == np.uint8 and arr.ndim == 3
-
-
-def _split_obs_to_state_and_images(obs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """
-    Separate an observation dictionary into state and image components.
-
-    Args:
-        obs: The observation dictionary.
-
-    Returns:
-        A tuple containing two dictionaries: one for state and one for images.
-    """
-    state, images = {}, {}
-    for k, v in obs.items():
-        if "image" in k.lower() or _is_image(v):
-            images[k] = v
-        else:
-            state[k] = v
-    return state, images
-
-
-# Private Helper Functions (Common Logic)
-
-
 def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     """
     Extract complementary data from a batch dictionary.
@@ -207,9 +170,6 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
 
     return {**pad_keys, **task_key, **index_key, **task_index_key}
-
-
-# Core Conversion Functions
 
 
 def create_transition(
@@ -247,13 +207,36 @@ def create_transition(
     }
 
 
+def robot_action_observation_to_transition(
+    action_observation: tuple[RobotAction, RobotObservation],
+) -> EnvTransition:
+    """
+    Convert a raw robot action and observation dictionary into a standardized `EnvTransition`.
+
+    Args:
+        action: The raw action dictionary from a teleoperation device or controller.
+        observation: The raw observation dictionary from the environment.
+
+    Returns:
+        An `EnvTransition` containing the formatted observation.
+    """
+    if not isinstance(action_observation, tuple):
+        raise ValueError("action_observation should be a tuple type with an action and observation")
+
+    action, observation = action_observation
+
+    if action is not None and not isinstance(action, dict):
+        raise ValueError(f"Action should be a RobotAction type got {type(action)}")
+
+    if observation is not None and not isinstance(observation, dict):
+        raise ValueError(f"Observation should be a RobotObservation type got {type(observation)}")
+
+    return create_transition(action=action, observation=observation)
+
+
 def robot_action_to_transition(action: RobotAction) -> EnvTransition:
     """
     Convert a raw robot action dictionary into a standardized `EnvTransition`.
-
-    The keys in the action dictionary are prefixed with "action." and stored under
-    the `ACTION` key in the transition. Values are converted to tensors, except for
-    special types like `Rotation`.
 
     Args:
         action: The raw action dictionary from a teleoperation device or controller.
@@ -261,7 +244,8 @@ def robot_action_to_transition(action: RobotAction) -> EnvTransition:
     Returns:
         An `EnvTransition` containing the formatted action.
     """
-
+    if not isinstance(action, dict):
+        raise ValueError(f"Action should be a RobotAction type got {type(action)}")
     return create_transition(action=action)
 
 
@@ -269,21 +253,15 @@ def observation_to_transition(observation: RobotObservation) -> EnvTransition:
     """
     Convert a raw robot observation dictionary into a standardized `EnvTransition`.
 
-    The observation is split into state and image components. State keys are prefixed
-    with "observation.state." and image keys with "observation.images.". The result is
-    stored under the `OBSERVATION` key in the transition.
-
     Args:
         observation: The raw observation dictionary from the environment.
 
     Returns:
         An `EnvTransition` containing the formatted observation.
     """
-    state, images = _split_obs_to_state_and_images(observation)
-
-    image_observations = {f"{OBS_IMAGES}.{cam}": img for cam, img in images.items()}
-
-    return create_transition(observation={**state, **image_observations})
+    if not isinstance(observation, dict):
+        raise ValueError(f"Observation should be a RobotObservation type got {type(observation)}")
+    return create_transition(observation=observation)
 
 
 def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
@@ -299,6 +277,9 @@ def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
     Returns:
         A dictionary representing the raw robot action.
     """
+    if not isinstance(transition, dict):
+        raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
+
     action = transition.get(TransitionKey.ACTION)
     if not isinstance(action, dict):
         raise ValueError(f"Action should be a RobotAction type (dict) got {type(action)}")
@@ -309,6 +290,9 @@ def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
     """
     Convert an `EnvTransition` to a `PolicyAction`.
     """
+    if not isinstance(transition, dict):
+        raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
+
     action = transition.get(TransitionKey.ACTION)
     if not isinstance(action, PolicyAction):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
@@ -319,6 +303,9 @@ def transition_to_observation(transition: EnvTransition) -> RobotObservation:
     """
     Convert an `EnvTransition` to a `RobotObservation`.
     """
+    if not isinstance(transition, dict):
+        raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
+
     observation = transition.get(TransitionKey.OBSERVATION)
     if not isinstance(observation, dict):
         raise ValueError(f"Observation should be a RobotObservation (dict) type got {type(observation)}")
@@ -386,6 +373,9 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
     Returns:
         A batch dictionary with canonical LeRobot field names.
     """
+    if not isinstance(transition, dict):
+        raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
+
     batch = {
         "action": transition.get(TransitionKey.ACTION),
         "next.reward": transition.get(TransitionKey.REWARD, 0.0),
@@ -407,7 +397,7 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
     return batch
 
 
-def identity_transition(tr: EnvTransition) -> EnvTransition:
+def identity_transition(transition: EnvTransition) -> EnvTransition:
     """
     An identity function for transitions, returning the input unchanged.
 
@@ -419,4 +409,4 @@ def identity_transition(tr: EnvTransition) -> EnvTransition:
     Returns:
         The same `EnvTransition`.
     """
-    return tr
+    return transition

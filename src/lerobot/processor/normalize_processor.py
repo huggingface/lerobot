@@ -43,6 +43,30 @@ class _NormalizationMixin:
     be inherited by concrete `ProcessorStep` implementations and should not be used
     directly.
 
+    **Stats Override Preservation:**
+    When stats are explicitly provided during construction (e.g., via overrides in
+    `DataProcessorPipeline.from_pretrained()`), they are preserved even when
+    `load_state_dict()` is called. This allows users to override normalization
+    statistics from saved models while keeping the rest of the model state intact.
+
+    Examples:
+        ```python
+        # Common use case: Override with dataset stats
+        from lerobot.datasets import LeRobotDataset
+
+        dataset = LeRobotDataset("my_dataset")
+        pipeline = DataProcessorPipeline.from_pretrained(
+            "model_path", overrides={"normalizer_processor": {"stats": dataset.meta.stats}}
+        )
+        # dataset.meta.stats will be used, not the stats from the saved model
+
+        # Custom stats override
+        custom_stats = {"action": {"mean": [0.0], "std": [1.0]}}
+        pipeline = DataProcessorPipeline.from_pretrained(
+            "model_path", overrides={"normalizer_processor": {"stats": custom_stats}}
+        )
+        ```
+
     Attributes:
         features: A dictionary mapping feature names to `PolicyFeature` objects, defining
             the data structure to be processed.
@@ -57,6 +81,8 @@ class _NormalizationMixin:
             normalization to specific observation features.
         _tensor_stats: An internal dictionary holding the normalization statistics as
             PyTorch tensors.
+        _stats_explicitly_provided: Internal flag tracking whether stats were explicitly
+            provided during construction (used for override preservation).
     """
 
     features: dict[str, PolicyFeature]
@@ -68,6 +94,7 @@ class _NormalizationMixin:
     normalize_observation_keys: set[str] | None = None
 
     _tensor_stats: dict[str, dict[str, Tensor]] = field(default_factory=dict, init=False, repr=False)
+    _stats_explicitly_provided: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self):
         """
@@ -78,6 +105,8 @@ class _NormalizationMixin:
         lists) and converts the provided `stats` dictionary into a dictionary of
         tensors (`_tensor_stats`) on the specified device.
         """
+        # Track if stats were explicitly provided (not None and not empty)
+        self._stats_explicitly_provided = self.stats is not None and bool(self.stats)
         # Robust JSON deserialization handling (guard empty maps).
         if self.features:
             first_val = next(iter(self.features.values()))
@@ -145,10 +174,33 @@ class _NormalizationMixin:
 
         The loaded tensors are moved to the processor's configured device.
 
+        **Stats Override Preservation:**
+        If stats were explicitly provided during construction (e.g., via overrides in
+        `DataProcessorPipeline.from_pretrained()`), they are preserved and the state
+        dictionary is ignored. This allows users to override normalization statistics
+        while still loading the rest of the model state.
+
+        This behavior is crucial for scenarios where users want to adapt a pretrained
+        model to a new dataset with different statistics without retraining the entire
+        model.
+
         Args:
             state: A flat state dictionary with keys in the format
                    `'feature_name.stat_name'`.
+
+        Note:
+            When stats are preserved due to explicit provision, only the tensor
+            representation is updated to ensure consistency with the current device
+            and dtype settings.
         """
+        # If stats were explicitly provided during construction, preserve them
+        if self._stats_explicitly_provided and self.stats is not None:
+            # Don't load from state_dict, keep the explicitly provided stats
+            # But ensure _tensor_stats is properly initialized
+            self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)  # type: ignore[assignment]
+            return
+
+        # Normal behavior: load stats from state_dict
         self._tensor_stats.clear()
         for flat_key, tensor in state.items():
             key, stat_name = flat_key.rsplit(".", 1)
@@ -159,7 +211,6 @@ class _NormalizationMixin:
 
         # Reconstruct the original stats dict from tensor stats for compatibility with to() method
         # and other functions that rely on self.stats
-
         self.stats = {}
         for key, tensor_dict in self._tensor_stats.items():
             self.stats[key] = {}
@@ -446,5 +497,5 @@ def hotswap_stats(
         if isinstance(step, _NormalizationMixin):
             step.stats = stats
             # Re-initialize tensor_stats on the correct device.
-            step._tensor_stats = to_tensor(stats, device=step.device, dtype=step.dtype)
+            step._tensor_stats = to_tensor(stats, device=step.device, dtype=step.dtype)  # type: ignore[assignment]
     return rp
