@@ -4,19 +4,19 @@
 
 **You’ll learn how to:**
 
-* Understand the v3.0 design and directory layout
-* Record a dataset and push it to the Hub
-* Load datasets for training with `LeRobotDataset`
-* Stream datasets without downloading using `StreamingLeRobotDataset`
-* Migrate existing `v2.1` datasets to `v3.0`
+- Understand the v3.0 design and directory layout
+- Record a dataset and push it to the Hub
+- Load datasets for training with `LeRobotDataset`
+- Stream datasets without downloading using `StreamingLeRobotDataset`
+- Migrate existing `v2.1` datasets to `v3.0`
 
 ## What’s new in `v3`
 
-* **File-based storage**: Many episodes per Parquet/MP4 file (v2 used one file per episode).
-* **Relational metadata**: Episode boundaries and lookups are resolved through metadata, not filenames.
-* **Hub-native streaming**: Consume datasets directly from the Hub with `StreamingLeRobotDataset`.
-* **Lower file-system pressure**: Fewer, larger files ⇒ faster initialization and fewer inode issues at scale.
-* **Unified organization**: Clean directory layout with consistent path templates across data and videos.
+- **File-based storage**: Many episodes per Parquet/MP4 file (v2 used one file per episode).
+- **Relational metadata**: Episode boundaries and lookups are resolved through metadata, not filenames.
+- **Hub-native streaming**: Consume datasets directly from the Hub with `StreamingLeRobotDataset`.
+- **Lower file-system pressure**: Fewer, larger files ⇒ faster initialization and fewer inode issues at scale.
+- **Unified organization**: Clean directory layout with consistent path templates across data and videos.
 
 ## Installation
 
@@ -47,7 +47,7 @@ lerobot-record \
   --dataset.single_task="Grab the black cube"
 ```
 
-See the recording guide for more robots and configurations: [https://huggingface.co/docs/lerobot/en/il\_robots?record=Command#record-a-dataset](https://huggingface.co/docs/lerobot/en/il_robots?record=Command#record-a-dataset)
+See the recording guide for more robots and configurations: [https://huggingface.co/docs/lerobot/en/il_robots?record=Command#record-a-dataset](https://huggingface.co/docs/lerobot/en/il_robots?record=Command#record-a-dataset)
 
 ## Format design
 
@@ -63,23 +63,35 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 
 ### Directory layout (simplified)
 
-* **`meta/info.json`** — canonical schema (features, shapes/dtypes), FPS, codebase version, and **path templates** to locate data/video shards.
-* **`meta/stats.json`** — global feature statistics (mean/std/min/max) used for normalization; exposed as `dataset.meta.stats`.
-* **`meta/tasks.jsonl`** — natural‑language task descriptions mapped to integer IDs for task‑conditioned policies.
-* **`meta/episodes/`** — per‑episode records (lengths, tasks, offsets) stored as **chunked Parquet** for scalability.
-* **`data/`** — frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
-* **`videos/`** — **MP4** shards per camera; each file typically contains **many episodes**.
+- **`meta/info.json`** — canonical schema (features, shapes/dtypes), FPS, codebase version, and **path templates** to locate data/video shards.
+- **`meta/stats.json`** — global feature statistics (mean/std/min/max) used for normalization; exposed as `dataset.meta.stats`.
+- **`meta/tasks.jsonl`** — natural‑language task descriptions mapped to integer IDs for task‑conditioned policies.
+- **`meta/episodes/`** — per‑episode records (lengths, tasks, offsets) stored as **chunked Parquet** for scalability.
+- **`data/`** — frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
+- **`videos/`** — **MP4** shards per camera; each file typically contains **many episodes**.
 
 ### From episode‑based to file‑based
 
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
   <figure style="margin:0; text-align:center;">
-    <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/asset1datasetv3.png" alt="LeRobotDataset v3 diagram" width="220" />
-    <figcaption style="font-size:0.9em; color:#666;">From episode‑based to file‑based datasets</figcaption>
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/asset1datasetv3.png"
+      alt="LeRobotDataset v3 diagram"
+      width="220"
+    />
+    <figcaption style="font-size:0.9em; color:#666;">
+      From episode‑based to file‑based datasets
+    </figcaption>
   </figure>
   <figure style="margin:0; text-align:center;">
-    <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/streaming-lerobot.png" alt="StreamingLeRobotDataset" width="520" />
-    <figcaption style="font-size:0.9em; color:#666;">Stream directly from the Hub for on‑the‑fly training.</figcaption>
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/streaming-lerobot.png"
+      alt="StreamingLeRobotDataset"
+      width="520"
+    />
+    <figcaption style="font-size:0.9em; color:#666;">
+      Stream directly from the Hub for on‑the‑fly training.
+    </figcaption>
   </figure>
 </div>
 
@@ -155,9 +167,9 @@ python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DAT
 
 **What it does**
 
-* `episode-0000.parquet`, `episode-0001.parquet`, … → **`file-0000.parquet`**, …
-* `episode-0000.mp4`, `episode-0001.mp4`, … → **`file-0000.mp4`**, …
-* Updates `meta/episodes/*` (chunked Parquet) with per‑episode lengths, tasks, and byte/frame offsets.
+- `episode-0000.parquet`, `episode-0001.parquet`, … → **`file-0000.parquet`**, …
+- `episode-0000.mp4`, `episode-0001.mp4`, … → **`file-0000.mp4`**, …
+- Updates `meta/episodes/*` (chunked Parquet) with per‑episode lengths, tasks, and byte/frame offsets.
 
 ## FAQ
 
