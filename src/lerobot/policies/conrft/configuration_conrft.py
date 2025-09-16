@@ -176,6 +176,9 @@ class ConRFTConfig(PreTrainedConfig):
     base_vla_model_path: str = "lilkm/octo-small-test"
     freeze_base_vla: bool = True
 
+    # Pretrained policy checkpoint path (for loading from offline training)
+    pretrained_path: str | None = None
+
     # Proprioception settings
     use_proprio: bool = True
     proprio_latent_dim: int = 64
