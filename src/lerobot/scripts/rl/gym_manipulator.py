@@ -372,19 +372,19 @@ def make_processors(
     if cfg.name == "gym_hil":
         action_pipeline_steps = [
             InterventionActionProcessorStep(terminate_on_success=terminate_on_success),
-            Torch2NumpyActionProcessorStep(),
         ]
 
         # Minimal processor pipeline for GymHIL simulation
         env_pipeline_steps = [
-            Numpy2TorchActionProcessorStep(),
             VanillaObservationProcessorStep(),
             AddBatchDimensionProcessorStep(),
             DeviceProcessorStep(device=device),
         ]
 
-        return DataProcessorPipeline(steps=env_pipeline_steps), DataProcessorPipeline(
-            steps=action_pipeline_steps
+        return DataProcessorPipeline(
+            steps=env_pipeline_steps, to_transition=identity_transition, to_output=identity_transition
+        ), DataProcessorPipeline(
+            steps=action_pipeline_steps, to_transition=identity_transition, to_output=identity_transition
         )
 
     # Full processor pipeline for real robot environment
