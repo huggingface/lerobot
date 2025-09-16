@@ -25,6 +25,9 @@ from huggingface_hub import HfApi
 from PIL import Image
 from safetensors.torch import load_file
 
+# Skip entire module if transformers is not available (required by policy factory imports)
+pytest.importorskip("transformers")
+
 import lerobot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig

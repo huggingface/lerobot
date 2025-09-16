@@ -5,6 +5,9 @@
 import pytest
 import torch
 
+# Skip entire module if transformers is not available
+pytest.importorskip("transformers")
+
 from lerobot.policies.pi0_openpi import PI0OpenPIPolicy
 from lerobot.policies.pi05_openpi.modeling_pi05openpi import PI05OpenPIPolicy
 from tests.utils import require_nightly_gpu
