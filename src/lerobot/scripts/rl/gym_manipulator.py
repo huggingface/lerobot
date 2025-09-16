@@ -41,7 +41,7 @@ import time
 from collections import deque
 from collections.abc import Sequence
 from threading import Lock
-from typing import Annotated, Any
+from typing import Annotated, Any, Optional, Dict
 
 import gymnasium as gym
 import numpy as np
@@ -2001,6 +2001,226 @@ def init_reward_classifier(cfg):
 ###########################################################
 
 
+def record_dataset_with_embeddings(
+    env,
+    policy,
+    cfg,
+    embedding_dim: int = 384,
+    compute_embeddings: bool = True
+):
+    """
+    Record a dataset with precomputed action embeddings.
+
+    This function extends the standard dataset recording functionality to include
+    action embeddings computed from VLA models during data collection.
+
+    Args:
+        env: The environment to record from
+        policy: Optional policy to generate actions (if None, uses teleop)
+        cfg: Configuration object containing recording parameters
+        vla_model_name_or_path: Path or HuggingFace model ID for the VLA model
+        embedding_dim: Dimension of action embeddings
+        task_description: Task description for the VLA model
+        compute_embeddings: Whether to compute embeddings (set False for debugging)
+    """
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    # Setup initial action
+    action = env.action_space.sample() * 0.0
+
+    action_names = ["delta_x_ee", "delta_y_ee", "delta_z_ee"]
+    if cfg.wrapper.use_gripper:
+        action_names.append("gripper_delta")
+
+    # Configure dataset features (including embeddings)
+    features = {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": env.observation_space["observation.state"].shape,
+            "names": None,
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": (len(action_names),),
+            "names": action_names,
+        },
+        "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
+        "next.done": {"dtype": "bool", "shape": (1,), "names": None},
+        "complementary_info.discrete_penalty": {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": ["discrete_penalty"],
+        },
+        "complementary_info.mc_returns": {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": ["mc_returns"],
+        },
+    }
+
+    # Add embedding features if computing embeddings
+    if compute_embeddings:
+        features["action_embedding"] = {
+            "dtype": "float32",
+            "shape": (embedding_dim,),
+            "names": None,
+        }
+
+    # Add image features
+    for key in env.observation_space:
+        if "image" in key:
+            features[key] = {
+                "dtype": "video",
+                "shape": env.observation_space[key].shape,
+                "names": ["channels", "height", "width"],
+            }
+
+    # Create dataset
+    dataset = LeRobotDataset.create(
+        cfg.repo_id,
+        cfg.fps,
+        root=cfg.dataset_root,
+        use_videos=True,
+        image_writer_threads=4,
+        image_writer_processes=0,
+        features=features,
+    )
+
+    # Record episodes
+    episode_index = 0
+    while episode_index < cfg.num_episodes:
+        obs, _ = env.reset()
+        start_episode_t = time.perf_counter()
+        log_say(f"Recording episode {episode_index} with embeddings", play_sounds=True)
+
+        # Track success state collection
+        success_detected = False
+        success_steps_collected = 0
+        trajectory = []  # To store transitions for MC returns calculation
+        episode_embeddings = []  # Store embeddings for the episode
+
+        # Run episode steps
+        while time.perf_counter() - start_episode_t < cfg.wrapper.control_time_s:
+            start_loop_t = time.perf_counter()
+
+            # Get action and embedding from policy
+            current_embedding = np.zeros(embedding_dim, dtype=np.float32)
+            if policy is not None:
+                _, embedding_tensor = policy.select_action_with_embedding(obs)
+                current_embedding = embedding_tensor.cpu().numpy()
+                # Ensure embedding has correct shape (384,) not (1, 384)
+                if current_embedding.ndim > 1:
+                    current_embedding = current_embedding.squeeze()
+            else:
+                action = env.action_space.sample() * 0.0  # Default to zero action for teleop
+
+            episode_embeddings.append(current_embedding)
+
+            # Step environment
+            next_obs, reward, terminated, truncated, info = env.step(action)
+
+            # Check if episode needs to be rerecorded
+            if info.get("rerecord_episode", False):
+                break
+
+            # Always record the teleoperated action from intervention
+            recorded_action = info["action_intervention"].cpu().squeeze(0).float()
+
+            print("recoreded_action.shape:", recorded_action)
+
+            print(f"recorded_action: {recorded_action}")
+
+            # Process observation for dataset
+            obs_processed = {}
+            for k, v in obs.items():
+                v_cpu = v.cpu().squeeze(0)
+                if "image" in k:
+                    obs_processed[k] = v_cpu.permute(1, 2, 0)
+                else:
+                    obs_processed[k] = v_cpu.float()
+
+            # Check if we've just detected success
+            if reward == 1.0 and not success_detected:
+                success_detected = True
+                logging.info("Success detected! Collecting additional success states.")
+
+            # Add embeddings if computed
+            if compute_embeddings:
+                obs_processed["action_embedding"] = current_embedding
+
+            # Create a temporary transition to store for MC returns calculation
+            temp_transition = {
+                "state": obs_processed,
+                "action": recorded_action,
+                "reward": reward,
+                "done": terminated,
+                "truncated": truncated,
+                "complementary_info": info,
+            }
+            trajectory.append(temp_transition)
+
+            obs = next_obs  # Update observation for next step
+
+            # Maintain consistent timing
+            if cfg.fps:
+                dt_s = time.perf_counter() - start_loop_t
+                busy_wait(1 / cfg.fps - dt_s)
+
+            # Check if we should end the episode
+            if (terminated or truncated) and not success_detected:
+                # Regular termination without success
+                break
+            elif success_detected and success_steps_collected >= cfg.number_of_steps_after_success:
+                # We've collected enough success states
+                logging.info(f"Collected {success_steps_collected} additional success states")
+                break
+
+        # Handle episode recording
+        if info.get("rerecord_episode", False):
+            dataset.clear_episode_buffer()
+            logging.info(f"Re-recording episode {episode_index}")
+            continue
+
+        # Calculate MC returns for the completed trajectory
+        if cfg.policy.use_mc_returns:
+            trajectory = add_mc_returns_to_trajectory(
+                trajectory,
+                gamma=cfg.policy.discount,
+                reward_scale=cfg.policy.reward_scale,
+                reward_bias=cfg.policy.reward_bias,
+                reward_neg=cfg.policy.reward_neg,
+                is_sparse_reward=cfg.policy.is_sparse_reward,
+            )
+
+        # Add processed transitions to dataset
+        for transition in trajectory:
+            frame = {
+                **transition["state"],
+                "action": transition["action"],
+                "next.reward": np.array([transition["reward"]], dtype=np.float32),
+                "next.done": np.array([transition["done"]], dtype=bool),
+                "complementary_info.discrete_penalty": torch.tensor(
+                    [transition["complementary_info"].get("discrete_penalty", 0.0)], dtype=torch.float32
+                ),
+                "complementary_info.mc_returns": torch.tensor(
+                    [transition["complementary_info"].get("mc_returns", 0.0)], dtype=torch.float32
+                ),
+            }
+
+            dataset.add_frame(frame, task=cfg.task)
+
+        dataset.save_episode()
+        episode_index += 1
+
+        logging.info(f"Episode {episode_index-1} recorded with {len(trajectory)} frames and embeddings")
+
+    # Finalize dataset
+    if cfg.push_to_hub:
+        dataset.push_to_hub()
+
+    logging.info(f"Dataset recording completed with {episode_index} episodes and action embeddings")
+
+
 def record_dataset(env, policy, cfg):
     """
     Record a dataset of robot interactions using either a policy or teleop.
@@ -2255,18 +2475,29 @@ def main(cfg: EnvConfig):
 
     if cfg.mode == "record":
         policy = None
-        if cfg.pretrained_policy_name_or_path is not None:
-            from lerobot.policies.sac.modeling_sac import SACPolicy
+        # Load policy using make_policy like in learner script
+        # This creates a fresh ConRFT policy with frozen Octo encoder
+        from lerobot.policies.factory import make_policy
 
-            policy = SACPolicy.from_pretrained(cfg.pretrained_policy_name_or_path)
-            policy.to(cfg.device)
-            policy.eval()
+        # Create policy using make_policy exactly like in learner.py
+        policy = make_policy(cfg=cfg.policy, env_cfg=cfg)
+        policy.eval()
 
-        record_dataset(
-            env,
-            policy=policy,
-            cfg=cfg,
-        )
+        # Check if embeddings should be computed
+        if hasattr(cfg, 'embeddings') and cfg.embeddings.compute_embeddings:
+            record_dataset_with_embeddings(
+                env,
+                policy=policy,
+                cfg=cfg,
+                embedding_dim=cfg.embeddings.embedding_dim,
+                compute_embeddings=True
+            )
+        else:
+            record_dataset(
+                env,
+                policy=policy,
+                cfg=cfg,
+            )
         exit()
 
     if cfg.mode == "replay":
