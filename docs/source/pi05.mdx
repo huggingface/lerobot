@@ -4,14 +4,14 @@
 
 ## Model Overview
 
-π₀.₅ represents a significant evolution from π₀, developed by [Physical Intelligence](https://www.physicalintelligence.company/blog/pi05) to address the biggest challenge in robotics: **open-world generalization**. While robots can perform impressive feats in controlled environments, π₀.₅ is designed to generalize to entirely new environments and situations that were never seen during training.
+π₀.₅ represents a significant evolution from π₀, developed by [Physical Intelligence](https://www.physicalintelligence.company/blog/pi05) to address a big challenge in robotics: **open-world generalization**. While robots can perform impressive tasks in controlled environments, π₀.₅ is designed to generalize to entirely new environments and situations that were never seen during training.
 
 ### The Generalization Challenge
 
-As Physical Intelligence explains, the fundamental challenge isn't performing feats of agility or dexterity, but generalization, the ability to correctly perform tasks in new settings with new objects. Consider a robot cleaning different homes: each home has different objects in different places. Generalization must occur at multiple levels:
+As Physical Intelligence explains, the fundamental challenge isn't performing tasks of agility or dexterity, but generalization, the ability to correctly perform tasks in new settings with new objects. Consider a robot cleaning different homes: each home has different objects in different places. Generalization must occur at multiple levels:
 
 - **Physical Level**: Understanding how to pick up a spoon (by the handle) or plate (by the edge), even with unseen objects in cluttered environments
-- **Semantic Level**: Understanding task semantics, where to put clothes and shoes (laundry hamper, not on the bed), what tools are appropriate for cleaning spills
+- **Semantic Level**: Understanding task semantics, where to put clothes and shoes (laundry hamper, not on the bed), and what tools are appropriate for cleaning spills
 - **Environmental Level**: Adapting to "messy" real-world environments like homes, grocery stores, offices, and hospitals
 
 ### Co-Training on Heterogeneous Data
@@ -114,24 +114,17 @@ python src/lerobot/scripts/train.py \
 
 ### Libero Benchmark Results
 
-π₀.₅ has demonstrated strong performance on the Libero benchmark suite:
+π₀.₅ has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the libero base model for an additional 6k steps on the Libero dataset and compared the results to the OpenPI reference results.
 
-#### Our Results (LeRobot Implementation)
+| Benchmark          | LeRobot Implementation | OpenPI Reference |
+| ------------------ | ---------------------- | ---------------- |
+| **Libero Spatial** | 98.0%                  | 98.8%            |
+| **Libero Object**  | 99.0%                  | 98.2%            |
+| **Libero Goal**    | 97.0%                  | 98.0%            |
+| **Libero 10**      | 93.0%                  | 92.4%            |
+| **Average**        | 96.75%                 | 96.85%           |
 
-- **Libero Spatial**: 98.0% success rate
-- **Libero Object**: 99.0% success rate
-- **Libero Goal**: 97.0% success rate
-- **Libero 10**: 93.0% success rate
-
-#### OpenPI Reference Results (30k finetuned)
-
-- **Libero Spatial**: 98.8% success rate
-- **Libero Object**: 98.2% success rate
-- **Libero Goal**: 98.0% success rate
-- **Libero 10**: 92.4% success rate
-- **Average**: 96.85% success rate
-
-These results demonstrate π₀.₅'s strong generalization capabilities across diverse robotic manipulation tasks.
+These results demonstrate π₀.₅'s strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, you can follow the instructions in the [Libero](#libero) section.
 
 ## License
 
