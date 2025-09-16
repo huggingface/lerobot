@@ -160,6 +160,21 @@ class Teleoperator(abc.ABC):
         """
         pass
 
+    def get_action_with_raw(self) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """
+        Retrieve both normalized action and, if available, the corresponding raw hardware values.
+
+        Returns:
+            tuple[dict[str, Any], dict[str, Any] | None]:
+                - First element: normalized action as returned by get_action().
+                - Second element: raw action values in device units (e.g., ticks). If not available, None.
+
+        Note:
+            Subclasses can override this to provide raw values without changing the base API of get_action().
+        """
+        action = self.get_action()
+        return action, None
+
     @abc.abstractmethod
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         """

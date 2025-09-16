@@ -202,6 +202,34 @@ class KochFollower(Robot):
 
         return obs_dict
 
+    def get_observation_with_raw(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        # Joint positions in raw ticks
+        start = time.perf_counter()
+        raw_by_name = self.bus.sync_read("Present_Position", normalize=False)
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read state raw: {dt_ms:.1f}ms")
+
+        # Normalize joint positions using current calibration, keep names
+        ids_values = {self.bus.motors[motor].id: val for motor, val in raw_by_name.items()}
+        norm_by_id = self.bus._normalize(ids_values)
+        norm_by_name = {self.bus._id_to_name(id_): val for id_, val in norm_by_id.items()}
+
+        # Build observation dicts with .pos suffix
+        obs_norm: dict[str, Any] = {f"{motor}.pos": val for motor, val in norm_by_name.items()}
+        obs_raw: dict[str, Any] = {f"{motor}.pos": val for motor, val in raw_by_name.items()}
+
+        # Add images only to normalized observations
+        for cam_key, cam in self.cameras.items():
+            start = time.perf_counter()
+            obs_norm[cam_key] = cam.async_read()
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+        return obs_norm, obs_raw
+
     def send_action(self, action: dict[str, float]) -> dict[str, float]:
         """Command arm to move to a target joint configuration.
 
