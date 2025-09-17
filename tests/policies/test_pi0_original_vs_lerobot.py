@@ -16,7 +16,7 @@ from openpi.models_pytorch.pi0_pytorch import PI0Pytorch
 from transformers import AutoTokenizer
 
 from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy
-from tests.utils import require_nightly_gpu
+from tests.utils import require_cuda
 
 DUMMY_ACTION_DIM = 32
 DUMMY_STATE_DIM = 32
@@ -318,7 +318,7 @@ def create_original_observation_from_lerobot(lerobot_pi0, batch):
     )
 
 
-@require_nightly_gpu
+@require_cuda
 def test_pi0_original_vs_lerobot():
     """Test PI0 original implementation vs LeRobot implementation."""
     print("Initializing models...")

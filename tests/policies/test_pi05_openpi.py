@@ -11,10 +11,10 @@ pytest.importorskip("transformers")
 from lerobot.policies.pi0_openpi.configuration_pi0openpi import PI0OpenPIConfig
 from lerobot.policies.pi0_openpi.modeling_pi0openpi import PI0OpenPIPolicy
 from lerobot.policies.pi05_openpi import PI05OpenPIConfig, PI05OpenPIPolicy
-from tests.utils import require_nightly_gpu
+from tests.utils import require_cuda
 
 
-@require_nightly_gpu
+@require_cuda
 def test_pi05_model_architecture():
     """Test that pi05=True creates the correct model architecture."""
     print("Testing PI0.5 model architecture...")
@@ -82,7 +82,7 @@ def test_pi05_model_architecture():
     print("✓ AdaRMS correctly configured: PaliGemma=False, Expert=True")
 
 
-@require_nightly_gpu
+@require_cuda
 def test_pi05_forward_pass():
     """Test forward pass with"""
     print("\nTesting PI0.5 forward pass...")
@@ -146,7 +146,7 @@ def test_pi05_forward_pass():
         raise
 
 
-@require_nightly_gpu
+@require_cuda
 def test_pi0_vs_pi05_differences():
     """Test key differences between pi0 and pi05 modes."""
     print("\nComparing PI0 vs PI0.5 architectures...")
