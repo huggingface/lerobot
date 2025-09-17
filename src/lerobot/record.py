@@ -80,26 +80,26 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    bi_starai_follower,
     hope_jr,
     koch_follower,
     make_robot_from_config,
     so100_follower,
     so101_follower,
-    starai_viola,
     starai_cello,
-    bi_starai_follower
+    starai_viola,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_so100_leader,
+    bi_starai_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
     starai_violin,
-    bi_starai_leader
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.control_utils import (
@@ -284,8 +284,8 @@ def record_loop(
 
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
-            frame = {**observation_frame, **action_frame}
-            dataset.add_frame(frame, task=single_task)
+            frame = {**observation_frame, **action_frame, "task": single_task}
+            dataset.add_frame(frame)
 
         if display_data:
             log_rerun_data(observation, action)

@@ -75,6 +75,7 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         return Reachy2Teleoperator(config)
     elif config.type == "bi_starai_leader":
         from .bi_starai_leader import BiStaraiLeader
+
         return BiStaraiLeader(config)
     else:
         raise ValueError(config.type)

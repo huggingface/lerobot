@@ -22,7 +22,6 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.starai import (
     StaraiMotorsBus,
-    OperatingMode,
 )
 
 from ..teleoperator import Teleoperator
@@ -32,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 
 class StaraiViolin(Teleoperator):
-
     config_class = StaraiViolinConfig
     name = "starai_violin"
 
@@ -52,7 +50,7 @@ class StaraiViolin(Teleoperator):
                 "gripper": Motor(6, "rx8-u50", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
-            default_motion_time = 1500,
+            default_motion_time=1500,
         )
 
     @property
@@ -155,9 +153,7 @@ class StaraiViolin(Teleoperator):
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")
 
-
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -165,9 +161,9 @@ class StaraiViolin(Teleoperator):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         # if self.config.max_relative_target is not None:
-            # present_pos = self.bus.sync_read("Present_Position")
-            # goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
-            # goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+        # present_pos = self.bus.sync_read("Present_Position")
+        # goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
+        # goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)

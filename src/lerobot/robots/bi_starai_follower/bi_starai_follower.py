@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 
 class BiStaraiFollower(Robot):
-
     config_class = BiStaraiFollowerConfig
     name = "bi_starai_follower"
 

@@ -115,11 +115,11 @@ If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you c
 echo ${HF_USER}/aloha_test
 ```
 
-If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with:
+If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with [Rerun](https://github.com/rerun-io/rerun):
 
 ```bash
-python -m lerobot.scripts.visualize_dataset_html \
-  --repo-id ${HF_USER}/aloha_test
+python -m lerobot.scripts.visualize_dataset \
+  --repo-id ${HF_USER}/aloha_test --episode 0
 ```
 
 ## Replay an episode

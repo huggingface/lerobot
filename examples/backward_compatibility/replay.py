@@ -39,13 +39,13 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_starai_follower,
     koch_follower,
     make_robot_from_config,
     so100_follower,
     so101_follower,
-    starai_viola,
     starai_cello,
-    bi_starai_follower
+    starai_viola,
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (

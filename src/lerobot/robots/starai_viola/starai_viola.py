@@ -24,17 +24,15 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.starai import (
     StaraiMotorsBus,
-    OperatingMode,
 )
+
 from ..robot import Robot
-from ..utils import ensure_safe_goal_position
 from .config_starai_viola import StaraiViolaConfig
 
 logger = logging.getLogger(__name__)
 
 
 class StaraiViola(Robot):
-
     config_class = StaraiViolaConfig
     name = "starai_viola"
 
@@ -117,7 +115,7 @@ class StaraiViola(Robot):
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         # for motor in self.bus.motors:
-            # self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        # self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         # input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
@@ -144,15 +142,16 @@ class StaraiViola(Robot):
 
     def configure(self) -> None:
         pass
+
     #     with self.bus.torque_disabled():
     #         self.bus.configure_motors()
-            # for motor in self.bus.motors:
-                # self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-                # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-                # self.bus.write("P_Coefficient", motor, 16)
-                # Set I_Coefficient and D_Coefficient to default value 0 and 32
-                # self.bus.write("I_Coefficient", motor, 0)
-                # self.bus.write("D_Coefficient", motor, 32)
+    # for motor in self.bus.motors:
+    # self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+    # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
+    # self.bus.write("P_Coefficient", motor, 16)
+    # Set I_Coefficient and D_Coefficient to default value 0 and 32
+    # self.bus.write("I_Coefficient", motor, 0)
+    # self.bus.write("D_Coefficient", motor, 32)
 
     # def setup_motors(self) -> None:
     #     for motor in reversed(self.bus.motors):
@@ -200,9 +199,9 @@ class StaraiViola(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         # if self.config.max_relative_target is not None:
-            # present_pos = self.bus.sync_read("Present_Position")
-            # goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
-            # goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+        # present_pos = self.bus.sync_read("Present_Position")
+        # goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
+        # goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)
