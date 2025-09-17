@@ -167,22 +167,6 @@ def require_package_arg(func):
     return wrapper
 
 
-def require_nightly_gpu(func):
-    """
-    Decorator that skips the test if GPU is not available.
-    Renamed from require_nightly_gpu to maintain backward compatibility,
-    but now only requires GPU availability (not nightly workflow).
-    """
-
-    @require_cuda
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Only check for GPU availability, no longer require nightly workflow
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
 def require_package(package_name):
     """
     Decorator that skips the test if the specified package is not installed.
