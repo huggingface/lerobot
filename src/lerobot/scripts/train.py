@@ -181,7 +181,7 @@ def train(cfg: TrainPipelineConfig):
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path, **processor_kwargs
     )
-    
+
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
@@ -294,7 +294,7 @@ def train(cfg: TrainPipelineConfig):
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
             ):
                 eval_info = eval_policy_all(
-                    env=eval_env, # dict[suite][task_id] -> vec_env
+                    env=eval_env,  # dict[suite][task_id] -> vec_env
                     policy=policy,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,

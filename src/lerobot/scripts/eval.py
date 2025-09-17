@@ -672,11 +672,15 @@ def eval_policy_all(
         """
         if max_parallel_tasks == 1:
             yield from _eval_monotask(
-                envs, policy, preprocessor=preprocessor,
-                postprocessor=postprocessor, n_episodes=n_episodes,
+                envs,
+                policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                n_episodes=n_episodes,
                 max_episodes_rendered=max_episodes_rendered,
-                videos_dir=videos_dir, return_episode_data=return_episode_data,
-                start_seed=start_seed
+                videos_dir=videos_dir,
+                return_episode_data=return_episode_data,
+                start_seed=start_seed,
             )
         else:
             yield from _eval_parallel(
