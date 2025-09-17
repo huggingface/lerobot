@@ -23,7 +23,7 @@ lerobot-replay \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=black \
     --dataset.repo_id=aliberts/record-test \
-    --dataset.episode=2
+    --dataset.episode=0
 ```
 
 Example replay with bimanual so100:
@@ -57,7 +57,6 @@ from lerobot.robots import (  # noqa: F401
     hope_jr,
     koch_follower,
     make_robot_from_config,
-    reachy2,
     so100_follower,
     so101_follower,
 )
@@ -113,7 +112,9 @@ def replay(cfg: ReplayConfig):
         for i, name in enumerate(dataset.features["action"]["names"]):
             action[name] = action_array[i]
 
-        processed_action = robot_action_processor(action)
+        robot_obs = robot.get_observation()
+
+        processed_action = robot_action_processor((action, robot_obs))
 
         _ = robot.send_action(processed_action)
 

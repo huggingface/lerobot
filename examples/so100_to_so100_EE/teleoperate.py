@@ -17,14 +17,14 @@
 import time
 
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotProcessorPipeline
+from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
+    robot_action_observation_to_transition,
     robot_action_to_transition,
     transition_to_robot_action,
 )
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
@@ -49,14 +49,14 @@ leader = SO100Leader(leader_config)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 follower_kinematics_solver = RobotKinematics(
-    urdf_path="./examples/phone_to_so100/SO101/so101_new_calib.urdf",
+    urdf_path="./SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(follower.bus.motors.keys()),
 )
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 leader_kinematics_solver = RobotKinematics(
-    urdf_path="./examples/phone_to_so100/SO101/so101_new_calib.urdf",
+    urdf_path="./SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(leader.bus.motors.keys()),
 )
@@ -73,9 +73,8 @@ leader_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
 )
 
 # build pipeline to convert EE action to robot joints
-ee_to_follower_joints = RobotProcessorPipeline[RobotAction, RobotAction](
+ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     [
-        AddRobotObservationAsComplimentaryData(robot=follower),
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
@@ -84,9 +83,10 @@ ee_to_follower_joints = RobotProcessorPipeline[RobotAction, RobotAction](
         InverseKinematicsEEToJoints(
             kinematics=follower_kinematics_solver,
             motor_names=list(follower.bus.motors.keys()),
+            initial_guess_current_joints=False,
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 
@@ -101,6 +101,9 @@ print("Starting teleop loop...")
 while True:
     t0 = time.perf_counter()
 
+    # Get robot observation
+    robot_obs = follower.get_observation()
+
     # Get teleop observation
     leader_joints_obs = leader.get_action()
 
@@ -108,7 +111,7 @@ while True:
     leader_ee_act = leader_to_ee(leader_joints_obs)
 
     # teleop EE -> robot joints
-    follower_joints_act = ee_to_follower_joints(leader_ee_act)
+    follower_joints_act = ee_to_follower_joints((leader_ee_act, robot_obs))
 
     # Send action to robot
     _ = follower.send_action(follower_joints_act)

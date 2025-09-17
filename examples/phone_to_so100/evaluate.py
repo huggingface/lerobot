@@ -30,14 +30,13 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import (
     observation_to_transition,
-    robot_action_to_transition,
+    robot_action_observation_to_transition,
     transition_to_observation,
     transition_to_robot_action,
 )
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservationAsComplimentaryData,
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
 )
@@ -69,22 +68,21 @@ policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 kinematics_solver = RobotKinematics(
-    urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf",
+    urdf_path="./SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(robot.bus.motors.keys()),
 )
 
 # Build pipeline to convert EE action to joints action
-robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
+robot_ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     steps=[
-        AddRobotObservationAsComplimentaryData(robot=robot),
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
             initial_guess_current_joints=True,
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 

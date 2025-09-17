@@ -26,7 +26,7 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
 
-NUM_EPISODES = 3
+NUM_EPISODES = 2
 FPS = 30
 EPISODE_TIME_SEC = 30
 RESET_TIME_SEC = 10

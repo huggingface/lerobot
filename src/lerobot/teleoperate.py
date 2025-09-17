@@ -109,8 +109,8 @@ def teleop_loop(
     teleop: Teleoperator,
     robot: Robot,
     fps: int,
-    teleop_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],
-    robot_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],
+    teleop_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
+    robot_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
     robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
     display_data: bool = False,
     duration: float | None = None,
@@ -137,21 +137,25 @@ def teleop_loop(
     while True:
         loop_start = time.perf_counter()
 
+        # Get robot observation
+        # Not really needed for now other than for visualization
+        # teleop_action_processor can take None as an observation
+        # given that it is the identity processor as default
+        obs = robot.get_observation()
+
         # Get teleop action
         raw_action = teleop.get_action()
 
         # Process teleop action through pipeline
-        teleop_action = teleop_action_processor(raw_action)
+        teleop_action = teleop_action_processor((raw_action, obs))
 
         # Process action for robot through pipeline
-        robot_action_to_send = robot_action_processor(teleop_action)
+        robot_action_to_send = robot_action_processor((teleop_action, obs))
 
         # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
         _ = robot.send_action(robot_action_to_send)
 
         if display_data:
-            # Get robot observation
-            obs = robot.get_observation()
             # Process robot observation through pipeline
             obs_transition = robot_observation_processor(obs)
 

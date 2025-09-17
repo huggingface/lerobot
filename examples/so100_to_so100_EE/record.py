@@ -23,14 +23,13 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
     observation_to_transition,
-    robot_action_to_transition,
+    robot_action_observation_to_transition,
     transition_to_observation,
     transition_to_robot_action,
 )
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
@@ -42,7 +41,7 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
 
-NUM_EPISODES = 10
+NUM_EPISODES = 2
 FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 30
@@ -62,14 +61,14 @@ leader = SO100Leader(leader_config)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 follower_kinematics_solver = RobotKinematics(
-    urdf_path="./examples/phone_to_so100/SO101/so101_new_calib.urdf",
+    urdf_path="./SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(follower.bus.motors.keys()),
 )
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 leader_kinematics_solver = RobotKinematics(
-    urdf_path="./examples/phone_to_so100/SO101/so101_new_calib.urdf",
+    urdf_path="./SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(leader.bus.motors.keys()),
 )
@@ -86,20 +85,19 @@ follower_joints_to_ee = RobotProcessorPipeline[RobotObservation, RobotObservatio
 )
 
 # Build pipeline to convert leader joints to EE action
-leader_joints_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
+leader_joints_to_ee = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     steps=[
         ForwardKinematicsJointsToEE(
             kinematics=leader_kinematics_solver, motor_names=list(leader.bus.motors.keys())
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 
 # Build pipeline to convert EE action to follower joints
-ee_to_follower_joints = RobotProcessorPipeline[RobotAction, RobotAction](
+ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     [
-        AddRobotObservationAsComplimentaryData(robot=follower),
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
@@ -108,9 +106,10 @@ ee_to_follower_joints = RobotProcessorPipeline[RobotAction, RobotAction](
         InverseKinematicsEEToJoints(
             kinematics=follower_kinematics_solver,
             motor_names=list(follower.bus.motors.keys()),
+            initial_guess_current_joints=True,
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 

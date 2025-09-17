@@ -207,13 +207,36 @@ def create_transition(
     }
 
 
+def robot_action_observation_to_transition(
+    action_observation: tuple[RobotAction, RobotObservation],
+) -> EnvTransition:
+    """
+    Convert a raw robot action and observation dictionary into a standardized `EnvTransition`.
+
+    Args:
+        action: The raw action dictionary from a teleoperation device or controller.
+        observation: The raw observation dictionary from the environment.
+
+    Returns:
+        An `EnvTransition` containing the formatted observation.
+    """
+    if not isinstance(action_observation, tuple):
+        raise ValueError("action_observation should be a tuple type with an action and observation")
+
+    action, observation = action_observation
+
+    if action is not None and not isinstance(action, dict):
+        raise ValueError(f"Action should be a RobotAction type got {type(action)}")
+
+    if observation is not None and not isinstance(observation, dict):
+        raise ValueError(f"Observation should be a RobotObservation type got {type(observation)}")
+
+    return create_transition(action=action, observation=observation)
+
+
 def robot_action_to_transition(action: RobotAction) -> EnvTransition:
     """
     Convert a raw robot action dictionary into a standardized `EnvTransition`.
-
-    The keys in the action dictionary are prefixed with "action." and stored under
-    the `ACTION` key in the transition. Values are converted to tensors, except for
-    special types like `Rotation`.
 
     Args:
         action: The raw action dictionary from a teleoperation device or controller.
@@ -229,10 +252,6 @@ def robot_action_to_transition(action: RobotAction) -> EnvTransition:
 def observation_to_transition(observation: RobotObservation) -> EnvTransition:
     """
     Convert a raw robot observation dictionary into a standardized `EnvTransition`.
-
-    The observation is split into state and image components. State keys are prefixed
-    with "observation.state." and image keys with "observation.images.". The result is
-    stored under the `OBSERVATION` key in the transition.
 
     Args:
         observation: The raw observation dictionary from the environment.

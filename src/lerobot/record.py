@@ -21,11 +21,12 @@ Example:
 lerobot-record \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.cameras="{laptop: {type: opencv, camera_index: 0, width: 640, height: 480}}" \
+    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
     --robot.id=black \
-    --dataset.repo_id=aliberts/record-test \
+    --dataset.repo_id=<my_username>/<my_dataset_name> \
     --dataset.num_episodes=2 \
     --dataset.single_task="Grab the cube" \
+    --display_data=true
     # <- Teleop optional if you want to teleoperate to record or in between episodes with a policy \
     # --teleop.type=so100_leader \
     # --teleop.port=/dev/tty.usbmodem58760431551 \
@@ -235,8 +236,12 @@ def record_loop(
     robot: Robot,
     events: dict,
     fps: int,
-    teleop_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],  # runs after teleop
-    robot_action_processor: RobotProcessorPipeline[RobotAction, RobotAction],  # runs before robot
+    teleop_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],  # runs after teleop
+    robot_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],  # runs before robot
     robot_observation_processor: RobotProcessorPipeline[
         RobotObservation, RobotObservation
     ],  # runs after robot
@@ -322,7 +327,7 @@ def record_loop(
             act = teleop.get_action()
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
-            act_processed_teleop = teleop_action_processor(act)
+            act_processed_teleop = teleop_action_processor((act, obs))
 
         elif policy is None and isinstance(teleop, list):
             arm_action = teleop_arm.get_action()
@@ -330,7 +335,7 @@ def record_loop(
             keyboard_action = teleop_keyboard.get_action()
             base_action = robot._from_keyboard_to_base_action(keyboard_action)
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-            act_processed_teleop = teleop_action_processor(act)
+            act_processed_teleop = teleop_action_processor((act, obs))
         else:
             logging.info(
                 "No policy or teleoperator provided, skipping action generation."
@@ -342,10 +347,10 @@ def record_loop(
         # Applies a pipeline to the action, default is IdentityProcessor
         if policy is not None and act_processed_policy is not None:
             action_values = act_processed_policy
-            robot_action_to_send = robot_action_processor(act_processed_policy)
+            robot_action_to_send = robot_action_processor((act_processed_policy, obs))
         else:
             action_values = act_processed_teleop
-            robot_action_to_send = robot_action_processor(act_processed_teleop)
+            robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
