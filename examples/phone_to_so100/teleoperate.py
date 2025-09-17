@@ -39,7 +39,7 @@ FPS = 30
 
 # Initialize the robot and teleoperator
 robot_config = SO100FollowerConfig(
-    port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", use_degrees=True
+    port="/dev/tty.usbmodem5A460814411", id="my_awesome_follower_arm", use_degrees=True
 )
 teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # or PhoneOS.ANDROID
 
@@ -49,7 +49,7 @@ teleop_device = Phone(teleop_config)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 kinematics_solver = RobotKinematics(
-    urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf",
+    urdf_path="./examples/phone_to_so100/SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(robot.bus.motors.keys()),
 )
@@ -62,6 +62,7 @@ phone_to_robot_joints_processor = RobotProcessorPipeline[tuple[RobotAction, Robo
             kinematics=kinematics_solver,
             end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
             motor_names=list(robot.bus.motors.keys()),
+            use_latched_reference=True,
         ),
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
@@ -74,6 +75,7 @@ phone_to_robot_joints_processor = RobotProcessorPipeline[tuple[RobotAction, Robo
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
+            initial_guess_current_joints=True,
         ),
     ],
     to_transition=robot_action_observation_to_transition,

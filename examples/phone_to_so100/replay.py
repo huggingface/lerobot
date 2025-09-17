@@ -32,11 +32,11 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
 EPISODE_IDX = 0
-HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
+HF_REPO_ID = "imstevenpmwork/phone_so100_eef2"
 
 # Initialize the robot config
 robot_config = SO100FollowerConfig(
-    port="/dev/tty.usbmodem58760434471", id="my_awesome_follower_arm", use_degrees=True
+    port="/dev/tty.usbmodem5A460814411", id="my_awesome_follower_arm", use_degrees=True
 )
 
 # Initialize the robot
@@ -44,7 +44,7 @@ robot = SO100Follower(robot_config)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 kinematics_solver = RobotKinematics(
-    urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf",
+    urdf_path="./examples/phone_to_so100/SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(robot.bus.motors.keys()),
 )
@@ -64,7 +64,9 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotOb
 
 # Fetch the dataset to replay
 dataset = LeRobotDataset(HF_REPO_ID, episodes=[EPISODE_IDX])
-actions = dataset.hf_dataset.select_columns("action")
+# Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
+episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == EPISODE_IDX)
+actions = episode_frames.select_columns("action")
 
 # Connect to the robot
 robot.connect()
@@ -74,7 +76,7 @@ if not robot.is_connected:
 
 print("Starting replay loop...")
 log_say(f"Replaying episode {EPISODE_IDX}")
-for idx in range(dataset.num_frames):
+for idx in range(len(episode_frames)):
     t0 = time.perf_counter()
 
     # Get recorded action from dataset

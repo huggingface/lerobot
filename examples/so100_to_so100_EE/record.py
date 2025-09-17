@@ -24,7 +24,6 @@ from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipel
 from lerobot.processor.converters import (
     observation_to_transition,
     robot_action_observation_to_transition,
-    robot_action_to_transition,
     transition_to_observation,
     transition_to_robot_action,
 )
@@ -42,12 +41,12 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
 
-NUM_EPISODES = 10
+NUM_EPISODES = 2
 FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 30
 TASK_DESCRIPTION = "My task description"
-HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
+HF_REPO_ID = "imstevenpmwork/dataset_ee_4"
 
 # Create the robot and teleoperator configurations
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -86,13 +85,13 @@ follower_joints_to_ee = RobotProcessorPipeline[RobotObservation, RobotObservatio
 )
 
 # Build pipeline to convert leader joints to EE action
-leader_joints_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
+leader_joints_to_ee = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     steps=[
         ForwardKinematicsJointsToEE(
             kinematics=leader_kinematics_solver, motor_names=list(leader.bus.motors.keys())
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 
@@ -107,6 +106,7 @@ ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservati
         InverseKinematicsEEToJoints(
             kinematics=follower_kinematics_solver,
             motor_names=list(follower.bus.motors.keys()),
+            initial_guess_current_joints=True,
         ),
     ],
     to_transition=robot_action_observation_to_transition,

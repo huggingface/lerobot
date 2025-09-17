@@ -363,16 +363,19 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
     discrete_gripper: bool = False
 
     def action(self, action: RobotAction) -> RobotAction:
-        complementary_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        observation = self.transition.get(TransitionKey.OBSERVATION).copy()
 
         gripper_vel = action.pop("ee.gripper_vel")
 
-        if "raw_joint_positions" not in complementary_data:
-            raise ValueError(
-                "raw_joint_positions is not in complementary data and is required for GripperVelocityToJoint"
-            )
+        if observation is None:
+            raise ValueError("Joints observation is require for computing robot kinematics")
 
-        curr_gripper_pos = complementary_data["raw_joint_positions"]["gripper"]
+        q_raw = np.array(
+            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+            dtype=float,
+        )
+        if q_raw is None:
+            raise ValueError("Joints observation is require for computing robot kinematics")
 
         # TODO(Michel,Adil): Fix this logic
         # if self.discrete_gripper:
@@ -385,7 +388,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
         # Compute desired gripper position
         delta = gripper_vel * float(self.speed_factor)
-        gripper_pos = float(np.clip(curr_gripper_pos + delta, self.clip_min, self.clip_max))
+        gripper_pos = float(np.clip(q_raw[-1] + delta, self.clip_min, self.clip_max))
         action["ee.gripper_pos"] = gripper_pos
 
         return action

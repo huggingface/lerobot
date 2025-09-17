@@ -83,6 +83,7 @@ ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservati
         InverseKinematicsEEToJoints(
             kinematics=follower_kinematics_solver,
             motor_names=list(follower.bus.motors.keys()),
+            initial_guess_current_joints=False,
         ),
     ],
     to_transition=robot_action_observation_to_transition,
