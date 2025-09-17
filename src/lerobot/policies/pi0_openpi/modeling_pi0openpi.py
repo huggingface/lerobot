@@ -22,14 +22,12 @@ from typing import Literal
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers import AutoTokenizer
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.gemma import modeling_gemma
 from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
 from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
 
-from lerobot.constants import ACTION, OBS_STATE
-from lerobot.policies.normalize import Normalize, Unnormalize
+from lerobot.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.policies.pi0_openpi.configuration_pi0openpi import PI0OpenPIConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 
@@ -858,20 +856,6 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-
-        # Create tokenizer for language input
-        self.tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
-
-        # Set max token length for tokenizer (from OpenPI)
-        self.max_token_len = config.tokenizer_max_length
-
         # Initialize the core PI0 model
         self.model = PI0Pytorch(config)
 
@@ -936,10 +920,7 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
             remap_count = 0
 
             for key, value in fixed_state_dict.items():
-                if not key.startswith("model.") and not any(
-                    key.startswith(prefix)
-                    for prefix in ["normalize_inputs.", "normalize_targets.", "unnormalize_outputs."]
-                ):
+                if not key.startswith("model."):
                     new_key = f"model.{key}"
                     remapped_state_dict[new_key] = value
                     remap_count += 1
@@ -1114,41 +1095,6 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
 
         return images, img_masks
 
-    def _tokenize_language(
-        self, batch: dict[str, Tensor]
-    ) -> tuple[Tensor, Tensor]:  # see lerobot pi0 `prepare_language`
-        """Tokenize language input using PaliGemma tokenizer."""
-        device = next(self.parameters()).device
-
-        # Get task description
-        if "task" in batch:
-            tasks = batch["task"]
-            if isinstance(tasks, str):
-                tasks = [tasks]
-            elif isinstance(tasks, list) and len(tasks) == 1:
-                # Expand to batch size
-                batch_size = batch[next(iter(batch.keys()))].shape[0]
-                tasks = tasks * batch_size
-        else:
-            # Default task if not provided
-            batch_size = batch[next(iter(batch.keys()))].shape[0]
-            tasks = ["Pick up the object"] * batch_size
-
-        # Tokenize with max_length padding to match OpenPI's expected format
-        tokenized = self.tokenizer(
-            tasks,
-            padding="max_length",  # Use max_length padding as per OpenPI
-            padding_side="right",  # from lerobot pi0 `prepare_language`
-            truncation=True,
-            max_length=self.max_token_len,  # Use the max token length from config
-            return_tensors="pt",
-        )
-
-        lang_tokens = tokenized["input_ids"].to(device)
-        lang_masks = tokenized["attention_mask"].to(device, dtype=torch.bool)
-
-        return lang_tokens, lang_masks
-
     def prepare_state(self, batch):  # see lerobot pi0 `prepare_state` (exact copy)
         """Pad state"""
         state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
@@ -1177,11 +1123,10 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
-        batch = self.normalize_inputs(batch)
-
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        lang_tokens, lang_masks = self._tokenize_language(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         state = self.prepare_state(batch)
 
         # Sample actions using the model
@@ -1191,17 +1136,14 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
-        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:  # see lerobot pi0 `forward`
         """Run the batch through the model and compute the loss for training."""
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
-
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        lang_tokens, lang_masks = self._tokenize_language(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         state = self.prepare_state(batch)
         actions = self.prepare_action(batch)
 

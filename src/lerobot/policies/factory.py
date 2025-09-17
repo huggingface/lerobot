@@ -307,6 +307,21 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
+    elif isinstance(policy_cfg, PI0OpenPIConfig):
+        from lerobot.policies.pi0_openpi.processor_pi0_openpi import make_pi0openpi_pre_post_processors
+
+        processors = make_pi0openpi_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, PI05OpenPIConfig):
+        from lerobot.policies.pi05_openpi.processor_pi05openpi import make_pi05openpi_pre_post_processors
+
+        processors = make_pi05openpi_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
     else:
         raise NotImplementedError(f"Processor for policy type '{policy_cfg.type}' is not implemented.")
 
