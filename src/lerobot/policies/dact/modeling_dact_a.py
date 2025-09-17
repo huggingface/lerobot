@@ -238,6 +238,7 @@ class DACTPolicyA(PreTrainedPolicy):
         This is a temporal attention pooling over the time axis. It uses a learnable query to attend to the history of observations.
         Args:
             hist: Dictionary of tensors with a time axis.
+            t_mask: Time mask to ignore padded values.
         Returns:
             Dictionary of tensors without a time axis.
         """
@@ -246,10 +247,12 @@ class DACTPolicyA(PreTrainedPolicy):
             if k in {OBS_STATE, OBS_ENV_STATE}:
                 pooled[k] = self.temporal_attn_pool_1d(x, t_mask)
             elif k in {OBS_IMAGES}:
-                # Loop through n_cams (dim=2) and pool each camera independently
+                # Loop through n_cams and pool each camera independently
                 pooled[k] = []
-                for i in range(x.shape[2]):
-                    pooled[k].append(self.temporal_attn_pool_2d(x[:, :, i], t_mask))
+                for i in range(x.shape[2]): # Reminder: x.shape = (B, T, n_cams, C, H, W)
+                    # Reminder: x[OBS_STATE].shape = (B, T, D)
+                    current_robot_state = x[OBS_STATE][:, -1] # Use the last robot state for each camera
+                    pooled[k].append(self.temporal_attn_pool_2d(x=x[:, :, i], context=current_robot_state, t_mask=t_mask))
                 pooled[k] = torch.stack(pooled[k], dim=1)  # (B, n_cams, C, H, W)
             else:
                 pooled[k] = x
@@ -528,7 +531,12 @@ class TemporalAttentionPool2D(nn.Module):
     """
     def __init__(self, config: DACTConfigA, backbone: nn.Module, backbone_out_channels: int):
         super().__init__()
-        self.query = nn.Parameter(torch.randn(1, 1, config.dim_model)) # (1, 1, D)
+        # Use a MLP to create a query informed by the robot state
+        self.query = nn.Sequential(
+            nn.Linear(config.robot_state_feature.shape[0], config.dim_model),
+            nn.ReLU(),
+            nn.Linear(config.dim_model, config.robot_state_feature.shape[0]),
+        )
         self.attn = nn.MultiheadAttention(num_heads=config.n_heads, embed_dim=config.dim_model, batch_first=True)
         # Time positions correspond to observation history length
         self.time_pos_embed = nn.Embedding(config.n_obs_steps, config.dim_model) # (T, D)
@@ -538,25 +546,34 @@ class TemporalAttentionPool2D(nn.Module):
         # Project frame descriptors from backbone channels to model dimension for attention
         self.frame_feat_proj = nn.Linear(self.backbone_out_channels, config.dim_model)
 
-    def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+    def forward(self, x: Tensor, context: Tensor, mask: Tensor | None = None) -> Tensor:
         # x: (B, T, C, H, W), mask: (B, T) True=valid
         b, t, c, h, w = x.shape
-        # Extract per-frame CNN features using the shared backbone
+
+        # 1) Extract per-frame CNN features using the shared backbone
         x_bt = x.reshape(b * t, c, h, w)                       # (B*T, C, H, W)
         feat = self.backbone(x_bt)["feature_map"]              # (B*T, C_b, H_b, W_b)
+        h_b, w_b = feat.shape[2], feat.shape[3]                # Extract spatial dimensions
+
+        # 2) Frame-level descriptors for attention weights
         g = feat.mean(dim=(2, 3))                              # (B*T, C_b)
         g = self.frame_feat_proj(g)                            # (B*T, D)
         g = g.view(b, t, -1)                                   # (B, T, D)
+
+        # 3) Temporal attention to get per-frame weights
         device = get_device_from_parameters(self)
         t_ids = torch.arange(t, device=device)
         g = g + self.time_pos_embed(t_ids).unsqueeze(0).expand(b, t, g.size(-1))
         kpm = None if mask is None else ~mask
-        query = self.query.expand(b, 1, g.size(-1))  # (B, 1, D)
-        _, attn = self.attn(query, g, g, key_padding_mask=kpm)
+        q = self.query(context).unsqueeze(1) # (B, 1, D)
+        _, attn = self.attn(q, g, g, key_padding_mask=kpm)
         # attn: (B, 1, T) softmax over time t
         w = attn.squeeze(1).view(b, t, 1, 1, 1) # (B, T, 1, 1, 1)
-        out = (x * w).sum(dim=1) # (B, C, H, W)
-        return out # (B, C, H, W)
+
+        # 4) Pool in feature space
+        feat = feat.view(b, t, self.backbone_out_channels, h_b, w_b)
+        out = (feat * w).sum(dim=1) # (B, C_b, H_b, W_b)
+        return out # (B, C_b, H_b, W_b)
 
 class DACT(nn.Module):
     """Action Chunking Transformer: The underlying neural network for ACTPolicy.
@@ -781,8 +798,8 @@ class DACT(nn.Module):
             # For a list of images, the H and W may vary but H*W is constant.
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
-            for img in batch[OBS_IMAGES]:
-                cam_features = self.backbone(img)["feature_map"]
+            for cam_features in batch[OBS_IMAGES]:
+                # Assume we already have the backbone features
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
 
