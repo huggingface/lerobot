@@ -59,12 +59,11 @@ from lerobot.robots import (  # noqa: F401
 )
 from lerobot.robots.robot import Robot
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     EEReferenceAndDelta,
     ForwardKinematicsJointsToEEObservation,
     GripperVelocityToJoint,
-    InverseKinematicsEEToJoints,
+    InverseKinematicsRLStep,
 )
 from lerobot.teleoperators import (
     gamepad,  # noqa: F401
@@ -159,6 +158,7 @@ class RobotEnv(gym.Env):
         self.use_gripper = use_gripper
 
         self._joint_names = list(self.robot.bus.motors.keys())
+        self._raw_joint_positions = None
 
         self._setup_spaces()
 
@@ -245,10 +245,8 @@ class RobotEnv(gym.Env):
         self.current_step = 0
         self.episode_data = None
         obs = self._get_observation()
-        return obs, {
-            TeleopEvents.IS_INTERVENTION: False,
-            "raw_joint_positions": {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names},
-        }
+        self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
+        return obs, {TeleopEvents.IS_INTERVENTION: False}
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
@@ -257,6 +255,8 @@ class RobotEnv(gym.Env):
         self.robot.send_action(joint_targets_dict)
 
         obs = self._get_observation()
+
+        self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
 
         if self.display_cameras:
             self.render()
@@ -272,10 +272,7 @@ class RobotEnv(gym.Env):
             reward,
             terminated,
             truncated,
-            {
-                TeleopEvents.IS_INTERVENTION: False,
-                "raw_joint_positions": {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names},
-            },
+            {TeleopEvents.IS_INTERVENTION: False},
         )
 
     def render(self) -> None:
@@ -294,6 +291,10 @@ class RobotEnv(gym.Env):
         """Close environment and disconnect robot."""
         if self.robot.is_connected:
             self.robot.disconnect()
+
+    def get_raw_joint_positions(self) -> dict[str, float]:
+        """Get raw joint positions."""
+        return self._raw_joint_positions
 
 
 def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
@@ -460,7 +461,6 @@ def make_processors(
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
         AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
-        AddRobotObservationAsComplimentaryData(robot=env.robot),
         InterventionActionProcessorStep(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
             terminate_on_success=terminate_on_success,
@@ -480,6 +480,7 @@ def make_processors(
                 end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
                 motor_names=motor_names,
                 use_latched_reference=False,
+                use_ik_solution=True,
             ),
             EEBoundsAndSafety(
                 end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
@@ -489,10 +490,8 @@ def make_processors(
                 speed_factor=1.0,
                 discrete_gripper=True,
             ),
-            InverseKinematicsEEToJoints(
-                kinematics=kinematics_solver,
-                motor_names=motor_names,
-                initial_guess_current_joints=False,
+            InverseKinematicsRLStep(
+                kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=False
             ),
         ]
         action_pipeline_steps.extend(inverse_kinematics_steps)
@@ -528,6 +527,9 @@ def step_env_and_process_transition(
 
     # Create action transition
     transition[TransitionKey.ACTION] = action
+    transition[TransitionKey.OBSERVATION] = (
+        env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
+    )
     processed_action_transition = action_processor(transition)
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
@@ -729,17 +731,19 @@ def replay_trajectory(
         episodes=[cfg.dataset.replay_episode],
         download_videos=False,
     )
-    dataset_actions = dataset.hf_dataset.select_columns(["action"])
+    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.replay_episode)
+    actions = episode_frames.select_columns("action")
+
     _, info = env.reset()
 
-    for action_data in dataset_actions:
+    for action_data in actions:
         start_time = time.perf_counter()
         transition = create_transition(
+            observation=env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {},
             action=action_data["action"],
-            complementary_data={"raw_joint_positions": info["raw_joint_positions"]},
         )
         transition = action_processor(transition)
-        _, _, _, _, info = env.step(transition[TransitionKey.ACTION])
+        env.step(transition[TransitionKey.ACTION])
         busy_wait(1 / cfg.env.fps - (time.perf_counter() - start_time))
 
 

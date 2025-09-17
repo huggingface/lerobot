@@ -22,7 +22,6 @@ import numpy as np
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
-    ComplementaryDataProcessorStep,
     EnvTransition,
     ObservationProcessorStep,
     ProcessorStep,
@@ -31,7 +30,6 @@ from lerobot.processor import (
     RobotActionProcessorStep,
     TransitionKey,
 )
-from lerobot.robots.robot import Robot
 from lerobot.utils.rotation import Rotation
 
 
@@ -68,6 +66,7 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
     use_latched_reference: bool = (
         True  # If True, latch reference on enable; if False, always use current pose
     )
+    use_ik_solution: bool = False
 
     reference_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
     _prev_enabled: bool = field(default=False, init=False, repr=False)
@@ -79,14 +78,20 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
         if observation is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
-        q_raw = np.array(
-            [
-                float(v)
-                for k, v in observation.items()
-                if isinstance(k, str) and k.endswith(".pos") and k.removesuffix(".pos") in self.motor_names
-            ],
-            dtype=float,
-        )
+        if self.use_ik_solution and "IK_solution" in self.transition.get(TransitionKey.COMPLEMENTARY_DATA):
+            q_raw = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
+        else:
+            q_raw = np.array(
+                [
+                    float(v)
+                    for k, v in observation.items()
+                    if isinstance(k, str)
+                    and k.endswith(".pos")
+                    and k.removesuffix(".pos") in self.motor_names
+                ],
+                dtype=float,
+            )
+
         if q_raw is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
@@ -489,41 +494,6 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
         return features
 
 
-@ProcessorStepRegistry.register("add_robot_observation")
-@dataclass
-class AddRobotObservationAsComplimentaryData(ComplementaryDataProcessorStep):
-    """
-    Reads the robot's current observation and adds it to the transition's complementary data.
-
-    This step acts as a bridge to the physical robot, injecting its real-time sensor readings
-    (like raw joint positions) into the data processing pipeline. This data is then available
-    for other processing steps.
-
-    Attributes:
-        robot: An instance of a `Robot` class used to get observations from hardware.
-    """
-
-    robot: Robot
-
-    def complementary_data(self, comp: dict | None) -> dict:
-        new_comp = dict(comp)
-        obs = (
-            self.robot.get_observation()
-        )  # todo(steven): why not self.trtansition.get(TransitionKey.OBSERVATION)?
-
-        new_comp["raw_joint_positions"] = {
-            k.removesuffix(".pos"): float(v)
-            for k, v in obs.items()
-            if isinstance(k, str) and k.endswith(".pos")
-        }
-        return new_comp
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
-
-
 @ProcessorStepRegistry.register(name="forward_kinematics_joints_to_ee")
 @dataclass
 class ForwardKinematicsJointsToEE(ProcessorStep):
@@ -553,3 +523,94 @@ class ForwardKinematicsJointsToEE(ProcessorStep):
         if features[PipelineFeatureType.OBSERVATION] is not None:
             features = self.joints_to_ee_observation_processor.transform_features(features)
         return features
+
+
+@ProcessorStepRegistry.register("inverse_kinematics_rl_step")
+@dataclass
+class InverseKinematicsRLStep(ProcessorStep):
+    """
+    Computes desired joint positions from a target end-effector pose using inverse kinematics (IK).
+
+    This is modified from the InverseKinematicsEEToJoints step to be used in the RL pipeline.
+    """
+
+    kinematics: RobotKinematics
+    motor_names: list[str]
+    q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
+    initial_guess_current_joints: bool = True
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        new_transition = dict(transition)
+        action = new_transition.get(TransitionKey.ACTION)
+        if action is None:
+            raise ValueError("Action is required for InverseKinematicsEEToJoints")
+        action = dict(action)
+
+        x = action.pop("ee.x")
+        y = action.pop("ee.y")
+        z = action.pop("ee.z")
+        wx = action.pop("ee.wx")
+        wy = action.pop("ee.wy")
+        wz = action.pop("ee.wz")
+        gripper_pos = action.pop("ee.gripper_pos")
+
+        if None in (x, y, z, wx, wy, wz, gripper_pos):
+            raise ValueError(
+                "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos must all be present in action"
+            )
+
+        observation = new_transition.get(TransitionKey.OBSERVATION).copy()
+        if observation is None:
+            raise ValueError("Joints observation is require for computing robot kinematics")
+
+        q_raw = np.array(
+            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+            dtype=float,
+        )
+        if q_raw is None:
+            raise ValueError("Joints observation is require for computing robot kinematics")
+
+        if self.initial_guess_current_joints:  # Use current joints as initial guess
+            self.q_curr = q_raw
+        else:  # Use previous ik solution as initial guess
+            if self.q_curr is None:
+                self.q_curr = q_raw
+
+        # Build desired 4x4 transform from pos + rotvec (twist)
+        t_des = np.eye(4, dtype=float)
+        t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+        t_des[:3, 3] = [x, y, z]
+
+        # Compute inverse kinematics
+        q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+        self.q_curr = q_target
+
+        # TODO: This is sentitive to order of motor_names = q_target mapping
+        for i, name in enumerate(self.motor_names):
+            if name != "gripper":
+                action[f"{name}.pos"] = float(q_target[i])
+            else:
+                action["gripper.pos"] = float(gripper_pos)
+
+        new_transition[TransitionKey.ACTION] = action
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        complementary_data["IK_solution"] = q_target
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
+        return new_transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        for feat in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
+            features[PipelineFeatureType.ACTION].pop(f"ee.{feat}", None)
+
+        for name in self.motor_names:
+            features[PipelineFeatureType.ACTION][f"{name}.pos"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+
+        return features
+
+    def reset(self):
+        """Resets the initial guess for the IK solver."""
+        self.q_curr = None

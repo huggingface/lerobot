@@ -160,9 +160,8 @@ The action processor (`action_processor`) handles outgoing actions and human int
 
 1. **AddTeleopActionAsComplimentaryDataStep**: Captures teleoperator actions for logging
 2. **AddTeleopEventsAsInfoStep**: Records intervention events and episode control signals
-3. **AddRobotObservationAsComplimentaryData**: Stores raw robot state for processing
-4. **InterventionActionProcessorStep**: Handles human interventions and episode termination
-5. **Inverse Kinematics Pipeline** (when enabled):
+3. **InterventionActionProcessorStep**: Handles human interventions and episode termination
+4. **Inverse Kinematics Pipeline** (when enabled):
    - **MapDeltaActionToRobotActionStep**: Converts delta actions to robot action format
    - **EEReferenceAndDelta**: Computes end-effector reference and delta movements
    - **EEBoundsAndSafety**: Enforces workspace safety bounds
