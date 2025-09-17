@@ -128,6 +128,8 @@ preprocessor, postprocessor = make_pre_post_processors(
     policy_cfg=policy,
     pretrained_path=HF_MODEL_ID,
     dataset_stats=dataset.meta.stats,
+    # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
+    preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
 )
 
 # Connect the robot
