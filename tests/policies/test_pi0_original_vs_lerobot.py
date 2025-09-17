@@ -79,7 +79,9 @@ def instantiate_lerobot_pi0(from_pretrained: bool = False):
             policy.config.output_features, policy.config.normalization_mapping, DUMMY_DATASET_STATS
         )
     else:
-        config = PI0OpenPIConfig(action_dim=DUMMY_ACTION_DIM, state_dim=DUMMY_STATE_DIM, dtype="float32")
+        config = PI0OpenPIConfig(
+            max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32"
+        )
         policy = PI0OpenPIPolicy(config, DUMMY_DATASET_STATS)
     policy.to(DEVICE)
     return policy

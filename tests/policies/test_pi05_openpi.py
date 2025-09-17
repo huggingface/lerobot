@@ -21,8 +21,8 @@ def test_pi05_model_architecture():
 
     # Create config
     config = PI05OpenPIConfig(
-        action_dim=7,
-        state_dim=14,
+        max_action_dim=7,
+        max_state_dim=14,
         dtype="float32",
     )
 
@@ -89,8 +89,8 @@ def test_pi05_forward_pass():
 
     # Create config
     config = PI05OpenPIConfig(
-        action_dim=7,
-        state_dim=14,
+        max_action_dim=7,
+        max_state_dim=14,
         dtype="float32",
         chunk_size=16,  # Shorter chunk_size for testing
         n_action_steps=16,  # Shorter action steps for testing
@@ -152,8 +152,8 @@ def test_pi0_vs_pi05_differences():
     print("\nComparing PI0 vs PI0.5 architectures...")
 
     # Create both configurations
-    config_pi0 = PI0OpenPIConfig(action_dim=7, state_dim=14, dtype="float32")
-    config_pi05 = PI05OpenPIConfig(action_dim=7, state_dim=14, dtype="float32")
+    config_pi0 = PI0OpenPIConfig(max_action_dim=7, max_state_dim=14, dtype="float32")
+    config_pi05 = PI05OpenPIConfig(max_action_dim=7, max_state_dim=14, dtype="float32")
 
     dataset_stats = {
         "observation.state": {"mean": torch.zeros(14), "std": torch.ones(14)},

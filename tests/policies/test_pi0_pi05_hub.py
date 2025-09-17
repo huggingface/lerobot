@@ -17,12 +17,12 @@ def create_dummy_stats(config):
     """Create dummy dataset statistics for testing."""
     dummy_stats = {
         "observation.state": {
-            "mean": torch.zeros(config.state_dim),
-            "std": torch.ones(config.state_dim),
+            "mean": torch.zeros(config.max_state_dim),
+            "std": torch.ones(config.max_state_dim),
         },
         "action": {
-            "mean": torch.zeros(config.action_dim),
-            "std": torch.ones(config.action_dim),
+            "mean": torch.zeros(config.max_action_dim),
+            "std": torch.ones(config.max_action_dim),
         },
     }
 
@@ -97,8 +97,8 @@ def _test_hub_loading(model_id, model_name):
         print(f"  - Model type: {model_name}")
         print(f"  - PaliGemma variant: {policy.config.paligemma_variant}")
         print(f"  - Action expert variant: {policy.config.action_expert_variant}")
-        print(f"  - Action dimension: {policy.config.action_dim}")
-        print(f"  - State dimension: {policy.config.state_dim}")
+        print(f"  - Action dimension: {policy.config.max_action_dim}")
+        print(f"  - State dimension: {policy.config.max_state_dim}")
         print(f"  - Chunk_size: {policy.config.chunk_size}")
         print(f"  - Tokenizer max length: {policy.config.tokenizer_max_length}")
         if model_name == "PI0.5":
@@ -185,12 +185,12 @@ def _test_hub_loading(model_id, model_name):
     # Create test batch
     batch = {
         "observation.state": torch.randn(
-            batch_size, policy.config.state_dim, dtype=torch.float32, device=device
+            batch_size, policy.config.max_state_dim, dtype=torch.float32, device=device
         ),
         "action": torch.randn(
             batch_size,
             policy.config.chunk_size,
-            policy.config.action_dim,
+            policy.config.max_action_dim,
             dtype=torch.float32,
             device=device,
         ),
@@ -282,8 +282,8 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
     print(f"  - Model type: {model_type}")
     print(f"  - PaliGemma variant: {policy.config.paligemma_variant}")
     print(f"  - Action expert variant: {policy.config.action_expert_variant}")
-    print(f"  - Action dimension: {policy.config.action_dim}")
-    print(f"  - State dimension: {policy.config.state_dim}")
+    print(f"  - Action dimension: {policy.config.max_action_dim}")
+    print(f"  - State dimension: {policy.config.max_state_dim}")
     print(f"  - Chunk size: {policy.config.chunk_size}")
     print(f"  - Tokenizer max length: {policy.config.tokenizer_max_length}")
     print(f"  - Device: {device}")
@@ -339,10 +339,14 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
     batch_size = 1
     batch = {
         "observation.state": torch.randn(
-            batch_size, policy.config.state_dim, dtype=torch.float32, device=device
+            batch_size, policy.config.max_state_dim, dtype=torch.float32, device=device
         ),
         "action": torch.randn(
-            batch_size, policy.config.chunk_size, policy.config.action_dim, dtype=torch.float32, device=device
+            batch_size,
+            policy.config.chunk_size,
+            policy.config.max_action_dim,
+            dtype=torch.float32,
+            device=device,
         ),
         "task": ["Pick up the object"] * batch_size,
     }
@@ -369,7 +373,7 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
         policy.eval()
         with torch.no_grad():
             action = policy.select_action(batch)
-        expected_shape = (batch_size, policy.config.action_dim)
+        expected_shape = (batch_size, policy.config.max_action_dim)
         assert action.shape == expected_shape, (
             f"{model_id}: Expected action shape {expected_shape}, got {action.shape}"
         )

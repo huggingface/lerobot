@@ -19,7 +19,7 @@ def test_policy_instantiation():
     print("Testing PI0OpenPI policy instantiation...")
 
     # Create config
-    config = PI0OpenPIConfig(action_dim=7, state_dim=14, dtype="float32")
+    config = PI0OpenPIConfig(max_action_dim=7, max_state_dim=14, dtype="float32")
 
     # Create dummy dataset stats
     dataset_stats = {
@@ -75,8 +75,8 @@ def test_config_creation():
     try:
         config = make_policy_config(
             policy_type="pi0_openpi",
-            action_dim=7,
-            state_dim=14,
+            max_action_dim=7,
+            max_state_dim=14,
         )
         print("✓ Config created successfully through factory")
         print(f"  Config type: {type(config).__name__}")
