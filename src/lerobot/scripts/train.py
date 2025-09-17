@@ -30,11 +30,12 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env
+from lerobot.envs.utils import close_envs
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.eval import eval_policy_all
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -66,10 +67,8 @@ def update_policy(
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
-
     This function executes the forward and backward passes, clips gradients, and steps the optimizer and
     learning rate scheduler. It also handles mixed-precision training via a GradScaler.
-
     Args:
         train_metrics: A MetricsTracker instance to record training statistics.
         policy: The policy model to be trained.
@@ -80,7 +79,6 @@ def update_policy(
         lr_scheduler: An optional learning rate scheduler.
         use_amp: A boolean indicating whether to use automatic mixed precision.
         lock: An optional lock for thread-safe optimizer updates.
-
     Returns:
         A tuple containing:
         - The updated MetricsTracker with new statistics for this step.
@@ -131,7 +129,6 @@ def update_policy(
 def train(cfg: TrainPipelineConfig):
     """
     Main function to train a policy.
-
     This function orchestrates the entire training pipeline, including:
     - Setting up logging, seeding, and device configuration.
     - Creating the dataset, evaluation environment (if applicable), policy, and optimizer.
@@ -139,7 +136,6 @@ def train(cfg: TrainPipelineConfig):
     - Running the main training loop, which involves fetching data batches and calling `update_policy`.
     - Periodically logging metrics, saving model checkpoints, and evaluating the policy.
     - Pushing the final trained model to the Hugging Face Hub if configured.
-
     Args:
         cfg: A `TrainPipelineConfig` object containing all training configurations.
     """
@@ -162,7 +158,6 @@ def train(cfg: TrainPipelineConfig):
 
     logging.info("Creating dataset")
     dataset = make_dataset(cfg)
-
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
@@ -172,11 +167,11 @@ def train(cfg: TrainPipelineConfig):
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Creating policy")
+
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
-
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     if not (cfg.resume and cfg.policy.pretrained_path):
@@ -186,7 +181,7 @@ def train(cfg: TrainPipelineConfig):
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path, **processor_kwargs
     )
-
+    
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
@@ -234,7 +229,6 @@ def train(cfg: TrainPipelineConfig):
     dl_iter = cycle(dataloader)
 
     policy.train()
-
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
@@ -251,8 +245,8 @@ def train(cfg: TrainPipelineConfig):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
-        batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
+        batch = preprocessor(batch)
 
         train_tracker, output_dict = update_policy(
             train_tracker,
@@ -299,8 +293,8 @@ def train(cfg: TrainPipelineConfig):
                 torch.no_grad(),
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
             ):
-                eval_info = eval_policy(
-                    env=eval_env,
+                eval_info = eval_policy_all(
+                    env=eval_env, # dict[suite][task_id] -> vec_env
                     policy=policy,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
@@ -308,8 +302,20 @@ def train(cfg: TrainPipelineConfig):
                     videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
+                    max_parallel_tasks=cfg.env.max_parallel_tasks,
+                    verbose=False,
                 )
 
+            # overall metrics (suite-agnostic)
+            aggregated = eval_info["overall"]["aggregated"]
+
+            # optional: per-suite logging
+            for suite, suite_info in eval_info.items():
+                if suite == "overall":
+                    continue
+                logging.info("Suite %s aggregated: %s", suite, suite_info["aggregated"])
+
+            # meters/tracker
             eval_metrics = {
                 "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
                 "pc_success": AverageMeter("success", ":.1f"),
@@ -318,17 +324,16 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker = MetricsTracker(
                 cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
             )
-            eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
-            eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
-            eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
-            logging.info(eval_tracker)
+            eval_tracker.eval_s = aggregated.get("eval_s", 0.0)
+            eval_tracker.avg_sum_reward = aggregated.get("avg_sum_reward", float("nan"))
+            eval_tracker.pc_success = aggregated.get("pc_success", float("nan"))
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
 
     if eval_env:
-        eval_env.close()
+        close_envs(eval_env)
     logging.info("End of training")
 
     if cfg.policy.push_to_hub:

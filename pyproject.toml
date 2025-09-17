@@ -135,7 +135,21 @@ video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 aloha = ["gym-aloha>=0.1.1"]
 pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 xarm = ["gym-xarm>=0.1.1"]
-
+libero = [
+    "hydra-core>=1.2,<1.4",
+    "easydict>=1.9",
+    "lerobot[transformers-dep]",
+    "robomimic==0.2.0",
+    "thop>=0.1.0.post2206102148",
+    "robosuite==1.4.0",
+    "bddl==1.0.1",
+    "matplotlib>=3.5.3",
+    "cloudpickle>=2.0.0",
+    "gym>=0.25,<0.27",
+    "future>=0.18.3",
+    "egl_probe @ git+https://github.com/jadechoghari/egl_probe.git#egg=egl_probe",
+    "libero @ git+https://github.com/jadechoghari/LIBERO.git@main#egg=libero",
+]
 # All
 all = [
     "lerobot[dynamixel]",
@@ -156,6 +170,7 @@ all = [
     "lerobot[pusht]",
     "lerobot[xarm]",
     "lerobot[phone]",
+    "lerobot[libero]"
 ]
 
 [project.scripts]

@@ -359,7 +359,6 @@ def make_policy(
         if env_cfg is None:
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
-
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
@@ -372,10 +371,7 @@ def make_policy(
     else:
         # Make a fresh policy.
         policy = policy_cls(**kwargs)
-
     policy.to(cfg.device)
     assert isinstance(policy, torch.nn.Module)
-
     # policy = torch.compile(policy, mode="reduce-overhead")
-
     return policy
