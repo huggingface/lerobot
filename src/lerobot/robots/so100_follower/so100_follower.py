@@ -49,12 +49,12 @@ class SO100Follower(Robot):
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
-                "shoulder_lift": Motor(2, "sts3215", norm_mode_body),
-                "elbow_flex": Motor(3, "sts3215", norm_mode_body),
-                "wrist_flex": Motor(4, "sts3215", norm_mode_body),
-                "wrist_roll": Motor(5, "sts3215", norm_mode_body),
-                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, self.config.motor_type, norm_mode_body),
+                "shoulder_lift": Motor(2, self.config.motor_type, norm_mode_body),
+                "elbow_flex": Motor(3, self.config.motor_type, norm_mode_body),
+                "wrist_flex": Motor(4, self.config.motor_type, norm_mode_body),
+                "wrist_roll": Motor(5, self.config.motor_type, norm_mode_body),
+                "gripper": Motor(6, self.config.motor_type, MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
@@ -218,7 +218,10 @@ class SO100Follower(Robot):
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
+        start = time.perf_counter()
         self.bus.sync_write("Goal_Position", goal_pos)
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} write state: {dt_ms:.1f}ms")
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):
