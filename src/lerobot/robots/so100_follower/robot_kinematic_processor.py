@@ -387,6 +387,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
         # Compute desired gripper position
         delta = gripper_vel * float(self.speed_factor)
+        # TODO: This assumes gripper is the last specified joint in the robot
         gripper_pos = float(np.clip(q_raw[-1] + delta, self.clip_min, self.clip_max))
         action["ee.gripper_pos"] = gripper_pos
 
