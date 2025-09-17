@@ -109,13 +109,29 @@ def are_all_envs_same_type(env: gym.vector.VectorEnv) -> bool:
 def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
+        task_name, task = None, None
+        try:
+            task_name = env.call("task_description")
+        except (AttributeError, TypeError):
+            pass
+        try:
+            task = env.call("task")
+        except (AttributeError, TypeError):
+            pass
 
-        if not (hasattr(env.envs[0], "task_description") and hasattr(env.envs[0], "task")):
+        if task_name is None or task is None:
             warnings.warn(
-                "The environment does not have 'task_description' and 'task'. Some policies require these features.",
+                "The environment does not have both 'task_description' and 'task'. Some policies require these features.",
                 UserWarning,
                 stacklevel=2,
             )
+        if isinstance(env, gym.vector.AsyncVectorEnv):
+            warnings.warn(
+                "The environment is an AsyncVectorEnv. Skipping the environment type check.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
         if not are_all_envs_same_type(env):
             warnings.warn(
                 "The environments have different types. Make sure you infer the right task from each environment. Empty task will be passed instead.",
@@ -126,11 +142,16 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
 
 def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
-    if hasattr(env.envs[0], "task_description"):
-        observation["task"] = env.call("task_description")
-    elif hasattr(env.envs[0], "task"):
-        observation["task"] = env.call("task")
-    else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
+    task_name = None
+    try:
+        task_name = env.call("task_description")
+    except (AttributeError, TypeError):
+        try:
+            task_name = env.call("task")
+        except (AttributeError, TypeError):
+            pass
+    if task_name is None:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
         num_envs = observation[list(observation.keys())[0]].shape[0]
-        observation["task"] = ["" for _ in range(num_envs)]
+        task_name = ["" for _ in range(num_envs)]
+    observation["task"] = task_name
     return observation
