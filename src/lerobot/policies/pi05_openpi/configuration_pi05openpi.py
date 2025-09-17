@@ -28,9 +28,6 @@ class PI05OpenPIConfig(PreTrainedConfig):
     # Model architecture
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
-    discrete_state_input: bool | None = (
-        True  # Whether to use discrete state input # see openpi `Pi0Config, __post_init__`
-    )
     dtype: str = "float32"  # Options: "bfloat16", "float32"
 
     # Input / output structure
