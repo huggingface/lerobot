@@ -74,7 +74,6 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
     _command_when_disabled: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def action(self, action: RobotAction) -> RobotAction:
-        new_action = action.copy()
         observation = self.transition.get(TransitionKey.OBSERVATION).copy()
 
         if observation is None:
@@ -94,14 +93,14 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
         # Current pose from FK on measured joints
         t_curr = self.kinematics.forward_kinematics(q_raw)
 
-        enabled = bool(new_action.pop("enabled"))
-        tx = float(new_action.pop("target_x"))
-        ty = float(new_action.pop("target_y"))
-        tz = float(new_action.pop("target_z"))
-        wx = float(new_action.pop("target_wx"))
-        wy = float(new_action.pop("target_wy"))
-        wz = float(new_action.pop("target_wz"))
-        gripper_vel = float(new_action.pop("gripper_vel"))
+        enabled = bool(action.pop("enabled"))
+        tx = float(action.pop("target_x"))
+        ty = float(action.pop("target_y"))
+        tz = float(action.pop("target_z"))
+        wx = float(action.pop("target_wx"))
+        wy = float(action.pop("target_wy"))
+        wz = float(action.pop("target_wz"))
+        gripper_vel = float(action.pop("gripper_vel"))
 
         desired = None
 
@@ -137,16 +136,16 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
         # Write action fields
         pos = desired[:3, 3]
         tw = Rotation.from_matrix(desired[:3, :3]).as_rotvec()
-        new_action["ee.x"] = float(pos[0])
-        new_action["ee.y"] = float(pos[1])
-        new_action["ee.z"] = float(pos[2])
-        new_action["ee.wx"] = float(tw[0])
-        new_action["ee.wy"] = float(tw[1])
-        new_action["ee.wz"] = float(tw[2])
-        new_action["ee.gripper_vel"] = gripper_vel
+        action["ee.x"] = float(pos[0])
+        action["ee.y"] = float(pos[1])
+        action["ee.z"] = float(pos[2])
+        action["ee.wx"] = float(tw[0])
+        action["ee.wy"] = float(tw[1])
+        action["ee.wz"] = float(tw[2])
+        action["ee.gripper_vel"] = gripper_vel
 
         self._prev_enabled = enabled
-        return new_action
+        return action
 
     def reset(self):
         """Resets the internal state of the processor."""
