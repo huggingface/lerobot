@@ -80,21 +80,26 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    bi_starai_follower,
     hope_jr,
     koch_follower,
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    starai_cello,
+    starai_viola,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_so100_leader,
+    bi_starai_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    starai_violin,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.control_utils import (
