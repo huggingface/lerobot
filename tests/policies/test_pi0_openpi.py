@@ -1,16 +1,21 @@
 #!/usr/bin/env python
 
-"""Test script to verify PI0OpenPI policy integration with LeRobot."""
+"""Test script to verify PI0OpenPI policy integration with LeRobot, only meant to be run locally!"""
+
+import os
 
 import pytest
 import torch
 
-# Skip entire module if transformers is not available
-pytest.importorskip("transformers")
+# Skip this entire module in CI
+pytestmark = pytest.mark.skipif(
+    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="This test requires local OpenPI installation and is not meant for CI",
+)
 
-from lerobot.policies.factory import make_policy_config
-from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy
-from tests.utils import require_cuda
+from lerobot.policies.factory import make_policy_config  # noqa: E402
+from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy  # noqa: E402
+from tests.utils import require_cuda  # noqa: E402
 
 
 @require_cuda
