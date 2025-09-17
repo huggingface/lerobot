@@ -130,7 +130,6 @@ def rollout(
         The dictionary described above.
     """
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
-    device = get_device_from_parameters(policy)
 
     # Reset the policy and environments.
     policy.reset()
@@ -161,10 +160,11 @@ def rollout(
         if return_observations:
             all_observations.append(deepcopy(observation))
 
-        observation = preprocessor(observation)
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
+
+        observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
         action = postprocessor(action)
@@ -232,12 +232,12 @@ def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
     n_episodes: int,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
-    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ) -> dict:
     """
     Args:
@@ -498,7 +498,7 @@ def eval_main(cfg: EvalPipelineConfig):
     )
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
-            env=env,
+            envs=envs,
             policy=policy,
             preprocessor=preprocessor,
             postprocessor=postprocessor,
@@ -587,7 +587,7 @@ def eval_policy_all(
             env=env,
             policy=policy,
             preprocessor=preprocessor,
-            postprocessor=postprocessor
+            postprocessor=postprocessor,
             n_episodes=n_episodes,
             max_episodes_rendered=max_episodes_rendered,
             videos_dir=task_videos_dir,
@@ -689,7 +689,7 @@ def eval_policy_all(
                 videos_dir=videos_dir,
                 return_episode_data=return_episode_data,
                 start_seed=start_seed,
-                max_parallel_tasks,
+                max_parallel_tasks=max_parallel_tasks,
             )
 
     # single accumulator path on the main thread
