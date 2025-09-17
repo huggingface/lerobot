@@ -588,6 +588,13 @@ class PI0FAST(nn.Module):
         discretized = torch.bucketize(state, bins) - 1
         discretized = discretized[:, :32]
 
+        # Ensure lang_text is always a list
+        if isinstance(lang_text, str):
+            lang_text = [lang_text]
+
+        if len(lang_text) == 1:
+            lang_text = [lang_text[0] for _ in range(bsize)]
+
         prefix_texts = []
         state_text = []
         for txt, disc in zip(lang_text, discretized, strict=False):
