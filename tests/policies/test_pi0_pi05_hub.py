@@ -36,7 +36,7 @@ def create_dummy_stats(config):
     }
 
     # Add stats for image keys if they exist
-    for key in config.image_keys:
+    for key in config.image_features.keys():
         dummy_stats[key] = {
             "mean": torch.zeros(3, config.image_resolution[0], config.image_resolution[1]),
             "std": torch.ones(3, config.image_resolution[0], config.image_resolution[1]),
@@ -205,7 +205,7 @@ def _test_hub_loading(model_id, model_name):
     }
 
     # Add images if they're in the config
-    for key in policy.config.image_keys:
+    for key in policy.config.image_features.keys():
         batch[key] = torch.rand(batch_size, 3, 224, 224, dtype=torch.float32, device=device)
 
     try:
@@ -358,7 +358,7 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
     }
 
     # Add images based on config
-    for key in policy.config.image_keys:
+    for key in policy.config.image_features.keys():
         batch[key] = torch.rand(batch_size, 3, 224, 224, dtype=torch.float32, device=device)
 
     # Test forward pass

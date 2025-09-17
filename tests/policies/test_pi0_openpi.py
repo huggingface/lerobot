@@ -18,6 +18,27 @@ def test_policy_instantiation():
     # Create config
     config = PI0OpenPIConfig(max_action_dim=7, max_state_dim=14, dtype="float32")
 
+    # Set up input_features and output_features in the config
+    from lerobot.configs.types import FeatureType, PolicyFeature
+
+    config.input_features = {
+        "observation.state": PolicyFeature(
+            type=FeatureType.STATE,
+            shape=(14,),
+        ),
+        "observation.images.base_0_rgb": PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 224, 224),
+        ),
+    }
+
+    config.output_features = {
+        "action": PolicyFeature(
+            type=FeatureType.ACTION,
+            shape=(7,),
+        ),
+    }
+
     # Create dummy dataset stats
     dataset_stats = {
         "observation.state": {
@@ -27,6 +48,10 @@ def test_policy_instantiation():
         "action": {
             "mean": torch.zeros(7),
             "std": torch.ones(7),
+        },
+        "observation.images.base_0_rgb": {
+            "mean": torch.zeros(3, 224, 224),
+            "std": torch.ones(3, 224, 224),
         },
     }
 
