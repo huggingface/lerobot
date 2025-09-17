@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
 from .converters import to_tensor
-from .core import EnvAction, PolicyAction
-from .pipeline import ActionProcessorStep, ProcessorStepRegistry
+from .core import EnvAction, EnvTransition, PolicyAction
+from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("torch2numpy_action_processor")
@@ -69,23 +69,27 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
 
 @ProcessorStepRegistry.register("numpy2torch_action_processor")
 @dataclass
-class Numpy2TorchActionProcessorStep(ActionProcessorStep):
-    """
-    Converts a NumPy array action to a PyTorch tensor.
+class Numpy2TorchActionProcessorStep(ProcessorStep):
+    """Converts a NumPy array action to a PyTorch tensor when action is present."""
 
-    This step is useful for converting actions from environments or hardware,
-    which are often NumPy arrays, into PyTorch tensors that can be processed
-    by a policy or model.
-    """
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Converts numpy action to torch tensor if action exists, otherwise passes through."""
+        from .core import TransitionKey
 
-    def action(self, action: EnvAction) -> PolicyAction:
-        if not isinstance(action, EnvAction):
-            raise TypeError(
-                f"Expected np.ndarray or None, got {type(action).__name__}. "
-                "Use appropriate processor for non-tensor actions."
-            )
-        torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
-        return torch_action
+        self._current_transition = transition.copy()
+        new_transition = self._current_transition
+
+        action = new_transition.get(TransitionKey.ACTION)
+        if action is not None:
+            if not isinstance(action, EnvAction):
+                raise TypeError(
+                    f"Expected np.ndarray or None, got {type(action).__name__}. "
+                    "Use appropriate processor for non-tensor actions."
+                )
+            torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
+            new_transition[TransitionKey.ACTION] = torch_action
+
+        return new_transition
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

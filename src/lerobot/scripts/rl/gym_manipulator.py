@@ -370,10 +370,11 @@ def make_processors(
     if cfg.name == "gym_hil":
         action_pipeline_steps = [
             InterventionActionProcessorStep(terminate_on_success=terminate_on_success),
+            Torch2NumpyActionProcessorStep(),
         ]
 
-        # Minimal processor pipeline for GymHIL simulation
         env_pipeline_steps = [
+            Numpy2TorchActionProcessorStep(),
             VanillaObservationProcessorStep(),
             AddBatchDimensionProcessorStep(),
             DeviceProcessorStep(device=device),
@@ -528,10 +529,7 @@ def step_env_and_process_transition(
     processed_action_transition = action_processor(transition)
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
-    # Step environment with processed action
     obs, reward, terminated, truncated, info = env.step(processed_action)
-
-    # Combine rewards from environment and action processor
 
     reward = reward + processed_action_transition[TransitionKey.REWARD]
     terminated = terminated or processed_action_transition[TransitionKey.DONE]
