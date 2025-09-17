@@ -32,7 +32,7 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
 EPISODE_IDX = 0
-HF_REPO_ID = "imstevenpmwork/phone_so100_eef2"
+HF_REPO_ID = "<hf_username>/<dataset_repo_id>"
 
 # Initialize the robot config
 robot_config = SO100FollowerConfig(
@@ -44,7 +44,7 @@ robot = SO100Follower(robot_config)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 kinematics_solver = RobotKinematics(
-    urdf_path="./examples/phone_to_so100/SO101/so101_new_calib.urdf",
+    urdf_path="./SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(robot.bus.motors.keys()),
 )

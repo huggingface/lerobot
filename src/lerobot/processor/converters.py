@@ -225,10 +225,10 @@ def robot_action_observation_to_transition(
 
     action, observation = action_observation
 
-    if not isinstance(action, dict):
+    if action is not None and not isinstance(action, dict):
         raise ValueError(f"Action should be a RobotAction type got {type(action)}")
 
-    if not isinstance(observation, dict):
+    if observation is not None and not isinstance(observation, dict):
         raise ValueError(f"Observation should be a RobotObservation type got {type(observation)}")
 
     return create_transition(action=action, observation=observation)

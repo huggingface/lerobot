@@ -138,6 +138,9 @@ def teleop_loop(
         loop_start = time.perf_counter()
 
         # Get robot observation
+        # Not really needed for now other than for visualization
+        # teleop_action_processor can take None as an observation
+        # given that it is the identity processor as default
         obs = robot.get_observation()
 
         # Get teleop action
