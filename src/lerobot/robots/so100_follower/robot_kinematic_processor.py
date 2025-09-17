@@ -75,22 +75,24 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
 
     def action(self, action: RobotAction) -> RobotAction:
         new_action = action.copy()
-        comp = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        observation = self.transition.get(TransitionKey.OBSERVATION).copy()
 
-        # Get joint positions from complimentary data
-        raw = comp["raw_joint_positions"]
-        if raw is None:
-            raise ValueError(
-                "raw_joint_positions is not in complementary data and is required for EEReferenceAndDelta"
-            )
+        if observation is None:
+            raise ValueError("Joints observation is require for computing robot kinematics")
 
-        if "reference_joint_positions" in comp:
-            q = comp["reference_joint_positions"]
-        else:
-            q = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
+        q_raw = np.array(
+            [
+                float(v)
+                for k, v in observation.items()
+                if isinstance(k, str) and k.endswith(".pos") and k.removesuffix(".pos") in self.motor_names
+            ],
+            dtype=float,
+        )
+        if q_raw is None:
+            raise ValueError("Joints observation is require for computing robot kinematics")
 
         # Current pose from FK on measured joints
-        t_curr = self.kinematics.forward_kinematics(q)
+        t_curr = self.kinematics.forward_kinematics(q_raw)
 
         enabled = bool(new_action.pop("enabled"))
         tx = float(new_action.pop("target_x"))
@@ -250,7 +252,7 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
 
 @ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
 @dataclass
-class InverseKinematicsEEToJoints(ProcessorStep):
+class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     """
     Computes desired joint positions from a target end-effector pose using inverse kinematics (IK).
 
@@ -270,40 +272,36 @@ class InverseKinematicsEEToJoints(ProcessorStep):
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        new_transition = transition.copy()
-        act = new_transition.get(TransitionKey.ACTION).copy()
-
-        if not isinstance(act, dict):
-            raise ValueError(f"Action should be a RobotAction type got {type(act)}")
-
-        comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-
-        x = act.pop("ee.x")
-        y = act.pop("ee.y")
-        z = act.pop("ee.z")
-        wx = act.pop("ee.wx")
-        wy = act.pop("ee.wy")
-        wz = act.pop("ee.wz")
-        gripper_pos = act.pop("ee.gripper_pos")
+    def action(self, action: RobotAction) -> RobotAction:
+        x = action.pop("ee.x")
+        y = action.pop("ee.y")
+        z = action.pop("ee.z")
+        wx = action.pop("ee.wx")
+        wy = action.pop("ee.wy")
+        wz = action.pop("ee.wz")
+        gripper_pos = action.pop("ee.gripper_pos")
 
         if None in (x, y, z, wx, wy, wz, gripper_pos):
             raise ValueError(
                 "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos must all be present in action"
             )
 
-        # Get joint positions from complimentary data
-        raw = comp["raw_joint_positions"]
-        if raw is None:
-            raise ValueError(
-                "raw_joint_positions is not in complementary data and is required for EEReferenceAndDelta"
-            )
+        observation = self.transition.get(TransitionKey.OBSERVATION).copy()
+        if observation is None:
+            raise ValueError("Joints observation is require for computing robot kinematics")
+
+        q_raw = np.array(
+            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+            dtype=float,
+        )
+        if q_raw is None:
+            raise ValueError("Joints observation is require for computing robot kinematics")
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
-            self.q_curr = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
+            self.q_curr = q_raw
         else:  # Use previous ik solution as initial guess
             if self.q_curr is None:
-                self.q_curr = np.array([float(raw[n]) for n in self.motor_names], dtype=float)
+                self.q_curr = q_raw
 
         # Build desired 4x4 transform from pos + rotvec (twist)
         t_des = np.eye(4, dtype=float)
@@ -314,17 +312,14 @@ class InverseKinematicsEEToJoints(ProcessorStep):
         q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
         self.q_curr = q_target
 
-        new_act = dict(act)
         # TODO: This is sentitive to order of motor_names = q_target mapping
         for i, name in enumerate(self.motor_names):
             if name != "gripper":
-                new_act[f"{name}.pos"] = float(q_target[i])
+                action[f"{name}.pos"] = float(q_target[i])
             else:
-                new_act["gripper.pos"] = float(gripper_pos)
-        new_transition[TransitionKey.ACTION] = new_act
-        if not self.initial_guess_current_joints:
-            new_transition[TransitionKey.COMPLEMENTARY_DATA]["reference_joint_positions"] = q_target
-        return new_transition
+                action["gripper.pos"] = float(gripper_pos)
+
+        return action
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

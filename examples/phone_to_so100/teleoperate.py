@@ -16,11 +16,13 @@
 import time
 
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotProcessorPipeline
-from lerobot.processor.converters import robot_action_to_transition, transition_to_robot_action
+from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
+from lerobot.processor.converters import (
+    robot_action_observation_to_transition,
+    transition_to_robot_action,
+)
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     EEReferenceAndDelta,
     GripperVelocityToJoint,
@@ -53,10 +55,9 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert phone action to ee pose action to joint action
-phone_to_robot_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
+phone_to_robot_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
-        AddRobotObservationAsComplimentaryData(robot=robot),
         EEReferenceAndDelta(
             kinematics=kinematics_solver,
             end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
@@ -75,7 +76,7 @@ phone_to_robot_joints_processor = RobotProcessorPipeline[RobotAction, RobotActio
             motor_names=list(robot.bus.motors.keys()),
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 
@@ -93,11 +94,14 @@ print("Starting teleop loop. Move your phone to teleoperate the robot...")
 while True:
     t0 = time.perf_counter()
 
+    # Get robot observation
+    robot_obs = robot.get_observation()
+
     # Get teleop action
     phone_obs = teleop_device.get_action()
 
     # Phone -> EE pose -> Joints transition
-    joint_action = phone_to_robot_joints_processor(phone_obs)
+    joint_action = phone_to_robot_joints_processor((phone_obs, robot_obs))
 
     # Send action to robot
     _ = robot.send_action(joint_action)

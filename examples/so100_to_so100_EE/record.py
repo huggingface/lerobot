@@ -23,6 +23,7 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
     observation_to_transition,
+    robot_action_observation_to_transition,
     robot_action_to_transition,
     transition_to_observation,
     transition_to_robot_action,
@@ -30,7 +31,6 @@ from lerobot.processor.converters import (
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
@@ -97,9 +97,8 @@ leader_joints_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
 )
 
 # Build pipeline to convert EE action to follower joints
-ee_to_follower_joints = RobotProcessorPipeline[RobotAction, RobotAction](
+ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     [
-        AddRobotObservationAsComplimentaryData(robot=follower),
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
@@ -110,7 +109,7 @@ ee_to_follower_joints = RobotProcessorPipeline[RobotAction, RobotAction](
             motor_names=list(follower.bus.motors.keys()),
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 

@@ -22,14 +22,13 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
     observation_to_transition,
-    robot_action_to_transition,
+    robot_action_observation_to_transition,
     transition_to_observation,
     transition_to_robot_action,
 )
 from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     EEReferenceAndDelta,
     ForwardKinematicsJointsToEE,
@@ -73,14 +72,12 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert phone action to EE action
-phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, RobotAction](
+phone_to_robot_ee_pose_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
-        AddRobotObservationAsComplimentaryData(robot=robot),
         EEReferenceAndDelta(
             kinematics=kinematics_solver,
             end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
-            motor_names=list(robot.bus.motors.keys()),
         ),
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
@@ -89,12 +86,12 @@ phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, RobotActi
         ),
         GripperVelocityToJoint(),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 
 # Build pipeline to convert EE action to joints action
-robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
+robot_ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     steps=[
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
@@ -102,7 +99,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
             initial_guess_current_joints=True,
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 

@@ -19,11 +19,13 @@ import time
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotProcessorPipeline
-from lerobot.processor.converters import robot_action_to_transition, transition_to_robot_action
+from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
+from lerobot.processor.converters import (
+    robot_action_observation_to_transition,
+    transition_to_robot_action,
+)
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservationAsComplimentaryData,
     InverseKinematicsEEToJoints,
 )
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
@@ -49,16 +51,15 @@ kinematics_solver = RobotKinematics(
 )
 
 # Build pipeline to convert EE action to joints action
-robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction](
+robot_ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     steps=[
-        AddRobotObservationAsComplimentaryData(robot=robot),
         InverseKinematicsEEToJoints(
             kinematics=kinematics_solver,
             motor_names=list(robot.bus.motors.keys()),
             initial_guess_current_joints=False,  # Because replay is open loop
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 
@@ -82,8 +83,11 @@ for idx in range(dataset.num_frames):
         name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
     }
 
+    # Get robot observation
+    robot_obs = robot.get_observation()
+
     # Dataset EE -> robot joints
-    joint_action = robot_ee_to_joints_processor(ee_action)
+    joint_action = robot_ee_to_joints_processor((ee_action, robot_obs))
 
     # Send action to robot
     _ = robot.send_action(joint_action)

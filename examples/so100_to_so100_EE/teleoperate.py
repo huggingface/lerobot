@@ -17,14 +17,14 @@
 import time
 
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor import RobotAction, RobotProcessorPipeline
+from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
+    robot_action_observation_to_transition,
     robot_action_to_transition,
     transition_to_robot_action,
 )
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    AddRobotObservationAsComplimentaryData,
     EEBoundsAndSafety,
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
@@ -73,9 +73,8 @@ leader_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
 )
 
 # build pipeline to convert EE action to robot joints
-ee_to_follower_joints = RobotProcessorPipeline[RobotAction, RobotAction](
+ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
     [
-        AddRobotObservationAsComplimentaryData(robot=follower),
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
@@ -86,7 +85,7 @@ ee_to_follower_joints = RobotProcessorPipeline[RobotAction, RobotAction](
             motor_names=list(follower.bus.motors.keys()),
         ),
     ],
-    to_transition=robot_action_to_transition,
+    to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,
 )
 
@@ -101,6 +100,9 @@ print("Starting teleop loop...")
 while True:
     t0 = time.perf_counter()
 
+    # Get robot observation
+    robot_obs = follower.get_observation()
+
     # Get teleop observation
     leader_joints_obs = leader.get_action()
 
@@ -108,7 +110,7 @@ while True:
     leader_ee_act = leader_to_ee(leader_joints_obs)
 
     # teleop EE -> robot joints
-    follower_joints_act = ee_to_follower_joints(leader_ee_act)
+    follower_joints_act = ee_to_follower_joints((leader_ee_act, robot_obs))
 
     # Send action to robot
     _ = follower.send_action(follower_joints_act)
