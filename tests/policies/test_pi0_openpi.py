@@ -10,10 +10,10 @@ pytest.importorskip("transformers")
 
 from lerobot.policies.factory import make_policy_config
 from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy
-from tests.utils import require_nightly_gpu
+from tests.utils import require_cuda
 
 
-@require_nightly_gpu
+@require_cuda
 def test_policy_instantiation():
     """Test basic policy instantiation."""
     print("Testing PI0OpenPI policy instantiation...")
@@ -67,7 +67,7 @@ def test_policy_instantiation():
         raise
 
 
-@require_nightly_gpu
+@require_cuda
 def test_config_creation():
     """Test policy config creation through factory."""
     print("\nTesting config creation through factory...")
