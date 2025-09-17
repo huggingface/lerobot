@@ -84,8 +84,8 @@ def test_make_diffusion_processor_basic():
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
-    assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
-    assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[0], UnnormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[1], DeviceProcessorStep)
 
 
 def test_diffusion_processor_with_images():

@@ -108,8 +108,8 @@ def test_make_pi0_processor_basic():
 
     # Check steps in postprocessor
     assert len(postprocessor.steps) == 2
-    assert isinstance(postprocessor.steps[0], DeviceProcessorStep)
-    assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[0], UnnormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[1], DeviceProcessorStep)
 
 
 def test_pi0_newline_processor_single_task():

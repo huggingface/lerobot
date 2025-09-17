@@ -146,10 +146,10 @@ def make_pi0_pre_post_processors(
     ]
 
     output_steps: list[ProcessorStep] = [
-        DeviceProcessorStep(device="cpu"),
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
+        DeviceProcessorStep(device="cpu"),
     ]
 
     return (
