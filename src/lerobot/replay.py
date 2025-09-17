@@ -54,6 +54,7 @@ from lerobot.robots import (  # noqa: F401
     bi_so100_follower,
     hope_jr,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
     reachy2,
     so100_follower,
