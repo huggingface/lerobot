@@ -21,6 +21,12 @@
     title: Use Async Inference
   title: "Tutorials"
 - sections:
+  - local: lerobot-dataset-v3
+    title: Using LeRobotDataset
+  - local: porting_datasets_v3
+    title: Porting Large Datasets
+  title: "Datasets"
+- sections:
   - local: smolvla
     title: Finetune SmolVLA
   title: "Policies"

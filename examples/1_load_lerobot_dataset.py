@@ -92,11 +92,11 @@ print(dataset.hf_dataset)
 # LeRobot datasets also subclasses PyTorch datasets so you can do everything you know and love from working
 # with the latter, like iterating through the dataset.
 # The __getitem__ iterates over the frames of the dataset. Since our datasets are also structured by
-# episodes, you can access the frame indices of any episode using the episode_data_index. Here, we access
+# episodes, you can access the frame indices of any episode using dataset.meta.episodes. Here, we access
 # frame indices associated to the first episode:
 episode_index = 0
-from_idx = dataset.episode_data_index["from"][episode_index].item()
-to_idx = dataset.episode_data_index["to"][episode_index].item()
+from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
+to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
 
 # Then we grab all the image frames from the first camera:
 camera_key = dataset.meta.camera_keys[0]
