@@ -51,7 +51,7 @@ class OpenCVCameraConfig(CameraConfig):
         - Only 3-channel color output (RGB/BGR) is currently supported.
     """
 
-    index_or_path: int | Path
+    index_or_path: int | str | Path
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
