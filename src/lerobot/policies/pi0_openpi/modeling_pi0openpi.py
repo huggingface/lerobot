@@ -1162,6 +1162,9 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
             batch_size = batch[next(iter(batch.keys()))].shape[0]
             tasks = ["Pick up the object"] * batch_size
 
+        # PaliGemma prompt has to end with a new line
+        tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
+
         # Tokenize with max_length padding to match OpenPI's expected format
         tokenized = self.tokenizer(
             tasks,
