@@ -1754,8 +1754,9 @@ def test_from_pretrained_nonexistent_path():
 
     # Test with a local directory that exists but has no config files
     with tempfile.TemporaryDirectory() as tmp_dir:
-        # Since the directory exists but has no config, it will try Hub and fail
-        with pytest.raises(FileNotFoundError):
+        # Since the directory exists but has no config, it will raise RuntimeError
+        # (not try Hub anymore with the new migration detection logic)
+        with pytest.raises(RuntimeError):
             DataProcessorPipeline.from_pretrained(tmp_dir)
 
 
