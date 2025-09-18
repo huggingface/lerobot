@@ -22,7 +22,7 @@ pip install -e ".[hilserl]"
 
 ## Teleoperate and Record a Dataset
 
-To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_gym_hil_il.json).
+To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file can be found [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/sim_il/env_config.json).
 
 To teleoperate and collect a dataset, we need to modify this config file. Here's an example configuration for imitation learning data collection:
 
@@ -165,7 +165,7 @@ huggingface-cli upload ${HF_USER}/il_sim_test${CKPT} \
 
 ## Evaluate your policy in Sim
 
-To evaluate your policy we have to use a configuration file. An example can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/eval_config_gym_hil.json).
+To evaluate your policy we have to use a configuration file. An example can be found [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/sim_il/eval_config.json).
 
 Here's an example evaluation configuration:
 

@@ -36,7 +36,10 @@ from .factory import (
     make_default_robot_observation_processor,
     make_default_teleop_action_processor,
 )
-from .gym_action_processor import Numpy2TorchActionProcessorStep, Torch2NumpyActionProcessorStep
+from .gym_action_processor import (
+    Numpy2TorchActionProcessorStep,
+    Torch2NumpyActionProcessorStep,
+)
 from .hil_processor import (
     AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfoStep,
@@ -66,6 +69,10 @@ from .pipeline import (
     RobotActionProcessorStep,
     RobotProcessorPipeline,
     TruncatedProcessorStep,
+)
+from .policy_robot_bridge import (
+    PolicyActionToRobotActionProcessorStep,
+    RobotActionToPolicyActionProcessorStep,
 )
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import TokenizerProcessorStep
@@ -116,6 +123,8 @@ __all__ = [
     "RobotProcessorPipeline",
     "TokenizerProcessorStep",
     "Torch2NumpyActionProcessorStep",
+    "RobotActionToPolicyActionProcessorStep",
+    "PolicyActionToRobotActionProcessorStep",
     "transition_to_batch",
     "TransitionKey",
     "TruncatedProcessorStep",

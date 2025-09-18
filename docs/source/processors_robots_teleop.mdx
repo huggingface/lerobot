@@ -34,7 +34,6 @@ Below is an example of the three pipelines that we use in the phone to SO-100 fo
 phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, RobotAction]( # teleop -> dataset action
     steps=[
         MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
-        AddRobotObservationAsComplimentaryData(robot=robot),
         EEReferenceAndDelta(
             kinematics=kinematics_solver, end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5}, motor_names=list(robot.bus.motors.keys()),
         ),
