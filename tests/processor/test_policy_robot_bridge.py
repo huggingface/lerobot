@@ -341,7 +341,10 @@ def test_save_and_load_robot_to_policy():
 
         # Load pipeline
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            "testrobottopolicy.json",
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         assert loaded_pipeline.name == "TestRobotToPolicy"
@@ -370,7 +373,10 @@ def test_save_and_load_policy_to_robot():
 
         # Load pipeline
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            "testpolicytorobot.json",
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         loaded_processor = loaded_pipeline.steps[0]
