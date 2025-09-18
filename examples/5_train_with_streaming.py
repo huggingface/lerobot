@@ -52,7 +52,7 @@ def main():
     log_freq = 1
 
     dataset_id = (
-        "aractingi/droid_1.0.1"  # 26M frames! Would require 4TB of disk space if installed locally (:
+        "lerobot/droid_1.0.1"  # 26M frames! Would require 4TB of disk space if installed locally (:
     )
     dataset_metadata = LeRobotDatasetMetadata(dataset_id)
     features = dataset_to_policy_features(dataset_metadata.features)
