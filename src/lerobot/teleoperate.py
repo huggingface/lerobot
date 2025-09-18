@@ -99,8 +99,14 @@ class TeleoperateConfig:
     display_data: bool = False
     show_currents: bool = False
 
+
 def teleop_loop(
-    teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, show_currents: bool = False, duration: float | None = None
+    teleop: Teleoperator,
+    robot: Robot,
+    fps: int,
+    display_data: bool = False,
+    show_currents: bool = False,
+    duration: float | None = None,
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
@@ -121,7 +127,7 @@ def teleop_loop(
         print(f"{'NAME':<{display_len}} | {'NORM':>7}")
         for motor, value in action.items():
             print(f"{motor:<{display_len}} | {value:>7.2f}")
-        
+
         if show_currents:
             print("\n" + "-" * (display_len + 10))
             print(f"{'MOTOR':<{display_len}} | {'CURRENT':>7}")
@@ -153,7 +159,14 @@ def teleoperate(cfg: TeleoperateConfig):
     robot.connect()
 
     try:
-        teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, show_currents=cfg.show_currents, duration=cfg.teleop_time_s)
+        teleop_loop(
+            teleop,
+            robot,
+            cfg.fps,
+            display_data=cfg.display_data,
+            show_currents=cfg.show_currents,
+            duration=cfg.teleop_time_s,
+        )
     except KeyboardInterrupt:
         pass
     finally:
