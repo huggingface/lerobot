@@ -21,8 +21,14 @@ OBS_ENV_STATE = "observation.environment_state"
 OBS_STATE = "observation.state"
 OBS_IMAGE = "observation.image"
 OBS_IMAGES = "observation.images"
+OBS_LANGUAGE = "observation.language"
 ACTION = "action"
 REWARD = "next.reward"
+TRUNCATED = "next.truncated"
+DONE = "next.done"
+
+OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
+OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
 
 ROBOTS = "robots"
 ROBOT_TYPE = "robot_type"
@@ -38,6 +44,9 @@ TRAINING_STEP = "training_step.json"
 OPTIMIZER_STATE = "optimizer_state.safetensors"
 OPTIMIZER_PARAM_GROUPS = "optimizer_param_groups.json"
 SCHEDULER_STATE = "scheduler_state.json"
+
+POLICY_PREPROCESSOR_DEFAULT_NAME = "policy_preprocessor"
+POLICY_POSTPROCESSOR_DEFAULT_NAME = "policy_postprocessor"
 
 if "LEROBOT_HOME" in os.environ:
     raise ValueError(

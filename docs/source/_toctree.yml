@@ -30,9 +30,18 @@
   - local: smolvla
     title: Finetune SmolVLA
   title: "Policies"
+
 - sections:
-  - local: hope_jr
-    title: Hope Jr
+  - local: introduction_processors
+    title: Introduction to Robot Processors
+  - local: debug_processor_pipeline
+    title: Debug your processor pipeline
+  - local: implement_your_own_processor
+    title: Implement your own processor
+  - local: processors_robots_teleop
+    title: Processors for Robots and Teleoperators
+  title: "Robot Processors"
+- sections:
   - local: so101
     title: SO-101
   - local: so100
@@ -41,9 +50,15 @@
     title: Koch v1.1
   - local: lekiwi
     title: LeKiwi
+  - local: hope_jr
+    title: Hope Jr
   - local: reachy2
     title: Reachy 2
   title: "Robots"
+- sections:
+  - local: phone_teleop
+    title: Phone
+  title: "Teleoperators"
 - sections:
   - local: notebooks
     title: Notebooks
