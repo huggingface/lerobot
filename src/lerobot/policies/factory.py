@@ -26,6 +26,7 @@ from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.eo1.configuration_eo1 import EO1Config
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -74,6 +75,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "eo1":
+        from lerobot.policies.eo1.modeling_eo1 import EO1Policy
+
+        return EO1Policy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -97,6 +102,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SmolVLAConfig(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
+    elif policy_type == "eo1":
+        return EO1Config(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
