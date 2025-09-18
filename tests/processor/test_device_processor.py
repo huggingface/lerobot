@@ -324,7 +324,9 @@ def test_save_and_load_pretrained():
         robot_processor.save_pretrained(tmpdir)
 
         # Load
-        loaded_processor = DataProcessorPipeline.from_pretrained(tmpdir)
+        loaded_processor = DataProcessorPipeline.from_pretrained(
+            tmpdir, config_filename="device_test_processor.json"
+        )
 
         assert len(loaded_processor.steps) == 1
         loaded_device_processor = loaded_processor.steps[0]

@@ -425,7 +425,10 @@ def test_save_and_load_pretrained_with_tokenizer_name(mock_auto_tokenizer):
 
         # Load processor - tokenizer will be recreated from saved config
         loaded_processor = DataProcessorPipeline.from_pretrained(
-            temp_dir, to_transition=identity_transition, to_output=identity_transition
+            temp_dir,
+            config_filename="dataprocessorpipeline.json",
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         # Test that loaded processor works
@@ -461,6 +464,7 @@ def test_save_and_load_pretrained_with_tokenizer_object():
         # Load processor with tokenizer override (since tokenizer object wasn't saved)
         loaded_processor = DataProcessorPipeline.from_pretrained(
             temp_dir,
+            config_filename="dataprocessorpipeline.json",
             overrides={"tokenizer_processor": {"tokenizer": mock_tokenizer}},
             to_transition=identity_transition,
             to_output=identity_transition,

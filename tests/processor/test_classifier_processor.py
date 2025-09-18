@@ -250,7 +250,9 @@ def test_classifier_processor_save_and_load():
         preprocessor.save_pretrained(tmpdir)
 
         # Load preprocessor
-        loaded_preprocessor = DataProcessorPipeline.from_pretrained(tmpdir)
+        loaded_preprocessor = DataProcessorPipeline.from_pretrained(
+            tmpdir, config_filename="classifier_preprocessor.json"
+        )
 
         # Test that loaded processor works
         observation = {

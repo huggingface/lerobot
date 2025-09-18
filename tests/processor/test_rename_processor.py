@@ -232,7 +232,10 @@ def test_save_and_load_pretrained():
 
         # Load pipeline
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            config_filename="testrenameprocessorstep.json",
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         assert loaded_pipeline.name == "TestRenameProcessorStep"
@@ -293,7 +296,9 @@ def test_registry_based_save_load():
         assert "class" not in config["steps"][0]  # Should use registry, not module path
 
         # Load should work
-        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="dataprocessorpipeline.json"
+        )
         loaded_processor = loaded_pipeline.steps[0]
         assert isinstance(loaded_processor, RenameObservationsProcessorStep)
         assert loaded_processor.rename_map == {"key1": "renamed_key1"}

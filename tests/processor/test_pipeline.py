@@ -543,7 +543,7 @@ def test_save_and_load_pretrained():
         assert config["steps"][1]["config"]["counter"] == 10
 
         # Load pipeline
-        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="testpipeline.json")
 
         assert loaded_pipeline.name == "TestPipeline"
         assert len(loaded_pipeline) == 2
@@ -571,7 +571,9 @@ def test_step_without_optional_methods():
     # Save/load should work even without optional methods
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
-        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="dataprocessorpipeline.json"
+        )
         assert len(loaded_pipeline) == 1
 
 
@@ -600,7 +602,9 @@ def test_mixed_json_and_tensor_state():
         assert state_path.exists()
 
         # Load and verify
-        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="dataprocessorpipeline.json"
+        )
         loaded_step = loaded_pipeline.steps[0]
 
         # Check JSON attributes were restored
@@ -888,7 +892,11 @@ def test_from_pretrained_with_overrides():
         }
 
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides=overrides, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            config_filename="testoverrides.json",
+            overrides=overrides,
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         # Verify the pipeline was loaded correctly
@@ -926,7 +934,11 @@ def test_from_pretrained_with_partial_overrides():
         # The current implementation applies overrides to ALL steps with the same class name
         # Both steps will get the override
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides=overrides, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides=overrides,
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         transition = create_transition(reward=1.0)
@@ -950,7 +962,9 @@ def test_from_pretrained_invalid_override_key():
         overrides = {"NonExistentStep": {"param": "value"}}
 
         with pytest.raises(KeyError, match="Override keys.*do not match any step"):
-            DataProcessorPipeline.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
 
 def test_from_pretrained_multiple_invalid_override_keys():
@@ -965,7 +979,9 @@ def test_from_pretrained_multiple_invalid_override_keys():
         overrides = {"NonExistentStep1": {"param": "value1"}, "NonExistentStep2": {"param": "value2"}}
 
         with pytest.raises(KeyError) as exc_info:
-            DataProcessorPipeline.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
         error_msg = str(exc_info.value)
         assert "NonExistentStep1" in error_msg
@@ -985,7 +1001,11 @@ def test_from_pretrained_registered_step_override():
         overrides = {"registered_mock_step": {"value": 999, "device": "cuda"}}
 
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides=overrides, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides=overrides,
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         # Test that overrides were applied
@@ -1015,7 +1035,11 @@ def test_from_pretrained_mixed_registered_and_unregistered():
         }
 
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides=overrides, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides=overrides,
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         # Test both steps
@@ -1038,7 +1062,10 @@ def test_from_pretrained_no_overrides():
 
         # Load without overrides
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         assert len(loaded_pipeline) == 1
@@ -1060,7 +1087,11 @@ def test_from_pretrained_empty_overrides():
 
         # Load with empty overrides
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides={}, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides={},
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         assert len(loaded_pipeline) == 1
@@ -1088,7 +1119,9 @@ def test_from_pretrained_override_instantiation_error():
         }
 
         with pytest.raises(ValueError, match="Failed to instantiate processor step"):
-            DataProcessorPipeline.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
 
 def test_from_pretrained_with_state_and_overrides():
@@ -1112,7 +1145,9 @@ def test_from_pretrained_with_state_and_overrides():
             }
         }
 
-        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+        )
         loaded_step = loaded_pipeline.steps[0]
 
         # Check that config overrides were applied
@@ -1140,7 +1175,9 @@ def test_from_pretrained_override_error_messages():
         overrides = {"WrongStepName": {"param": "value"}}
 
         with pytest.raises(KeyError) as exc_info:
-            DataProcessorPipeline.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
         error_msg = str(exc_info.value)
         assert "WrongStepName" in error_msg
@@ -1325,21 +1362,21 @@ def test_multiple_processors_same_directory():
         assert len(loaded_post) == 1
 
 
-def test_auto_detect_single_config():
-    """Test automatic config detection when there's only one JSON file."""
+def test_explicit_config_filename_loading():
+    """Test explicit config filename loading (no more auto-detection)."""
     step = MockStepWithTensorState()
     pipeline = DataProcessorPipeline([step], name="SingleConfig")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
 
-        # Load without specifying config_filename
-        loaded = DataProcessorPipeline.from_pretrained(tmp_dir)
+        # Load with explicit config_filename (now required)
+        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="singleconfig.json")
         assert loaded.name == "SingleConfig"
 
 
-def test_error_multiple_configs_no_filename():
-    """Test error when multiple configs exist and no filename specified."""
+def test_explicit_config_selection_with_multiple_configs():
+    """Test explicit config selection when multiple configs exist."""
     proc1 = DataProcessorPipeline([MockStep()], name="processor1")
     proc2 = DataProcessorPipeline([MockStep()], name="processor2")
 
@@ -1347,9 +1384,12 @@ def test_error_multiple_configs_no_filename():
         proc1.save_pretrained(tmp_dir)
         proc2.save_pretrained(tmp_dir)
 
-        # Should raise error
-        with pytest.raises(ValueError, match="Multiple .json files found"):
-            DataProcessorPipeline.from_pretrained(tmp_dir)
+        # Can load specific configs explicitly
+        loaded1 = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor1.json")
+        loaded2 = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor2.json")
+
+        assert loaded1.name == "processor1"
+        assert loaded2.name == "processor2"
 
 
 def test_state_file_naming_with_indices():
@@ -1483,6 +1523,7 @@ def test_override_with_nested_config():
             # Load with nested override
             loaded = DataProcessorPipeline.from_pretrained(
                 tmp_dir,
+                config_filename="dataprocessorpipeline.json",
                 overrides={"complex_config_step": {"nested_config": {"level1": {"level2": "overridden"}}}},
                 to_transition=identity_transition,
                 to_output=identity_transition,
@@ -1507,6 +1548,7 @@ def test_override_preserves_defaults():
         # Override only one parameter
         loaded = DataProcessorPipeline.from_pretrained(
             tmp_dir,
+            config_filename="dataprocessorpipeline.json",
             overrides={
                 "MockStepWithNonSerializableParam": {
                     "multiplier": 5.0  # Only override multiplier
@@ -1536,7 +1578,9 @@ def test_override_type_validation():
         }
 
         with pytest.raises(ValueError, match="Failed to instantiate"):
-            DataProcessorPipeline.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
 
 def test_override_with_callables():
@@ -1587,6 +1631,7 @@ def test_override_with_callables():
             # Load with callable override
             loaded = DataProcessorPipeline.from_pretrained(
                 tmp_dir,
+                config_filename="dataprocessorpipeline.json",
                 overrides={"callable_step": {"transform_fn": double_values}},
                 to_transition=identity_transition,
                 to_output=identity_transition,
@@ -1611,7 +1656,9 @@ def test_override_multiple_same_class_warning():
 
         # Override affects all instances of the class
         loaded = DataProcessorPipeline.from_pretrained(
-            tmp_dir, overrides={"MockStepWithNonSerializableParam": {"multiplier": 10.0}}
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides={"MockStepWithNonSerializableParam": {"multiplier": 10.0}},
         )
 
         # Both steps get the same override
@@ -1716,7 +1763,9 @@ def test_override_with_device_strings():
             # Override device
             if torch.cuda.is_available():
                 loaded = DataProcessorPipeline.from_pretrained(
-                    tmp_dir, overrides={"device_aware_step": {"device": "cuda:0"}}
+                    tmp_dir,
+                    config_filename="dataprocessorpipeline.json",
+                    overrides={"device_aware_step": {"device": "cuda:0"}},
                 )
 
                 loaded_step = loaded.steps[0]
@@ -1734,19 +1783,13 @@ def test_from_pretrained_nonexistent_path():
 
     # Test with an invalid local path - should raise FileNotFoundError
     with pytest.raises(FileNotFoundError):
-        DataProcessorPipeline.from_pretrained("/path/that/does/not/exist")
+        DataProcessorPipeline.from_pretrained("/path/that/does/not/exist", config_filename="processor.json")
 
     # Test with a path that doesn't exist as a directory
     with pytest.raises(FileNotFoundError):
-        DataProcessorPipeline.from_pretrained("user/repo/extra/path")
+        DataProcessorPipeline.from_pretrained("user/repo/extra/path", config_filename="processor.json")
 
-    # Test with a Hub repo without specifying config_filename (should raise ValueError)
-    with pytest.raises(
-        ValueError, match="When loading from Hugging Face Hub, 'config_filename' must be specified"
-    ):
-        DataProcessorPipeline.from_pretrained("nonexistent-user/nonexistent-repo")
-
-    # Test with a non-existent Hub repo when config_filename is provided
+    # Test with a non-existent Hub repo
     with pytest.raises((FileNotFoundError, HfHubHTTPError)):
         DataProcessorPipeline.from_pretrained(
             "nonexistent-user/nonexistent-repo", config_filename="processor.json"
@@ -1754,9 +1797,9 @@ def test_from_pretrained_nonexistent_path():
 
     # Test with a local directory that exists but has no config files
     with tempfile.TemporaryDirectory() as tmp_dir:
-        # Since the directory exists but has no config, it will try Hub and fail
+        # Since the directory exists but has no config, it will raise FileNotFoundError
         with pytest.raises(FileNotFoundError):
-            DataProcessorPipeline.from_pretrained(tmp_dir)
+            DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor.json")
 
 
 def test_save_load_with_custom_converter_functions():
@@ -1793,7 +1836,7 @@ def test_save_load_with_custom_converter_functions():
         pipeline.save_pretrained(tmp_dir)
 
         # Load - should use default converters
-        loaded = DataProcessorPipeline.from_pretrained(tmp_dir)
+        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="dataprocessorpipeline.json")
 
         # Verify it uses default converters by checking with standard batch format
         batch = {

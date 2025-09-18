@@ -237,6 +237,19 @@ class ProcessorKwargs(TypedDict, total=False):
     after_step_hooks: list[Callable[[int, EnvTransition], None]] | None
 
 
+class ProcessorMigrationError(Exception):
+    """Raised when a model needs migration to the processor format"""
+
+    def __init__(self, model_path: str | Path, migration_command: str, original_error: str):
+        self.model_path = model_path
+        self.migration_command = migration_command
+        self.original_error = original_error
+        super().__init__(
+            f"Model '{model_path}' requires migration to processor format. "
+            f"Run: {migration_command}\n\nOriginal error: {original_error}"
+        )
+
+
 @dataclass
 class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
     """A sequential pipeline for processing data, integrated with the Hugging Face Hub.
@@ -439,6 +452,7 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: str | Path,
+        config_filename: str,
         *,
         force_download: bool = False,
         resume_download: bool | None = None,
@@ -447,24 +461,74 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        config_filename: str | None = None,
         overrides: dict[str, Any] | None = None,
         to_transition: Callable[[TInput], EnvTransition] | None = None,
         to_output: Callable[[EnvTransition], TOutput] | None = None,
         **kwargs,
     ) -> DataProcessorPipeline[TInput, TOutput]:
-        """Loads a pipeline from a local directory or a Hugging Face Hub repository.
+        """Loads a pipeline from a local directory, single file, or Hugging Face Hub repository.
 
-        This method reconstructs a `DataProcessorPipeline` by:
-        1. Loading the main JSON configuration file.
-        2. Iterating through the steps defined in the config.
-        3. Dynamically importing or looking up each step's class.
-        4. Instantiating each step with its saved configuration, potentially with overrides.
-        5. Loading the step's state from its `.safetensors` file, if it exists.
+        This method implements a simplified loading pipeline with intelligent migration detection:
+
+        **Simplified Loading Strategy**:
+        1. **Config Loading** (_load_config):
+           - **Directory**: Load specified config_filename from directory
+           - **Single file**: Load file directly (config_filename ignored)
+           - **Hub repository**: Download specified config_filename from Hub
+
+        2. **Config Validation** (_validate_loaded_config):
+           - Format validation: Ensure config is valid processor format
+           - Migration detection: Guide users to migrate old LeRobot models
+           - Clear errors: Provide actionable error messages
+
+        3. **Step Construction** (_build_steps_with_overrides):
+           - Class resolution: Registry lookup or dynamic imports
+           - Override merging: User parameters override saved config
+           - State loading: Load .safetensors files for stateful steps
+
+        4. **Override Validation** (_validate_overrides_used):
+           - Ensure all user overrides were applied (catch typos)
+           - Provide helpful error messages with available keys
+
+        **Migration Detection**:
+        - **Smart detection**: Analyzes JSON files to detect old LeRobot models
+        - **Precise targeting**: Avoids false positives on other HuggingFace models
+        - **Clear guidance**: Provides exact migration command to run
+        - **Error mode**: Always raises ProcessorMigrationError for clear user action
+
+        **Loading Examples**:
+        ```python
+        # Directory loading
+        pipeline = DataProcessorPipeline.from_pretrained("/models/my_model", config_filename="processor.json")
+
+        # Single file loading
+        pipeline = DataProcessorPipeline.from_pretrained(
+            "/models/my_model/processor.json", config_filename="processor.json"
+        )
+
+        # Hub loading
+        pipeline = DataProcessorPipeline.from_pretrained("user/repo", config_filename="processor.json")
+
+        # Multiple configs (preprocessor/postprocessor)
+        preprocessor = DataProcessorPipeline.from_pretrained(
+            "model", config_filename="policy_preprocessor.json"
+        )
+        postprocessor = DataProcessorPipeline.from_pretrained(
+            "model", config_filename="policy_postprocessor.json"
+        )
+        ```
+
+        **Override System**:
+        - **Key matching**: Use registry names or class names as override keys
+        - **Config merging**: User overrides take precedence over saved config
+        - **Validation**: Ensure all override keys match actual steps (catch typos)
+        - **Example**: overrides={"NormalizeStep": {"device": "cuda"}}
 
         Args:
-            pretrained_model_name_or_path: The identifier of the repository on the Hugging Face Hub
-                or a path to a local directory.
+            pretrained_model_name_or_path: The identifier of the repository on the Hugging Face Hub,
+                a path to a local directory, or a path to a single config file.
+            config_filename: The name of the pipeline's JSON configuration file. Always required
+                to prevent ambiguity when multiple configs exist (e.g., preprocessor vs postprocessor).
             force_download: Whether to force (re)downloading the files.
             resume_download: Whether to resume a previously interrupted download.
             proxies: A dictionary of proxy servers to use.
@@ -472,9 +536,6 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
             cache_dir: The path to a specific cache folder to store downloaded files.
             local_files_only: If True, avoid downloading files from the Hub.
             revision: The specific model version to use (e.g., a branch name, tag name, or commit id).
-            config_filename: The name of the pipeline's JSON configuration file. If not provided,
-                it's auto-detected in local directories (if only one .json file exists). This parameter
-                is mandatory when loading from Hugging Face Hub repositories.
             overrides: A dictionary to override the configuration of specific steps. Keys should
                 match the step's class name or registry name.
             to_transition: A custom function to convert input data to `EnvTransition`.
@@ -489,179 +550,666 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
             ValueError: If configuration is ambiguous or instantiation fails.
             ImportError: If a step's class cannot be imported.
             KeyError: If an override key doesn't match any step in the pipeline.
+            ProcessorMigrationError: If the model requires migration to processor format.
         """
         model_id = str(pretrained_model_name_or_path)
-        loaded_config: dict[str, Any] | None = None
-        base_path: Path | None = None
+        hub_download_kwargs = {
+            "force_download": force_download,
+            "resume_download": resume_download,
+            "proxies": proxies,
+            "token": token,
+            "cache_dir": cache_dir,
+            "local_files_only": local_files_only,
+            "revision": revision,
+        }
 
-        # Standard pattern: try local directory first
-        if Path(model_id).is_dir():
-            base_path = Path(model_id)
+        # 1. Load configuration using simplified 3-way logic
+        loaded_config, base_path = cls._load_config(model_id, config_filename, hub_download_kwargs)
 
-            # Handle config filename
-            if config_filename is None:
-                json_files = list(base_path.glob("*.json"))
-                if len(json_files) == 0:
-                    # No config files found locally, will try Hub next
-                    pass
-                elif len(json_files) == 1:
-                    config_filename = json_files[0].name
-                else:
-                    raise ValueError(
-                        f"Multiple .json files found in {model_id}: {[f.name for f in json_files]}. "
-                        f"Please specify which one to load using the config_filename parameter."
-                    )
+        # 2. Validate configuration and handle migration
+        cls._validate_loaded_config(model_id, loaded_config, config_filename)
 
-            # Try to load config from local directory
-            if config_filename and (base_path / config_filename).exists():
-                with open(base_path / config_filename) as f:
-                    loaded_config = json.load(f)
+        # 3. Build steps with overrides
+        steps, validated_overrides = cls._build_steps_with_overrides(
+            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs
+        )
 
-        # If not found locally, try Hub
-        if loaded_config is None:
-            # Check if this looks like a local path that doesn't exist
-            # Hub repo IDs have format "user/repo" with exactly one slash
-            # Local paths typically have multiple slashes, backslashes, or start with ./ or ../
-            looks_like_local_path = (
-                model_id.count("/") > 1  # Multiple slashes suggest local path
-                or "\\" in model_id  # Backslashes are only in local paths
-                or Path(model_id).is_absolute()  # Absolute paths are local
-                or model_id.startswith("./")
-                or model_id.startswith("../")  # Relative path indicators
-            )
+        # 4. Validate that all overrides were used
+        cls._validate_overrides_used(validated_overrides, loaded_config)
 
-            if looks_like_local_path:
-                # This appears to be a local path that doesn't exist
-                raise FileNotFoundError(f"Local path '{model_id}' does not exist")
-            # For Hub repositories, config_filename is mandatory
-            if config_filename is None:
-                raise ValueError(
-                    f"When loading from Hugging Face Hub, 'config_filename' must be specified. "
-                    f"Example: DataProcessorPipeline.from_pretrained('{model_id}', config_filename='processor.json')"
+        # 5. Construct and return the final pipeline instance
+        return cls(
+            steps=steps,
+            name=loaded_config.get("name", "DataProcessorPipeline"),
+            to_transition=to_transition or cast(Callable[[TInput], EnvTransition], batch_to_transition),
+            to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
+        )
+
+    @classmethod
+    def _load_config(
+        cls,
+        model_id: str,
+        config_filename: str,
+        hub_download_kwargs: dict[str, Any],
+    ) -> tuple[dict[str, Any], Path]:
+        """Load configuration from local file or Hugging Face Hub.
+
+        This method implements a super-simplified 3-way loading strategy:
+
+        1. **Local directory**: Load config_filename from directory
+           - Example: model_id="/models/my_model", config_filename="processor.json"
+           - Loads: "/models/my_model/processor.json"
+
+        2. **Single file**: Load file directly (ignore config_filename)
+           - Example: model_id="/models/my_model/processor.json"
+           - Loads: "/models/my_model/processor.json" (config_filename ignored)
+
+        3. **Hub repository**: Download config_filename from Hub
+           - Example: model_id="user/repo", config_filename="processor.json"
+           - Downloads and loads: config_filename from Hub repo
+
+        **Benefits of Explicit config_filename**:
+        - No auto-detection complexity or edge cases
+        - No risk of loading wrong config (preprocessor vs postprocessor)
+        - Consistent behavior across local and Hub usage
+        - Clear, predictable errors
+
+        Args:
+            model_id: The model identifier (Hub repo ID, local directory, or file path)
+            config_filename: The explicit config filename to load (always required)
+            hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
+
+        Returns:
+            Tuple of (loaded_config, base_path)
+            - loaded_config: Parsed JSON config dict (always loaded, never None)
+            - base_path: Directory containing config file (for state file resolution)
+
+        Raises:
+            FileNotFoundError: If config file cannot be found locally or on Hub
+        """
+        model_path = Path(model_id)
+
+        if model_path.is_dir():
+            # Directory: load specified config from directory
+            config_path = model_path / config_filename
+            if not config_path.exists():
+                # Check for migration before giving clear error
+                if cls._should_suggest_migration(model_path):
+                    cls._suggest_processor_migration(model_id, f"Config file '{config_filename}' not found")
+                raise FileNotFoundError(
+                    f"Config file '{config_filename}' not found in directory '{model_id}'"
                 )
 
+            with open(config_path) as f:
+                return json.load(f), model_path
+
+        elif model_path.is_file():
+            # File: load file directly (config_filename is ignored for single files)
+            with open(model_path) as f:
+                return json.load(f), model_path.parent
+
+        else:
+            # Hub: download specified config
             try:
-                # Download the configuration file from the Hub
                 config_path = hf_hub_download(
                     repo_id=model_id,
                     filename=config_filename,
                     repo_type="model",
-                    force_download=force_download,
-                    resume_download=resume_download,
-                    proxies=proxies,
-                    token=token,
-                    cache_dir=cache_dir,
-                    local_files_only=local_files_only,
-                    revision=revision,
+                    **hub_download_kwargs,
                 )
 
                 with open(config_path) as f:
-                    loaded_config = json.load(f)
-
-                # The base path for other files (like state tensors) is the directory of the config file
-                base_path = Path(config_path).parent
+                    return json.load(f), Path(config_path).parent
 
             except Exception as e:
                 raise FileNotFoundError(
-                    f"Could not find {config_filename} on the HuggingFace Hub at {model_id}"
+                    f"Could not find '{config_filename}' on the HuggingFace Hub at '{model_id}'"
                 ) from e
 
-        # At this point, loaded_config must be loaded successfully
-        if loaded_config is None:
-            raise RuntimeError("Failed to load configuration from local directory or Hub")
+    @classmethod
+    def _validate_loaded_config(
+        cls, model_id: str, loaded_config: dict[str, Any], config_filename: str
+    ) -> None:
+        """Validate that a config was loaded and is a valid processor config.
 
-        if overrides is None:
-            overrides = {}
+        This method validates processor config format with intelligent migration detection:
 
+        **Config Format Validation**:
+        - Use _is_processor_config() to validate structure
+          - Must have "steps" field with list of step configurations
+          - Each step needs "class" or "registry_name"
+        - If validation fails AND local directory: Check for migration need
+        - If migration needed: Raise ProcessorMigrationError with command
+        - If no migration: Raise ValueError with helpful error message
+
+        **Migration Detection Logic**:
+        - Only triggered for local directories (not Hub repos)
+        - Analyzes all JSON files in directory to detect old LeRobot models
+        - Provides exact migration command with model path
+
+        Args:
+            model_id: The model identifier (used for migration detection)
+            loaded_config: The loaded config dictionary (guaranteed non-None)
+            config_filename: The config filename that was loaded (for error messages)
+
+        Raises:
+            ValueError: If config format is invalid
+            ProcessorMigrationError: If model needs migration to processor format
+        """
+        # Validate that this is actually a processor config
+        if not cls._is_processor_config(loaded_config):
+            if Path(model_id).is_dir() and cls._should_suggest_migration(Path(model_id)):
+                cls._suggest_processor_migration(
+                    model_id,
+                    f"Config file '{config_filename}' is not a valid processor configuration",
+                )
+            raise ValueError(
+                f"Config file '{config_filename}' is not a valid processor configuration. "
+                f"Expected a config with 'steps' field, but got: {list(loaded_config.keys())}"
+            )
+
+    @classmethod
+    def _build_steps_with_overrides(
+        cls,
+        loaded_config: dict[str, Any],
+        overrides: dict[str, Any],
+        model_id: str,
+        base_path: Path | None,
+        hub_download_kwargs: dict[str, Any],
+    ) -> tuple[list[ProcessorStep], set[str]]:
+        """Build all processor steps with overrides and state loading.
+
+        This method orchestrates the complete step construction pipeline:
+
+        **For each step in loaded_config["steps"]**:
+
+        1. **Class Resolution** (via _resolve_step_class):
+           - **If "registry_name" exists**: Look up in ProcessorStepRegistry
+             Example: {"registry_name": "normalize_step"} -> Get registered class
+           - **Else use "class" field**: Dynamic import from full module path
+             Example: {"class": "lerobot.processor.normalize.NormalizeStep"}
+           - **Result**: (step_class, step_key) where step_key is used for overrides
+
+        2. **Step Instantiation** (via _instantiate_step):
+           - **Merge configs**: saved_config + user_overrides
+           - **Override priority**: User overrides take precedence over saved config
+           - **Example**: saved={"mean": 0.0}, override={"mean": 1.0} -> final={"mean": 1.0}
+           - **Result**: Instantiated ProcessorStep object
+
+        3. **State Loading** (via _load_step_state):
+           - **If step has "state_file"**: Load tensor state from .safetensors
+           - **Local first**: Check base_path/state_file.safetensors
+           - **Hub fallback**: Download state file if not found locally
+           - **Optional**: Only load if step has load_state_dict method
+
+        4. **Override Tracking**:
+           - **Track used overrides**: Remove step_key from remaining set
+           - **Purpose**: Validate all user overrides were applied (detect typos)
+
+        **Error Handling**:
+        - Class resolution errors -> ImportError with helpful message
+        - Instantiation errors -> ValueError with config details
+        - State loading errors -> Propagated from load_state_dict
+
+        Args:
+            loaded_config: The loaded processor configuration (must have "steps" field)
+            overrides: User-provided parameter overrides (keyed by class/registry name)
+            model_id: The model identifier (needed for Hub state file downloads)
+            base_path: Local directory path for finding state files
+            hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
+
+        Returns:
+            Tuple of (instantiated_steps_list, unused_override_keys)
+            - instantiated_steps_list: List of ready-to-use ProcessorStep instances
+            - unused_override_keys: Override keys that didn't match any step (for validation)
+
+        Raises:
+            ImportError: If a step class cannot be imported or found in registry
+            ValueError: If a step cannot be instantiated with its configuration
+        """
+        steps: list[ProcessorStep] = []
         override_keys = set(overrides.keys())
 
-        steps: list[ProcessorStep] = []
         for step_entry in loaded_config["steps"]:
-            # Determine the step class, prioritizing the registry.
-            if "registry_name" in step_entry:
-                try:
-                    step_class = ProcessorStepRegistry.get(step_entry["registry_name"])
-                    step_key = step_entry["registry_name"]
-                except KeyError as e:
-                    raise ImportError(f"Failed to load processor step from registry. {str(e)}") from e
-            else:
-                # Fallback to dynamic import using the full class path.
-                full_class_path = step_entry["class"]
-                module_path, class_name = full_class_path.rsplit(".", 1)
+            # 1. Get step class and key
+            step_class, step_key = cls._resolve_step_class(step_entry)
 
-                try:
-                    module = importlib.import_module(module_path)
-                    step_class = getattr(module, class_name)
-                    step_key = class_name
-                except (ImportError, AttributeError) as e:
-                    raise ImportError(
-                        f"Failed to load processor step '{full_class_path}'. "
-                        f"Make sure the module '{module_path}' is installed and contains class '{class_name}'. "
-                        f"Consider registering the step using @ProcessorStepRegistry.register() for better portability. "
-                        f"Error: {str(e)}"
-                    ) from e
+            # 2. Instantiate step with overrides
+            step_instance = cls._instantiate_step(step_entry, step_class, step_key, overrides)
 
-            # Instantiate the step, merging saved config with user-provided overrides.
-            try:
-                saved_cfg = step_entry.get("config", {})
-                step_overrides = overrides.get(step_key, {})
-                merged_cfg = {**saved_cfg, **step_overrides}
-                step_instance: ProcessorStep = step_class(**merged_cfg)
+            # 3. Load step state if available
+            cls._load_step_state(step_instance, step_entry, model_id, base_path, hub_download_kwargs)
 
-                if step_key in override_keys:
-                    override_keys.discard(step_key)
-
-            except Exception as e:
-                step_name = step_entry.get("registry_name", step_entry.get("class", "Unknown"))
-                raise ValueError(
-                    f"Failed to instantiate processor step '{step_name}' with config: {step_entry.get('config', {})}. "
-                    f"Error: {str(e)}"
-                ) from e
-
-            # Load the step's state if a state file is specified.
-            if "state_file" in step_entry and hasattr(step_instance, "load_state_dict"):
-                # Check if state file exists locally first
-                if base_path and (base_path / step_entry["state_file"]).exists():
-                    state_path = str(base_path / step_entry["state_file"])
-                else:
-                    # Download the state file from the Hub.
-                    state_path = hf_hub_download(
-                        repo_id=model_id,
-                        filename=step_entry["state_file"],
-                        repo_type="model",
-                        force_download=force_download,
-                        resume_download=resume_download,
-                        proxies=proxies,
-                        token=token,
-                        cache_dir=cache_dir,
-                        local_files_only=local_files_only,
-                        revision=revision,
-                    )
-
-                step_instance.load_state_dict(load_file(state_path))
+            # 4. Track used overrides
+            if step_key in override_keys:
+                override_keys.discard(step_key)
 
             steps.append(step_instance)
 
-        # Check for any unused override keys, which likely indicates a typo by the user.
-        if override_keys:
-            available_keys = [
-                step.get("registry_name") or step["class"].rsplit(".", 1)[1]
-                for step in loaded_config["steps"]
-            ]
+        return steps, override_keys
 
-            raise KeyError(
-                f"Override keys {list(override_keys)} do not match any step in the saved configuration. "
-                f"Available step keys: {available_keys}. "
-                f"Make sure override keys match exact step class names or registry names."
+    @classmethod
+    def _resolve_step_class(cls, step_entry: dict[str, Any]) -> tuple[type[ProcessorStep], str]:
+        """Resolve step class from registry or import path.
+
+        This method implements a two-tier resolution strategy:
+
+        **Tier 1: Registry-based resolution** (preferred):
+        - **If "registry_name" in step_entry**: Look up in ProcessorStepRegistry
+          - **Advantage**: Faster, no imports needed, guaranteed compatibility
+          - **Example**: {"registry_name": "normalize_step"} -> Get pre-registered class
+          - **Error**: KeyError if registry_name not found -> Convert to ImportError
+
+        **Tier 2: Dynamic import fallback**:
+        - **Else use "class" field**: Full module.ClassName import path
+          - **Process**: Split "module.path.ClassName" into module + class parts
+          - **Import**: Use importlib.import_module() + getattr()
+          - **Example**: "lerobot.processor.normalize.NormalizeStep"
+            a. Import module: "lerobot.processor.normalize"
+            b. Get class: getattr(module, "NormalizeStep")
+          - **step_key**: Use class_name ("NormalizeStep") for overrides
+
+        **Override Key Strategy**:
+        - Registry steps: Use registry_name ("normalize_step")
+        - Import steps: Use class_name ("NormalizeStep")
+        - This allows users to override with: {"normalize_step": {...}} or {"NormalizeStep": {...}}
+
+        **Error Handling**:
+        - Registry KeyError -> ImportError with registry context
+        - Import/Attribute errors -> ImportError with helpful suggestions
+        - All errors include troubleshooting guidance
+
+        Args:
+            step_entry: The step configuration dictionary (must have "registry_name" or "class")
+
+        Returns:
+            Tuple of (step_class, step_key)
+            - step_class: The resolved ProcessorStep class (ready for instantiation)
+            - step_key: The key used for user overrides (registry_name or class_name)
+
+        Raises:
+            ImportError: If step class cannot be loaded from registry or import path
+        """
+        if "registry_name" in step_entry:
+            try:
+                step_class = ProcessorStepRegistry.get(step_entry["registry_name"])
+                return step_class, step_entry["registry_name"]
+            except KeyError as e:
+                raise ImportError(f"Failed to load processor step from registry. {str(e)}") from e
+        else:
+            # Fallback to dynamic import using the full class path
+            full_class_path = step_entry["class"]
+            module_path, class_name = full_class_path.rsplit(".", 1)
+
+            try:
+                module = importlib.import_module(module_path)
+                step_class = getattr(module, class_name)
+                return step_class, class_name
+            except (ImportError, AttributeError) as e:
+                raise ImportError(
+                    f"Failed to load processor step '{full_class_path}'. "
+                    f"Make sure the module '{module_path}' is installed and contains class '{class_name}'. "
+                    f"Consider registering the step using @ProcessorStepRegistry.register() for better portability. "
+                    f"Error: {str(e)}"
+                ) from e
+
+    @classmethod
+    def _instantiate_step(
+        cls,
+        step_entry: dict[str, Any],
+        step_class: type[ProcessorStep],
+        step_key: str,
+        overrides: dict[str, Any],
+    ) -> ProcessorStep:
+        """Instantiate a single processor step with config overrides.
+
+        This method handles the configuration merging and instantiation logic:
+
+        **Configuration Merging Strategy**:
+        1. **Extract saved config**: Get step_entry.get("config", {}) from saved pipeline
+           - Example: {"config": {"mean": 0.0, "std": 1.0}}
+        2. **Extract user overrides**: Get overrides.get(step_key, {}) for this step
+           - Example: overrides = {"NormalizeStep": {"mean": 2.0, "device": "cuda"}}
+        3. **Merge with priority**: {**saved_cfg, **step_overrides}
+           - **Override priority**: User values override saved values
+           - **Result**: {"mean": 2.0, "std": 1.0, "device": "cuda"}
+
+        **Instantiation Process**:
+        - **Call constructor**: step_class(**merged_cfg)
+        - **Example**: NormalizeStep(mean=2.0, std=1.0, device="cuda")
+
+        **Error Handling**:
+        - **Any exception during instantiation**: Convert to ValueError
+        - **Include context**: step name, attempted config, original error
+        - **Purpose**: Help users debug configuration issues
+        - **Common causes**:
+          a. Invalid parameter types (str instead of float)
+          b. Missing required parameters
+          c. Incompatible parameter combinations
+
+        Args:
+            step_entry: The step configuration from saved config (contains "config" dict)
+            step_class: The step class to instantiate (already resolved)
+            step_key: The key used for overrides ("registry_name" or class name)
+            overrides: User-provided parameter overrides (keyed by step_key)
+
+        Returns:
+            The instantiated processor step (ready for use)
+
+        Raises:
+            ValueError: If step cannot be instantiated, with detailed error context
+        """
+        try:
+            saved_cfg = step_entry.get("config", {})
+            step_overrides = overrides.get(step_key, {})
+            merged_cfg = {**saved_cfg, **step_overrides}
+            return step_class(**merged_cfg)
+        except Exception as e:
+            step_name = step_entry.get("registry_name", step_entry.get("class", "Unknown"))
+            raise ValueError(
+                f"Failed to instantiate processor step '{step_name}' with config: {step_entry.get('config', {})}. "
+                f"Error: {str(e)}"
+            ) from e
+
+    @classmethod
+    def _load_step_state(
+        cls,
+        step_instance: ProcessorStep,
+        step_entry: dict[str, Any],
+        model_id: str,
+        base_path: Path | None,
+        hub_download_kwargs: dict[str, Any],
+    ) -> None:
+        """Load state dictionary for a processor step if available.
+
+        This method implements conditional state loading with local/Hub fallback:
+
+        **Precondition Checks** (early return if not met):
+        1. **"state_file" in step_entry**: Step config specifies a state file
+           - **If missing**: Step has no saved state (e.g., stateless transforms)
+        2. **hasattr(step_instance, "load_state_dict")**: Step supports state loading
+           - **If missing**: Step doesn't implement state loading (rare)
+
+        **State File Resolution Strategy**:
+        1. **Local file priority**: Check base_path/state_filename exists
+           - **Advantage**: Faster, no network calls
+           - **Example**: "/models/my_model/normalize_step_0.safetensors"
+           - **Use case**: Loading from local saved model directory
+
+        2. **Hub download fallback**: Download state file from repository
+           - **When triggered**: Local file not found or base_path is None
+           - **Process**: Use hf_hub_download with same parameters as config
+           - **Example**: Download "normalize_step_0.safetensors" from "user/repo"
+           - **Result**: Downloaded to local cache, path returned
+
+        **State Loading Process**:
+        - **Load tensors**: Use safetensors.torch.load_file()
+        - **Apply to step**: Call step_instance.load_state_dict(tensor_dict)
+        - **In-place modification**: Updates step's internal tensor state
+
+        **Common state file examples**:
+        - "normalize_step_0.safetensors" - normalization statistics
+        - "custom_step_1.safetensors" - learned parameters
+        - "tokenizer_step_2.safetensors" - vocabulary embeddings
+
+        Args:
+            step_instance: The step instance to load state into (must have load_state_dict)
+            step_entry: The step configuration dictionary (may contain "state_file")
+            model_id: The model identifier (used for Hub downloads if needed)
+            base_path: Local directory path for finding state files (None for Hub-only)
+            hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
+
+        Note:
+            This method modifies step_instance in-place and returns None.
+            If state loading fails, exceptions from load_state_dict propagate.
+        """
+        if "state_file" not in step_entry or not hasattr(step_instance, "load_state_dict"):
+            return
+
+        state_filename = step_entry["state_file"]
+
+        # Try local file first
+        if base_path and (base_path / state_filename).exists():
+            state_path = str(base_path / state_filename)
+        else:
+            # Download from Hub
+            state_path = hf_hub_download(
+                repo_id=model_id,
+                filename=state_filename,
+                repo_type="model",
+                **hub_download_kwargs,
             )
 
-        # Construct and return the final pipeline instance.
-        return cls(
-            steps=steps,
-            name=loaded_config.get("name", "DataProcessorPipeline"),
-            to_transition=to_transition or batch_to_transition,
-            to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
+        step_instance.load_state_dict(load_file(state_path))
+
+    @classmethod
+    def _validate_overrides_used(
+        cls, remaining_override_keys: set[str], loaded_config: dict[str, Any]
+    ) -> None:
+        """Validate that all provided overrides were used.
+
+        This method ensures user overrides are valid to catch typos and configuration errors:
+
+        **Validation Logic**:
+        1. **If remaining_override_keys is empty**: All overrides were used -> Success
+           - **Early return**: No validation needed
+           - **Normal case**: User provided correct override keys
+
+        2. **If remaining_override_keys has entries**: Some overrides unused -> Error
+           - **Root cause**: User provided keys that don't match any step
+           - **Common issues**:
+             a. Typos in step names ("NormalizStep" vs "NormalizeStep")
+             b. Using wrong key type (class name vs registry name)
+             c. Step doesn't exist in saved pipeline
+
+        **Helpful Error Generation**:
+        - **Extract available keys**: Build list of valid override keys from config
+          a. **Registry steps**: Use "registry_name" directly
+          b. **Import steps**: Extract class name from "class" field
+          - Example: "lerobot.processor.normalize.NormalizeStep" -> "NormalizeStep"
+        - **Error message includes**:
+          a. Invalid keys provided by user
+          b. List of valid keys they can use
+          c. Guidance about registry vs class names
+
+        **Override Key Resolution Rules**:
+        - Steps with "registry_name": Use registry_name for overrides
+        - Steps with "class": Use final class name for overrides
+        - Users must match these exact keys in their overrides dict
+
+        Args:
+            remaining_override_keys: Override keys that weren't matched to any step
+            loaded_config: The loaded processor configuration (contains "steps" list)
+
+        Raises:
+            KeyError: If any override keys were not used, with helpful error message
+        """
+        if not remaining_override_keys:
+            return
+
+        available_keys = [
+            step.get("registry_name") or step["class"].rsplit(".", 1)[1] for step in loaded_config["steps"]
+        ]
+
+        raise KeyError(
+            f"Override keys {list(remaining_override_keys)} do not match any step in the saved configuration. "
+            f"Available step keys: {available_keys}. "
+            f"Make sure override keys match exact step class names or registry names."
         )
+
+    @classmethod
+    def _should_suggest_migration(cls, model_path: Path) -> bool:
+        """Check if directory has JSON files but no processor configs.
+
+        This method implements smart migration detection to avoid false positives:
+
+        **Decision Logic**:
+        1. **No JSON files found**: Return False
+           - **Reason**: Empty directory or only non-config files
+           - **Example**: Directory with only .safetensors, .md files
+           - **Action**: No migration needed
+
+        2. **JSON files exist**: Analyze each file
+           - **Goal**: Determine if ANY file is a valid processor config
+           - **Process**:
+             a. Try to parse each .json file
+             b. Skip files with JSON parse errors (malformed)
+             c. Check if parsed config passes _is_processor_config()
+           - **If ANY valid processor found**: Return False (no migration)
+           - **If NO valid processors found**: Return True (migration needed)
+
+        **Examples**:
+        - **No migration**: ["processor.json", "config.json"] where processor.json is valid
+        - **Migration needed**: ["config.json", "train.json"] where both are model configs
+        - **No migration**: [] (empty directory)
+        - **Migration needed**: ["old_model_config.json"] with old LeRobot format
+
+        **Why this works**:
+        - **Precise detection**: Only suggests migration for actual old LeRobot models
+        - **Avoids false positives**: Won't trigger on other HuggingFace model types
+        - **Graceful handling**: Ignores malformed JSON files
+
+        Args:
+            model_path: Path to local directory to analyze
+
+        Returns:
+            True if directory has JSON configs but none are processor configs (migration needed)
+            False if no JSON files or at least one valid processor config exists
+        """
+        json_files = list(model_path.glob("*.json"))
+        if len(json_files) == 0:
+            return False
+
+        # Check if any JSON file is a processor config
+        for json_file in json_files:
+            try:
+                with open(json_file) as f:
+                    config = json.load(f)
+
+                if cls._is_processor_config(config):
+                    return False  # Found at least one processor config, no migration needed
+
+            except (json.JSONDecodeError, OSError):
+                # Skip files that can't be parsed as JSON
+                continue
+
+        # Have JSON files but no processor configs - suggest migration
+        return True
+
+    @classmethod
+    def _is_processor_config(cls, config: dict) -> bool:
+        """Check if config follows DataProcessorPipeline format.
+
+        This method validates the processor configuration structure:
+
+        **Required Structure Validation**:
+        1. **"steps" field existence**: Must have top-level "steps" key
+           - **If missing**: Not a processor config (e.g., model config, train config)
+           - **Example invalid**: {"type": "act", "hidden_dim": 256}
+
+        2. **"steps" field type**: Must be a list, not other types
+           - **If not list**: Invalid format
+           - **Example invalid**: {"steps": "some_string"} or {"steps": {"key": "value"}}
+
+        3. **Empty steps validation**: Empty list is valid
+           - **If len(steps) == 0**: Return True immediately
+           - **Use case**: Empty processor pipeline (no-op)
+           - **Example valid**: {"name": "EmptyProcessor", "steps": []}
+
+        **Individual Step Validation** (for non-empty steps):
+        For each step in the steps list:
+        1. **Step type**: Must be a dictionary
+           - **If not dict**: Invalid step format
+           - **Example invalid**: ["string_step", 123, true]
+
+        2. **Step identifier**: Must have either "class" OR "registry_name"
+           - **"registry_name"**: Registered step (preferred)
+             Example: {"registry_name": "normalize_step", "config": {...}}
+           - **"class"**: Full import path
+             Example: {"class": "lerobot.processor.normalize.NormalizeStep"}
+           - **If neither**: Invalid step (can't resolve class)
+           - **If both**: Also valid (registry_name takes precedence)
+
+        **Valid Processor Config Examples**:
+        - {"steps": []} - Empty processor
+        - {"steps": [{"registry_name": "normalize"}]} - Registry step
+        - {"steps": [{"class": "my.module.Step"}]} - Import step
+        - {"name": "MyProcessor", "steps": [...]} - With name
+
+        **Invalid Config Examples**:
+        - {"type": "act"} - Missing "steps"
+        - {"steps": "normalize"} - Steps not a list
+        - {"steps": [{}]} - Step missing class/registry_name
+        - {"steps": ["string"]} - Step not a dict
+
+        Args:
+            config: The configuration dictionary to validate
+
+        Returns:
+            True if config follows valid DataProcessorPipeline format, False otherwise
+        """
+        # Must have a "steps" field with a list of step configurations
+        if not isinstance(config.get("steps"), list):
+            return False
+
+        steps = config["steps"]
+        if len(steps) == 0:
+            return True  # Empty processor is valid
+
+        # Each step must be a dict with either "class" or "registry_name"
+        for step in steps:
+            if not isinstance(step, dict):
+                return False
+            if not ("class" in step or "registry_name" in step):
+                return False
+
+        return True
+
+    @classmethod
+    def _suggest_processor_migration(cls, model_path: str | Path, original_error: str) -> None:
+        """Raise migration error when we detect JSON files but no processor configs.
+
+        This method is called when migration detection determines that a model
+        directory contains configuration files but none are valid processor configs.
+        This typically indicates an old LeRobot model that needs migration.
+
+        **When this is called**:
+        - User tries to load DataProcessorPipeline from local directory
+        - Directory contains JSON configuration files
+        - None of the JSON files follow processor config format
+        - _should_suggest_migration() returned True
+
+        **Migration Command Generation**:
+        - Constructs exact command user needs to run
+        - Uses the migration script: migrate_policy_normalization.py
+        - Includes the model path automatically
+        - Example: "python src/lerobot/processor/migrate_policy_normalization.py --pretrained-path /models/old_model"
+
+        **Error Structure**:
+        - **Always raises**: ProcessorMigrationError (never returns)
+        - **Includes**: model_path, migration_command, original_error
+        - **Purpose**: Force user attention to migration need
+        - **User experience**: Clear actionable error with exact command to run
+
+        **Migration Process**:
+        The suggested command will:
+        1. Extract normalization stats from old model
+        2. Create new processor configs (preprocessor + postprocessor)
+        3. Remove normalization layers from model
+        4. Save migrated model with processor pipeline
+
+        Args:
+            model_path: Path to the model directory needing migration
+            original_error: The error that triggered migration detection (for context)
+
+        Raises:
+            ProcessorMigrationError: Always raised (this method never returns normally)
+        """
+        migration_command = (
+            f"python src/lerobot/processor/migrate_policy_normalization.py --pretrained-path {model_path}"
+        )
+
+        raise ProcessorMigrationError(model_path, migration_command, original_error)
 
     def __len__(self) -> int:
         """Returns the number of steps in the pipeline."""
