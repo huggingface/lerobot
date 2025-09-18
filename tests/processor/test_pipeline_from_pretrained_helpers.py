@@ -29,148 +29,76 @@ import pytest
 
 from lerobot.processor.pipeline import DataProcessorPipeline, ProcessorMigrationError
 
-# Config Source Resolution Tests
+# Simplified Config Loading Tests
 
 
-def test_resolve_config_source_non_directory():
-    """Test resolution for non-directory paths (Hub repos)."""
-    config_filename, base_path = DataProcessorPipeline._resolve_config_source("user/repo", "processor.json")
-    assert config_filename == "processor.json"
-    assert base_path is None
-
-
-def test_resolve_config_source_specified_filename():
-    """Test resolution when user specifies config filename."""
+def test_load_config_directory():
+    """Test loading config from directory."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
 
-        config_filename, base_path = DataProcessorPipeline._resolve_config_source(
-            str(tmp_path), "custom.json"
+        # Create a config file
+        config_file = tmp_path / "processor.json"
+        test_config = {"name": "TestProcessor", "steps": []}
+        config_file.write_text(json.dumps(test_config))
+
+        # Load from directory
+        loaded_config, base_path = DataProcessorPipeline._load_config(str(tmp_path), "processor.json", {})
+
+        assert loaded_config == test_config
+        assert base_path == tmp_path
+
+
+def test_load_config_single_file():
+    """Test loading config from a single file path."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Create a config file
+        config_file = tmp_path / "processor.json"
+        test_config = {"name": "TestProcessor", "steps": []}
+        config_file.write_text(json.dumps(test_config))
+
+        # Load using file path directly
+        loaded_config, base_path = DataProcessorPipeline._load_config(
+            str(config_file), "any_filename_ignored", {}
         )
-        assert config_filename == "custom.json"
+
+        assert loaded_config == test_config
         assert base_path == tmp_path
 
 
-def test_resolve_config_source_no_json_files():
-    """Test resolution when directory has no JSON files."""
+def test_load_config_directory_file_not_found():
+    """Test directory loading when config file doesn't exist."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
 
-        # Create non-JSON files
-        (tmp_path / "model.safetensors").write_text("fake data")
-
-        config_filename, base_path = DataProcessorPipeline._resolve_config_source(str(tmp_path), None)
-        assert config_filename is None
-        assert base_path == tmp_path
+        # Directory exists but no processor.json
+        with pytest.raises(FileNotFoundError, match="not found in directory"):
+            DataProcessorPipeline._load_config(str(tmp_path), "processor.json", {})
 
 
-def test_resolve_config_source_single_json_file():
-    """Test auto-detection with single JSON file."""
+def test_load_config_directory_with_migration_detection():
+    """Test that missing config triggers migration detection."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
 
-        # Create single JSON file
-        config_path = tmp_path / "processor.json"
-        config_path.write_text(json.dumps({"name": "test", "steps": []}))
-
-        config_filename, base_path = DataProcessorPipeline._resolve_config_source(str(tmp_path), None)
-        assert config_filename == "processor.json"
-        assert base_path == tmp_path
-
-
-def test_resolve_config_source_multiple_json_valid_processor():
-    """Test multiple JSON files where one is a valid processor."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir)
-
-        # Create multiple files including valid processor
+        # Create old-style config to trigger migration
         (tmp_path / "config.json").write_text(json.dumps({"type": "act"}))
-        (tmp_path / "processor.json").write_text(json.dumps({"name": "test", "steps": []}))
 
-        # Should raise ValueError about multiple files (not migration error)
-        with pytest.raises(ValueError, match="Multiple .json files found"):
-            DataProcessorPipeline._resolve_config_source(str(tmp_path), None)
-
-
-def test_resolve_config_source_multiple_json_needs_migration():
-    """Test multiple JSON files that need migration."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir)
-
-        # Create multiple non-processor files
-        (tmp_path / "config.json").write_text(json.dumps({"type": "act"}))
-        (tmp_path / "train.json").write_text(json.dumps({"lr": 0.001}))
-
-        # Should trigger migration error
+        # Try to load processor.json (doesn't exist), should trigger migration
         with pytest.raises(ProcessorMigrationError):
-            DataProcessorPipeline._resolve_config_source(str(tmp_path), None)
+            DataProcessorPipeline._load_config(str(tmp_path), "processor.json", {})
 
 
-# Path Type Detection Tests
-
-
-def test_looks_like_local_path_hub_repos():
-    """Test detection of Hub repository IDs."""
-    hub_repos = [
-        "user/repo",
-        "organization/model-name",
-        "simple-repo",
-    ]
-
-    for repo in hub_repos:
-        assert not DataProcessorPipeline._looks_like_local_path(repo)
-
-
-def test_looks_like_local_path_local_paths():
-    """Test detection of local file paths."""
-    local_paths = [
-        "/absolute/path/to/model",
-        "./relative/path",
-        "../parent/dir",
-        "user/repo/extra/path",  # Multiple slashes
-        "C:\\Windows\\Path",  # Windows path
-        "/home/user/models",
-    ]
-
-    for path in local_paths:
-        assert DataProcessorPipeline._looks_like_local_path(path)
+def test_load_config_nonexistent_path_tries_hub():
+    """Test that nonexistent paths try Hub (simplified logic)."""
+    # This path doesn't exist locally, should try Hub
+    with pytest.raises(FileNotFoundError, match="on the HuggingFace Hub"):
+        DataProcessorPipeline._load_config("nonexistent/path", "processor.json", {})
 
 
 # Config Validation Tests
-
-
-def test_validate_loaded_config_none_no_migration():
-    """Test validation when no config loaded and no migration needed."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        # Empty directory - no migration needed
-        with pytest.raises(RuntimeError, match="Failed to load configuration"):
-            DataProcessorPipeline._validate_loaded_config(tmp_dir, None, "processor.json")
-
-
-def test_validate_loaded_config_none_with_migration():
-    """Test validation when no config loaded but migration needed."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir)
-
-        # Create non-processor config to trigger migration
-        (tmp_path / "config.json").write_text(json.dumps({"type": "act"}))
-
-        with pytest.raises(ProcessorMigrationError):
-            DataProcessorPipeline._validate_loaded_config(tmp_dir, None, "processor.json")
-
-
-def test_validate_loaded_config_invalid_config():
-    """Test validation with invalid processor config."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir)
-
-        # Create non-processor config
-        (tmp_path / "config.json").write_text(json.dumps({"type": "act"}))
-
-        invalid_config = {"type": "act", "hidden_dim": 256}
-
-        with pytest.raises(ProcessorMigrationError):
-            DataProcessorPipeline._validate_loaded_config(tmp_dir, invalid_config, "config.json")
 
 
 def test_validate_loaded_config_valid_config():
@@ -179,6 +107,29 @@ def test_validate_loaded_config_valid_config():
 
     # Should not raise any exception
     DataProcessorPipeline._validate_loaded_config("any-path", valid_config, "processor.json")
+
+
+def test_validate_loaded_config_invalid_config():
+    """Test validation with invalid processor config."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Create non-processor config to trigger migration
+        (tmp_path / "config.json").write_text(json.dumps({"type": "act"}))
+
+        invalid_config = {"type": "act", "hidden_dim": 256}
+
+        with pytest.raises(ProcessorMigrationError):
+            DataProcessorPipeline._validate_loaded_config(str(tmp_path), invalid_config, "config.json")
+
+
+def test_validate_loaded_config_invalid_config_no_migration():
+    """Test validation with invalid config when no migration is detected."""
+    # Non-directory path (Hub repo) - no migration detection
+    invalid_config = {"type": "act", "hidden_dim": 256}
+
+    with pytest.raises(ValueError, match="not a valid processor configuration"):
+        DataProcessorPipeline._validate_loaded_config("user/repo", invalid_config, "config.json")
 
 
 # Step Class Resolution Tests
@@ -281,3 +232,28 @@ def test_validate_overrides_used_helpful_error_message():
     assert "Available step keys" in error_msg
     assert "correct_step" in error_msg
     assert "CorrectClass" in error_msg
+
+
+# Integration Tests for Simplified Logic
+
+
+def test_simplified_three_way_loading():
+    """Test that the simplified 3-way loading logic works correctly."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Test 1: Directory loading
+        config_file = tmp_path / "processor.json"
+        test_config = {"name": "DirectoryTest", "steps": []}
+        config_file.write_text(json.dumps(test_config))
+
+        loaded_config, base_path = DataProcessorPipeline._load_config(str(tmp_path), "processor.json", {})
+        assert loaded_config["name"] == "DirectoryTest"
+        assert base_path == tmp_path
+
+        # Test 2: Single file loading
+        loaded_config, base_path = DataProcessorPipeline._load_config(
+            str(config_file), "ignored_filename", {}
+        )
+        assert loaded_config["name"] == "DirectoryTest"
+        assert base_path == tmp_path

@@ -51,20 +51,6 @@ from lerobot.utils.hub import HubMixin
 from .converters import batch_to_transition, create_transition, transition_to_batch
 from .core import EnvAction, EnvTransition, PolicyAction, RobotAction, TransitionKey
 
-
-class ProcessorMigrationError(Exception):
-    """Raised when a model needs migration to the processor format and strict_migration=True."""
-
-    def __init__(self, model_path: str | Path, migration_command: str, original_error: str):
-        self.model_path = model_path
-        self.migration_command = migration_command
-        self.original_error = original_error
-        super().__init__(
-            f"Model '{model_path}' requires migration to processor format. "
-            f"Run: {migration_command}\n\nOriginal error: {original_error}"
-        )
-
-
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
@@ -249,6 +235,19 @@ class ProcessorKwargs(TypedDict, total=False):
     name: str | None
     before_step_hooks: list[Callable[[int, EnvTransition], None]] | None
     after_step_hooks: list[Callable[[int, EnvTransition], None]] | None
+
+
+class ProcessorMigrationError(Exception):
+    """Raised when a model needs migration to the processor format"""
+
+    def __init__(self, model_path: str | Path, migration_command: str, original_error: str):
+        self.model_path = model_path
+        self.migration_command = migration_command
+        self.original_error = original_error
+        super().__init__(
+            f"Model '{model_path}' requires migration to processor format. "
+            f"Run: {migration_command}\n\nOriginal error: {original_error}"
+        )
 
 
 @dataclass
@@ -453,6 +452,7 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: str | Path,
+        config_filename: str,
         *,
         force_download: bool = False,
         resume_download: bool | None = None,
@@ -461,51 +461,62 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        config_filename: str | None = None,
         overrides: dict[str, Any] | None = None,
         to_transition: Callable[[TInput], EnvTransition] | None = None,
         to_output: Callable[[EnvTransition], TOutput] | None = None,
         **kwargs,
     ) -> DataProcessorPipeline[TInput, TOutput]:
-        """Loads a pipeline from a local directory or a Hugging Face Hub repository.
+        """Loads a pipeline from a local directory, single file, or Hugging Face Hub repository.
 
-        This method implements a robust loading pipeline with intelligent migration detection:
+        This method implements a simplified loading pipeline with intelligent migration detection:
 
-        **Overall Loading Strategy**:
-        1. **Config Source Resolution** (_resolve_config_source):
-           - Local directory: Auto-detect config filename or validate user choice
-           - Hub repository: Require explicit config_filename parameter
-           - Migration detection: Check for old LeRobot models needing migration
+        **Simplified Loading Strategy**:
+        1. **Config Loading** (_load_config):
+           - **Directory**: Load specified config_filename from directory
+           - **Single file**: Load file directly (config_filename ignored)
+           - **Hub repository**: Download specified config_filename from Hub
 
-        2. **Config Loading** (_load_config):
-           - Local-first strategy: Try local files before Hub downloads
-           - Path validation: Distinguish local paths from Hub repo IDs
-           - Hub fallback: Download configs with proper authentication
-
-        3. **Config Validation** (_validate_loaded_config):
-           - Format validation: Ensure loaded config is valid processor format
-           - Migration detection: Trigger migration for old model formats
+        2. **Config Validation** (_validate_loaded_config):
+           - Format validation: Ensure config is valid processor format
+           - Migration detection: Guide users to migrate old LeRobot models
            - Clear errors: Provide actionable error messages
 
-        4. **Step Construction** (_build_steps_with_overrides):
+        3. **Step Construction** (_build_steps_with_overrides):
            - Class resolution: Registry lookup or dynamic imports
            - Override merging: User parameters override saved config
            - State loading: Load .safetensors files for stateful steps
 
-        5. **Override Validation** (_validate_overrides_used):
+        4. **Override Validation** (_validate_overrides_used):
            - Ensure all user overrides were applied (catch typos)
            - Provide helpful error messages with available keys
 
-        **Migration Detection Features**:
-        - **Smart detection**: Only suggests migration for actual old LeRobot models
+        **Migration Detection**:
+        - **Smart detection**: Analyzes JSON files to detect old LeRobot models
         - **Precise targeting**: Avoids false positives on other HuggingFace models
         - **Clear guidance**: Provides exact migration command to run
-        - **Error mode**: Always raises ProcessorMigrationError (no silent failures)
+        - **Error mode**: Always raises ProcessorMigrationError for clear user action
 
-        **Local vs Hub Loading**:
-        - **Local directories**: Auto-detect config files, support relative paths
-        - **Hub repositories**: Require explicit config_filename, handle authentication
-        - **Hybrid**: Can load config from Hub but state files locally (development workflow)
+        **Loading Examples**:
+        ```python
+        # Directory loading
+        pipeline = DataProcessorPipeline.from_pretrained("/models/my_model", config_filename="processor.json")
+
+        # Single file loading
+        pipeline = DataProcessorPipeline.from_pretrained(
+            "/models/my_model/processor.json", config_filename="processor.json"
+        )
+
+        # Hub loading
+        pipeline = DataProcessorPipeline.from_pretrained("user/repo", config_filename="processor.json")
+
+        # Multiple configs (preprocessor/postprocessor)
+        preprocessor = DataProcessorPipeline.from_pretrained(
+            "model", config_filename="policy_preprocessor.json"
+        )
+        postprocessor = DataProcessorPipeline.from_pretrained(
+            "model", config_filename="policy_postprocessor.json"
+        )
+        ```
 
         **Override System**:
         - **Key matching**: Use registry names or class names as override keys
@@ -514,8 +525,10 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         - **Example**: overrides={"NormalizeStep": {"device": "cuda"}}
 
         Args:
-            pretrained_model_name_or_path: The identifier of the repository on the Hugging Face Hub
-                or a path to a local directory.
+            pretrained_model_name_or_path: The identifier of the repository on the Hugging Face Hub,
+                a path to a local directory, or a path to a single config file.
+            config_filename: The name of the pipeline's JSON configuration file. Always required
+                to prevent ambiguity when multiple configs exist (e.g., preprocessor vs postprocessor).
             force_download: Whether to force (re)downloading the files.
             resume_download: Whether to resume a previously interrupted download.
             proxies: A dictionary of proxy servers to use.
@@ -523,9 +536,6 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
             cache_dir: The path to a specific cache folder to store downloaded files.
             local_files_only: If True, avoid downloading files from the Hub.
             revision: The specific model version to use (e.g., a branch name, tag name, or commit id).
-            config_filename: The name of the pipeline's JSON configuration file. If not provided,
-                it's auto-detected in local directories (if only one .json file exists). This parameter
-                is mandatory when loading from Hugging Face Hub repositories.
             overrides: A dictionary to override the configuration of specific steps. Keys should
                 match the step's class name or registry name.
             to_transition: A custom function to convert input data to `EnvTransition`.
@@ -553,9 +563,8 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
             "revision": revision,
         }
 
-        # 1. Resolve configuration source and load config
-        config_filename, base_path = cls._resolve_config_source(model_id, config_filename)
-        loaded_config, base_path = cls._load_config(model_id, config_filename, base_path, hub_download_kwargs)
+        # 1. Load configuration using simplified 3-way logic
+        loaded_config, base_path = cls._load_config(model_id, config_filename, hub_download_kwargs)
 
         # 2. Validate configuration and handle migration
         cls._validate_loaded_config(model_id, loaded_config, config_filename)
@@ -577,238 +586,116 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         )
 
     @classmethod
-    def _resolve_config_source(
-        cls, model_id: str, config_filename: str | None
-    ) -> tuple[str | None, Path | None]:
-        """Resolve configuration source and filename for local directories.
-
-        This method implements a decision tree for config filename resolution:
-
-        1. **Non-directory paths**: Return as-is, assume Hub repo
-           - Example: "user/repo" -> Try Hub with provided filename
-
-        2. **User-specified filename**: Trust user's choice
-           - Example: ("/path/to/model", "custom.json") -> Use custom.json
-
-        3. **Auto-detection for local directories**:
-           - **No JSON files**: Return None to trigger Hub fallback
-           - **Single JSON file**: Auto-select it
-             Example: Only "processor.json" found -> Use it
-           - **Multiple JSON files**: Complex resolution:
-             a. Check if any is a valid processor config (via _should_suggest_migration)
-             b. If no processor configs found -> Raise ProcessorMigrationError
-             c. If processor configs exist -> Raise ValueError (user must specify)
-
-        Args:
-            model_id: The model identifier (path or repo ID)
-            config_filename: Optional config filename provided by user
-
-        Returns:
-            Tuple of (resolved_config_filename, base_path)
-            - config_filename: The resolved filename, or None if should try Hub
-            - base_path: Local directory path, or None if not a local directory
-
-        Raises:
-            ValueError: If multiple JSON files found and user must disambiguate
-            ProcessorMigrationError: If migration is needed (old LeRobot model detected)
-        """
-        if not Path(model_id).is_dir():
-            return config_filename, None
-
-        base_path = Path(model_id)
-
-        if config_filename is not None:
-            # User specified filename - use as is
-            return config_filename, base_path
-
-        # Auto-detect config filename
-        json_files = list(base_path.glob("*.json"))
-
-        if len(json_files) == 0:
-            # No JSON files - will try Hub next
-            return None, base_path
-        elif len(json_files) == 1:
-            # Single JSON file - use it
-            return json_files[0].name, base_path
-        else:
-            # Multiple JSON files - check if migration is needed
-            if cls._should_suggest_migration(base_path):
-                cls._suggest_processor_migration(
-                    model_id,
-                    "Multiple .json files found but none are processor configurations",
-                )
-
-            raise ValueError(
-                f"Multiple .json files found in {model_id}: {[f.name for f in json_files]}. "
-                f"Please specify which one to load using the config_filename parameter."
-            )
-
-    @classmethod
     def _load_config(
         cls,
         model_id: str,
-        config_filename: str | None,
-        base_path: Path | None,
+        config_filename: str,
         hub_download_kwargs: dict[str, Any],
-    ) -> tuple[dict[str, Any] | None, Path | None]:
+    ) -> tuple[dict[str, Any], Path]:
         """Load configuration from local file or Hugging Face Hub.
 
-        This method implements a cascading loading strategy:
+        This method implements a super-simplified 3-way loading strategy:
 
-        1. **Local file loading** (if base_path and config_filename both exist):
-           - Try to load config_filename from base_path
-           - Example: base_path="/models/my_model", config_filename="processor.json"
-           - Returns: (loaded_json_dict, base_path)
+        1. **Local directory**: Load config_filename from directory
+           - Example: model_id="/models/my_model", config_filename="processor.json"
+           - Loads: "/models/my_model/processor.json"
 
-        2. **Local directory without config** (base_path exists, no valid config):
-           - Don't attempt Hub download (user expects local loading)
-           - Return None to trigger error handling in caller
-           - Example: Directory exists but config_filename doesn't exist locally
+        2. **Single file**: Load file directly (ignore config_filename)
+           - Example: model_id="/models/my_model/processor.json"
+           - Loads: "/models/my_model/processor.json" (config_filename ignored)
 
-        3. **Hub repository loading** (no base_path, looks like repo ID):
-           a. **Path validation**: Ensure model_id looks like Hub repo, not local path
-              - Use _looks_like_local_path() to distinguish "user/repo" from "/path/to/model"
-              - If looks local but doesn't exist -> FileNotFoundError
-           b. **Filename requirement**: config_filename is mandatory for Hub repos
-              - Hub repos can have many files, auto-detection is not supported
-           c. **Download and load**: Use hf_hub_download to get config file
-              - Downloads to cache, loads JSON, returns with cache path as base_path
+        3. **Hub repository**: Download config_filename from Hub
+           - Example: model_id="user/repo", config_filename="processor.json"
+           - Downloads and loads: config_filename from Hub repo
+
+        **Benefits of Explicit config_filename**:
+        - No auto-detection complexity or edge cases
+        - No risk of loading wrong config (preprocessor vs postprocessor)
+        - Consistent behavior across local and Hub usage
+        - Clear, predictable errors
 
         Args:
-            model_id: The model identifier (Hub repo ID or local path)
-            config_filename: The config filename to load (required for Hub repos)
-            base_path: Local directory path if model_id is a local directory
+            model_id: The model identifier (Hub repo ID, local directory, or file path)
+            config_filename: The explicit config filename to load (always required)
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
 
         Returns:
-            Tuple of (loaded_config, resolved_base_path)
-            - loaded_config: Parsed JSON config dict, or None if not found locally
-            - resolved_base_path: Directory containing config file (for state file resolution)
+            Tuple of (loaded_config, base_path)
+            - loaded_config: Parsed JSON config dict (always loaded, never None)
+            - base_path: Directory containing config file (for state file resolution)
 
         Raises:
-            FileNotFoundError: If local path doesn't exist or Hub file not found
-            ValueError: If Hub repo specified without config_filename
+            FileNotFoundError: If config file cannot be found locally or on Hub
         """
-        # Try to load from local directory first
-        if base_path and config_filename and (base_path / config_filename).exists():
-            with open(base_path / config_filename) as f:
-                return json.load(f), base_path
+        model_path = Path(model_id)
 
-        # If we have a local directory but no config, don't try Hub
-        if base_path is not None:
-            return None, base_path
-
-        # Try Hub - first validate it looks like a Hub repo
-        if cls._looks_like_local_path(model_id):
-            raise FileNotFoundError(f"Local path '{model_id}' does not exist")
-
-        # For Hub repositories, config_filename is mandatory
-        if config_filename is None:
-            raise ValueError(
-                f"When loading from Hugging Face Hub, 'config_filename' must be specified. "
-                f"Example: DataProcessorPipeline.from_pretrained('{model_id}', config_filename='processor.json')"
-            )
-
-        # Download from Hub
-        try:
-            config_path = hf_hub_download(
-                repo_id=model_id,
-                filename=config_filename,
-                repo_type="model",
-                **hub_download_kwargs,
-            )
+        if model_path.is_dir():
+            # Directory: load specified config from directory
+            config_path = model_path / config_filename
+            if not config_path.exists():
+                # Check for migration before giving clear error
+                if cls._should_suggest_migration(model_path):
+                    cls._suggest_processor_migration(model_id, f"Config file '{config_filename}' not found")
+                raise FileNotFoundError(
+                    f"Config file '{config_filename}' not found in directory '{model_id}'"
+                )
 
             with open(config_path) as f:
-                loaded_config = json.load(f)
+                return json.load(f), model_path
 
-            return loaded_config, Path(config_path).parent
+        elif model_path.is_file():
+            # File: load file directly (config_filename is ignored for single files)
+            with open(model_path) as f:
+                return json.load(f), model_path.parent
 
-        except Exception as e:
-            raise FileNotFoundError(
-                f"Could not find {config_filename} on the HuggingFace Hub at {model_id}"
-            ) from e
+        else:
+            # Hub: download specified config
+            try:
+                config_path = hf_hub_download(
+                    repo_id=model_id,
+                    filename=config_filename,
+                    repo_type="model",
+                    **hub_download_kwargs,
+                )
 
-    @classmethod
-    def _looks_like_local_path(cls, model_id: str) -> bool:
-        """Check if model_id looks like a local path rather than a Hub repo ID.
+                with open(config_path) as f:
+                    return json.load(f), Path(config_path).parent
 
-        This method distinguishes between Hub repository IDs and local file paths
-        using several heuristics:
-
-        **Hub repository patterns** (return False):
-        - "user/repo" - single slash format
-        - "organization/model-name" - single slash with dashes
-        - "simple-name" - no slashes at all
-
-        **Local path patterns** (return True):
-        - "/absolute/path/to/model" - absolute paths (Unix)
-        - "C:\\Windows\\Path" - backslashes (Windows)
-        - "./relative/path" - relative path prefix
-        - "../parent/dir" - parent directory prefix
-        - "user/repo/extra/path" - more than one slash
-
-        The logic prioritizes safety: if uncertain, treat as local path
-        to avoid unexpected Hub downloads.
-
-        Args:
-            model_id: The model identifier to check
-
-        Returns:
-            True if it looks like a local path, False if it looks like a Hub repo ID
-        """
-        return (
-            model_id.count("/") > 1  # Multiple slashes suggest local path
-            or "\\" in model_id  # Backslashes are only in local paths
-            or Path(model_id).is_absolute()  # Absolute paths are local
-            or model_id.startswith("./")
-            or model_id.startswith("../")  # Relative path indicators
-        )
+            except Exception as e:
+                raise FileNotFoundError(
+                    f"Could not find '{config_filename}' on the HuggingFace Hub at '{model_id}'"
+                ) from e
 
     @classmethod
     def _validate_loaded_config(
-        cls, model_id: str, loaded_config: dict[str, Any] | None, config_filename: str | None
+        cls, model_id: str, loaded_config: dict[str, Any], config_filename: str
     ) -> None:
         """Validate that a config was loaded and is a valid processor config.
 
-        This method performs two-stage validation with intelligent migration detection:
+        This method validates processor config format with intelligent migration detection:
 
-        **Stage 1: Config Loading Validation**
-        - **If loaded_config is None**: No config was found
-          a. Check if this is a local directory that needs migration
-             - Use _should_suggest_migration() to detect old LeRobot models
-             - If migration needed: Raise ProcessorMigrationError with command
-          b. If no migration needed: Raise RuntimeError (normal "not found" error)
-
-        **Stage 2: Config Format Validation**
-        - **If config loaded but invalid format**: Wrong config type
-          a. Use _is_processor_config() to validate structure
-             - Must have "steps" field with list of step configurations
-             - Each step needs "class" or "registry_name"
-          b. If validation fails AND migration needed: Raise ProcessorMigrationError
-          c. If validation fails but no migration: Raise ValueError
+        **Config Format Validation**:
+        - Use _is_processor_config() to validate structure
+          - Must have "steps" field with list of step configurations
+          - Each step needs "class" or "registry_name"
+        - If validation fails AND local directory: Check for migration need
+        - If migration needed: Raise ProcessorMigrationError with command
+        - If no migration: Raise ValueError with helpful error message
 
         **Migration Detection Logic**:
         - Only triggered for local directories (not Hub repos)
-        - Analyzes all JSON files in directory
-        - Suggests migration if JSON configs exist but none are processor configs
+        - Analyzes all JSON files in directory to detect old LeRobot models
         - Provides exact migration command with model path
 
         Args:
             model_id: The model identifier (used for migration detection)
-            loaded_config: The loaded config dictionary, or None if loading failed
-            config_filename: The config filename that was attempted (for error messages)
+            loaded_config: The loaded config dictionary (guaranteed non-None)
+            config_filename: The config filename that was loaded (for error messages)
 
         Raises:
-            RuntimeError: If no config was loaded and no migration needed
-            ValueError: If config format is invalid and no migration needed
+            ValueError: If config format is invalid
             ProcessorMigrationError: If model needs migration to processor format
         """
-        if loaded_config is None:
-            # Check if migration is needed before giving up
-            if Path(model_id).is_dir() and cls._should_suggest_migration(Path(model_id)):
-                cls._suggest_processor_migration(model_id, "No processor configuration found")
-            raise RuntimeError("Failed to load configuration from local directory or Hub")
-
         # Validate that this is actually a processor config
         if not cls._is_processor_config(loaded_config):
             if Path(model_id).is_dir() and cls._should_suggest_migration(Path(model_id)):
