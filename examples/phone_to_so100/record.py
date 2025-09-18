@@ -86,7 +86,7 @@ phone_to_robot_ee_pose_processor = RobotProcessorPipeline[tuple[RobotAction, Rob
             max_ee_step_m=0.20,
             max_ee_twist_step_rad=0.50,
         ),
-        GripperVelocityToJoint(),
+        GripperVelocityToJoint(speed_factor=20.0),
     ],
     to_transition=robot_action_observation_to_transition,
     to_output=transition_to_robot_action,

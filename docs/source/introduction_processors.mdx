@@ -14,7 +14,7 @@ Training data from one robot setup needs adaptation for deployment on different 
 **That's where processors come in.** They serve as universal translators that bridge these gaps, ensuring seamless data flow from sensors to models to actuators.
 Processors handle all the preprocessing and postprocessing steps needed to convert raw environment data into model-ready inputs and vice versa.
 
-Now your favorite policy can be used like this:
+This means that your favorite policy can be used like this:
 
 ```python
 import torch
@@ -40,7 +40,7 @@ postprocessed_action = postprocessor(action)
 
 ## What are Processors?
 
-In robotics, data comes in many forms - images from cameras, joint positions from sensors, text instructions from users, and more. Each type of data requires specific transformations before a model can use it effectively. Models need this data to be:
+In robotics, data comes in many forms: images from cameras, joint positions from sensors, text instructions from users, and more. Each type of data requires specific transformations before a model can use it effectively. Models need this data to be:
 
 - **Normalized**: Scaled to appropriate ranges for neural network processing
 - **Batched**: Organized with proper dimensions for batch processing
@@ -181,8 +181,8 @@ training_preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         RenameObservationsProcessorStep(rename_map={}),     # Standardize keys
         AddBatchDimensionProcessorStep(),                   # Add batch dims
         TokenizerProcessorStep(tokenizer_name="...", ...),  # Tokenize language
-        DeviceProcessorStep(device="cuda"),                 # Move to GPU first ⚡
-        NormalizerProcessorStep(features=..., stats=...),   # Normalize on GPU ⚡
+        DeviceProcessorStep(device="cuda"),                 # Move to GPU first
+        NormalizerProcessorStep(features=..., stats=...),   # Normalize on GPU
     ]
 )
 
