@@ -41,7 +41,7 @@ class EvalPipelineConfig:
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = policy_path
+            self.policy.pretrained_path = Path(policy_path)
 
         else:
             logging.warning(
@@ -50,9 +50,11 @@ class EvalPipelineConfig:
 
         if not self.job_name:
             if self.env is None:
-                self.job_name = f"{self.policy.type}"
+                self.job_name = f"{self.policy.type if self.policy is not None else 'scratch'}"
             else:
-                self.job_name = f"{self.env.type}_{self.policy.type}"
+                self.job_name = (
+                    f"{self.env.type}_{self.policy.type if self.policy is not None else 'scratch'}"
+                )
 
         if not self.output_dir:
             now = dt.datetime.now()
