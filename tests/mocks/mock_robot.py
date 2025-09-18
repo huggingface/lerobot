@@ -111,6 +111,8 @@ class MockRobot(Robot):
         if self.config.random_values:
             return {f"{motor}.pos": random.uniform(-100, 100) for motor in self.motors}
         else:
+            if self.config.static_values is None:
+                raise ValueError("static_values must be provided when random_values is False.")
             return {
                 f"{motor}.pos": val for motor, val in zip(self.motors, self.config.static_values, strict=True)
             }
