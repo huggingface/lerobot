@@ -290,7 +290,10 @@ def test_save_and_load_pretrained():
 
         # Load pipeline
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            config_filename="batchpipeline.json",
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         assert loaded_pipeline.name == "BatchPipeline"
@@ -325,7 +328,10 @@ def test_registry_based_save_load():
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, to_transition=identity_transition, to_output=identity_transition
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            to_transition=identity_transition,
+            to_output=identity_transition,
         )
 
         # Verify the loaded processor works

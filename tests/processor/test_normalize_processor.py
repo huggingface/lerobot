@@ -1714,7 +1714,9 @@ def test_pipeline_from_pretrained_with_stats_overrides():
         # Load the pipeline with stat overrides
         overrides = {"normalizer_processor": {"stats": override_stats}}
 
-        loaded_pipeline = DataProcessorPipeline.from_pretrained(temp_dir, overrides=overrides)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            temp_dir, config_filename="test_pipeline.json", overrides=overrides
+        )
 
         # The critical test: the loaded pipeline should use override stats, not original stats
         loaded_normalizer = loaded_pipeline.steps[0]
