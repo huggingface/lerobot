@@ -444,7 +444,7 @@ class LeRobotDatasetMetadata:
         obj.repo_id = repo_id
         obj.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
 
-        obj.root.mkdir(parents=True, exist_ok=False)
+        obj.root.mkdir(parents=True, exist_ok=True)
 
         features = {**features, **DEFAULT_FEATURES}
         _validate_feature_names(features)
@@ -474,6 +474,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        compute_quantiles: bool = False,
+        quantiles: list[float] | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -586,6 +588,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
+            compute_quantiles (bool, optional): Whether to compute quantiles (q01, q99) during stats computation.
+                This provides more detailed statistics but is computationally more expensive. Defaults to False.
+            quantiles (list[float] | None, optional): List of quantiles to compute (e.g., [0.01, 0.99]).
+                Only used if compute_quantiles=True. If None, defaults to [0.01, 0.99]. Defaults to None.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -599,6 +605,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
+        self.compute_quantiles = compute_quantiles
+        self.quantiles = quantiles if quantiles is not None else [0.01, 0.99]
 
         # Unused attributes
         self.image_writer = None
@@ -1006,7 +1014,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Wait for image writer to end, so that episode stats over images can be computed
         self._wait_image_writer()
-        ep_stats = compute_episode_stats(episode_buffer, self.features)
+        ep_stats = compute_episode_stats(
+            episode_buffer, 
+            self.features,
+            compute_quantiles=getattr(self, 'compute_quantiles', False),
+            quantiles=getattr(self, 'quantiles', None)
+        )
 
         ep_metadata = self._save_episode_data(episode_buffer)
         has_video_keys = len(self.meta.video_keys) > 0
@@ -1289,6 +1302,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        compute_quantiles: bool = False,
+        quantiles: list[float] | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1307,6 +1322,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_writer = None
         obj.batch_encoding_size = batch_encoding_size
         obj.episodes_since_last_encoding = 0
+        obj.compute_quantiles = compute_quantiles
+        obj.quantiles = quantiles if quantiles is not None else [0.01, 0.99]
 
         if image_writer_processes or image_writer_threads:
             obj.start_image_writer(image_writer_processes, image_writer_threads)
