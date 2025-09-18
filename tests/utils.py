@@ -167,6 +167,24 @@ def require_package_arg(func):
     return wrapper
 
 
+def require_nightly_gpu(func):
+    """
+    Decorator that skips the test unless running in nightly environment with GPU.
+    Combines GPU availability check with nightly workflow detection.
+    """
+
+    @require_cuda
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Check if running in nightly workflow (GitHub Actions)
+        is_nightly = os.environ.get("GITHUB_WORKFLOW") == "Nightly"
+        if not is_nightly:
+            pytest.skip("Test only runs in nightly workflow with GPU")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 def require_package(package_name):
     """
     Decorator that skips the test if the specified package is not installed.

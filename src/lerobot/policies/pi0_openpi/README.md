@@ -1,0 +1,87 @@
+# π₀ (pi0)
+
+This repository contains the Hugging Face port of **π₀**, adapted from [OpenPI](https://github.com/Physical-Intelligence/openpi) by the Physical Intelligence.
+It is designed as a **Vision-Language-Action model for general robot control**.
+
+---
+
+### ⚠️ WARNING ⚠️
+
+This project requires **patching the Hugging Face `transformers` library**.
+
+1. Make sure you have the exact version installed:
+
+```bash
+   pip show transformers
+```
+
+It must be version **4.53.2**.
+
+2. Apply the custom patches by copying the modified files into your environment:
+
+   ```bash
+   cp -r ./src/lerobot/policies/pi0_openpi/transformers_replace/* \
+     $(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")
+   ```
+
+   These patches overwrite parts of `transformers` to:
+   - Support the **AdaRMS optimizer**,
+   - Correctly control the precision of activations,
+   - Allow the KV cache to be used without updates.
+
+**Important:**
+
+- This permanently modifies your `transformers` installation.
+- The changes survive reinstalls unless you explicitly remove the patched files or recreate the environment.
+
+To undo and restore a clean state:
+
+```bash
+pip uninstall transformers
+pip install transformers==4.53.2
+```
+
+---
+
+## Model Overview
+
+| Feature              | π₀                                                     | π₀.₅                                      |
+| -------------------- | ------------------------------------------------------ | ----------------------------------------- |
+| Time Conditioning    | Concatenates time with actions via `action_time_mlp_*` | Uses `time_mlp_*` for AdaRMS conditioning |
+| AdaRMS               | Not used                                               | Used in action expert                     |
+| Tokenizer Length     | 48 tokens                                              | 200 tokens                                |
+| Discrete State Input | False (Uses `state_proj` layer)                        | True                                      |
+| Parameter Count      | Higher (includes state embedding)                      | Lower (no state embedding)                |
+
+---
+
+## Citation
+
+If you use this work, please cite both **OpenPI** and the π₀ paper:
+
+```bibtex
+@misc{openpi2024,
+  author       = {Physical Intelligence Lab},
+  title        = {OpenPI: PyTorch Implementation of π0 and π0.5 Policies},
+  year         = {2024},
+  publisher    = {GitHub},
+  howpublished = {\url{https://github.com/Physical-Intelligence/openpi}},
+  license      = {Apache-2.0}
+}
+
+@misc{black2024pi0visionlanguageactionflowmodel,
+  title        = {π₀: A Vision-Language-Action Flow Model for General Robot Control},
+  author       = {Kevin Black and Noah Brown and Danny Driess and Adnan Esmail and Michael Equi and Chelsea Finn and Niccolo Fusai and Lachy Groom and Karol Hausman and Brian Ichter and Szymon Jakubczak and Tim Jones and Liyiming Ke and Sergey Levine and Adrian Li-Bell and Mohith Mothukuri and Suraj Nair and Karl Pertsch and Lucy Xiaoyang Shi and James Tanner and Quan Vuong and Anna Walling and Haohuan Wang and Ury Zhilinsky},
+  year         = {2024},
+  eprint       = {2410.24164},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.LG},
+  url          = {https://arxiv.org/abs/2410.24164},
+}
+```
+
+---
+
+## License
+
+This port follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi).

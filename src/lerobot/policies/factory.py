@@ -32,7 +32,9 @@ from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.policies.pi0_openpi.configuration_pi0openpi import PI0OpenPIConfig
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
+from lerobot.policies.pi05_openpi.configuration_pi05openpi import PI05OpenPIConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
@@ -89,6 +91,14 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.pi0fast.modeling_pi0fast import PI0FASTPolicy
 
         return PI0FASTPolicy
+    elif name == "pi0_openpi":
+        from lerobot.policies.pi0_openpi.modeling_pi0openpi import PI0OpenPIPolicy
+
+        return PI0OpenPIPolicy
+    elif name == "pi05_openpi":
+        from lerobot.policies.pi05_openpi.modeling_pi05openpi import PI05OpenPIPolicy
+
+        return PI05OpenPIPolicy
     elif name == "sac":
         from lerobot.policies.sac.modeling_sac import SACPolicy
 
@@ -136,6 +146,10 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi0fast":
         return PI0FASTConfig(**kwargs)
+    elif policy_type == "pi0_openpi":
+        return PI0OpenPIConfig(**kwargs)
+    elif policy_type == "pi05_openpi":
+        return PI05OpenPIConfig(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
@@ -293,6 +307,21 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
+    elif isinstance(policy_cfg, PI0OpenPIConfig):
+        from lerobot.policies.pi0_openpi.processor_pi0_openpi import make_pi0openpi_pre_post_processors
+
+        processors = make_pi0openpi_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, PI05OpenPIConfig):
+        from lerobot.policies.pi05_openpi.processor_pi05openpi import make_pi05openpi_pre_post_processors
+
+        processors = make_pi05openpi_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
     else:
         raise NotImplementedError(f"Processor for policy type '{policy_cfg.type}' is not implemented.")
 
