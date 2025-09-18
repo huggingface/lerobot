@@ -19,9 +19,13 @@
     title: Train RL in Simulation
   - local: async
     title: Use Async Inference
+  title: "Tutorials"
+- sections:
+  - local: lerobot-dataset-v3
+    title: Using LeRobotDataset
   - local: porting_datasets_v3
     title: Porting Large Datasets
-  title: "Tutorials"
+  title: "Datasets"
 - sections:
   - local: smolvla
     title: SmolVLA
@@ -30,6 +34,17 @@
   - local: pi05
     title: π₀.₅ (Pi05)
   title: "Policies"
+
+- sections:
+  - local: introduction_processors
+    title: Introduction to Robot Processors
+  - local: debug_processor_pipeline
+    title: Debug your processor pipeline
+  - local: implement_your_own_processor
+    title: Implement your own processor
+  - local: processors_robots_teleop
+    title: Processors for Robots and Teleoperators
+  title: "Robot Processors"
 - sections:
   - local: so101
     title: SO-101
@@ -44,6 +59,10 @@
   - local: reachy2
     title: Reachy 2
   title: "Robots"
+- sections:
+  - local: phone_teleop
+    title: Phone
+  title: "Teleoperators"
 - sections:
   - local: notebooks
     title: Notebooks
