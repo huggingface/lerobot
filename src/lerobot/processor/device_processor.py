@@ -105,6 +105,10 @@ class DeviceProcessorStep(ProcessorStep):
             # In both cases, use the configured device.
             target_device = self.tensor_device
 
+        # MPS workaround: Convert float64 to float32 since MPS doesn't support float64
+        if target_device.type == "mps" and tensor.dtype == torch.float64:
+            tensor = tensor.to(dtype=torch.float32)
+
         # Only move if necessary
         if tensor.device != target_device:
             tensor = tensor.to(target_device, non_blocking=self.non_blocking)
