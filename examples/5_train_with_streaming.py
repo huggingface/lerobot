@@ -30,6 +30,7 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.factory import make_pre_post_processors
 
 
 def main():
@@ -60,9 +61,10 @@ def main():
 
     # We can now instantiate our policy with this config and the dataset stats.
     cfg = ACTConfig(input_features=input_features, output_features=output_features)
-    policy = ACTPolicy(cfg, dataset_stats=dataset_metadata.stats)
+    policy = ACTPolicy(cfg)
     policy.train()
     policy.to(device)
+    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=dataset_metadata.stats)
 
     # Delta timestamps are used to (1) augment frames used during training and (2) supervise the policy.
     # Here, we use delta-timestamps to only provide ground truth actions for supervision
@@ -89,13 +91,7 @@ def main():
     done = False
     while not done:
         for batch in dataloader:
-            batch = {
-                k: (v.type(torch.float32) if isinstance(v, torch.Tensor) and v.dtype != torch.bool else v)
-                for k, v in batch.items()
-            }
-            batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
-
-            # batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+            batch = preprocessor(batch)
             loss, _ = policy.forward(batch)
             loss.backward()
             optimizer.step()
@@ -110,6 +106,8 @@ def main():
 
     # Save a policy checkpoint.
     policy.save_pretrained(output_directory)
+    preprocessor.save_pretrained(output_directory)
+    postprocessor.save_pretrained(output_directory)
 
 
 if __name__ == "__main__":

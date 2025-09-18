@@ -1015,3 +1015,147 @@ def test_policy_processor_integration():
     # Verify action is back on CPU and unnormalized
     assert output_result[TransitionKey.ACTION].device.type == "cpu"
     assert output_result[TransitionKey.ACTION].shape == (1, 5)
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS not available")
+def test_mps_float64_compatibility():
+    """Test MPS device compatibility with float64 tensors (automatic conversion to float32)."""
+    processor = DeviceProcessorStep(device="mps")
+
+    # Create tensors with different dtypes, including float64 which MPS doesn't support
+    observation = {
+        "observation.float64": torch.randn(5, dtype=torch.float64),  # Should be converted to float32
+        "observation.float32": torch.randn(5, dtype=torch.float32),  # Should remain float32
+        "observation.float16": torch.randn(5, dtype=torch.float16),  # Should remain float16
+        "observation.int64": torch.randint(0, 10, (5,), dtype=torch.int64),  # Should remain int64
+        "observation.bool": torch.tensor([True, False, True], dtype=torch.bool),  # Should remain bool
+    }
+    action = torch.randn(3, dtype=torch.float64)  # Should be converted to float32
+    reward = torch.tensor(1.0, dtype=torch.float64)  # Should be converted to float32
+    done = torch.tensor(False, dtype=torch.bool)  # Should remain bool
+    truncated = torch.tensor(True, dtype=torch.bool)  # Should remain bool
+
+    transition = create_transition(
+        observation=observation, action=action, reward=reward, done=done, truncated=truncated
+    )
+
+    result = processor(transition)
+
+    # Check that all tensors are on MPS device
+    assert result[TransitionKey.OBSERVATION]["observation.float64"].device.type == "mps"
+    assert result[TransitionKey.OBSERVATION]["observation.float32"].device.type == "mps"
+    assert result[TransitionKey.OBSERVATION]["observation.float16"].device.type == "mps"
+    assert result[TransitionKey.OBSERVATION]["observation.int64"].device.type == "mps"
+    assert result[TransitionKey.OBSERVATION]["observation.bool"].device.type == "mps"
+    assert result[TransitionKey.ACTION].device.type == "mps"
+    assert result[TransitionKey.REWARD].device.type == "mps"
+    assert result[TransitionKey.DONE].device.type == "mps"
+    assert result[TransitionKey.TRUNCATED].device.type == "mps"
+
+    # Check that float64 tensors were automatically converted to float32
+    assert result[TransitionKey.OBSERVATION]["observation.float64"].dtype == torch.float32
+    assert result[TransitionKey.ACTION].dtype == torch.float32
+    assert result[TransitionKey.REWARD].dtype == torch.float32
+
+    # Check that other dtypes were preserved
+    assert result[TransitionKey.OBSERVATION]["observation.float32"].dtype == torch.float32
+    assert result[TransitionKey.OBSERVATION]["observation.float16"].dtype == torch.float16
+    assert result[TransitionKey.OBSERVATION]["observation.int64"].dtype == torch.int64
+    assert result[TransitionKey.OBSERVATION]["observation.bool"].dtype == torch.bool
+    assert result[TransitionKey.DONE].dtype == torch.bool
+    assert result[TransitionKey.TRUNCATED].dtype == torch.bool
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS not available")
+def test_mps_float64_with_complementary_data():
+    """Test MPS float64 conversion with complementary_data tensors."""
+    processor = DeviceProcessorStep(device="mps")
+
+    # Create complementary_data with float64 tensors
+    complementary_data = {
+        "task": ["pick_object"],
+        "index": torch.tensor([42], dtype=torch.int64),  # Should remain int64
+        "task_index": torch.tensor([3], dtype=torch.int64),  # Should remain int64
+        "float64_tensor": torch.tensor([1.5, 2.5], dtype=torch.float64),  # Should convert to float32
+        "float32_tensor": torch.tensor([3.5], dtype=torch.float32),  # Should remain float32
+    }
+
+    transition = create_transition(
+        observation={"observation.state": torch.randn(5, dtype=torch.float64)},
+        action=torch.randn(3, dtype=torch.float64),
+        complementary_data=complementary_data,
+    )
+
+    result = processor(transition)
+
+    # Check that all tensors are on MPS device
+    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "mps"
+    assert result[TransitionKey.ACTION].device.type == "mps"
+
+    processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert processed_comp_data["index"].device.type == "mps"
+    assert processed_comp_data["task_index"].device.type == "mps"
+    assert processed_comp_data["float64_tensor"].device.type == "mps"
+    assert processed_comp_data["float32_tensor"].device.type == "mps"
+
+    # Check dtype conversions
+    assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.float32  # Converted
+    assert result[TransitionKey.ACTION].dtype == torch.float32  # Converted
+    assert processed_comp_data["float64_tensor"].dtype == torch.float32  # Converted
+    assert processed_comp_data["float32_tensor"].dtype == torch.float32  # Unchanged
+    assert processed_comp_data["index"].dtype == torch.int64  # Unchanged
+    assert processed_comp_data["task_index"].dtype == torch.int64  # Unchanged
+
+    # Check non-tensor data preserved
+    assert processed_comp_data["task"] == ["pick_object"]
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS not available")
+def test_mps_with_explicit_float_dtype():
+    """Test MPS device with explicit float_dtype setting."""
+    # Test that explicit float_dtype still works on MPS
+    processor = DeviceProcessorStep(device="mps", float_dtype="float16")
+
+    observation = {
+        "observation.float64": torch.randn(
+            5, dtype=torch.float64
+        ),  # First converted to float32, then to float16
+        "observation.float32": torch.randn(5, dtype=torch.float32),  # Converted to float16
+        "observation.int32": torch.randint(0, 10, (5,), dtype=torch.int32),  # Should remain int32
+    }
+    action = torch.randn(3, dtype=torch.float64)
+
+    transition = create_transition(observation=observation, action=action)
+    result = processor(transition)
+
+    # Check device placement
+    assert result[TransitionKey.OBSERVATION]["observation.float64"].device.type == "mps"
+    assert result[TransitionKey.OBSERVATION]["observation.float32"].device.type == "mps"
+    assert result[TransitionKey.OBSERVATION]["observation.int32"].device.type == "mps"
+    assert result[TransitionKey.ACTION].device.type == "mps"
+
+    # Check that all float tensors end up as float16 (the target dtype)
+    assert result[TransitionKey.OBSERVATION]["observation.float64"].dtype == torch.float16
+    assert result[TransitionKey.OBSERVATION]["observation.float32"].dtype == torch.float16
+    assert result[TransitionKey.ACTION].dtype == torch.float16
+
+    # Check that non-float tensors are preserved
+    assert result[TransitionKey.OBSERVATION]["observation.int32"].dtype == torch.int32
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS not available")
+def test_mps_serialization():
+    """Test that MPS device processor can be serialized and loaded correctly."""
+    processor = DeviceProcessorStep(device="mps", float_dtype="float32")
+
+    # Test get_config
+    config = processor.get_config()
+    assert config == {"device": "mps", "float_dtype": "float32"}
+
+    # Test state_dict (should be empty)
+    state = processor.state_dict()
+    assert state == {}
+
+    # Test load_state_dict (should be no-op)
+    processor.load_state_dict({})
+    assert processor.device == "mps"
