@@ -42,14 +42,17 @@ repos:
     rev: v0.12.4
     hooks:
       - id: ruff-format
+        exclude: ^src/lerobot/policies/eo1/modeling_qwen2_5_vl\.py
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
+        exclude: ^src/lerobot/policies/eo1/modeling_qwen2_5_vl\.py
 
   - repo: https://github.com/adhtruong/mirrors-typos
     rev: v1.34.0
     hooks:
       - id: typos
         args: [--force-exclude]
+        exclude: ^src/lerobot/policies/eo1/(modeling_qwen2_5_vl|modeling_eo1)\.py$
 
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.20.0
