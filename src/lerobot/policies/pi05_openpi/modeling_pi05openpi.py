@@ -1163,7 +1163,6 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
             full_prompts.append(full_prompt)
 
         # Tokenize the full prompts with state
-        # Use the HuggingFace tokenizer properly (not .encode() which doesn't exist on AutoTokenizer)
         tokenized = self.tokenizer(
             full_prompts,
             padding="max_length",
@@ -1171,7 +1170,6 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
             truncation=True,
             max_length=self.max_token_len,
             return_tensors="pt",
-            add_special_tokens=True,
         )
 
         tokens = tokenized["input_ids"].to(device)
