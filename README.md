@@ -233,7 +233,7 @@ Under the hood, the `LeRobotDataset` format makes use of several ways to seriali
 
 Here are the important details and internal structure organization of a typical `LeRobotDataset` instantiated with `dataset = LeRobotDataset("lerobot/aloha_static_coffee")`. The exact features will change from dataset to dataset but not the main aspects:
 
-````
+```
 dataset attributes:
   ├ hf_dataset: a Hugging Face dataset (backed by Arrow/parquet). Typical features example:
   │  ├ observation.images.cam_high (VideoFrame):
@@ -269,7 +269,7 @@ dataset attributes:
   ├ root (Path): local directory where the dataset is stored
   ├ image_transforms (Callable): optional image transformations to apply to visual modalities
   └ delta_timestamps (dict): optional delta timestamps for temporal queries
-decoding videos (e.g., 'pyav', 'torchcodec')
+```
 
 A `LeRobotDataset` is serialised using several widespread file formats for each of its parts, namely:
 
@@ -337,4 +337,7 @@ If you want, you can cite this work with:
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)
-````
+
+```
+
+```
