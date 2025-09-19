@@ -573,6 +573,7 @@ def eval_one(
         video_paths=task_result.get("video_paths", []),
     )
 
+
 def run_one(
     task_group: str,
     task_id: int,
