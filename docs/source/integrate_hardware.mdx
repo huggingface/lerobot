@@ -208,24 +208,25 @@ LeRobot supports saving and loading calibration data automatically. This is usef
 
 <!-- prettier-ignore-start -->
 ```python
-> @property
-> def is_calibrated(self) -> bool:
->    return True
->
-> def calibrate(self) -> None:
->    pass
-> ```
+@property
+def is_calibrated(self) -> bool:
+   return True
+
+def calibrate(self) -> None:
+   pass
+```
+<!-- prettier-ignore-end -->
 
 ### `is_calibrated`
 
 This should reflect whether your robot has the required calibration loaded.
-
-```
-<!-- prettier-ignore-end -->python
+<!-- prettier-ignore-start -->
+```python
 @property
 def is_calibrated(self) -> bool:
     return self.bus.is_calibrated
 ```
+<!-- prettier-ignore-end -->
 
 ### `calibrate()`
 
