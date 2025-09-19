@@ -281,8 +281,14 @@ class _NormalizationMixin:
         """
         Core logic to apply a normalization or unnormalization transformation to a tensor.
 
-        This method selects the appropriate normalization mode (e.g., mean/std, min/max)
-        based on the feature type and applies the corresponding mathematical operation.
+        This method selects the appropriate normalization mode based on the feature type
+        and applies the corresponding mathematical operation.
+
+        Normalization Modes:
+          - MEAN_STD: Centers data around zero with unit variance.
+          - MIN_MAX: Scales data to [-1, 1] range using actual min/max values.
+          - QUANTILES: Scales data to [0, 1] range using 1st and 99th percentiles (q01/q99).
+          - QUANTILE10: Scales data to [0, 1] range using 10th and 90th percentiles (q10/q90).
 
         Args:
             tensor: The input tensor to transform.
@@ -300,7 +306,12 @@ class _NormalizationMixin:
         if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
             return tensor
 
-        if norm_mode not in (NormalizationMode.MEAN_STD, NormalizationMode.MIN_MAX):
+        if norm_mode not in (
+            NormalizationMode.MEAN_STD,
+            NormalizationMode.MIN_MAX,
+            NormalizationMode.QUANTILES,
+            NormalizationMode.QUANTILE10,
+        ):
             raise ValueError(f"Unsupported normalization mode: {norm_mode}")
 
         # For Accelerate compatibility: Ensure stats are on the same device and dtype as the input tensor
@@ -333,6 +344,28 @@ class _NormalizationMixin:
                 return (tensor + 1) / 2 * denom + min_val
             # Map from [min, max] to [-1, 1]
             return 2 * (tensor - min_val) / denom - 1
+
+        if norm_mode == NormalizationMode.QUANTILES and "q01" in stats and "q99" in stats:
+            q01, q99 = stats["q01"], stats["q99"]
+            denom = q99 - q01
+            # Avoid division by zero by adding epsilon when quantiles are identical
+            denom = torch.where(
+                denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
+            )
+            if inverse:
+                return tensor * denom + q01
+            return (tensor - q01) / denom
+
+        if norm_mode == NormalizationMode.QUANTILE10 and "q10" in stats and "q90" in stats:
+            q10, q90 = stats["q10"], stats["q90"]
+            denom = q90 - q10
+            # Avoid division by zero by adding epsilon when quantiles are identical
+            denom = torch.where(
+                denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
+            )
+            if inverse:
+                return tensor * denom + q10
+            return (tensor - q10) / denom
 
         # If necessary stats are missing, return input unchanged.
         return tensor
