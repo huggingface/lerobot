@@ -193,6 +193,4 @@ As you can see, it's almost the same command as previously used to record your t
 
 ## More
 
-Follow this [previous tutorial](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#4-train-a-policy-on-your-data) for a more in-depth explanation.
-
 If you have any question or need help, please reach out on Discord in the channel `#aloha-arm`.
