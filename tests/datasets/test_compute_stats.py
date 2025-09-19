@@ -391,22 +391,23 @@ def test_running_quantile_stats_get_statistics_with_quantiles():
     running_stats = RunningQuantileStats()
     running_stats.update(data)
 
-    quantiles = [0.01, 0.5, 0.99]
-    stats = running_stats.get_statistics(quantiles)
+    stats = running_stats.get_statistics()
 
     # Should have basic stats plus quantiles
-    expected_keys = {"min", "max", "mean", "std", "count", "q01", "q50", "q99"}
+    expected_keys = {"min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99"}
     assert expected_keys.issubset(set(stats.keys()))
 
     # Verify quantile values are reasonable
-    for i, q in enumerate(quantiles):
+    from lerobot.datasets.compute_stats import DEFAULT_QUANTILES
+
+    for i, q in enumerate(DEFAULT_QUANTILES):
         q_key = f"q{int(q * 100):02d}"
         assert q_key in stats
         assert stats[q_key].shape == (2,)
 
         # Check that quantiles are in reasonable order
         if i > 0:
-            prev_q_key = f"q{int(quantiles[i - 1] * 100):02d}"
+            prev_q_key = f"q{int(DEFAULT_QUANTILES[i - 1] * 100):02d}"
             assert np.all(stats[prev_q_key] <= stats[q_key])
 
 
@@ -486,7 +487,7 @@ def test_get_feature_stats_quantiles_enabled_by_default():
     data = np.random.normal(0, 1, (100, 5))
     stats = get_feature_stats(data, axis=0, keepdims=False)
 
-    expected_keys = {"min", "max", "mean", "std", "count", "q01", "q99"}
+    expected_keys = {"min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99"}
     assert set(stats.keys()) == expected_keys
 
 
@@ -495,9 +496,9 @@ def test_get_feature_stats_quantiles_with_vector_data():
     np.random.seed(42)
     data = np.random.normal(0, 1, (100, 5))
 
-    stats = get_feature_stats(data, axis=0, keepdims=False, quantiles=[0.01, 0.99])
+    stats = get_feature_stats(data, axis=0, keepdims=False)
 
-    expected_keys = {"min", "max", "mean", "std", "count", "q01", "q99"}
+    expected_keys = {"min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99"}
     assert set(stats.keys()) == expected_keys
 
     # Verify shapes
@@ -513,24 +514,24 @@ def test_get_feature_stats_quantiles_with_image_data():
     np.random.seed(42)
     data = np.random.normal(0, 1, (50, 3, 32, 32))  # batch, channels, height, width
 
-    stats = get_feature_stats(data, axis=(0, 2, 3), keepdims=True, quantiles=[0.05, 0.95])
+    stats = get_feature_stats(data, axis=(0, 2, 3), keepdims=True)
 
-    expected_keys = {"min", "max", "mean", "std", "count", "q05", "q95"}
+    expected_keys = {"min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99"}
     assert set(stats.keys()) == expected_keys
 
     # Verify shapes for images (should be (1, channels, 1, 1))
-    assert stats["q05"].shape == (1, 3, 1, 1)
-    assert stats["q95"].shape == (1, 3, 1, 1)
+    assert stats["q01"].shape == (1, 3, 1, 1)
+    assert stats["q50"].shape == (1, 3, 1, 1)
+    assert stats["q99"].shape == (1, 3, 1, 1)
 
 
-def test_get_feature_stats_custom_quantiles():
-    """Test with custom quantile values."""
+def test_get_feature_stats_fixed_quantiles():
+    """Test that fixed quantiles are always computed."""
     data = np.random.normal(0, 1, (200, 3))
 
-    custom_quantiles = [0.1, 0.25, 0.75, 0.9]
-    stats = get_feature_stats(data, axis=0, keepdims=False, quantiles=custom_quantiles)
+    stats = get_feature_stats(data, axis=0, keepdims=False)
 
-    expected_quantile_keys = {"q10", "q25", "q75", "q90"}
+    expected_quantile_keys = {"q01", "q10", "q50", "q90", "q99"}
     assert expected_quantile_keys.issubset(set(stats.keys()))
 
 
@@ -560,7 +561,7 @@ def test_compute_episode_stats_backward_compatibility():
     stats = compute_episode_stats(episode_data, features)
 
     for key in ["action", "observation.state"]:
-        expected_keys = {"min", "max", "mean", "std", "count", "q01", "q99"}
+        expected_keys = {"min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99"}
         assert set(stats[key].keys()) == expected_keys
 
 
@@ -576,11 +577,11 @@ def test_compute_episode_stats_with_custom_quantiles():
         "observation.state": {"dtype": "float32", "shape": (10,)},
     }
 
-    stats = compute_episode_stats(episode_data, features, quantiles=[0.01, 0.99])
+    stats = compute_episode_stats(episode_data, features)
 
     # Should have quantiles
     for key in ["action", "observation.state"]:
-        expected_keys = {"min", "max", "mean", "std", "count", "q01", "q99"}
+        expected_keys = {"min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99"}
         assert set(stats[key].keys()) == expected_keys
 
         # Verify shapes
@@ -601,15 +602,20 @@ def test_compute_episode_stats_with_image_data():
     }
 
     with patch("lerobot.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy):
-        stats = compute_episode_stats(episode_data, features, quantiles=[0.1, 0.9])
+        stats = compute_episode_stats(episode_data, features)
 
     # Image quantiles should be normalized and have correct shape
-    assert "q10" in stats["observation.image"]
-    assert "q90" in stats["observation.image"]
-    assert stats["observation.image"]["q10"].shape == (3, 1, 1)
+    assert "q01" in stats["observation.image"]
+    assert "q50" in stats["observation.image"]
+    assert "q99" in stats["observation.image"]
+    assert stats["observation.image"]["q01"].shape == (3, 1, 1)
+    assert stats["observation.image"]["q50"].shape == (3, 1, 1)
+    assert stats["observation.image"]["q99"].shape == (3, 1, 1)
 
     # Action quantiles should have correct shape
-    assert stats["action"]["q10"].shape == (5,)
+    assert stats["action"]["q01"].shape == (5,)
+    assert stats["action"]["q50"].shape == (5,)
+    assert stats["action"]["q99"].shape == (5,)
 
 
 def test_compute_episode_stats_string_features_skipped():
@@ -748,7 +754,7 @@ def test_quantile_integration_single_value_quantiles():
     running_stats = RunningQuantileStats()
     running_stats.update(data)
 
-    stats = running_stats.get_statistics([0.01, 0.5, 0.99])
+    stats = running_stats.get_statistics()
 
     # All quantiles should be approximately 1.0
     np.testing.assert_allclose(stats["q01"], np.array([1.0, 1.0, 1.0]), atol=1e-6)
@@ -756,16 +762,19 @@ def test_quantile_integration_single_value_quantiles():
     np.testing.assert_allclose(stats["q99"], np.array([1.0, 1.0, 1.0]), atol=1e-6)
 
 
-def test_quantile_integration_extreme_quantiles():
-    """Test with extreme quantile values."""
+def test_quantile_integration_fixed_quantiles():
+    """Test that fixed quantiles are computed."""
     np.random.seed(42)
     data = np.random.normal(0, 1, (1000, 2))
 
-    extreme_quantiles = [0.001, 0.999]
-    stats = get_feature_stats(data, axis=0, keepdims=False, quantiles=extreme_quantiles)
+    stats = get_feature_stats(data, axis=0, keepdims=False)
 
-    assert "q00" in stats  # 0.1% -> q00
-    assert "q99" in stats  # 99.9% -> q99 (rounded)
+    # Check all fixed quantiles are present
+    assert "q01" in stats
+    assert "q10" in stats
+    assert "q50" in stats
+    assert "q90" in stats
+    assert "q99" in stats
 
 
 def test_quantile_integration_large_dataset_quantiles():
@@ -776,8 +785,49 @@ def test_quantile_integration_large_dataset_quantiles():
     running_stats = RunningQuantileStats(num_quantile_bins=1000)  # Reduced bins for speed
     running_stats.update(large_data)
 
-    stats = running_stats.get_statistics([0.01, 0.5, 0.99])
+    stats = running_stats.get_statistics()
 
     # Should complete without issues and produce reasonable results
     assert stats["count"][0] == 10000
     assert len(stats["q01"]) == 5
+
+
+def test_fixed_quantiles_always_computed():
+    """Test that the fixed quantiles [0.01, 0.10, 0.50, 0.90, 0.99] are always computed."""
+    np.random.seed(42)
+    # Test with vector data
+    vector_data = np.random.normal(0, 1, (100, 5))
+    vector_stats = get_feature_stats(vector_data, axis=0, keepdims=False)
+
+    # Check all fixed quantiles are present
+    expected_quantiles = ["q01", "q10", "q50", "q90", "q99"]
+    for q_key in expected_quantiles:
+        assert q_key in vector_stats
+        assert vector_stats[q_key].shape == (5,)
+
+    # Test with image data
+    image_data = np.random.randint(0, 256, (50, 3, 32, 32), dtype=np.uint8)
+    image_stats = get_feature_stats(image_data, axis=(0, 2, 3), keepdims=True)
+
+    # Check all fixed quantiles are present for images
+    for q_key in expected_quantiles:
+        assert q_key in image_stats
+        assert image_stats[q_key].shape == (1, 3, 1, 1)
+
+    # Test with episode data
+    episode_data = {
+        "action": np.random.normal(0, 1, (100, 7)),
+        "observation.state": np.random.normal(0, 1, (100, 10)),
+    }
+    features = {
+        "action": {"dtype": "float32", "shape": (7,)},
+        "observation.state": {"dtype": "float32", "shape": (10,)},
+    }
+
+    episode_stats = compute_episode_stats(episode_data, features)
+
+    # Check all fixed quantiles are present in episode stats
+    for key in ["action", "observation.state"]:
+        for q_key in expected_quantiles:
+            assert q_key in episode_stats[key]
+            assert episode_stats[key][q_key].shape == (features[key]["shape"][0],)

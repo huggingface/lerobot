@@ -17,6 +17,8 @@ import numpy as np
 
 from lerobot.datasets.utils import load_image_as_numpy
 
+DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
+
 
 class RunningQuantileStats:
     """Compute running statistics including quantiles for a batch of vectors."""
@@ -77,11 +79,11 @@ class RunningQuantileStats:
 
         self._update_histograms(batch)
 
-    def get_statistics(self, quantiles: list[float] | None = None) -> dict[str, np.ndarray]:
+    def get_statistics(self) -> dict[str, np.ndarray]:
         """Compute and return the statistics of the vectors processed so far.
 
         Args:
-            quantiles: List of quantiles to compute (e.g., [0.01, 0.99]). If None, no quantiles computed.
+            quantiles: List of quantiles to compute (e.g., [0.01, 0.10, 0.50, 0.90, 0.99]). If None, no quantiles computed.
 
         Returns:
             Dictionary containing the computed statistics.
@@ -100,12 +102,10 @@ class RunningQuantileStats:
             "count": np.array([self._count]),
         }
 
-        if quantiles is not None:
-            quantile_results = self._compute_quantiles(quantiles)
-            for i, q in enumerate(quantiles):
-                # Format as q01, q99, etc.
-                q_key = f"q{int(q * 100):02d}"
-                stats[q_key] = quantile_results[i]
+        quantile_results = self._compute_quantiles()
+        for i, q in enumerate(DEFAULT_QUANTILES):
+            q_key = f"q{int(q * 100):02d}"
+            stats[q_key] = quantile_results[i]
 
         return stats
 
@@ -142,10 +142,10 @@ class RunningQuantileStats:
             hist, _ = np.histogram(batch[:, i], bins=self._bin_edges[i])
             self._histograms[i] += hist
 
-    def _compute_quantiles(self, quantiles: list[float]) -> list[np.ndarray]:
+    def _compute_quantiles(self) -> list[np.ndarray]:
         """Compute quantiles based on histograms."""
         results = []
-        for q in quantiles:
+        for q in DEFAULT_QUANTILES:
             target_count = q * self._count
             q_values = []
             for hist, edges in zip(self._histograms, self._bin_edges, strict=True):
@@ -210,22 +210,17 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
     return images
 
 
-def get_feature_stats(
-    array: np.ndarray, axis: tuple, keepdims: bool, quantiles: list[float] | None = None
-) -> dict[str, np.ndarray]:
+def get_feature_stats(array: np.ndarray, axis: tuple, keepdims: bool) -> dict[str, np.ndarray]:
     """Compute feature statistics including quantiles.
 
     Args:
         array: Input data array
         axis: Axes along which to compute statistics
         keepdims: Whether to keep reduced dimensions
-        quantiles: List of quantiles to compute (e.g., [0.01, 0.99])
 
     Returns:
-        Dictionary containing computed statistics including quantiles
+        Dictionary containing computed statistics
     """
-    if quantiles is None:
-        quantiles = [0.01, 0.99]  # Default to 1st and 99th percentiles
 
     # Determine the appropriate reshaping and computation strategy based on axis
     original_shape = array.shape
@@ -271,11 +266,11 @@ def get_feature_stats(
             "count": np.array([sample_count]),
         }
         # Add quantiles as the same value (since we only have one data point)
-        for q in quantiles:
+        for q in DEFAULT_QUANTILES:
             q_key = f"q{int(q * 100):02d}"
             stats[q_key] = stats["mean"].copy()
     else:
-        stats = running_stats.get_statistics(quantiles)
+        stats = running_stats.get_statistics()
         # Fix the count to reflect the correct number of samples
         stats["count"] = np.array([sample_count])
 
@@ -326,18 +321,15 @@ def get_feature_stats(
     return stats
 
 
-def compute_episode_stats(
-    episode_data: dict[str, list[str] | np.ndarray], features: dict, quantiles: list[float] | None = None
-) -> dict:
+def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], features: dict) -> dict:
     """Compute episode statistics including quantiles.
 
     Args:
         episode_data: Dictionary containing episode data
         features: Dictionary describing feature types and shapes
-        quantiles: List of quantiles to compute (e.g., [0.01, 0.99])
 
     Returns:
-        Dictionary containing computed statistics for each feature including quantiles
+        Dictionary containing computed statistics for each feature
     """
     ep_stats = {}
     for key, data in episode_data.items():
@@ -352,9 +344,7 @@ def compute_episode_stats(
             axes_to_reduce = 0  # compute stats over the first axis
             keepdims = data.ndim == 1  # keep as np.array
 
-        ep_stats[key] = get_feature_stats(
-            ep_ft_array, axis=axes_to_reduce, keepdims=keepdims, quantiles=quantiles
-        )
+        ep_stats[key] = get_feature_stats(ep_ft_array, axis=axes_to_reduce, keepdims=keepdims)
 
         # finally, we normalize and remove batch dim for images
         if features[key]["dtype"] in ["image", "video"]:
