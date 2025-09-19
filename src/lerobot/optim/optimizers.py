@@ -45,7 +45,7 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
         return "adam"
 
     @abc.abstractmethod
-    def build(self) -> torch.optim.Optimizer | dict[str, torch.optim.Optimizer]:
+    def build(self, *args: Any, **kwargs: Any) -> torch.optim.Optimizer | dict[str, torch.optim.Optimizer]:
         """
         Build the optimizer. It can be a single optimizer or a dictionary of optimizers.
         NOTE: Multiple optimizers are useful when you have different models to optimize.
