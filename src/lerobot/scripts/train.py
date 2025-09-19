@@ -294,7 +294,7 @@ def train(cfg: TrainPipelineConfig):
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
             ):
                 eval_info = eval_policy_all(
-                    env=eval_env,  # dict[suite][task_id] -> vec_env
+                    envs=eval_env,  # dict[suite][task_id] -> vec_env
                     policy=policy,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
