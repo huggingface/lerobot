@@ -51,9 +51,7 @@ def main():
     training_steps = 10
     log_freq = 1
 
-    dataset_id = (
-        "aractingi/droid_1.0.1"  # 26M frames! Would require 4TB of disk space if installed locally (:
-    )
+    dataset_id = "lerobot/droid_1.0.1"  # 26M frames! Would require 4TB of disk space if installed locally (:
     dataset_metadata = LeRobotDatasetMetadata(dataset_id)
     features = dataset_to_policy_features(dataset_metadata.features)
     output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
