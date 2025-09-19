@@ -212,21 +212,21 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
 
 def _reshape_stats_by_axis(stats: dict, axis, keepdims: bool, original_shape: tuple) -> dict:
     """Transform computed statistics to match the expected output shape conventions.
-    
+
     This function orchestrates the reshaping of all statistics in the dictionary to conform
     to NumPy's broadcasting and dimensionality conventions when `keepdims=True` or when
     specific axis reductions are applied. The 'count' statistic is never reshaped as it
     represents metadata about the number of samples processed.
-    
+
     Args:
         stats: Dictionary containing computed statistics (min, max, mean, std, quantiles, count)
         axis: Axis or axes along which statistics were computed
         keepdims: Whether reduced dimensions should be kept as dimensions of size 1
         original_shape: Shape of the original array before any reduction operations
-        
+
     Returns:
         Dictionary with the same keys but values reshaped according to NumPy conventions
-        
+
     Examples:
         For image data with axis=(0,2,3) and keepdims=True:
         - Input: stats['mean'].shape = (3,) for 3 channels
@@ -234,71 +234,71 @@ def _reshape_stats_by_axis(stats: dict, axis, keepdims: bool, original_shape: tu
     """
     if axis == (1,) and not keepdims:
         return stats
-    
+
     result = {}
     for key, value in stats.items():
         if key == "count":
             result[key] = value
         else:
             result[key] = _reshape_single_stat(value, axis, keepdims, original_shape)
-    
+
     return result
 
 
 def _reshape_single_stat(value: np.ndarray, axis, keepdims: bool, original_shape: tuple) -> np.ndarray:
     """Apply appropriate reshaping to a single statistic array.
-    
+
     This function implements the core logic for transforming statistic arrays to match
     expected output shapes. The reshaping follows NumPy's conventions where:
-    
+
     - When keepdims=True: reduced dimensions become size-1 dimensions
     - When keepdims=False: reduced dimensions are eliminated entirely
     - Special handling for different axis patterns commonly used in ML pipelines:
       * axis=(0,2,3): Image data where batch, height, width are reduced
-      * axis=0 or (0,): Vector data where batch dimension is reduced  
+      * axis=0 or (0,): Vector data where batch dimension is reduced
       * axis=(1,): Feature dimension reduction
       * axis=None: Global reduction across all dimensions
-    
+
     Args:
         value: The statistic array to reshape
         axis: Axis or axes that were reduced during computation
         keepdims: Whether to maintain reduced dimensions as size-1 dimensions
         original_shape: Shape of the original data before reduction
-        
+
     Returns:
         Reshaped array following NumPy broadcasting conventions
-        
+
     Examples:
         Image case: (batch=10, channels=3, H=32, W=32) -> axis=(0,2,3), keepdims=True
         - Input: value.shape = (3,)  # per-channel statistics
         - Output: value.shape = (1, 3, 1, 1)  # broadcastable with (N, 3, H, W)
-        
-        Vector case: (batch=100, features=7) -> axis=0, keepdims=True  
+
+        Vector case: (batch=100, features=7) -> axis=0, keepdims=True
         - Input: value.shape = (7,)  # per-feature statistics
         - Output: value.shape = (1, 7)  # broadcastable with (N, 7)
     """
     if axis == (0, 2, 3) and keepdims and value.ndim == 1:
         return value.reshape(1, -1, 1, 1)
-    
+
     if axis in [0, (0,)] and keepdims:
         if len(original_shape) == 1 and value.ndim > 0:
             return value.reshape(1)
         elif len(original_shape) >= 2 and value.ndim == 1:
             return value.reshape(1, -1)
-    
+
     if axis == (1,) and keepdims:
         if value.ndim == 0:
             return value.reshape(1, 1)
         elif value.ndim == 1:
             return value.reshape(-1, 1)
-    
+
     if axis is None:
         if keepdims:
             target_shape = tuple(1 for _ in original_shape)
             return value.reshape(target_shape)
         elif not keepdims and value.ndim > 0 and value.size == 1:
             return value.item()
-    
+
     return value
 
 

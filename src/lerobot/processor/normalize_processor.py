@@ -306,7 +306,12 @@ class _NormalizationMixin:
         if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
             return tensor
 
-        if norm_mode not in (NormalizationMode.MEAN_STD, NormalizationMode.MIN_MAX, NormalizationMode.QUANTILES, NormalizationMode.QUANTILE10):
+        if norm_mode not in (
+            NormalizationMode.MEAN_STD,
+            NormalizationMode.MIN_MAX,
+            NormalizationMode.QUANTILES,
+            NormalizationMode.QUANTILE10,
+        ):
             raise ValueError(f"Unsupported normalization mode: {norm_mode}")
 
         # For Accelerate compatibility: Ensure stats are on the same device and dtype as the input tensor

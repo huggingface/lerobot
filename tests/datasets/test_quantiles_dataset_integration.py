@@ -2,11 +2,8 @@
 
 """Integration tests for quantile functionality in LeRobotDataset."""
 
-from unittest.mock import patch
-
 import numpy as np
 import pytest
-import torch
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -41,7 +38,7 @@ def test_create_dataset_with_fixed_quantiles(tmp_path, simple_features):
         features=simple_features,
         root=tmp_path / "create_fixed_quantiles",
     )
-    
+
     # Dataset should be created successfully
     assert dataset is not None
 
@@ -49,22 +46,24 @@ def test_create_dataset_with_fixed_quantiles(tmp_path, simple_features):
 def test_save_episode_computes_all_quantiles(tmp_path, simple_features):
     """Test that all fixed quantiles are computed when saving an episode."""
     dataset = LeRobotDataset.create(
-        repo_id="test_dataset_save_episode", 
+        repo_id="test_dataset_save_episode",
         fps=30,
         features=simple_features,
         root=tmp_path / "save_episode_quantiles",
     )
-    
+
     # Add some frames
-    for i in range(10):
-        dataset.add_frame({
-            "action": np.random.randn(4).astype(np.float32),  # Correct shape for action
-            "observation.state": np.random.randn(10).astype(np.float32),
-            "task": "test_task",
-        })
-    
+    for _ in range(10):
+        dataset.add_frame(
+            {
+                "action": np.random.randn(4).astype(np.float32),  # Correct shape for action
+                "observation.state": np.random.randn(10).astype(np.float32),
+                "task": "test_task",
+            }
+        )
+
     dataset.save_episode()
-    
+
     # Check that all fixed quantiles were computed
     stats = dataset.meta.stats
     for key in ["action", "observation.state"]:
@@ -83,19 +82,21 @@ def test_quantile_values_ordering(tmp_path, simple_features):
         features=simple_features,
         root=tmp_path / "quantile_ordering",
     )
-    
+
     # Add data with known distribution
     np.random.seed(42)
-    for i in range(100):
-        dataset.add_frame({
-            "action": np.random.randn(4).astype(np.float32),  # Correct shape for action
-            "observation.state": np.random.randn(10).astype(np.float32),
-            "task": "test_task",
-        })
-    
+    for _ in range(100):
+        dataset.add_frame(
+            {
+                "action": np.random.randn(4).astype(np.float32),  # Correct shape for action
+                "observation.state": np.random.randn(10).astype(np.float32),
+                "task": "test_task",
+            }
+        )
+
     dataset.save_episode()
     stats = dataset.meta.stats
-    
+
     # Verify quantile ordering
     for key in ["action", "observation.state"]:
         assert np.all(stats[key]["q01"] <= stats[key]["q10"])
@@ -112,19 +113,19 @@ def test_save_episode_with_fixed_quantiles(tmp_path, simple_features):
         features=simple_features,
         root=tmp_path / "save_fixed_quantiles",
     )
-    
+
     # Add frames to episode
     np.random.seed(42)
-    for i in range(50):
+    for _ in range(50):
         frame = {
             "action": np.random.normal(0, 1, (4,)).astype(np.float32),
             "observation.state": np.random.normal(0, 1, (10,)).astype(np.float32),
             "task": "test_task",
         }
         dataset.add_frame(frame)
-    
+
     dataset.save_episode()
-    
+
     # Check that all fixed quantiles are included
     stats = dataset.meta.stats
     for key in ["action", "observation.state"]:
@@ -141,19 +142,19 @@ def test_quantile_aggregation_across_episodes(tmp_path, simple_features):
         features=simple_features,
         root=tmp_path / "quantile_aggregation",
     )
-    
+
     # Add frames to episode
     np.random.seed(42)
-    for i in range(100):
+    for _ in range(100):
         frame = {
             "action": np.random.normal(0, 1, (4,)).astype(np.float32),
             "observation.state": np.random.normal(2, 1, (10,)).astype(np.float32),
             "task": "test_task",
         }
         dataset.add_frame(frame)
-    
+
     dataset.save_episode()
-    
+
     # Check stats include all fixed quantiles
     stats = dataset.meta.stats
     for key in ["action", "observation.state"]:
@@ -175,20 +176,20 @@ def test_save_multiple_episodes_with_quantiles(tmp_path, simple_features):
         features=simple_features,
         root=tmp_path / "multiple_episodes",
     )
-    
+
     # Save multiple episodes
     np.random.seed(42)
     for episode_idx in range(3):
-        for frame_idx in range(50):
+        for _ in range(50):
             frame = {
                 "action": np.random.normal(episode_idx * 2.0, 1, (4,)).astype(np.float32),
                 "observation.state": np.random.normal(-episode_idx * 1.5, 1, (10,)).astype(np.float32),
                 "task": f"task_{episode_idx}",
             }
             dataset.add_frame(frame)
-        
+
         dataset.save_episode()
-    
+
     # Verify final stats include properly aggregated quantiles
     stats = dataset.meta.stats
     for key in ["action", "observation.state"]:
