@@ -233,18 +233,16 @@ class SMOLANDFAST(nn.Module):
         # Tokenize (likely CPU-bound, since HuggingFace tokenizers are Rust/C++)
         prefix_out = self.llm_tokenizer(
             prefix_texts,
-            add_special_tokens=True,
-            return_tensors="pt",
-            padding="longest",
+            padding=False,
             truncation=False,
         )
+        # print(prefix_out)
 
         # Move tokenized tensors to GPU once
-        prefix_ids = prefix_out["input_ids"].to(device)
-        prefix_pad_mask = prefix_out["attention_mask"].to(device)
-        prefix_att_mask = torch.zeros_like(prefix_ids, dtype=torch.bool, device=device)
+        prefix_ids = prefix_out["input_ids"]
+        prefix_pad_mask = prefix_out["attention_mask"]
 
-        return prefix_ids, prefix_pad_mask, prefix_att_mask
+        return prefix_ids, prefix_pad_mask
 
     def embed_tokens(self, tokens: torch.Tensor):
         lang_emb = self.embed_func(tokens)
@@ -260,6 +258,7 @@ class SMOLANDFAST(nn.Module):
         fast_pad_token = self._llm_tokens_to_act_tokens(self.pad_token_id)
 
         batch_tokens = self.fast_tokenizer(actions_norm)
+        print(batch_tokens)
         batch_mask = [[1]*len(tokens) for tokens in batch_tokens]
 
         max_len = max([len(seq) for seq in batch_tokens]) + 1
@@ -296,29 +295,75 @@ class SMOLANDFAST(nn.Module):
     def create_input_tokens(self, state, env, lang_text, actions=None):
         device = state.device
 
-        prefix_ids, prefix_pad_mask, prefix_att_mask = self.create_obs_prefix_tokens(state=state,
-                                                                env=env,
-                                                                lang_text=lang_text)
+        obs_ids, obs_pad_mask = self.create_obs_prefix_tokens(state=state,
+                                                              env=env,
+                                                              lang_text=lang_text)
 
         if actions is not None:
-            act_ids, act_pad_mask, act_att_mask = self.create_action_tokens(actions=actions)
-            final_ids = torch.cat([prefix_ids, act_ids], dim=1).to(device)
-            final_pad_mask = torch.cat([prefix_pad_mask, act_pad_mask], dim=1).to(device)
-            final_att_mask = torch.cat([prefix_att_mask, act_att_mask], dim=1).to(device)
-        else:
-            final_ids = prefix_ids.to(device)
-            final_pad_mask = prefix_pad_mask.to(device)
-            final_att_mask = prefix_att_mask.to(device)
+            fast_action_tokens = self.fast_tokenizer(actions.detach().cpu())
 
-        padded_output = {"input_ids": final_ids,
-                         "pad_masks": final_pad_mask,
-                         "att_masks": final_att_mask}
-        # define tensor of padding lengths
-        prefix_lens = prefix_pad_mask.sum(dim=1, keepdim=True)
-        seq_mask = (padded_output["pad_masks"] != 0)
-        loss_mask = (seq_mask.cumsum(dim=1) > prefix_lens) & seq_mask
-        padded_output["loss_mask"] = loss_mask
-        return padded_output
+            llm_action_tokens = []
+            for seq in fast_action_tokens:
+                llm_seq = []
+                for token in seq:
+                    llm_seq.append(self._act_tokens_to_llm_tokens(token))
+                llm_action_tokens.append(llm_seq)
+
+            prefix_tokens = []
+            loss_mask = []
+            for obs_seq, act_seq in zip(obs_ids, llm_action_tokens):
+                prefix_tokens.append(obs_seq + act_seq + [self.eos_token_id])
+                loss_mask.append([0]*len(obs_seq)+[1]*len(act_seq) + [1])
+            prefix_mask = [[1]*len(tokens) for tokens in prefix_tokens]
+
+            # print(prefix_tokens)
+            # print(loss_mask)
+
+            max_len = max([len(seq) for seq in prefix_tokens])
+
+            prefix_pad = []
+            prefix_mask_pad = []
+            loss_mask_pad = []
+            # right padding for training
+            for seq, seq_mask, seq_loss in zip(prefix_tokens, prefix_mask, loss_mask):
+                seq_len = len(seq)
+                prefix_pad.append(seq + [self.pad_token_id]*(max_len - seq_len))
+                prefix_mask_pad.append(seq_mask + [0]*(max_len - seq_len))
+                loss_mask_pad.append(seq_loss + [0]*(max_len - seq_len))
+
+            # print(prefix_tokens)
+            # print(prefix_mask)
+            # print(loss_mask)
+
+            prefix_tokens = torch.tensor(prefix_pad, dtype=torch.long).to(device)
+            prefix_pad_mask = torch.tensor(prefix_mask_pad, dtype=torch.long).to(device)
+            loss_mask = torch.tensor(loss_mask_pad, dtype=torch.long).to(device)
+
+            return {"input_ids": prefix_tokens,
+                    "pad_masks": prefix_pad_mask,
+                    "loss_mask": loss_mask}
+        else:
+
+            max_len = max([len(seq) for seq in obs_ids])
+            prefix_tokens = []
+            prefix_pad_mask = []
+
+            # left padding for generation
+            for seq in obs_ids:
+                seq_len = len(seq)
+                prefix_tokens.append([self.pad_token_id]*(max_len - seq_len) + seq)
+                prefix_pad_mask.append([0]*(max_len - seq_len) + [1]*seq_len)
+
+            # print(prefix_tokens)
+            # print(prefix_pad_mask)
+            prefix_tokens = torch.tensor(prefix_tokens, dtype=torch.long).to(device)
+            prefix_pad_mask = torch.tensor(prefix_pad_mask, dtype=torch.long).to(device)
+
+            return {"input_ids": prefix_tokens,
+                    "pad_masks": prefix_pad_mask,
+                    "loss_mask": None}
+
+    
 
     def forward(self, batch: dict[str, Tensor]):
         device = batch[OBS_STATE].device
@@ -331,12 +376,12 @@ class SMOLANDFAST(nn.Module):
         )
 
         # embed tokens
-        tokens_embs = self.embed_tokens(padded_outs["input_ids"].to(device))
-        att_2d_masks = make_att_2d_masks(padded_outs["pad_masks"], padded_outs["att_masks"])
-        position_ids = torch.cumsum(padded_outs["pad_masks"], dim=1)
+        # tokens_embs = self.embed_tokens(padded_outs["input_ids"].to(device))
+        # att_2d_masks = make_att_2d_masks(padded_outs["pad_masks"], padded_outs["att_masks"])
+        # position_ids = torch.cumsum(padded_outs["pad_masks"], dim=1)
 
-        # Prepare attention masks
-        att_2d_masks_4d = prepare_attention_masks_4d(att_2d_masks)
+        # # Prepare attention masks
+        # att_2d_masks_4d = prepare_attention_masks_4d(att_2d_masks)
         
         outputs = self.llm.forward(
             input_ids=padded_outs["input_ids"],
@@ -437,9 +482,9 @@ class SMOLANDFAST(nn.Module):
             actions=None,
         )
 
-        # embed tokens
-        tokens_embs = self.embed_tokens(padded_outs["input_ids"].to(device))
-        position_ids = torch.cumsum(padded_outs["pad_masks"], dim=1)
+        # # embed tokens
+        # tokens_embs = self.embed_tokens(padded_outs["input_ids"].to(device))
+        # position_ids = torch.cumsum(padded_outs["pad_masks"], dim=1)
 
         input_len = padded_outs["input_ids"].shape[1]
 
