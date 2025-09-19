@@ -538,8 +538,6 @@ ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths")
 
 
 def eval_one(
-    task_group: str,
-    task_id: int,
     env: gym.vector.VectorEnv,
     *,
     policy: PreTrainedPolicy,
@@ -574,17 +572,6 @@ def eval_one(
         successes=[ep["success"] for ep in per_episode],
         video_paths=task_result.get("video_paths", []),
     )
-
-
-def _make_task_videos_dir(videos_dir: Path | None, task_group: str, task_id: int) -> Path | None:
-    """Return and ensure the per-task video subdirectory, or None if videos_dir is None."""
-    if videos_dir is None:
-        return None
-    safe_name = f"{task_group}_{task_id}"
-    sub = videos_dir / safe_name
-    sub.mkdir(parents=True, exist_ok=True)
-    return sub
-
 
 def run_one(
     task_group: str,
