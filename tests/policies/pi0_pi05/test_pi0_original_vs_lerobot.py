@@ -1,6 +1,8 @@
 """Test script to verify PI0OpenPI policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
 
 import os
+from copy import deepcopy
+from typing import Any
 
 import pytest
 import torch
@@ -21,8 +23,11 @@ from openpi.models_pytorch import preprocessing_pytorch as openpi_preprocessing 
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
-from lerobot.policies.pi0 import PI0Config, PI0Policy  # noqa: E402
+from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy  # noqa: E402
+from lerobot.policies.pi0_openpi.processor_pi0_openpi import make_pi0_openpi_pre_post_processors  # noqa: E402
+from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 
+# TODO: ADDING DEFAULT IMAGES_FEATURES TO CONFIG
 DUMMY_ACTION_DIM = 32
 DUMMY_STATE_DIM = 32
 DUMMY_ACTION_HORIZON = 50
@@ -65,27 +70,29 @@ class PI0BaseOriginalConfig:
     dtype: str = "float32"
 
 
-def instantiate_lerobot_pi0(from_pretrained: bool = False):
+def instantiate_lerobot_pi0(
+    from_pretrained: bool = False,
+) -> tuple[
+    PI0OpenPIPolicy,
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
     if from_pretrained:
         # Load the policy first
-        policy = PI0Policy.from_pretrained(pretrained_name_or_path="pepijn223/pi0_base_fp32", strict=True)
-        # Then reinitialize the normalization with proper stats
-        from lerobot.policies.normalize import Normalize, Unnormalize
-
-        policy.normalize_inputs = Normalize(
-            policy.config.input_features, policy.config.normalization_mapping, DUMMY_DATASET_STATS
-        )
-        policy.normalize_targets = Normalize(
-            policy.config.output_features, policy.config.normalization_mapping, DUMMY_DATASET_STATS
-        )
-        policy.unnormalize_outputs = Unnormalize(
-            policy.config.output_features, policy.config.normalization_mapping, DUMMY_DATASET_STATS
+        policy = PI0OpenPIPolicy.from_pretrained(
+            pretrained_name_or_path="pepijn223/pi0_base_fp32", strict=True
         )
     else:
-        config = PI0Config(max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32")
-        policy = PI0Policy(config, DUMMY_DATASET_STATS)
+        config = PI0OpenPIConfig(
+            max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32"
+        )
+        policy = PI0OpenPIPolicy(config)
+
     policy.to(DEVICE)
-    return policy
+    preprocessor, postprocessor = make_pi0_openpi_pre_post_processors(
+        config=policy.config, dataset_stats=DUMMY_DATASET_STATS
+    )
+    return (policy, preprocessor, postprocessor)
 
 
 def instantiate_original_pi0(from_pretrained: bool = False, model_path: str = None):
@@ -324,13 +331,16 @@ def create_original_observation_from_lerobot(lerobot_pi0, batch):
 def test_pi0_original_vs_lerobot():
     """Test PI0 original implementation vs LeRobot implementation."""
     print("Initializing models...")
-    lerobot_pi0 = instantiate_lerobot_pi0(from_pretrained=True)  # Load pretrained LeRobot model
+    lerobot_pi0, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_pi0(
+        from_pretrained=True
+    )  # Load pretrained LeRobot model
     original_pi0 = instantiate_original_pi0(
         from_pretrained=True
     )  # Load pretrained OpenPI model from HuggingFace Hub
 
     print("Creating dummy data...")
     batch = create_dummy_data()
+    batch_lerobot = deepcopy(batch)
 
     # Test 1: Each model with its own preprocessing (more realistic end-to-end test)
     print("\nTEST 1: Each model with its own preprocessing")
@@ -353,16 +363,24 @@ def test_pi0_original_vs_lerobot():
         openpi_actions = original_pi0.sample_actions(
             device=DEVICE, observation=pi0_obs_openpi, noise=fixed_noise, num_steps=10
         )
+        openpi_actions_unit = openpi_actions[:, 0, :]
     print(f"OpenPI (own preprocessing) Actions shape: {openpi_actions.shape}")
+    print(f"OpenPI (own preprocessing) Actions unit shape: {openpi_actions_unit.shape}")
     print(f"OpenPI (own preprocessing) Actions mean: {openpi_actions.mean().item():.6f}")
     print(f"OpenPI (own preprocessing) Actions std: {openpi_actions.std().item():.6f}")
 
     print("Testing LeRobot with own preprocessing...")
     lerobot_pi0.eval()
     torch.manual_seed(42)  # Set the same seed
+
+    batch_lerobot_processed = lerobot_preprocessor(batch_lerobot)
     with torch.no_grad():
-        lerobot_actions_own = lerobot_pi0.predict_action_chunk(batch)
+        lerobot_actions_own = lerobot_pi0.predict_action_chunk(
+            batch_lerobot_processed
+        )  # batch_size, n_action_steps, action_dim
+        lerobot_ations_unit = lerobot_actions_own[:, 0, :]
     print(f"LeRobot (own preprocessing) Actions shape: {lerobot_actions_own.shape}")
+    print(f"LeRobot (own preprocessing) Actions unit shape: {lerobot_ations_unit.shape}")
     print(f"LeRobot (own preprocessing) Actions mean: {lerobot_actions_own.mean().item():.6f}")
     print(f"LeRobot (own preprocessing) Actions std: {lerobot_actions_own.std().item():.6f}")
 

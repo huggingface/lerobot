@@ -866,6 +866,7 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
             self.model.gradient_checkpointing_enable()
 
         self.reset()
+        self.model.to(config.device)
 
     @classmethod
     def from_pretrained(
@@ -908,8 +909,7 @@ class PI0OpenPIPolicy(PreTrainedPolicy):
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
-        dataset_stats = kwargs.get("dataset_stats")  # TODO(Adil, Pepijn): Remove this with pipeline
-        model = cls(config, dataset_stats=dataset_stats, **kwargs)
+        model = cls(config, **kwargs)
 
         # Now manually load and remap the state dict
         try:
