@@ -227,38 +227,101 @@ def get_feature_stats(
     if quantiles is None:
         quantiles = [0.01, 0.99]  # Default to 1st and 99th percentiles
 
-    # Reshape array to match RunningQuantileStats expectation
+    # Determine the appropriate reshaping and computation strategy based on axis
+    original_shape = array.shape
+
     if axis == (0, 2, 3):  # Image case: (batch, channels, height, width) -> (batch*height*width, channels)
         batch_size, channels, height, width = array.shape
         reshaped = array.transpose(0, 2, 3, 1).reshape(-1, channels)  # (batch*height*width, channels)
-    elif axis == 0:  # Vector case
+        sample_count = batch_size  # For images, count should be number of image samples, not pixels
+
+    elif axis == 0 or axis == (0,):  # Vector case - compute stats over first axis
         if array.ndim == 1:
             # 1D array: reshape to (n_samples, 1)
             reshaped = array.reshape(-1, 1)
         else:
             # Multi-dimensional: should already be (n_samples, n_features)
             reshaped = array
+        sample_count = array.shape[0]
+
+    elif axis == (1,):  # Compute stats along axis 1
+        # Transpose so we compute stats over features for each sample
+        reshaped = array.T  # Now shape is (n_features, n_samples)
+        sample_count = array.shape[1]  # Number of samples along axis 1
+
+    elif axis is None:  # Flatten and compute stats over entire array
+        reshaped = array.flatten().reshape(-1, 1)  # All values as single feature
+        sample_count = array.shape[0]  # Count represents number of samples, not total elements
+
     else:
         raise ValueError(f"Unsupported axis configuration for quantile computation: {axis}")
 
     # Compute stats using RunningQuantileStats
     running_stats = RunningQuantileStats()
     running_stats.update(reshaped)
-    stats = running_stats.get_statistics(quantiles)
 
-    # Apply keepdims if needed
-    if keepdims and axis == (0, 2, 3):
-        # For images, reshape to (1, channels, 1, 1)
+    # Check if we have enough samples for quantile computation
+    if reshaped.shape[0] < 2:
+        # Fallback to basic stats without quantiles for insufficient data
+        stats = {
+            "min": np.min(reshaped, axis=0),
+            "max": np.max(reshaped, axis=0),
+            "mean": np.mean(reshaped, axis=0),
+            "std": np.std(reshaped, axis=0),
+            "count": np.array([sample_count]),
+        }
+        # Add quantiles as the same value (since we only have one data point)
+        for q in quantiles:
+            q_key = f"q{int(q * 100):02d}"
+            stats[q_key] = stats["mean"].copy()
+    else:
+        stats = running_stats.get_statistics(quantiles)
+        # Fix the count to reflect the correct number of samples
+        stats["count"] = np.array([sample_count])
+
+    # Apply keepdims and reshape stats to match expected output format
+    if axis == (0, 2, 3) and keepdims:
+        # For images with keepdims, reshape to (1, channels, 1, 1)
         for key in stats:
             if key != "count" and stats[key].ndim == 1:
                 stats[key] = stats[key].reshape(1, -1, 1, 1)
-    elif keepdims and axis == 0:
+
+    elif (axis == 0 or axis == (0,)) and keepdims:
         if array.ndim == 1:
             # For 1D vectors with keepdims, stats should be shape (1,)
             for key in stats:
                 if key != "count":
                     stats[key] = stats[key].reshape(1) if stats[key].ndim > 0 else stats[key]
-        # For multi-dimensional vectors, keepdims doesn't change shape when axis=0
+        elif array.ndim == 2:
+            # For 2D arrays, keepdims means (1, n_features)
+            for key in stats:
+                if key != "count" and stats[key].ndim == 1:
+                    stats[key] = stats[key].reshape(1, -1)
+
+    elif axis == (1,) and not keepdims:
+        # Stats are already in correct shape for axis=1 case
+        pass
+
+    elif axis == (1,) and keepdims:
+        # For keepdims with axis=1, reshape to (n_samples, 1)
+        for key in stats:
+            if key != "count":
+                if stats[key].ndim == 0:
+                    stats[key] = stats[key].reshape(1, 1)
+                elif stats[key].ndim == 1:
+                    stats[key] = stats[key].reshape(-1, 1)
+
+    elif axis is None and keepdims:
+        # For axis=None with keepdims, maintain original dimensionality with all dims=1
+        target_shape = tuple(1 for _ in original_shape)
+        for key in stats:
+            if key != "count":
+                stats[key] = stats[key].reshape(target_shape)
+    elif axis is None and not keepdims:
+        # For axis=None without keepdims, stats should be scalars
+        for key in stats:
+            if key != "count" and stats[key].ndim > 0:
+                stats[key] = stats[key].item() if stats[key].size == 1 else stats[key].flatten()[0]
 
     return stats
 

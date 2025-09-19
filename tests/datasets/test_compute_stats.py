@@ -102,6 +102,9 @@ def test_get_feature_stats_axis_1(sample_array):
         "count": np.array([3]),
     }
     result = get_feature_stats(sample_array, axis=(1,), keepdims=False)
+
+    # Check that basic stats are correct (quantiles are also included now)
+    assert set(expected.keys()).issubset(set(result.keys()))
     for key in expected:
         np.testing.assert_allclose(result[key], expected[key])
 
@@ -115,6 +118,9 @@ def test_get_feature_stats_no_axis(sample_array):
         "count": np.array([3]),
     }
     result = get_feature_stats(sample_array, axis=None, keepdims=False)
+
+    # Check that basic stats are correct (quantiles are also included now)
+    assert set(expected.keys()).issubset(set(result.keys()))
     for key in expected:
         np.testing.assert_allclose(result[key], expected[key])
 
@@ -310,11 +316,6 @@ def test_aggregate_stats():
         np.testing.assert_allclose(results[fkey]["count"], expected_agg_stats[fkey]["count"])
 
 
-# =============================================
-# Quantile Tests
-# =============================================
-
-
 def test_running_quantile_stats_initialization():
     """Test proper initialization of RunningQuantileStats."""
     running_stats = RunningQuantileStats()
@@ -480,12 +481,12 @@ def test_running_quantile_stats_reshape_handling():
     assert running_stats_1d._mean.shape == (1,)
 
 
-def test_get_feature_stats_quantiles_disabled_by_default():
-    """Test that quantiles are not computed by default."""
+def test_get_feature_stats_quantiles_enabled_by_default():
+    """Test that quantiles are computed by default."""
     data = np.random.normal(0, 1, (100, 5))
     stats = get_feature_stats(data, axis=0, keepdims=False)
 
-    expected_keys = {"min", "max", "mean", "std", "count"}
+    expected_keys = {"min", "max", "mean", "std", "count", "q01", "q99"}
     assert set(stats.keys()) == expected_keys
 
 
@@ -556,16 +557,15 @@ def test_compute_episode_stats_backward_compatibility():
         "observation.state": {"dtype": "float32", "shape": (10,)},
     }
 
-    # Default behavior (no quantiles)
     stats = compute_episode_stats(episode_data, features)
 
     for key in ["action", "observation.state"]:
-        expected_keys = {"min", "max", "mean", "std", "count"}
+        expected_keys = {"min", "max", "mean", "std", "count", "q01", "q99"}
         assert set(stats[key].keys()) == expected_keys
 
 
-def test_compute_episode_stats_quantiles_enabled():
-    """Test quantile computation when enabled."""
+def test_compute_episode_stats_with_custom_quantiles():
+    """Test quantile computation with custom quantile values."""
     np.random.seed(42)
     episode_data = {
         "action": np.random.normal(0, 1, (100, 7)),
