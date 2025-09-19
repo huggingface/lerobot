@@ -606,8 +606,6 @@ def run_one(
 
     # Call the existing eval_one (assumed to return TaskMetrics-like dict)
     metrics = eval_one(
-        task_group,
-        task_id,
         env,
         policy=policy,
         preprocessor=preprocessor,
