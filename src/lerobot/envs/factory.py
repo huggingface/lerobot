@@ -76,9 +76,8 @@ def make_env(
     try:
         importlib.import_module(package_name)
     except ModuleNotFoundError as e:
-        raise ModuleNotFoundError(
-            f'{package_name} is not installed. Install with: pip install "lerobot[{cfg.type}]"'
-        ) from e
+        print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
+        raise e
 
     gym_handle = f"{package_name}/{cfg.task}"
 
