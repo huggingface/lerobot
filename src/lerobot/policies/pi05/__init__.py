@@ -16,5 +16,6 @@
 
 from .configuration_pi05openpi import PI05OpenPIConfig
 from .modeling_pi05openpi import PI05OpenPIPolicy
+from .processor_pi05openpi import make_pi05_openpi_pre_post_processors
 
-__all__ = ["PI05OpenPIConfig", "PI05OpenPIPolicy"]
+__all__ = ["PI05OpenPIConfig", "PI05OpenPIPolicy", "make_pi05_openpi_pre_post_processors"]
