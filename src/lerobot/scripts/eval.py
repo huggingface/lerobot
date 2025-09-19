@@ -164,11 +164,11 @@ def rollout(
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
-
         observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
         action = postprocessor(action)
+
         # Convert to CPU / numpy.
         action_numpy: np.ndarray = action.to("cpu").numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
@@ -418,6 +418,7 @@ def eval_policy(
             "eval_ep_s": (time.time() - start) / n_episodes,
         },
     }
+
     if return_episode_data:
         info["episodes"] = episode_data
 
@@ -478,6 +479,7 @@ def eval_main(cfg: EvalPipelineConfig):
 
     # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)
+
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     set_seed(cfg.seed)
@@ -488,6 +490,7 @@ def eval_main(cfg: EvalPipelineConfig):
     envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Making policy.")
+
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
@@ -495,7 +498,10 @@ def eval_main(cfg: EvalPipelineConfig):
 
     policy.eval()
     preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path
+        policy_cfg=cfg.policy,
+        pretrained_path=cfg.policy.pretrained_path,
+        # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
+        preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
     )
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
@@ -621,10 +627,10 @@ def run_one(
 def eval_policy_all(
     envs: dict[str, dict[int, gym.vector.VectorEnv]],
     policy,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
     *,
-    preprocessor=None,
-    postprocessor=None,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
