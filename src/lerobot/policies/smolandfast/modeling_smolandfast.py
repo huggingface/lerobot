@@ -3,6 +3,7 @@
 from collections import deque
 
 import numpy as np
+import math
 import torch
 from scipy.fft import idct
 from torch import Tensor, nn
@@ -115,6 +116,41 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
         loss_dict = self.model.forward(batch)
         return loss_dict["loss"], loss_dict
 
+def make_att_2d_masks(pad_masks, att_masks):
+    """Copied from big_vision.
+
+    Tokens can attend to valid inputs tokens which have a cumulative mask_ar
+    smaller or equal to theirs. This way `mask_ar` int[B, N] can be used to
+    setup several types of attention, for example:
+
+      [[1 1 1 1 1 1]]: pure causal attention.
+
+      [[0 0 0 1 1 1]]: prefix-lm attention. The first 3 tokens can attend between
+          themselves and the last 3 tokens have a causal attention. The first
+          entry could also be a 1 without changing behaviour.
+
+      [[1 0 1 0 1 0 0 1 0 0]]: causal attention between 4 blocks. Tokens of a
+          block can attend all previous blocks and all tokens on the same block.
+
+    Args:
+      input_mask: bool[B, N] true if its part of the input, false if padding.
+      mask_ar: int32[B, N] mask that's 1 where previous tokens cannot depend on
+        it and 0 where it shares the same attention mask as the previous token.
+    """
+    if att_masks.ndim != 2:
+        raise ValueError(att_masks.ndim)
+    if pad_masks.ndim != 2:
+        raise ValueError(pad_masks.ndim)
+
+    cumsum = torch.cumsum(att_masks, dim=1)
+    att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
+    pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
+    return att_2d_masks & pad_2d_masks
+
+def prepare_attention_masks_4d(att_2d_masks):
+    """Helper method to prepare 4D attention masks for transformer."""
+    att_2d_masks_4d = att_2d_masks[:, None, :, :].to(dtype=torch.bool)
+    return torch.where(att_2d_masks_4d, 0.0, -2.3819763e38)
 
 class SMOLANDFAST(nn.Module):
     def __init__(self, config: SMOLANDFASTConfig):
@@ -122,7 +158,7 @@ class SMOLANDFAST(nn.Module):
         self.config = config
 
         self.llm = AutoModelForCausalLM.from_pretrained(self.config.llm_checkpoint)
-        self.llm_tokenizer = AutoTokenizer.from_pretrained(self.config.llm_checkpoint)
+        self.llm_tokenizer = AutoTokenizer.from_pretrained(self.config.llm_checkpoint, padding_side="left")
 
         fast_tokenizer_path = "physical-intelligence/fast"
         self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
@@ -157,17 +193,18 @@ class SMOLANDFAST(nn.Module):
             if any(selector in name for selector in params_to_change_dtype):
                 param.data = param.data.to(dtype=torch_precision)
 
+        self.embed_func = self.llm.get_input_embeddings()
         # TODO: Remove this once we bump transformers to >4.52.0 because the attribute will be removed
-        # AttributeError: 'PaliGemmaConfig' object has no attribute 'ignore_index'
+        # AttributeError: 'llmConfig' object has no attribute 'ignore_index'
         # self.ignore_index = self.llm.config.ignore_index # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         self.padding_side = self.config.padding_side
 
 
-    def _act_tokens_to_paligemma_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        paligemma_tokens = self.llm_tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
-        return paligemma_tokens
+    def _act_tokens_to_llm_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
+        llm_tokens = self.llm_tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
+        return llm_tokens
     
-    def _paligemma_tokens_to_act_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
+    def _llm_tokens_to_act_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         fast_tokens = self.llm_tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
         return fast_tokens
 
@@ -204,17 +241,23 @@ class SMOLANDFAST(nn.Module):
 
         # Move tokenized tensors to GPU once
         prefix_ids = prefix_out["input_ids"].to(device)
-        prefix_mask = prefix_out["attention_mask"].to(device)
+        prefix_pad_mask = prefix_out["attention_mask"].to(device)
+        prefix_att_mask = torch.zeros_like(prefix_ids, dtype=torch.bool, device=device)
 
-        return prefix_ids, prefix_mask
-    
+        return prefix_ids, prefix_pad_mask, prefix_att_mask
+
+    def embed_tokens(self, tokens: torch.Tensor):
+        lang_emb = self.embed_func(tokens)
+        lang_emb_dim = lang_emb.shape[-1]
+        return lang_emb * math.sqrt(lang_emb_dim)
+
     def fast_tokenizer_wrapper(self, actions_norm):
         """
         A wrapper for self.fast_tokenizer that ensures batch processing,
         conversion to PyTorch tensors, and returns a dictionary without padding.
         """
-        fast_eos_token = self._paligemma_tokens_to_act_tokens(self.eos_token_id)
-        fast_pad_token = self._paligemma_tokens_to_act_tokens(self.pad_token_id)
+        fast_eos_token = self._llm_tokens_to_act_tokens(self.eos_token_id)
+        fast_pad_token = self._llm_tokens_to_act_tokens(self.pad_token_id)
 
         batch_tokens = self.fast_tokenizer(actions_norm)
         batch_mask = [[1]*len(tokens) for tokens in batch_tokens]
@@ -238,38 +281,41 @@ class SMOLANDFAST(nn.Module):
 
         # Tokenization (CPU-bound)
         # Move actions once to CPU, tokenize, return tensors
-        fast_tokens, act_mask = self.fast_tokenizer_wrapper(actions.detach().cpu())
+        fast_tokens, fast_pad_mask = self.fast_tokenizer_wrapper(actions.detach().cpu())
 
-        # Convert to paligemma token IDs (GPU-friendly math)
-        act_ids = fast_tokens.to(device)
-        act_ids = self._act_tokens_to_paligemma_tokens(act_ids)
+        # Convert to llm token IDs (GPU-friendly math)
+        fast_tokens = fast_tokens.to(device)
+        act_ids = self._act_tokens_to_llm_tokens(fast_tokens)
 
         # Convert mask to GPU
-        act_mask = act_mask.to(device)
+        act_pad_mask = fast_pad_mask.to(device)
+        act_att_mask = torch.ones_like(act_ids, dtype=torch.bool, device=device)
 
-        return act_ids, act_mask
+        return act_ids, act_pad_mask, act_att_mask
 
     def create_input_tokens(self, state, env, lang_text, actions=None):
         device = state.device
 
-        prefix_ids, prefix_mask = self.create_obs_prefix_tokens(state=state,
+        prefix_ids, prefix_pad_mask, prefix_att_mask = self.create_obs_prefix_tokens(state=state,
                                                                 env=env,
                                                                 lang_text=lang_text)
 
         if actions is not None:
-            act_ids, act_mask = self.create_action_tokens(actions=actions)
-
+            act_ids, act_pad_mask, act_att_mask = self.create_action_tokens(actions=actions)
             final_ids = torch.cat([prefix_ids, act_ids], dim=1).to(device)
-            final_mask = torch.cat([prefix_mask, act_mask], dim=1).to(device)
+            final_pad_mask = torch.cat([prefix_pad_mask, act_pad_mask], dim=1).to(device)
+            final_att_mask = torch.cat([prefix_att_mask, act_att_mask], dim=1).to(device)
         else:
             final_ids = prefix_ids.to(device)
-            final_mask = prefix_mask.to(device)
+            final_pad_mask = prefix_pad_mask.to(device)
+            final_att_mask = prefix_att_mask.to(device)
 
         padded_output = {"input_ids": final_ids,
-                         "attention_mask": final_mask}
+                         "pad_masks": final_pad_mask,
+                         "att_masks": final_att_mask}
         # define tensor of padding lengths
-        prefix_lens = prefix_mask.sum(dim=1, keepdim=True)
-        seq_mask = (padded_output["attention_mask"] != 0)
+        prefix_lens = prefix_pad_mask.sum(dim=1, keepdim=True)
+        seq_mask = (padded_output["pad_masks"] != 0)
         loss_mask = (seq_mask.cumsum(dim=1) > prefix_lens) & seq_mask
         padded_output["loss_mask"] = loss_mask
         return padded_output
@@ -284,10 +330,21 @@ class SMOLANDFAST(nn.Module):
             actions=batch[ACTION],
         )
 
+        # embed tokens
+        tokens_embs = self.embed_tokens(padded_outs["input_ids"].to(device))
+        att_2d_masks = make_att_2d_masks(padded_outs["pad_masks"], padded_outs["att_masks"])
+        position_ids = torch.cumsum(padded_outs["pad_masks"], dim=1)
+
+        # Prepare attention masks
+        att_2d_masks_4d = prepare_attention_masks_4d(att_2d_masks)
+        
         outputs = self.llm.forward(
             input_ids=padded_outs["input_ids"],
-            attention_mask=padded_outs["attention_mask"],
-            use_cache=False,
+            # attention_mask=att_2d_masks_4d,
+            attention_mask=padded_outs["pad_masks"],
+            # inputs_embeds=tokens_embs,
+            # position_ids=position_ids,
+            use_cache=self.config.use_cache,
         )
 
         logits = outputs.logits
@@ -380,6 +437,10 @@ class SMOLANDFAST(nn.Module):
             actions=None,
         )
 
+        # embed tokens
+        tokens_embs = self.embed_tokens(padded_outs["input_ids"].to(device))
+        position_ids = torch.cumsum(padded_outs["pad_masks"], dim=1)
+
         input_len = padded_outs["input_ids"].shape[1]
 
         def make_fast_band_processor(low, high, special_tokens):
@@ -401,7 +462,9 @@ class SMOLANDFAST(nn.Module):
 
         output_tokens = self.llm.generate(
             input_ids=padded_outs["input_ids"],
-            attention_mask=padded_outs["attention_mask"],
+            attention_mask=padded_outs["pad_masks"],
+            # inputs_embeds=tokens_embs,
+            # position_ids=position_ids,
             use_cache=self.config.use_cache,
             max_new_tokens=self.config.max_decoding_steps,
             do_sample=False,
@@ -412,10 +475,10 @@ class SMOLANDFAST(nn.Module):
         )
         gemma_action_tokens = output_tokens[:,input_len:]
 
-        fast_eos_token = self._paligemma_tokens_to_act_tokens(self.eos_token_id)
-        fast_pad_token = self._paligemma_tokens_to_act_tokens(self.pad_token_id)
+        fast_eos_token = self._llm_tokens_to_act_tokens(self.eos_token_id)
+        fast_pad_token = self._llm_tokens_to_act_tokens(self.pad_token_id)
 
-        fast_action_tokens = self._paligemma_tokens_to_act_tokens(gemma_action_tokens).tolist() 
+        fast_action_tokens = self._llm_tokens_to_act_tokens(gemma_action_tokens).tolist() 
 
         # remove fast pad tokens and eos token
         for seq in fast_action_tokens:
