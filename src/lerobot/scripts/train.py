@@ -303,17 +303,13 @@ def train(cfg: TrainPipelineConfig):
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
                     max_parallel_tasks=cfg.env.max_parallel_tasks,
-                    verbose=False,
                 )
-
             # overall metrics (suite-agnostic)
-            aggregated = eval_info["overall"]["aggregated"]
+            aggregated = eval_info["overall"]
 
             # optional: per-suite logging
             for suite, suite_info in eval_info.items():
-                if suite == "overall":
-                    continue
-                logging.info("Suite %s aggregated: %s", suite, suite_info["aggregated"])
+                logging.info("Suite %s aggregated: %s", suite, suite_info)
 
             # meters/tracker
             eval_metrics = {
@@ -330,7 +326,7 @@ def train(cfg: TrainPipelineConfig):
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+                wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
 
     if eval_env:
         close_envs(eval_env)
