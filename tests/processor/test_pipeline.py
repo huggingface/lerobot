@@ -25,29 +25,21 @@ import pytest
 import torch
 import torch.nn as nn
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.processor import EnvTransition, ProcessorStepRegistry, RobotProcessor
-from lerobot.processor.pipeline import TransitionKey
+from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features
+from lerobot.processor import (
+    DataProcessorPipeline,
+    EnvTransition,
+    ProcessorStep,
+    ProcessorStepRegistry,
+    TransitionKey,
+)
+from lerobot.processor.converters import create_transition, identity_transition
 from tests.conftest import assert_contract_is_typed
 
 
-def create_transition(
-    observation=None, action=None, reward=0.0, done=False, truncated=False, info=None, complementary_data=None
-):
-    """Helper to create an EnvTransition dictionary."""
-    return {
-        TransitionKey.OBSERVATION: observation,
-        TransitionKey.ACTION: action,
-        TransitionKey.REWARD: reward,
-        TransitionKey.DONE: done,
-        TransitionKey.TRUNCATED: truncated,
-        TransitionKey.INFO: info if info is not None else {},
-        TransitionKey.COMPLEMENTARY_DATA: complementary_data if complementary_data is not None else {},
-    }
-
-
 @dataclass
-class MockStep:
+class MockStep(ProcessorStep):
     """Mock pipeline step for testing - demonstrates best practices.
 
     This example shows the proper separation:
@@ -90,13 +82,15 @@ class MockStep:
     def reset(self) -> None:
         self.counter = 0
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We do not test features here
         return features
 
 
 @dataclass
-class MockStepWithoutOptionalMethods:
+class MockStepWithoutOptionalMethods(ProcessorStep):
     """Mock step that only implements the required __call__ method."""
 
     multiplier: float = 2.0
@@ -112,13 +106,15 @@ class MockStepWithoutOptionalMethods:
 
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We do not test features here
         return features
 
 
 @dataclass
-class MockStepWithTensorState:
+class MockStepWithTensorState(ProcessorStep):
     """Mock step demonstrating mixed JSON attributes and tensor state."""
 
     name: str = "tensor_step"
@@ -168,14 +164,16 @@ class MockStepWithTensorState:
         self.running_mean.zero_()
         self.running_count.zero_()
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We do not test features here
         return features
 
 
 def test_empty_pipeline():
     """Test pipeline with no steps."""
-    pipeline = RobotProcessor()
+    pipeline = DataProcessorPipeline([], to_transition=identity_transition, to_output=identity_transition)
 
     transition = create_transition()
     result = pipeline(transition)
@@ -187,7 +185,7 @@ def test_empty_pipeline():
 def test_single_step_pipeline():
     """Test pipeline with a single step."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step], to_transition=identity_transition, to_output=identity_transition)
 
     transition = create_transition()
     result = pipeline(transition)
@@ -204,7 +202,9 @@ def test_multiple_steps_pipeline():
     """Test pipeline with multiple steps."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = RobotProcessor([step1, step2])
+    pipeline = DataProcessorPipeline(
+        [step1, step2], to_transition=identity_transition, to_output=identity_transition
+    )
 
     transition = create_transition()
     result = pipeline(transition)
@@ -216,7 +216,7 @@ def test_multiple_steps_pipeline():
 
 def test_invalid_transition_format():
     """Test pipeline with invalid transition format."""
-    pipeline = RobotProcessor([MockStep()])
+    pipeline = DataProcessorPipeline([MockStep()])
 
     # Test with wrong type (tuple instead of dict)
     with pytest.raises(ValueError, match="EnvTransition must be a dictionary"):
@@ -231,7 +231,7 @@ def test_step_through():
     """Test step_through method with dict input."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = RobotProcessor([step1, step2])
+    pipeline = DataProcessorPipeline([step1, step2])
 
     transition = create_transition()
 
@@ -252,7 +252,7 @@ def test_step_through_with_dict():
     """Test step_through method with dict input."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = RobotProcessor([step1, step2])
+    pipeline = DataProcessorPipeline([step1, step2])
 
     batch = {
         "observation.image": None,
@@ -291,7 +291,7 @@ def test_step_through_with_dict():
 def test_step_through_no_hooks():
     """Test that step_through doesn't execute hooks."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     hook_calls = []
 
@@ -326,7 +326,7 @@ def test_indexing():
     """Test pipeline indexing."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = RobotProcessor([step1, step2])
+    pipeline = DataProcessorPipeline([step1, step2])
 
     # Test integer indexing
     assert pipeline[0] is step1
@@ -334,7 +334,7 @@ def test_indexing():
 
     # Test slice indexing
     sub_pipeline = pipeline[0:1]
-    assert isinstance(sub_pipeline, RobotProcessor)
+    assert isinstance(sub_pipeline, DataProcessorPipeline)
     assert len(sub_pipeline) == 1
     assert sub_pipeline[0] is step1
 
@@ -342,7 +342,7 @@ def test_indexing():
 def test_hooks():
     """Test before/after step hooks."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     before_calls = []
     after_calls = []
@@ -366,7 +366,7 @@ def test_hooks():
 def test_unregister_hooks():
     """Test unregistering hooks from the pipeline."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     # Test before_step_hook
     before_calls = []
@@ -405,7 +405,7 @@ def test_unregister_hooks():
 
 def test_unregister_nonexistent_hook():
     """Test error handling when unregistering hooks that don't exist."""
-    pipeline = RobotProcessor([MockStep()])
+    pipeline = DataProcessorPipeline([MockStep()])
 
     def some_hook(idx: int, transition: EnvTransition):
         pass
@@ -423,7 +423,7 @@ def test_unregister_nonexistent_hook():
 
 def test_multiple_hooks_and_selective_unregister():
     """Test registering multiple hooks and selectively unregistering them."""
-    pipeline = RobotProcessor([MockStep("step1"), MockStep("step2")])
+    pipeline = DataProcessorPipeline([MockStep("step1"), MockStep("step2")])
 
     calls_1 = []
     calls_2 = []
@@ -469,7 +469,7 @@ def test_multiple_hooks_and_selective_unregister():
 
 def test_hook_execution_order_documentation():
     """Test and document that hooks are executed sequentially in registration order."""
-    pipeline = RobotProcessor([MockStep("step")])
+    pipeline = DataProcessorPipeline([MockStep("step")])
 
     execution_order = []
 
@@ -521,7 +521,7 @@ def test_save_and_load_pretrained():
     step1.counter = 5
     step2.counter = 10
 
-    pipeline = RobotProcessor([step1, step2], name="TestPipeline")
+    pipeline = DataProcessorPipeline([step1, step2], name="TestPipeline")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save pipeline
@@ -543,7 +543,7 @@ def test_save_and_load_pretrained():
         assert config["steps"][1]["config"]["counter"] == 10
 
         # Load pipeline
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="testpipeline.json")
 
         assert loaded_pipeline.name == "TestPipeline"
         assert len(loaded_pipeline) == 2
@@ -556,7 +556,9 @@ def test_save_and_load_pretrained():
 def test_step_without_optional_methods():
     """Test pipeline with steps that don't implement optional methods."""
     step = MockStepWithoutOptionalMethods(multiplier=3.0)
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline(
+        [step], to_transition=identity_transition, to_output=identity_transition
+    )  # Identity for EnvTransition input/output
 
     transition = create_transition(reward=2.0)
     result = pipeline(transition)
@@ -569,14 +571,16 @@ def test_step_without_optional_methods():
     # Save/load should work even without optional methods
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="dataprocessorpipeline.json"
+        )
         assert len(loaded_pipeline) == 1
 
 
 def test_mixed_json_and_tensor_state():
     """Test step with both JSON attributes and tensor state."""
     step = MockStepWithTensorState(name="stats", learning_rate=0.05, window_size=5)
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     # Process some transitions with rewards
     for i in range(10):
@@ -592,13 +596,15 @@ def test_mixed_json_and_tensor_state():
         pipeline.save_pretrained(tmp_dir)
 
         # Check that both config and state files were created
-        config_path = Path(tmp_dir) / "robotprocessor.json"  # Default name is "RobotProcessor"
-        state_path = Path(tmp_dir) / "robotprocessor_step_0.safetensors"
+        config_path = Path(tmp_dir) / "dataprocessorpipeline.json"  # Default name is "RobotProcessor"
+        state_path = Path(tmp_dir) / "dataprocessorpipeline_step_0.safetensors"
         assert config_path.exists()
         assert state_path.exists()
 
         # Load and verify
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="dataprocessorpipeline.json"
+        )
         loaded_step = loaded_pipeline.steps[0]
 
         # Check JSON attributes were restored
@@ -611,7 +617,7 @@ def test_mixed_json_and_tensor_state():
         assert torch.allclose(loaded_step.running_mean, step.running_mean)
 
 
-class MockModuleStep(nn.Module):
+class MockModuleStep(ProcessorStep, nn.Module):
     """Mock step that inherits from nn.Module to test state_dict handling of module parameters."""
 
     def __init__(self, input_dim: int = 10, hidden_dim: int = 5):
@@ -651,23 +657,25 @@ class MockModuleStep(nn.Module):
     def state_dict(self) -> dict[str, torch.Tensor]:
         """Override to return all module parameters and buffers."""
         # Get the module's state dict (includes all parameters and buffers)
-        return super().state_dict()
+        return nn.Module.state_dict(self)
 
     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
         """Override to load all module parameters and buffers."""
         # Use the module's load_state_dict
-        super().load_state_dict(state)
+        nn.Module.load_state_dict(self, state)
 
     def reset(self) -> None:
         self.running_mean.zero_()
         self.counter = 0
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We do not test features here
         return features
 
 
-class MockNonModuleStepWithState:
+class MockNonModuleStepWithState(ProcessorStep):
     """Mock step that explicitly does NOT inherit from nn.Module but has tensor state.
 
     This tests the state_dict/load_state_dict path for regular classes.
@@ -744,14 +752,16 @@ class MockNonModuleStepWithState:
         self.step_count.zero_()
         self.history.clear()
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We do not test features here
         return features
 
 
 # Tests for overrides functionality
 @dataclass
-class MockStepWithNonSerializableParam:
+class MockStepWithNonSerializableParam(ProcessorStep):
     """Mock step that requires a non-serializable parameter."""
 
     def __init__(self, name: str = "mock_env_step", multiplier: float = 1.0, env: Any = None):
@@ -799,14 +809,16 @@ class MockStepWithNonSerializableParam:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We do not test features here
         return features
 
 
 @ProcessorStepRegistry.register("registered_mock_step")
 @dataclass
-class RegisteredMockStep:
+class RegisteredMockStep(ProcessorStep):
     """Mock step registered in the registry."""
 
     value: int = 42
@@ -838,8 +850,10 @@ class RegisteredMockStep:
     def reset(self) -> None:
         pass
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        # We do not test feature_contract here
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # We do not test features here
         return features
 
 
@@ -859,7 +873,7 @@ def test_from_pretrained_with_overrides():
     env_step = MockStepWithNonSerializableParam(name="env_step", multiplier=2.0)
     registered_step = RegisteredMockStep(value=100, device="cpu")
 
-    pipeline = RobotProcessor([env_step, registered_step], name="TestOverrides")
+    pipeline = DataProcessorPipeline([env_step, registered_step], name="TestOverrides")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save the pipeline
@@ -877,7 +891,13 @@ def test_from_pretrained_with_overrides():
             "registered_mock_step": {"device": "cuda", "value": 200},
         }
 
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir,
+            config_filename="testoverrides.json",
+            overrides=overrides,
+            to_transition=identity_transition,
+            to_output=identity_transition,
+        )
 
         # Verify the pipeline was loaded correctly
         assert len(loaded_pipeline) == 2
@@ -903,7 +923,7 @@ def test_from_pretrained_with_partial_overrides():
     step1 = MockStepWithNonSerializableParam(name="step1", multiplier=1.0)
     step2 = MockStepWithNonSerializableParam(name="step2", multiplier=2.0)
 
-    pipeline = RobotProcessor([step1, step2])
+    pipeline = DataProcessorPipeline([step1, step2])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
@@ -913,7 +933,13 @@ def test_from_pretrained_with_partial_overrides():
 
         # The current implementation applies overrides to ALL steps with the same class name
         # Both steps will get the override
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides=overrides,
+            to_transition=identity_transition,
+            to_output=identity_transition,
+        )
 
         transition = create_transition(reward=1.0)
         result = loaded_pipeline(transition)
@@ -927,7 +953,7 @@ def test_from_pretrained_with_partial_overrides():
 def test_from_pretrained_invalid_override_key():
     """Test that invalid override keys raise KeyError."""
     step = MockStepWithNonSerializableParam()
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
@@ -936,13 +962,15 @@ def test_from_pretrained_invalid_override_key():
         overrides = {"NonExistentStep": {"param": "value"}}
 
         with pytest.raises(KeyError, match="Override keys.*do not match any step"):
-            RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
 
 def test_from_pretrained_multiple_invalid_override_keys():
     """Test that multiple invalid override keys are reported."""
     step = MockStepWithNonSerializableParam()
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
@@ -951,7 +979,9 @@ def test_from_pretrained_multiple_invalid_override_keys():
         overrides = {"NonExistentStep1": {"param": "value1"}, "NonExistentStep2": {"param": "value2"}}
 
         with pytest.raises(KeyError) as exc_info:
-            RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
         error_msg = str(exc_info.value)
         assert "NonExistentStep1" in error_msg
@@ -962,7 +992,7 @@ def test_from_pretrained_multiple_invalid_override_keys():
 def test_from_pretrained_registered_step_override():
     """Test overriding registered steps using registry names."""
     registered_step = RegisteredMockStep(value=50, device="cpu")
-    pipeline = RobotProcessor([registered_step])
+    pipeline = DataProcessorPipeline([registered_step])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
@@ -970,7 +1000,13 @@ def test_from_pretrained_registered_step_override():
         # Override using registry name
         overrides = {"registered_mock_step": {"value": 999, "device": "cuda"}}
 
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides=overrides,
+            to_transition=identity_transition,
+            to_output=identity_transition,
+        )
 
         # Test that overrides were applied
         transition = create_transition()
@@ -986,7 +1022,7 @@ def test_from_pretrained_mixed_registered_and_unregistered():
     unregistered_step = MockStepWithNonSerializableParam(name="unregistered", multiplier=1.0)
     registered_step = RegisteredMockStep(value=10, device="cpu")
 
-    pipeline = RobotProcessor([unregistered_step, registered_step])
+    pipeline = DataProcessorPipeline([unregistered_step, registered_step])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
@@ -998,7 +1034,13 @@ def test_from_pretrained_mixed_registered_and_unregistered():
             "registered_mock_step": {"value": 777},
         }
 
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides=overrides,
+            to_transition=identity_transition,
+            to_output=identity_transition,
+        )
 
         # Test both steps
         transition = create_transition(reward=2.0)
@@ -1013,13 +1055,18 @@ def test_from_pretrained_mixed_registered_and_unregistered():
 def test_from_pretrained_no_overrides():
     """Test that from_pretrained works without overrides (backward compatibility)."""
     step = MockStepWithNonSerializableParam(name="no_override", multiplier=3.0)
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
 
         # Load without overrides
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            to_transition=identity_transition,
+            to_output=identity_transition,
+        )
 
         assert len(loaded_pipeline) == 1
 
@@ -1033,13 +1080,19 @@ def test_from_pretrained_no_overrides():
 def test_from_pretrained_empty_overrides():
     """Test that from_pretrained works with empty overrides dict."""
     step = MockStepWithNonSerializableParam(multiplier=2.0)
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
 
         # Load with empty overrides
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides={})
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides={},
+            to_transition=identity_transition,
+            to_output=identity_transition,
+        )
 
         assert len(loaded_pipeline) == 1
 
@@ -1053,7 +1106,7 @@ def test_from_pretrained_empty_overrides():
 def test_from_pretrained_override_instantiation_error():
     """Test that instantiation errors with overrides are properly reported."""
     step = MockStepWithNonSerializableParam(multiplier=1.0)
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
@@ -1066,13 +1119,15 @@ def test_from_pretrained_override_instantiation_error():
         }
 
         with pytest.raises(ValueError, match="Failed to instantiate processor step"):
-            RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
 
 def test_from_pretrained_with_state_and_overrides():
     """Test that overrides work correctly with steps that have tensor state."""
     step = MockStepWithTensorState(name="tensor_step", learning_rate=0.01, window_size=5)
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     # Process some data to create state
     for i in range(10):
@@ -1090,7 +1145,9 @@ def test_from_pretrained_with_state_and_overrides():
             }
         }
 
-        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+        )
         loaded_step = loaded_pipeline.steps[0]
 
         # Check that config overrides were applied
@@ -1109,7 +1166,7 @@ def test_from_pretrained_override_error_messages():
     """Test that error messages for override failures are helpful."""
     step1 = MockStepWithNonSerializableParam(name="step1")
     step2 = RegisteredMockStep()
-    pipeline = RobotProcessor([step1, step2])
+    pipeline = DataProcessorPipeline([step1, step2])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
@@ -1118,7 +1175,9 @@ def test_from_pretrained_override_error_messages():
         overrides = {"WrongStepName": {"param": "value"}}
 
         with pytest.raises(KeyError) as exc_info:
-            RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
         error_msg = str(exc_info.value)
         assert "WrongStepName" in error_msg
@@ -1129,20 +1188,20 @@ def test_from_pretrained_override_error_messages():
 
 def test_repr_empty_processor():
     """Test __repr__ with empty processor."""
-    pipeline = RobotProcessor()
+    pipeline = DataProcessorPipeline()
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='RobotProcessor', steps=0: [])"
+    expected = "DataProcessorPipeline(name='DataProcessorPipeline', steps=0: [])"
     assert repr_str == expected
 
 
 def test_repr_single_step():
     """Test __repr__ with single step."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='RobotProcessor', steps=1: [MockStep])"
+    expected = "DataProcessorPipeline(name='DataProcessorPipeline', steps=1: [MockStep])"
     assert repr_str == expected
 
 
@@ -1150,18 +1209,18 @@ def test_repr_multiple_steps_under_limit():
     """Test __repr__ with 2-3 steps (all shown)."""
     step1 = MockStep("step1")
     step2 = MockStepWithoutOptionalMethods()
-    pipeline = RobotProcessor([step1, step2])
+    pipeline = DataProcessorPipeline([step1, step2])
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='RobotProcessor', steps=2: [MockStep, MockStepWithoutOptionalMethods])"
+    expected = "DataProcessorPipeline(name='DataProcessorPipeline', steps=2: [MockStep, MockStepWithoutOptionalMethods])"
     assert repr_str == expected
 
     # Test with 3 steps (boundary case)
     step3 = MockStepWithTensorState()
-    pipeline = RobotProcessor([step1, step2, step3])
+    pipeline = DataProcessorPipeline([step1, step2, step3])
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='RobotProcessor', steps=3: [MockStep, MockStepWithoutOptionalMethods, MockStepWithTensorState])"
+    expected = "DataProcessorPipeline(name='DataProcessorPipeline', steps=3: [MockStep, MockStepWithoutOptionalMethods, MockStepWithTensorState])"
     assert repr_str == expected
 
 
@@ -1173,30 +1232,30 @@ def test_repr_many_steps_truncated():
     step4 = MockModuleStep()
     step5 = MockNonModuleStepWithState()
 
-    pipeline = RobotProcessor([step1, step2, step3, step4, step5])
+    pipeline = DataProcessorPipeline([step1, step2, step3, step4, step5])
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='RobotProcessor', steps=5: [MockStep, MockStepWithoutOptionalMethods, ..., MockNonModuleStepWithState])"
+    expected = "DataProcessorPipeline(name='DataProcessorPipeline', steps=5: [MockStep, MockStepWithoutOptionalMethods, ..., MockNonModuleStepWithState])"
     assert repr_str == expected
 
 
 def test_repr_with_custom_name():
     """Test __repr__ with custom processor name."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step], name="CustomProcessor")
+    pipeline = DataProcessorPipeline([step], name="CustomProcessor")
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='CustomProcessor', steps=1: [MockStep])"
+    expected = "DataProcessorPipeline(name='CustomProcessor', steps=1: [MockStep])"
     assert repr_str == expected
 
 
 def test_repr_with_seed():
     """Test __repr__ with seed parameter."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='RobotProcessor', steps=1: [MockStep])"
+    expected = "DataProcessorPipeline(name='DataProcessorPipeline', steps=1: [MockStep])"
     assert repr_str == expected
 
 
@@ -1204,20 +1263,22 @@ def test_repr_with_custom_name_and_seed():
     """Test __repr__ with both custom name and seed."""
     step1 = MockStep("step1")
     step2 = MockStepWithoutOptionalMethods()
-    pipeline = RobotProcessor([step1, step2], name="MyProcessor")
+    pipeline = DataProcessorPipeline([step1, step2], name="MyProcessor")
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='MyProcessor', steps=2: [MockStep, MockStepWithoutOptionalMethods])"
+    expected = (
+        "DataProcessorPipeline(name='MyProcessor', steps=2: [MockStep, MockStepWithoutOptionalMethods])"
+    )
     assert repr_str == expected
 
 
 def test_repr_without_seed():
     """Test __repr__ when seed is explicitly None (should not show seed)."""
     step = MockStep("test_step")
-    pipeline = RobotProcessor([step], name="TestProcessor")
+    pipeline = DataProcessorPipeline([step], name="TestProcessor")
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='TestProcessor', steps=1: [MockStep])"
+    expected = "DataProcessorPipeline(name='TestProcessor', steps=1: [MockStep])"
     assert repr_str == expected
 
 
@@ -1228,10 +1289,10 @@ def test_repr_various_step_types():
     step3 = MockModuleStep()
     step4 = MockNonModuleStepWithState()
 
-    pipeline = RobotProcessor([step1, step2, step3, step4], name="MixedSteps")
+    pipeline = DataProcessorPipeline([step1, step2, step3, step4], name="MixedSteps")
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='MixedSteps', steps=4: [MockStep, MockStepWithTensorState, ..., MockNonModuleStepWithState])"
+    expected = "DataProcessorPipeline(name='MixedSteps', steps=4: [MockStep, MockStepWithTensorState, ..., MockNonModuleStepWithState])"
     assert repr_str == expected
 
 
@@ -1242,10 +1303,10 @@ def test_repr_edge_case_long_names():
     step3 = MockStepWithTensorState()
     step4 = MockNonModuleStepWithState()
 
-    pipeline = RobotProcessor([step1, step2, step3, step4], name="LongNames")
+    pipeline = DataProcessorPipeline([step1, step2, step3, step4], name="LongNames")
     repr_str = repr(pipeline)
 
-    expected = "RobotProcessor(name='LongNames', steps=4: [MockStepWithNonSerializableParam, MockStepWithoutOptionalMethods, ..., MockNonModuleStepWithState])"
+    expected = "DataProcessorPipeline(name='LongNames', steps=4: [MockStepWithNonSerializableParam, MockStepWithoutOptionalMethods, ..., MockNonModuleStepWithState])"
     assert repr_str == expected
 
 
@@ -1253,7 +1314,7 @@ def test_repr_edge_case_long_names():
 def test_save_with_custom_config_filename():
     """Test saving processor with custom config filename."""
     step = MockStep("test")
-    pipeline = RobotProcessor([step], name="TestProcessor")
+    pipeline = DataProcessorPipeline([step], name="TestProcessor")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save with custom filename
@@ -1269,16 +1330,18 @@ def test_save_with_custom_config_filename():
         assert config["name"] == "TestProcessor"
 
         # Load with specific filename
-        loaded = RobotProcessor.from_pretrained(tmp_dir, config_filename="my_custom_config.json")
+        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="my_custom_config.json")
         assert loaded.name == "TestProcessor"
 
 
 def test_multiple_processors_same_directory():
     """Test saving multiple processors to the same directory with different config files."""
     # Create different processors
-    preprocessor = RobotProcessor([MockStep("pre1"), MockStep("pre2")], name="preprocessor")
+    preprocessor = DataProcessorPipeline([MockStep("pre1"), MockStep("pre2")], name="preprocessor")
 
-    postprocessor = RobotProcessor([MockStepWithoutOptionalMethods(multiplier=0.5)], name="postprocessor")
+    postprocessor = DataProcessorPipeline(
+        [MockStepWithoutOptionalMethods(multiplier=0.5)], name="postprocessor"
+    )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save both to same directory
@@ -1290,8 +1353,8 @@ def test_multiple_processors_same_directory():
         assert (Path(tmp_dir) / "postprocessor.json").exists()
 
         # Load them back
-        loaded_pre = RobotProcessor.from_pretrained(tmp_dir, config_filename="preprocessor.json")
-        loaded_post = RobotProcessor.from_pretrained(tmp_dir, config_filename="postprocessor.json")
+        loaded_pre = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="preprocessor.json")
+        loaded_post = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="postprocessor.json")
 
         assert loaded_pre.name == "preprocessor"
         assert loaded_post.name == "postprocessor"
@@ -1299,31 +1362,34 @@ def test_multiple_processors_same_directory():
         assert len(loaded_post) == 1
 
 
-def test_auto_detect_single_config():
-    """Test automatic config detection when there's only one JSON file."""
+def test_explicit_config_filename_loading():
+    """Test explicit config filename loading (no more auto-detection)."""
     step = MockStepWithTensorState()
-    pipeline = RobotProcessor([step], name="SingleConfig")
+    pipeline = DataProcessorPipeline([step], name="SingleConfig")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
 
-        # Load without specifying config_filename
-        loaded = RobotProcessor.from_pretrained(tmp_dir)
+        # Load with explicit config_filename (now required)
+        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="singleconfig.json")
         assert loaded.name == "SingleConfig"
 
 
-def test_error_multiple_configs_no_filename():
-    """Test error when multiple configs exist and no filename specified."""
-    proc1 = RobotProcessor([MockStep()], name="processor1")
-    proc2 = RobotProcessor([MockStep()], name="processor2")
+def test_explicit_config_selection_with_multiple_configs():
+    """Test explicit config selection when multiple configs exist."""
+    proc1 = DataProcessorPipeline([MockStep()], name="processor1")
+    proc2 = DataProcessorPipeline([MockStep()], name="processor2")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         proc1.save_pretrained(tmp_dir)
         proc2.save_pretrained(tmp_dir)
 
-        # Should raise error
-        with pytest.raises(ValueError, match="Multiple .json files found"):
-            RobotProcessor.from_pretrained(tmp_dir)
+        # Can load specific configs explicitly
+        loaded1 = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor1.json")
+        loaded2 = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor2.json")
+
+        assert loaded1.name == "processor1"
+        assert loaded2.name == "processor2"
 
 
 def test_state_file_naming_with_indices():
@@ -1333,7 +1399,7 @@ def test_state_file_naming_with_indices():
     step2 = MockStepWithTensorState(name="norm2", window_size=10)
     step3 = MockModuleStep(input_dim=5)
 
-    pipeline = RobotProcessor([step1, step2, step3])
+    pipeline = DataProcessorPipeline([step1, step2, step3])
 
     # Process some data to create state
     for i in range(5):
@@ -1349,9 +1415,9 @@ def test_state_file_naming_with_indices():
 
         # Files should be named with pipeline name prefix and indices
         expected_names = [
-            "robotprocessor_step_0.safetensors",
-            "robotprocessor_step_1.safetensors",
-            "robotprocessor_step_2.safetensors",
+            "dataprocessorpipeline_step_0.safetensors",
+            "dataprocessorpipeline_step_1.safetensors",
+            "dataprocessorpipeline_step_2.safetensors",
         ]
         actual_names = [f.name for f in state_files]
         assert actual_names == expected_names
@@ -1363,7 +1429,7 @@ def test_state_file_naming_with_registry():
     # Register a test step
     @ProcessorStepRegistry.register("test_stateful_step")
     @dataclass
-    class TestStatefulStep:
+    class TestStatefulStep(ProcessorStep):
         value: int = 0
 
         def __init__(self, value: int = 0):
@@ -1382,15 +1448,17 @@ def test_state_file_naming_with_registry():
         def load_state_dict(self, state):
             self.state_tensor = state["state_tensor"]
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-            # We do not test feature_contract here
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            # We do not test features here
             return features
 
     try:
         # Create pipeline with registered steps
         step1 = TestStatefulStep(1)
         step2 = TestStatefulStep(2)
-        pipeline = RobotProcessor([step1, step2])
+        pipeline = DataProcessorPipeline([step1, step2])
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline.save_pretrained(tmp_dir)
@@ -1401,8 +1469,8 @@ def test_state_file_naming_with_registry():
 
             # Should include pipeline name, index and registry name
             expected_names = [
-                "robotprocessor_step_0_test_stateful_step.safetensors",
-                "robotprocessor_step_1_test_stateful_step.safetensors",
+                "dataprocessorpipeline_step_0_test_stateful_step.safetensors",
+                "dataprocessorpipeline_step_1_test_stateful_step.safetensors",
             ]
             actual_names = [f.name for f in state_files]
             assert actual_names == expected_names
@@ -1418,7 +1486,7 @@ def test_override_with_nested_config():
 
     @ProcessorStepRegistry.register("complex_config_step")
     @dataclass
-    class ComplexConfigStep:
+    class ComplexConfigStep(ProcessorStep):
         name: str = "complex"
         simple_param: int = 42
         nested_config: dict = None
@@ -1439,21 +1507,26 @@ def test_override_with_nested_config():
         def get_config(self):
             return {"name": self.name, "simple_param": self.simple_param, "nested_config": self.nested_config}
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-            # We do not test feature_contract here
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            # We do not test features here
             return features
 
     try:
         step = ComplexConfigStep()
-        pipeline = RobotProcessor([step])
+        pipeline = DataProcessorPipeline([step])
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline.save_pretrained(tmp_dir)
 
             # Load with nested override
-            loaded = RobotProcessor.from_pretrained(
+            loaded = DataProcessorPipeline.from_pretrained(
                 tmp_dir,
+                config_filename="dataprocessorpipeline.json",
                 overrides={"complex_config_step": {"nested_config": {"level1": {"level2": "overridden"}}}},
+                to_transition=identity_transition,
+                to_output=identity_transition,
             )
 
             # Test that override worked
@@ -1467,14 +1540,15 @@ def test_override_with_nested_config():
 def test_override_preserves_defaults():
     """Test that overrides only affect specified parameters."""
     step = MockStepWithNonSerializableParam(name="test", multiplier=2.0)
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
 
         # Override only one parameter
-        loaded = RobotProcessor.from_pretrained(
+        loaded = DataProcessorPipeline.from_pretrained(
             tmp_dir,
+            config_filename="dataprocessorpipeline.json",
             overrides={
                 "MockStepWithNonSerializableParam": {
                     "multiplier": 5.0  # Only override multiplier
@@ -1491,7 +1565,7 @@ def test_override_preserves_defaults():
 def test_override_type_validation():
     """Test that type errors in overrides are caught properly."""
     step = MockStepWithTensorState(learning_rate=0.01)
-    pipeline = RobotProcessor([step])
+    pipeline = DataProcessorPipeline([step])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
@@ -1504,7 +1578,9 @@ def test_override_type_validation():
         }
 
         with pytest.raises(ValueError, match="Failed to instantiate"):
-            RobotProcessor.from_pretrained(tmp_dir, overrides=overrides)
+            DataProcessorPipeline.from_pretrained(
+                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            )
 
 
 def test_override_with_callables():
@@ -1512,7 +1588,7 @@ def test_override_with_callables():
 
     @ProcessorStepRegistry.register("callable_step")
     @dataclass
-    class CallableStep:
+    class CallableStep(ProcessorStep):
         name: str = "callable_step"
         transform_fn: Any = None
 
@@ -1531,13 +1607,15 @@ def test_override_with_callables():
         def get_config(self):
             return {"name": self.name}
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-            # We do not test feature_contract here
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            # We do not test features here
             return features
 
     try:
         step = CallableStep()
-        pipeline = RobotProcessor([step])
+        pipeline = DataProcessorPipeline([step])
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline.save_pretrained(tmp_dir)
@@ -1551,8 +1629,12 @@ def test_override_with_callables():
                 return x
 
             # Load with callable override
-            loaded = RobotProcessor.from_pretrained(
-                tmp_dir, overrides={"callable_step": {"transform_fn": double_values}}
+            loaded = DataProcessorPipeline.from_pretrained(
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides={"callable_step": {"transform_fn": double_values}},
+                to_transition=identity_transition,
+                to_output=identity_transition,
             )
 
             # Test it works
@@ -1567,14 +1649,16 @@ def test_override_multiple_same_class_warning():
     """Test behavior when multiple steps of same class exist."""
     step1 = MockStepWithNonSerializableParam(name="step1", multiplier=1.0)
     step2 = MockStepWithNonSerializableParam(name="step2", multiplier=2.0)
-    pipeline = RobotProcessor([step1, step2])
+    pipeline = DataProcessorPipeline([step1, step2])
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
 
         # Override affects all instances of the class
-        loaded = RobotProcessor.from_pretrained(
-            tmp_dir, overrides={"MockStepWithNonSerializableParam": {"multiplier": 10.0}}
+        loaded = DataProcessorPipeline.from_pretrained(
+            tmp_dir,
+            config_filename="dataprocessorpipeline.json",
+            overrides={"MockStepWithNonSerializableParam": {"multiplier": 10.0}},
         )
 
         # Both steps get the same override
@@ -1589,7 +1673,7 @@ def test_override_multiple_same_class_warning():
 def test_config_filename_special_characters():
     """Test config filenames with special characters are sanitized."""
     # Processor name with special characters
-    pipeline = RobotProcessor([MockStep()], name="My/Processor\\With:Special*Chars")
+    pipeline = DataProcessorPipeline([MockStep()], name="My/Processor\\With:Special*Chars")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
@@ -1607,10 +1691,10 @@ def test_state_file_naming_with_multiple_processors():
     """Test that state files are properly prefixed with pipeline names to avoid conflicts."""
     # Create two processors with state
     step1 = MockStepWithTensorState(name="norm", window_size=5)
-    preprocessor = RobotProcessor([step1], name="PreProcessor")
+    preprocessor = DataProcessorPipeline([step1], name="PreProcessor")
 
     step2 = MockStepWithTensorState(name="norm", window_size=10)
-    postprocessor = RobotProcessor([step2], name="PostProcessor")
+    postprocessor = DataProcessorPipeline([step2], name="PostProcessor")
 
     # Process some data to create state
     for i in range(3):
@@ -1630,8 +1714,8 @@ def test_state_file_naming_with_multiple_processors():
         assert (Path(tmp_dir) / "postprocessor_step_0.safetensors").exists()
 
         # Load both back and verify they work correctly
-        loaded_pre = RobotProcessor.from_pretrained(tmp_dir, config_filename="preprocessor.json")
-        loaded_post = RobotProcessor.from_pretrained(tmp_dir, config_filename="postprocessor.json")
+        loaded_pre = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="preprocessor.json")
+        loaded_post = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="postprocessor.json")
 
         assert loaded_pre.name == "PreProcessor"
         assert loaded_post.name == "PostProcessor"
@@ -1644,7 +1728,7 @@ def test_override_with_device_strings():
 
     @ProcessorStepRegistry.register("device_aware_step")
     @dataclass
-    class DeviceAwareStep:
+    class DeviceAwareStep(ProcessorStep):
         device: str = "cpu"
 
         def __init__(self, device: str = "cpu"):
@@ -1663,21 +1747,25 @@ def test_override_with_device_strings():
         def load_state_dict(self, state):
             self.buffer = state["buffer"]
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-            # We do not test feature_contract here
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            # We do not test features here
             return features
 
     try:
         step = DeviceAwareStep(device="cpu")
-        pipeline = RobotProcessor([step])
+        pipeline = DataProcessorPipeline([step])
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline.save_pretrained(tmp_dir)
 
             # Override device
             if torch.cuda.is_available():
-                loaded = RobotProcessor.from_pretrained(
-                    tmp_dir, overrides={"device_aware_step": {"device": "cuda:0"}}
+                loaded = DataProcessorPipeline.from_pretrained(
+                    tmp_dir,
+                    config_filename="dataprocessorpipeline.json",
+                    overrides={"device_aware_step": {"device": "cuda:0"}},
                 )
 
                 loaded_step = loaded.steps[0]
@@ -1691,20 +1779,27 @@ def test_override_with_device_strings():
 
 def test_from_pretrained_nonexistent_path():
     """Test error handling when loading from non-existent sources."""
-    from huggingface_hub.errors import HfHubHTTPError, HFValidationError
+    from huggingface_hub.errors import HfHubHTTPError
 
-    # Test with an invalid repo ID (too many slashes) - caught by HF validation
-    with pytest.raises(HFValidationError):
-        RobotProcessor.from_pretrained("/path/that/does/not/exist")
+    # Test with an invalid local path - should raise FileNotFoundError
+    with pytest.raises(FileNotFoundError):
+        DataProcessorPipeline.from_pretrained("/path/that/does/not/exist", config_filename="processor.json")
 
-    # Test with a non-existent but valid Hub repo format
+    # Test with a path that doesn't exist as a directory
+    with pytest.raises(FileNotFoundError):
+        DataProcessorPipeline.from_pretrained("user/repo/extra/path", config_filename="processor.json")
+
+    # Test with a non-existent Hub repo
     with pytest.raises((FileNotFoundError, HfHubHTTPError)):
-        RobotProcessor.from_pretrained("nonexistent-user/nonexistent-repo")
+        DataProcessorPipeline.from_pretrained(
+            "nonexistent-user/nonexistent-repo", config_filename="processor.json"
+        )
 
     # Test with a local directory that exists but has no config files
     with tempfile.TemporaryDirectory() as tmp_dir:
-        with pytest.raises(FileNotFoundError, match="No .json configuration files found"):
-            RobotProcessor.from_pretrained(tmp_dir)
+        # Since the directory exists but has no config, it will raise FileNotFoundError
+        with pytest.raises(FileNotFoundError):
+            DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor.json")
 
 
 def test_save_load_with_custom_converter_functions():
@@ -1733,13 +1828,15 @@ def test_save_load_with_custom_converter_functions():
         }
 
     # Create processor with custom converters
-    pipeline = RobotProcessor([MockStep()], to_transition=custom_to_transition, to_output=custom_to_output)
+    pipeline = DataProcessorPipeline(
+        [MockStep()], to_transition=custom_to_transition, to_output=custom_to_output
+    )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
 
         # Load - should use default converters
-        loaded = RobotProcessor.from_pretrained(tmp_dir)
+        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="dataprocessorpipeline.json")
 
         # Verify it uses default converters by checking with standard batch format
         batch = {
@@ -1753,35 +1850,39 @@ def test_save_load_with_custom_converter_functions():
 
         # Should work with standard format (wouldn't work with custom converter)
         result = loaded(batch)
-        assert "observation.image" in result  # Standard format preserved
+        # With new behavior, default to_output is _default_transition_to_batch, so result is batch dict
+        assert "observation.image" in result
 
 
 class NonCompliantStep:
-    """Intentionally non-compliant: missing feature_contract."""
+    """Intentionally non-compliant: missing features."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
 
-def test_construction_rejects_step_without_feature_contract():
-    with pytest.raises(TypeError, match=r"must define feature_contract\(features\) -> dict\[str, Any\]"):
-        RobotProcessor([NonCompliantStep()])
-
-
-class NonCallableStep:
+class NonCallableStep(ProcessorStep):
     """Intentionally non-compliant: missing __call__."""
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
 def test_construction_rejects_step_without_call():
-    with pytest.raises(TypeError, match=r"must define __call__"):
-        RobotProcessor([NonCallableStep()])
+    """Test that DataProcessorPipeline rejects steps that don't inherit from ProcessorStep."""
+    with pytest.raises(
+        TypeError, match=r"Can't instantiate abstract class NonCallableStep with abstract method __call_"
+    ):
+        DataProcessorPipeline([NonCallableStep()])
+
+    with pytest.raises(TypeError, match=r"must inherit from ProcessorStep"):
+        DataProcessorPipeline([NonCompliantStep()])
 
 
 @dataclass
-class FeatureContractAddStep:
+class FeatureContractAddStep(ProcessorStep):
     """Adds a PolicyFeature"""
 
     key: str = "a"
@@ -1790,39 +1891,47 @@ class FeatureContractAddStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features[self.key] = self.value
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        features[PipelineFeatureType.OBSERVATION][self.key] = self.value
         return features
 
 
 @dataclass
-class FeatureContractMutateStep:
+class FeatureContractMutateStep(ProcessorStep):
     """Mutates a PolicyFeature"""
 
     key: str = "a"
-    fn: Callable[[PolicyFeature | None], PolicyFeature] = lambda x: x  # noqa: E731
+    fn: Callable[[PolicyFeature | None], PolicyFeature] = identity_transition  # noqa: E731
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features[self.key] = self.fn(features.get(self.key))
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        features[PipelineFeatureType.OBSERVATION][self.key] = self.fn(
+            features[PipelineFeatureType.OBSERVATION].get(self.key)
+        )
         return features
 
 
 @dataclass
-class FeatureContractBadReturnStep:
+class FeatureContractBadReturnStep(ProcessorStep):
     """Returns a non-dict"""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return ["not-a-dict"]
 
 
 @dataclass
-class FeatureContractRemoveStep:
+class FeatureContractRemoveStep(ProcessorStep):
     """Removes a PolicyFeature"""
 
     key: str
@@ -1830,32 +1939,39 @@ class FeatureContractRemoveStep:
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         return transition
 
-    def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
-        features.pop(self.key, None)
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        features[PipelineFeatureType.OBSERVATION].pop(self.key, None)
         return features
 
 
-def test_feature_contract_orders_and_merges(policy_feature_factory):
-    p = RobotProcessor(
+def test_features_orders_and_merges(policy_feature_factory):
+    p = DataProcessorPipeline(
         [
             FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
             FeatureContractMutateStep("a", lambda v: PolicyFeature(type=v.type, shape=(3,))),
             FeatureContractAddStep("b", policy_feature_factory(FeatureType.ENV, (2,))),
         ]
     )
-    out = p.feature_contract({})
-
-    assert out["a"].type == FeatureType.STATE and out["a"].shape == (3,)
-    assert out["b"].type == FeatureType.ENV and out["b"].shape == (2,)
+    out = p.transform_features({PipelineFeatureType.OBSERVATION: {}})
+    assert out[PipelineFeatureType.OBSERVATION]["a"].type == FeatureType.STATE and out[
+        PipelineFeatureType.OBSERVATION
+    ]["a"].shape == (3,)
+    assert out[PipelineFeatureType.OBSERVATION]["b"].type == FeatureType.ENV and out[
+        PipelineFeatureType.OBSERVATION
+    ]["b"].shape == (2,)
     assert_contract_is_typed(out)
 
 
-def test_feature_contract_respects_initial_without_mutation(policy_feature_factory):
+def test_features_respects_initial_without_mutation(policy_feature_factory):
     initial = {
-        "seed": policy_feature_factory(FeatureType.STATE, (7,)),
-        "nested": policy_feature_factory(FeatureType.ENV, (0,)),
+        PipelineFeatureType.OBSERVATION: {
+            "seed": policy_feature_factory(FeatureType.STATE, (7,)),
+            "nested": policy_feature_factory(FeatureType.ENV, (0,)),
+        }
     }
-    p = RobotProcessor(
+    p = DataProcessorPipeline(
         [
             FeatureContractMutateStep("seed", lambda v: PolicyFeature(type=v.type, shape=(v.shape[0] + 1,))),
             FeatureContractMutateStep(
@@ -1863,57 +1979,224 @@ def test_feature_contract_respects_initial_without_mutation(policy_feature_facto
             ),
         ]
     )
-    out = p.feature_contract(initial_features=initial)
+    out = p.transform_features(initial_features=initial)
 
-    assert out["seed"].shape == (8,)
-    assert out["nested"].shape == (5,)
+    assert out[PipelineFeatureType.OBSERVATION]["seed"].shape == (8,)
+    assert out[PipelineFeatureType.OBSERVATION]["nested"].shape == (5,)
     # Initial dict must be preserved
-    assert initial["seed"].shape == (7,)
-    assert initial["nested"].shape == (0,)
+    assert initial[PipelineFeatureType.OBSERVATION]["seed"].shape == (7,)
+    assert initial[PipelineFeatureType.OBSERVATION]["nested"].shape == (0,)
 
     assert_contract_is_typed(out)
 
 
-def test_feature_contract_type_error_on_bad_step():
-    p = RobotProcessor([FeatureContractAddStep(), FeatureContractBadReturnStep()])
-    with pytest.raises(TypeError, match=r"\w+\.feature_contract must return dict\[str, Any\]"):
-        _ = p.feature_contract({})
-
-
-def test_feature_contract_execution_order_tracking():
-    class Track:
+def test_features_execution_order_tracking():
+    class Track(ProcessorStep):
         def __init__(self, label):
             self.label = label
 
         def __call__(self, transition: EnvTransition) -> EnvTransition:
             return transition
 
-        def feature_contract(self, features: dict[str, PolicyFeature]) -> dict[str, PolicyFeature]:
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
             code = {"A": 1, "B": 2, "C": 3}[self.label]
-            pf = features.get("order", PolicyFeature(type=FeatureType.ENV, shape=()))
-            features["order"] = PolicyFeature(type=pf.type, shape=pf.shape + (code,))
+            pf = features[PipelineFeatureType.OBSERVATION].get(
+                "order", PolicyFeature(type=FeatureType.ENV, shape=())
+            )
+            features[PipelineFeatureType.OBSERVATION]["order"] = PolicyFeature(
+                type=pf.type, shape=pf.shape + (code,)
+            )
             return features
 
-    out = RobotProcessor([Track("A"), Track("B"), Track("C")]).feature_contract({})
-    assert out["order"].shape == (1, 2, 3)
+    out = DataProcessorPipeline([Track("A"), Track("B"), Track("C")]).transform_features(
+        initial_features={PipelineFeatureType.OBSERVATION: {}}
+    )
+    assert out[PipelineFeatureType.OBSERVATION]["order"].shape == (1, 2, 3)
 
 
-def test_feature_contract_remove_key(policy_feature_factory):
-    p = RobotProcessor(
+def test_features_remove_key(policy_feature_factory):
+    p = DataProcessorPipeline(
         [
             FeatureContractAddStep("a", policy_feature_factory(FeatureType.STATE, (1,))),
             FeatureContractRemoveStep("a"),
         ]
     )
-    out = p.feature_contract({})
-    assert "a" not in out
+    out = p.transform_features({PipelineFeatureType.OBSERVATION: {}})
+    assert "a" not in out[PipelineFeatureType.OBSERVATION]
 
 
-def test_feature_contract_remove_from_initial(policy_feature_factory):
+def test_features_remove_from_initial(policy_feature_factory):
     initial = {
-        "keep": policy_feature_factory(FeatureType.STATE, (1,)),
-        "drop": policy_feature_factory(FeatureType.STATE, (1,)),
+        PipelineFeatureType.OBSERVATION: {
+            "keep": policy_feature_factory(FeatureType.STATE, (1,)),
+            "drop": policy_feature_factory(FeatureType.STATE, (1,)),
+        },
     }
-    p = RobotProcessor([FeatureContractRemoveStep("drop")])
-    out = p.feature_contract(initial_features=initial)
-    assert "drop" not in out and out["keep"] == initial["keep"]
+    p = DataProcessorPipeline([FeatureContractRemoveStep("drop")])
+    out = p.transform_features(initial_features=initial)
+    assert (
+        "drop" not in out[PipelineFeatureType.OBSERVATION]
+        and out[PipelineFeatureType.OBSERVATION]["keep"] == initial[PipelineFeatureType.OBSERVATION]["keep"]
+    )
+
+
+@dataclass
+class AddActionEEAndJointFeatures(ProcessorStep):
+    """Adds both EE and JOINT action features."""
+
+    def __call__(self, tr):
+        return tr
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # EE features
+        features[PipelineFeatureType.ACTION]["action.ee.x"] = float
+        features[PipelineFeatureType.ACTION]["action.ee.y"] = float
+        # JOINT features
+        features[PipelineFeatureType.ACTION]["action.j1.pos"] = float
+        features[PipelineFeatureType.ACTION]["action.j2.pos"] = float
+        return features
+
+
+@dataclass
+class AddObservationStateFeatures(ProcessorStep):
+    """Adds state features (and optionally an image spec to test precedence)."""
+
+    add_front_image: bool = False
+    front_image_shape: tuple = (240, 320, 3)
+
+    def __call__(self, tr):
+        return tr
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # State features (mix EE and a joint state)
+        features[PipelineFeatureType.OBSERVATION]["observation.state.ee.x"] = float
+        features[PipelineFeatureType.OBSERVATION]["observation.state.j1.pos"] = float
+        if self.add_front_image:
+            features[PipelineFeatureType.OBSERVATION]["observation.images.front"] = self.front_image_shape
+        return features
+
+
+def test_aggregate_joint_action_only():
+    rp = DataProcessorPipeline([AddActionEEAndJointFeatures()])
+    initial = {PipelineFeatureType.OBSERVATION: {"front": (480, 640, 3)}, PipelineFeatureType.ACTION: {}}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features=initial,
+        use_videos=True,
+        patterns=["action.j1.pos", "action.j2.pos"],
+    )
+
+    # Expect only "action" with joint names
+    assert "action" in out and "observation.state" not in out
+    assert out["action"]["dtype"] == "float32"
+    assert set(out["action"]["names"]) == {"j1.pos", "j2.pos"}
+    assert out["action"]["shape"] == (len(out["action"]["names"]),)
+
+
+def test_aggregate_ee_action_and_observation_with_videos():
+    rp = DataProcessorPipeline([AddActionEEAndJointFeatures(), AddObservationStateFeatures()])
+    initial = {"front": (480, 640, 3), "side": (720, 1280, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features={PipelineFeatureType.OBSERVATION: initial, PipelineFeatureType.ACTION: {}},
+        use_videos=True,
+        patterns=["action.ee", "observation.state"],
+    )
+
+    # Action should pack only EE names
+    assert "action" in out
+    assert set(out["action"]["names"]) == {"ee.x", "ee.y"}
+    assert out["action"]["dtype"] == "float32"
+
+    # Observation state should pack both ee.x and j1.pos as a vector
+    assert "observation.state" in out
+    assert set(out["observation.state"]["names"]) == {"ee.x", "j1.pos"}
+    assert out["observation.state"]["dtype"] == "float32"
+
+    # Cameras from initial_features appear as videos
+    for cam in ("front", "side"):
+        key = f"observation.images.{cam}"
+        assert key in out
+        assert out[key]["dtype"] == "video"
+        assert out[key]["shape"] == initial[cam]
+        assert out[key]["names"] == ["height", "width", "channels"]
+
+
+def test_aggregate_both_action_types():
+    rp = DataProcessorPipeline([AddActionEEAndJointFeatures()])
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: {}},
+        use_videos=True,
+        patterns=["action.ee", "action.j1", "action.j2.pos"],
+    )
+
+    assert "action" in out
+    expected = {"ee.x", "ee.y", "j1.pos", "j2.pos"}
+    assert set(out["action"]["names"]) == expected
+    assert out["action"]["shape"] == (len(expected),)
+
+
+def test_aggregate_images_when_use_videos_false():
+    rp = DataProcessorPipeline([AddObservationStateFeatures(add_front_image=True)])
+    initial = {"back": (480, 640, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
+        use_videos=False,  # expect "image" dtype
+        patterns=None,
+    )
+
+    key = "observation.images.back"
+    key_front = "observation.images.front"
+    assert key not in out
+    assert key_front not in out
+
+
+def test_aggregate_images_when_use_videos_true():
+    rp = DataProcessorPipeline([AddObservationStateFeatures(add_front_image=True)])
+    initial = {"back": (480, 640, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features={PipelineFeatureType.OBSERVATION: initial, PipelineFeatureType.ACTION: {}},
+        use_videos=True,
+        patterns=None,
+    )
+
+    key = "observation.images.front"
+    key_back = "observation.images.back"
+    assert key in out
+    assert key_back in out
+    assert out[key]["dtype"] == "video"
+    assert out[key_back]["dtype"] == "video"
+    assert out[key_back]["shape"] == initial["back"]
+
+
+def test_initial_camera_not_overridden_by_step_image():
+    # Step explicitly sets a different front image shape; initial has another shape.
+    # aggregate_pipeline_dataset_features should keep the step's value (setdefault behavior on initial cams).
+    rp = DataProcessorPipeline(
+        [AddObservationStateFeatures(add_front_image=True, front_image_shape=(240, 320, 3))]
+    )
+    initial = {"front": (480, 640, 3)}  # should NOT override the step-provided (240, 320, 3)
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
+        use_videos=True,
+        patterns=["observation.images.front"],
+    )
+
+    key = "observation.images.front"
+    assert key in out
+    assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial
