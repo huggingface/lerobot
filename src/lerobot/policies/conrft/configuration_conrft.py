@@ -177,7 +177,7 @@ class ConRFTConfig(PreTrainedConfig):
     freeze_base_vla: bool = True
 
     # Pretrained policy checkpoint path (for loading from offline training)
-    pretrained_path: str | None = None
+    pretrained_model_path: str | None = None
 
     # Proprioception settings
     use_proprio: bool = True

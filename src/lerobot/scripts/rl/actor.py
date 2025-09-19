@@ -257,9 +257,9 @@ def act_with_policy(
     )
 
     # Load from pretrained checkpoint if specified (for online training after offline training)
-    if hasattr(cfg.policy, 'pretrained_path') and cfg.policy.pretrained_path is not None:
+    if hasattr(cfg.policy, 'pretrained_model_path') and cfg.policy.pretrained_model_path is not None:
         import os
-        pretrained_path = cfg.policy.pretrained_path
+        pretrained_path = cfg.policy.pretrained_model_path
         if os.path.exists(pretrained_path):
             logging.info(f"Loading pretrained policy from: {pretrained_path}")
             try:
