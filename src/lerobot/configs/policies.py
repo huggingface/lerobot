@@ -196,11 +196,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             config = json.load(f)
 
         config.pop("type")
-        with tempfile.NamedTemporaryFile("w+") as f:
+        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)
             config_file = f.name
-            f.flush()
 
-            cli_overrides = policy_kwargs.pop("cli_overrides", [])
-            with draccus.config_type("json"):
-                return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+        cli_overrides = policy_kwargs.pop("cli_overrides", [])
+        with draccus.config_type("json"):
+            return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
