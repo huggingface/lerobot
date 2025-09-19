@@ -149,6 +149,10 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SmolVLAConfig(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
+    elif policy_type == "pi0_openpi":
+        return PI0OpenPIConfig(**kwargs)
+    elif policy_type == "pi05_openpi":
+        return PI05OpenPIConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
@@ -264,6 +268,22 @@ def make_pre_post_processors(
         from lerobot.policies.pi0fast.processor_pi0fast import make_pi0fast_pre_post_processors
 
         processors = make_pi0fast_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, PI0OpenPIConfig):
+        from lerobot.policies.pi0_openpi.processor_pi0_openpi import make_pi0_openpi_pre_post_processors
+
+        processors = make_pi0_openpi_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, PI05OpenPIConfig):
+        from lerobot.policies.pi05_openpi.processor_pi05openpi import make_pi05_openpi_pre_post_processors
+
+        processors = make_pi05_openpi_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
