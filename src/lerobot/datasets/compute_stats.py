@@ -33,14 +33,13 @@ class RunningQuantileStats:
 
     def update(self, batch: np.ndarray) -> None:
         """Update the running statistics with a batch of vectors.
-        
+
         Args:
             batch: An array where all dimensions except the last are batch dimensions.
         """
-        original_shape = batch.shape
         batch = batch.reshape(-1, batch.shape[-1])
         num_elements, vector_length = batch.shape
-        
+
         if self._count == 0:
             self._mean = np.mean(batch, axis=0)
             self._mean_of_squares = np.mean(batch**2, axis=0)
@@ -54,7 +53,7 @@ class RunningQuantileStats:
         else:
             if vector_length != self._mean.size:
                 raise ValueError("The length of new vectors does not match the initialized vector length.")
-            
+
             new_max = np.max(batch, axis=0)
             new_min = np.min(batch, axis=0)
             max_changed = np.any(new_max > self._max)
@@ -72,16 +71,18 @@ class RunningQuantileStats:
 
         # Update running mean and mean of squares
         self._mean += (batch_mean - self._mean) * (num_elements / self._count)
-        self._mean_of_squares += (batch_mean_of_squares - self._mean_of_squares) * (num_elements / self._count)
+        self._mean_of_squares += (batch_mean_of_squares - self._mean_of_squares) * (
+            num_elements / self._count
+        )
 
         self._update_histograms(batch)
 
     def get_statistics(self, quantiles: list[float] | None = None) -> dict[str, np.ndarray]:
         """Compute and return the statistics of the vectors processed so far.
-        
+
         Args:
             quantiles: List of quantiles to compute (e.g., [0.01, 0.99]). If None, no quantiles computed.
-            
+
         Returns:
             Dictionary containing the computed statistics.
         """
@@ -90,22 +91,22 @@ class RunningQuantileStats:
 
         variance = self._mean_of_squares - self._mean**2
         stddev = np.sqrt(np.maximum(0, variance))
-        
+
         stats = {
             "min": self._min.copy(),
-            "max": self._max.copy(), 
+            "max": self._max.copy(),
             "mean": self._mean.copy(),
             "std": stddev,
-            "count": np.array([self._count])
+            "count": np.array([self._count]),
         }
-        
+
         if quantiles is not None:
             quantile_results = self._compute_quantiles(quantiles)
             for i, q in enumerate(quantiles):
                 # Format as q01, q99, etc.
-                q_key = f"q{int(q*100):02d}"
+                q_key = f"q{int(q * 100):02d}"
                 stats[q_key] = quantile_results[i]
-                
+
         return stats
 
     def _adjust_histograms(self):
@@ -113,17 +114,19 @@ class RunningQuantileStats:
         for i in range(len(self._histograms)):
             old_edges = self._bin_edges[i]
             old_hist = self._histograms[i]
-            
+
             # Create new edges with small padding to ensure range coverage
             padding = (self._max[i] - self._min[i]) * 1e-10
-            new_edges = np.linspace(self._min[i] - padding, self._max[i] + padding, self._num_quantile_bins + 1)
+            new_edges = np.linspace(
+                self._min[i] - padding, self._max[i] + padding, self._num_quantile_bins + 1
+            )
 
             # Redistribute existing histogram counts to new bins
             # We need to map each old bin center to the new bins
             old_centers = (old_edges[:-1] + old_edges[1:]) / 2
             new_hist = np.zeros(self._num_quantile_bins)
-            
-            for j, (old_center, count) in enumerate(zip(old_centers, old_hist)):
+
+            for old_center, count in zip(old_centers, old_hist, strict=False):
                 if count > 0:
                     # Find which new bin this old center belongs to
                     bin_idx = np.searchsorted(new_edges, old_center) - 1
@@ -208,57 +211,41 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
 
 
 def get_feature_stats(
-    array: np.ndarray, 
-    axis: tuple, 
-    keepdims: bool, 
-    compute_quantiles: bool = False,
-    quantiles: list[float] | None = None
+    array: np.ndarray, axis: tuple, keepdims: bool, quantiles: list[float] | None = None
 ) -> dict[str, np.ndarray]:
-    """Compute feature statistics, optionally including quantiles.
-    
+    """Compute feature statistics including quantiles.
+
     Args:
         array: Input data array
-        axis: Axes along which to compute statistics  
+        axis: Axes along which to compute statistics
         keepdims: Whether to keep reduced dimensions
-        compute_quantiles: Whether to compute quantiles using running stats
         quantiles: List of quantiles to compute (e.g., [0.01, 0.99])
-        
+
     Returns:
-        Dictionary containing computed statistics
+        Dictionary containing computed statistics including quantiles
     """
-    if not compute_quantiles:
-        # Use original fast computation for basic stats
-        return {
-            "min": np.min(array, axis=axis, keepdims=keepdims),
-            "max": np.max(array, axis=axis, keepdims=keepdims),
-            "mean": np.mean(array, axis=axis, keepdims=keepdims),
-            "std": np.std(array, axis=axis, keepdims=keepdims),
-            "count": np.array([len(array)]),
-        }
-    
-    # Use running stats for quantile computation
     if quantiles is None:
         quantiles = [0.01, 0.99]  # Default to 1st and 99th percentiles
-        
+
     # Reshape array to match RunningQuantileStats expectation
-    if axis == (0, 2, 3):  # Image case: (batch, channels, height, width) -> (batch*height*width, channels) 
+    if axis == (0, 2, 3):  # Image case: (batch, channels, height, width) -> (batch*height*width, channels)
         batch_size, channels, height, width = array.shape
         reshaped = array.transpose(0, 2, 3, 1).reshape(-1, channels)  # (batch*height*width, channels)
     elif axis == 0:  # Vector case
         if array.ndim == 1:
-            # 1D array: reshape to (n_samples, 1) 
+            # 1D array: reshape to (n_samples, 1)
             reshaped = array.reshape(-1, 1)
         else:
             # Multi-dimensional: should already be (n_samples, n_features)
             reshaped = array
     else:
         raise ValueError(f"Unsupported axis configuration for quantile computation: {axis}")
-    
+
     # Compute stats using RunningQuantileStats
     running_stats = RunningQuantileStats()
     running_stats.update(reshaped)
     stats = running_stats.get_statistics(quantiles)
-    
+
     # Apply keepdims if needed
     if keepdims and axis == (0, 2, 3):
         # For images, reshape to (1, channels, 1, 1)
@@ -267,31 +254,27 @@ def get_feature_stats(
                 stats[key] = stats[key].reshape(1, -1, 1, 1)
     elif keepdims and axis == 0:
         if array.ndim == 1:
-            # For 1D vectors with keepdims, stats should be shape (1,) 
+            # For 1D vectors with keepdims, stats should be shape (1,)
             for key in stats:
                 if key != "count":
                     stats[key] = stats[key].reshape(1) if stats[key].ndim > 0 else stats[key]
         # For multi-dimensional vectors, keepdims doesn't change shape when axis=0
-                
+
     return stats
 
 
 def compute_episode_stats(
-    episode_data: dict[str, list[str] | np.ndarray], 
-    features: dict, 
-    compute_quantiles: bool = False,
-    quantiles: list[float] | None = None
+    episode_data: dict[str, list[str] | np.ndarray], features: dict, quantiles: list[float] | None = None
 ) -> dict:
-    """Compute episode statistics, optionally including quantiles.
-    
+    """Compute episode statistics including quantiles.
+
     Args:
         episode_data: Dictionary containing episode data
         features: Dictionary describing feature types and shapes
-        compute_quantiles: Whether to compute quantiles (slower but more informative)
         quantiles: List of quantiles to compute (e.g., [0.01, 0.99])
-        
+
     Returns:
-        Dictionary containing computed statistics for each feature
+        Dictionary containing computed statistics for each feature including quantiles
     """
     ep_stats = {}
     for key, data in episode_data.items():
@@ -307,11 +290,7 @@ def compute_episode_stats(
             keepdims = data.ndim == 1  # keep as np.array
 
         ep_stats[key] = get_feature_stats(
-            ep_ft_array, 
-            axis=axes_to_reduce, 
-            keepdims=keepdims,
-            compute_quantiles=compute_quantiles,
-            quantiles=quantiles
+            ep_ft_array, axis=axes_to_reduce, keepdims=keepdims, quantiles=quantiles
         )
 
         # finally, we normalize and remove batch dim for images
@@ -335,10 +314,10 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
                     raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
                 if k == "count" and v.shape != (1,):
                     raise ValueError(f"Shape of 'count' must be (1), but is {v.shape} instead.")
-                if "image" in fkey and k != "count" and not k.startswith('q') and v.shape != (3, 1, 1):
+                if "image" in fkey and k != "count" and not k.startswith("q") and v.shape != (3, 1, 1):
                     raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
                 # Allow quantile keys (q01, q99, etc.) to have same shape as other stats
-                if "image" in fkey and k.startswith('q') and k[1:].isdigit() and v.shape != (3, 1, 1):
+                if "image" in fkey and k.startswith("q") and k[1:].isdigit() and v.shape != (3, 1, 1):
                     raise ValueError(f"Shape of quantile '{k}' must be (3,1,1), but is {v.shape} instead.")
 
 
@@ -369,16 +348,15 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
         "std": np.sqrt(total_variance),
         "count": total_count,
     }
-    
-    # Handle quantiles if present
-    quantile_keys = [k for k in stats_ft_list[0].keys() if k.startswith('q') and k[1:].isdigit()]
+
+    quantile_keys = [k for k in stats_ft_list[0].keys() if k.startswith("q") and k[1:].isdigit()]
     for q_key in quantile_keys:
         # For quantiles, use weighted average as approximation
         # This is not mathematically exact but provides a reasonable estimate
         quantile_values = np.stack([s[q_key] for s in stats_ft_list])
         weighted_quantiles = quantile_values * counts
         aggregated[q_key] = weighted_quantiles.sum(axis=0) / total_count
-    
+
     return aggregated
 
 
