@@ -177,7 +177,7 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
-    
+
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     if not (cfg.resume and cfg.policy.pretrained_path):
