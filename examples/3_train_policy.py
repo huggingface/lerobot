@@ -27,6 +27,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetad
 from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
+from lerobot.policies.factory import make_pre_post_processors
 
 
 def main():
@@ -56,9 +57,10 @@ def main():
     cfg = DiffusionConfig(input_features=input_features, output_features=output_features)
 
     # We can now instantiate our policy with this config and the dataset stats.
-    policy = DiffusionPolicy(cfg, dataset_stats=dataset_metadata.stats)
+    policy = DiffusionPolicy(cfg)
     policy.train()
     policy.to(device)
+    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=dataset_metadata.stats)
 
     # Another policy-dataset interaction is with the delta_timestamps. Each policy expects a given number frames
     # which can differ for inputs, outputs and rewards (if there are some).
@@ -99,7 +101,7 @@ def main():
     done = False
     while not done:
         for batch in dataloader:
-            batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+            batch = preprocessor(batch)
             loss, _ = policy.forward(batch)
             loss.backward()
             optimizer.step()
@@ -114,6 +116,8 @@ def main():
 
     # Save a policy checkpoint.
     policy.save_pretrained(output_directory)
+    preprocessor.save_pretrained(output_directory)
+    postprocessor.save_pretrained(output_directory)
 
 
 if __name__ == "__main__":

@@ -84,7 +84,6 @@ dependencies = [
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
-    "flask>=3.0.3,<4.0.0",
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
     "termcolor>=2.4.0,<4.0.0",
 ]
@@ -95,7 +94,7 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1"]
 placo-dep = ["placo>=0.9.6"]
-transformers-dep = ["transformers>=4.50.3,<4.52.0"] # TODO: Bumb dependency
+transformers-dep = ["transformers>=4.52.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
 
 # Motors
@@ -106,11 +105,13 @@ dynamixel = ["dynamixel-sdk>=3.7.31"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1"]
+reachy2 = ["reachy2_sdk>=1.0.14"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
 ]
+phone = ["hebi-py>=2.8.0", "teleop>=0.1.0"]
 # stretch = [
 #     "hello-robot-stretch-body>=0.7.27 ; sys_platform == 'linux'",
 #     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
@@ -120,7 +121,7 @@ intelrealsense = [
 # Policies
 pi0 = ["lerobot[transformers-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
-hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.9", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
@@ -141,6 +142,7 @@ all = [
     "lerobot[gamepad]",
     "lerobot[hopejr]",
     "lerobot[lekiwi]",
+    "lerobot[reachy2]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     "lerobot[pi0]",
@@ -152,7 +154,8 @@ all = [
     "lerobot[video_benchmark]",
     "lerobot[aloha]",
     "lerobot[pusht]",
-    "lerobot[xarm]"
+    "lerobot[xarm]",
+    "lerobot[phone]",
 ]
 
 [project.scripts]

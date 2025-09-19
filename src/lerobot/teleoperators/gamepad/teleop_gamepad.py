@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from ..teleoperator import Teleoperator
+from ..utils import TeleopEvents
 from .configuration_gamepad import GamepadTeleopConfig
 
 
@@ -106,6 +107,48 @@ class GamepadTeleop(Teleoperator):
             action_dict["gripper"] = gripper_action
 
         return action_dict
+
+    def get_teleop_events(self) -> dict[str, Any]:
+        """
+        Get extra control events from the gamepad such as intervention status,
+        episode termination, success indicators, etc.
+
+        Returns:
+            Dictionary containing:
+                - is_intervention: bool - Whether human is currently intervening
+                - terminate_episode: bool - Whether to terminate the current episode
+                - success: bool - Whether the episode was successful
+                - rerecord_episode: bool - Whether to rerecord the episode
+        """
+        if self.gamepad is None:
+            return {
+                TeleopEvents.IS_INTERVENTION: False,
+                TeleopEvents.TERMINATE_EPISODE: False,
+                TeleopEvents.SUCCESS: False,
+                TeleopEvents.RERECORD_EPISODE: False,
+            }
+
+        # Update gamepad state to get fresh inputs
+        self.gamepad.update()
+
+        # Check if intervention is active
+        is_intervention = self.gamepad.should_intervene()
+
+        # Get episode end status
+        episode_end_status = self.gamepad.get_episode_end_status()
+        terminate_episode = episode_end_status in [
+            TeleopEvents.RERECORD_EPISODE,
+            TeleopEvents.FAILURE,
+        ]
+        success = episode_end_status == TeleopEvents.SUCCESS
+        rerecord_episode = episode_end_status == TeleopEvents.RERECORD_EPISODE
+
+        return {
+            TeleopEvents.IS_INTERVENTION: is_intervention,
+            TeleopEvents.TERMINATE_EPISODE: terminate_episode,
+            TeleopEvents.SUCCESS: success,
+            TeleopEvents.RERECORD_EPISODE: rerecord_episode,
+        }
 
     def disconnect(self) -> None:
         """Disconnect from the gamepad."""
