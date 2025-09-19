@@ -16,5 +16,6 @@
 
 from .configuration_pi0openpi import PI0OpenPIConfig
 from .modeling_pi0openpi import PI0OpenPIPolicy
+from .processor_pi0_openpi import make_pi0_openpi_pre_post_processors
 
-__all__ = ["PI0OpenPIConfig", "PI0OpenPIPolicy"]
+__all__ = ["PI0OpenPIConfig", "PI0OpenPIPolicy", "make_pi0_openpi_pre_post_processors"]
