@@ -604,7 +604,15 @@ def eval_policy_all(
         )
 
     def _eval_monotask(
-        envs, policy, n_episodes, max_episodes_rendered, videos_dir, return_episode_data, start_seed
+        envs,
+        policy,
+        preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+        postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+        n_episodes,
+        max_episodes_rendered,
+        videos_dir,
+        return_episode_data,
+        start_seed,
     ):
         for task_group, tasks in envs.items():
             for task_id, vec in tasks.items():
