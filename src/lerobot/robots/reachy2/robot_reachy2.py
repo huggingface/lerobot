@@ -18,13 +18,17 @@ import time
 from typing import Any
 
 import numpy as np
-from reachy2_sdk import ReachySDK
 
 from lerobot.cameras.utils import make_cameras_from_configs
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .configuration_reachy2 import Reachy2RobotConfig
+
+try:
+    from reachy2_sdk import ReachySDK
+except ImportError:
+    ReachySDK = None
 
 # {lerobot_keys: reachy2_sdk_keys}
 REACHY2_NECK_JOINTS = {
@@ -77,6 +81,9 @@ class Reachy2Robot(Robot):
 
     def __init__(self, config: Reachy2RobotConfig):
         super().__init__(config)
+        if ReachySDK is None:
+            raise ImportError("reachy2_sdk is required to use Reachy2Robot")
+        self._sdk = ReachySDK
 
         self.config = config
         self.robot_type = self.config.type
@@ -122,7 +129,7 @@ class Reachy2Robot(Robot):
         return self.reachy.is_connected() if self.reachy is not None else False
 
     def connect(self, calibrate: bool = False) -> None:
-        self.reachy = ReachySDK(self.config.ip_address)
+        self.reachy = self._sdk(self.config.ip_address)
         if not self.is_connected:
             raise ConnectionError()
 
