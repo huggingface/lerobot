@@ -23,6 +23,9 @@ Please, update your dataset to the new format using this command:
 python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id={repo_id}
 ```
 
+If you already have a converted version uploaded to the hub, then this error might be because of
+an older version in your local cache. Consider deleting the cached version and retrying.
+
 If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)
 or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
 """
