@@ -34,7 +34,7 @@ class SMOLANDFASTConfig(PreTrainedConfig):
 
     # Decoding
     max_decoding_steps: int = 512
-    fast_skip_tokens: int = 128  # Skip last 128 tokens in PaliGemma vocab since they are special tokens
+    fast_skip_tokens: int = 280  # Skip last 128 tokens in PaliGemma vocab since they are special tokens
     max_input_seq_len: int = 512  # 512
 
     # Utils
@@ -52,7 +52,7 @@ class SMOLANDFASTConfig(PreTrainedConfig):
 
     checkpoint_path: str = None
 
-    llm_checkpoint = "HuggingFaceTB/SmolLM2-135M"
+    vlm_checkpoint = "HuggingFaceTB/SmolVLM2-256M-Video-Instruct"
     # llm_checkpoint = "gpt2"
     # llm_checkpoint = "google/gemma-3-270m"
 

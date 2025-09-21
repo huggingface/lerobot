@@ -7,11 +7,13 @@ import math
 import torch
 from scipy.fft import idct
 from torch import Tensor, nn
+from torchvision.transforms.functional import to_pil_image
+
 from transformers import AutoProcessor, AutoTokenizer
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModelForImageTextToText
 from transformers import LogitsProcessorList
 
-from lerobot.constants import ACTION, OBS_STATE, OBS_ENV_STATE
+from lerobot.constants import ACTION, OBS_STATE, OBS_IMAGE
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.smolandfast.configuration_smolandfast import SMOLANDFASTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -157,8 +159,8 @@ class SMOLANDFAST(nn.Module):
         super().__init__()
         self.config = config
 
-        self.llm = AutoModelForCausalLM.from_pretrained(self.config.llm_checkpoint)
-        self.llm_tokenizer = AutoTokenizer.from_pretrained(self.config.llm_checkpoint, padding_side="left")
+        self.vlm = AutoModelForImageTextToText.from_pretrained(self.config.vlm_checkpoint)
+        self.processor = AutoProcessor.from_pretrained(self.config.vlm_checkpoint)
 
         fast_tokenizer_path = "physical-intelligence/fast"
         self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
@@ -170,134 +172,89 @@ class SMOLANDFAST(nn.Module):
         ]  # self.config.max_action_dim  # self.config.action_feature.shape[0]
         precision = config.precision
         torch_precision = PRECISION.get(precision, torch.float32)
-
-        # TODO: CHANGE TO GENERAL APPROACH. CURRENT SOLLUTION FOR GPT2
-        self.llm_tokenizer.pad_token_id = self.llm_tokenizer.eos_token_id
         
-        self.pad_token_id = (
-            self.llm_tokenizer.pad_token_id
-            if hasattr(self.llm_tokenizer, "pad_token_id")
-            else self.llm_tokenizer.eos_token_id
-        )
-        self.eos_token_id = self.llm_tokenizer.eos_token_id
+        self.pad_token_id = self.processor.tokenizer.pad_token_id
+        self.eos_token_id = self.processor.tokenizer.eos_token_id
 
 
         # change important stuff in bf16
         params_to_change_dtype = [
-            "language_model",
-            "vision_tower",
-            "multi_modal",
+            "text_model",
+            "connector",
+            "lm_head",
+            "vision_model",
         ]
     
-        for name, param in self.llm.named_parameters():
+        for name, param in self.vlm.named_parameters():
             if any(selector in name for selector in params_to_change_dtype):
                 param.data = param.data.to(dtype=torch_precision)
 
-        self.embed_func = self.llm.get_input_embeddings()
+        self.embed_func = self.vlm.get_input_embeddings()
         # TODO: Remove this once we bump transformers to >4.52.0 because the attribute will be removed
         # AttributeError: 'llmConfig' object has no attribute 'ignore_index'
-        # self.ignore_index = self.llm.config.ignore_index # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # self.ignore_index = self.vlm.config.ignore_index # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         self.padding_side = self.config.padding_side
 
-
-    def _act_tokens_to_llm_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        llm_tokens = self.llm_tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
-        return llm_tokens
-    
-    def _llm_tokens_to_act_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        fast_tokens = self.llm_tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
-        return fast_tokens
-
-    def create_obs_prefix_tokens(self, state, env, lang_text):
-        device = state.device
+    def create_obs_prefix_tokens(self, states, images, lang_text):
+        device = states.device
 
         # Precompute bin edges on GPU
         bins = torch.linspace(-1, 1, self.config.n_state_bins + 1, device=device)[:-1]
 
         # Discretize directly on GPU
-        discretized_state = torch.bucketize(state, bins) - 1   # shape: [B, state_dim]
-        discretized_env = torch.bucketize(env, bins) - 1       # shape: [B, env_dim]
+        discretized_states = torch.bucketize(states, bins) - 1   # shape: [B, state_dim]
 
         # Move the batched results to CPU only once for string formatting
-        disc_state_cpu = discretized_state.detach().cpu().numpy()
-        disc_env_cpu = discretized_env.detach().cpu().numpy()
+        disc_states_cpu = discretized_states.detach().cpu().numpy()
 
         # Build strings in batch
         prefix_texts = []
-        for txt, disc_st, disc_env in zip(lang_text, disc_state_cpu, disc_env_cpu):
+        for txt, disc_st in zip(lang_text, disc_states_cpu):
             cleaned = txt.lower().strip().replace("_", " ")
             state_str = " ".join(map(str, disc_st.tolist()))
-            env_str = " ".join(map(str, disc_env.tolist()))
-            prefix_texts.append(f"Task: {cleaned}, State: {state_str}, Env: {env_str}, Action: ")
+            message = [{
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": f"Task: {cleaned}, State: {state_str}, Action: "}
+                ],
+                }]
+            prefix_texts.append(message)
+        prompts = [self.processor.apply_chat_template(m, add_generation_prompt=True) for m in prefix_texts]
 
-        # Tokenize (likely CPU-bound, since HuggingFace tokenizers are Rust/C++)
-        prefix_out = self.llm_tokenizer(
-            prefix_texts,
-            padding=False,
-            truncation=False,
+        images = list(torch.unbind(images, dim=0))
+        # Convert each tensor to PIL
+        pil_images = [[img] for img in images]
+        prefix_out = self.processor(
+            images=pil_images,
+            text=prompts,
+            padding=False
         )
-        # print(prefix_out)
-
-        # Move tokenized tensors to GPU once
-        prefix_ids = prefix_out["input_ids"]
-        prefix_pad_mask = prefix_out["attention_mask"]
-
-        return prefix_ids, prefix_pad_mask
+        return prefix_out
 
     def embed_tokens(self, tokens: torch.Tensor):
         lang_emb = self.embed_func(tokens)
         lang_emb_dim = lang_emb.shape[-1]
         return lang_emb * math.sqrt(lang_emb_dim)
 
-    def fast_tokenizer_wrapper(self, actions_norm):
-        """
-        A wrapper for self.fast_tokenizer that ensures batch processing,
-        conversion to PyTorch tensors, and returns a dictionary without padding.
-        """
-        fast_eos_token = self._llm_tokens_to_act_tokens(self.eos_token_id)
-        fast_pad_token = self._llm_tokens_to_act_tokens(self.pad_token_id)
+    def _act_tokens_to_llm_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
+        llm_tokens = self.processor.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
+        return llm_tokens
 
-        batch_tokens = self.fast_tokenizer(actions_norm)
-        print(batch_tokens)
-        batch_mask = [[1]*len(tokens) for tokens in batch_tokens]
+    def _llm_tokens_to_act_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
+        fast_tokens = self.processor.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
+        return fast_tokens
 
-        max_len = max([len(seq) for seq in batch_tokens]) + 1
+    def create_input_tokens(self, states, images, lang_text, actions=None):
+        device = states.device
 
-        for seq, seq_mask in zip(batch_tokens, batch_mask):
-            seq_len = len(seq) + 1 # len of the sequence with eos_token
-            seq.append(fast_eos_token)
-            seq_mask.append(1)
-            seq.extend([fast_pad_token]*(max_len - seq_len))
-            seq_mask.extend([0]*(max_len - seq_len))
-
-        fast_tokens = torch.tensor(batch_tokens, dtype=torch.long)
-        mask = torch.tensor(batch_mask, dtype=torch.long)
-
-        return fast_tokens, mask
-
-    def create_action_tokens(self, actions: torch.Tensor):
-        device = actions.device
-
-        # Tokenization (CPU-bound)
-        # Move actions once to CPU, tokenize, return tensors
-        fast_tokens, fast_pad_mask = self.fast_tokenizer_wrapper(actions.detach().cpu())
-
-        # Convert to llm token IDs (GPU-friendly math)
-        fast_tokens = fast_tokens.to(device)
-        act_ids = self._act_tokens_to_llm_tokens(fast_tokens)
-
-        # Convert mask to GPU
-        act_pad_mask = fast_pad_mask.to(device)
-        act_att_mask = torch.ones_like(act_ids, dtype=torch.bool, device=device)
-
-        return act_ids, act_pad_mask, act_att_mask
-
-    def create_input_tokens(self, state, env, lang_text, actions=None):
-        device = state.device
-
-        obs_ids, obs_pad_mask = self.create_obs_prefix_tokens(state=state,
-                                                              env=env,
-                                                              lang_text=lang_text)
+        prefix_out = self.create_obs_prefix_tokens(states=states,
+                                                   images=images,
+                                                   lang_text=lang_text)
+    
+        prefix_out["pixel_values"] = torch.tensor(np.array(prefix_out["pixel_values"]),dtype=torch.float32, device=device)
+        prefix_out["pixel_attention_mask"] = torch.tensor(np.array(prefix_out["pixel_attention_mask"]),dtype=torch.long, device=device)
+        obs_ids = prefix_out["input_ids"]
 
         if actions is not None:
             fast_action_tokens = self.fast_tokenizer(actions.detach().cpu())
@@ -341,6 +298,8 @@ class SMOLANDFAST(nn.Module):
 
             return {"input_ids": prefix_tokens,
                     "pad_masks": prefix_pad_mask,
+                    "pixel_values": prefix_out["pixel_values"],
+                    "pixel_attention_mask": prefix_out["pixel_attention_mask"],
                     "loss_mask": loss_mask}
         else:
 
@@ -361,6 +320,8 @@ class SMOLANDFAST(nn.Module):
 
             return {"input_ids": prefix_tokens,
                     "pad_masks": prefix_pad_mask,
+                    "pixel_values": prefix_out["pixel_values"],
+                    "pixel_attention_mask": prefix_out["pixel_attention_mask"],
                     "loss_mask": None}
 
     
@@ -369,8 +330,8 @@ class SMOLANDFAST(nn.Module):
         device = batch[OBS_STATE].device
 
         padded_outs = self.create_input_tokens(
-            state=batch[OBS_STATE],
-            env=batch[OBS_ENV_STATE],
+            states=batch[OBS_STATE],
+            images=batch[OBS_IMAGE],
             lang_text=batch["task"] if "task" in batch else "",
             actions=batch[ACTION],
         )
@@ -383,10 +344,12 @@ class SMOLANDFAST(nn.Module):
         # # Prepare attention masks
         # att_2d_masks_4d = prepare_attention_masks_4d(att_2d_masks)
         
-        outputs = self.llm.forward(
+        outputs = self.vlm.forward(
             input_ids=padded_outs["input_ids"],
             # attention_mask=att_2d_masks_4d,
             attention_mask=padded_outs["pad_masks"],
+            pixel_values=padded_outs["pixel_values"],
+            pixel_attention_mask=padded_outs["pixel_attention_mask"],
             # inputs_embeds=tokens_embs,
             # position_ids=position_ids,
             use_cache=self.config.use_cache,
@@ -476,8 +439,8 @@ class SMOLANDFAST(nn.Module):
         device = batch[OBS_STATE].device
 
         padded_outs = self.create_input_tokens(
-            state=batch[OBS_STATE],
-            env=batch[OBS_ENV_STATE],
+            states=batch[OBS_STATE],
+            images=batch[OBS_IMAGE],
             lang_text=batch["task"] if "task" in batch else "",
             actions=None,
         )
@@ -500,14 +463,16 @@ class SMOLANDFAST(nn.Module):
             return processor
         # Example usage in generate_actions
         fast_vocab_size = self.fast_tokenizer.bpe_tokenizer.vocab_size
-        high = self.llm_tokenizer.vocab_size - 1 - self.fast_skip_tokens
+        high = self.processor.tokenizer.vocab_size - 1 - self.fast_skip_tokens
         low = high - (fast_vocab_size - 1)
 
         processors = LogitsProcessorList([make_fast_band_processor(low, high, [self.eos_token_id, self.pad_token_id])])
 
-        output_tokens = self.llm.generate(
+        output_tokens = self.vlm.generate(
             input_ids=padded_outs["input_ids"],
             attention_mask=padded_outs["pad_masks"],
+            pixel_values=padded_outs["pixel_values"],
+            pixel_attention_mask=padded_outs["pixel_attention_mask"],
             # inputs_embeds=tokens_embs,
             # position_ids=position_ids,
             use_cache=self.config.use_cache,
