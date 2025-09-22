@@ -18,6 +18,8 @@ import platform
 from pathlib import Path
 from typing import TypeAlias
 
+from lerobot.utils.utils import make_device_from_device_class
+
 from .camera import Camera
 from .configs import CameraConfig, Cv2Rotation
 
@@ -42,6 +44,9 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
             from .reachy2_camera.reachy2_camera import Reachy2Camera
 
             cameras[key] = Reachy2Camera(cfg)
+
+        elif hasattr(cfg, "device_class"):
+            cameras[key] = make_device_from_device_class(cfg.device_class, cfg)
 
         else:
             raise ValueError(f"The camera type '{cfg.type}' is not valid.")
