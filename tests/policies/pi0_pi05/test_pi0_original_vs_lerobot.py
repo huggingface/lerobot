@@ -15,13 +15,13 @@ pytestmark = pytest.mark.skipif(
     reason="This test requires local OpenPI installation and is not meant for CI",
 )
 
-from transformers import AutoTokenizer  # noqa: E402
-
-from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy  # noqa: E402
 from openpi.models_pytorch import preprocessing_pytorch as openpi_preprocessing  # noqa: E402
 
 # NOTE: Assumes PYTHONPATH is set to include OpenPI src as per instructions.
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch  # noqa: E402
+from transformers import AutoTokenizer  # noqa: E402
+
+from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy  # noqa: E402
 
 DUMMY_ACTION_DIM = 32
 DUMMY_STATE_DIM = 32

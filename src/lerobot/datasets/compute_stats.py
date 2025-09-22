@@ -210,27 +210,30 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
     return images
 
 
-def _reshape_stats_by_axis(stats: dict, axis, keepdims: bool, original_shape: tuple) -> dict:
-    """Transform computed statistics to match the expected output shape conventions.
+def _reshape_stats_by_axis(
+    stats: dict[str, np.ndarray],
+    axis: int | tuple[int, ...] | None,
+    keepdims: bool,
+    original_shape: tuple[int, ...],
+) -> dict[str, np.ndarray]:
+    """Reshape all statistics to match NumPy's output conventions.
 
-    This function orchestrates the reshaping of all statistics in the dictionary to conform
-    to NumPy's broadcasting and dimensionality conventions when `keepdims=True` or when
-    specific axis reductions are applied. The 'count' statistic is never reshaped as it
-    represents metadata about the number of samples processed.
+    Applies consistent reshaping to all statistics (except 'count') based on the
+    axis and keepdims parameters. This ensures statistics have the correct shape
+    for broadcasting with the original data.
 
     Args:
-        stats: Dictionary containing computed statistics (min, max, mean, std, quantiles, count)
+        stats: Dictionary of computed statistics
         axis: Axis or axes along which statistics were computed
-        keepdims: Whether reduced dimensions should be kept as dimensions of size 1
-        original_shape: Shape of the original array before any reduction operations
+        keepdims: Whether to keep reduced dimensions as size-1 dimensions
+        original_shape: Shape of the original array
 
     Returns:
-        Dictionary with the same keys but values reshaped according to NumPy conventions
+        Dictionary with reshaped statistics
 
-    Examples:
-        For image data with axis=(0,2,3) and keepdims=True:
-        - Input: stats['mean'].shape = (3,) for 3 channels
-        - Output: stats['mean'].shape = (1, 3, 1, 1) for broadcasting compatibility
+    Note:
+        The 'count' statistic is never reshaped as it represents metadata
+        rather than per-feature statistics.
     """
     if axis == (1,) and not keepdims:
         return stats
@@ -245,19 +248,58 @@ def _reshape_stats_by_axis(stats: dict, axis, keepdims: bool, original_shape: tu
     return result
 
 
-def _reshape_single_stat(value: np.ndarray, axis, keepdims: bool, original_shape: tuple) -> np.ndarray:
+def _reshape_for_image_stats(value: np.ndarray, keepdims: bool) -> np.ndarray:
+    """Reshape statistics for image data (axis=(0,2,3))."""
+    if keepdims and value.ndim == 1:
+        return value.reshape(1, -1, 1, 1)
+    return value
+
+
+def _reshape_for_vector_stats(
+    value: np.ndarray, keepdims: bool, original_shape: tuple[int, ...]
+) -> np.ndarray:
+    """Reshape statistics for vector data (axis=0 or axis=(0,))."""
+    if not keepdims:
+        return value
+
+    if len(original_shape) == 1 and value.ndim > 0:
+        return value.reshape(1)
+    elif len(original_shape) >= 2 and value.ndim == 1:
+        return value.reshape(1, -1)
+    return value
+
+
+def _reshape_for_feature_stats(value: np.ndarray, keepdims: bool) -> np.ndarray:
+    """Reshape statistics for feature-wise computation (axis=(1,))."""
+    if not keepdims:
+        return value
+
+    if value.ndim == 0:
+        return value.reshape(1, 1)
+    elif value.ndim == 1:
+        return value.reshape(-1, 1)
+    return value
+
+
+def _reshape_for_global_stats(
+    value: np.ndarray, keepdims: bool, original_shape: tuple[int, ...]
+) -> np.ndarray | float:
+    """Reshape statistics for global reduction (axis=None)."""
+    if keepdims:
+        target_shape = tuple(1 for _ in original_shape)
+        return value.reshape(target_shape)
+    elif not keepdims and value.ndim > 0 and value.size == 1:
+        return value.item()
+    return value
+
+
+def _reshape_single_stat(
+    value: np.ndarray, axis: int | tuple[int, ...] | None, keepdims: bool, original_shape: tuple[int, ...]
+) -> np.ndarray | float:
     """Apply appropriate reshaping to a single statistic array.
 
-    This function implements the core logic for transforming statistic arrays to match
-    expected output shapes. The reshaping follows NumPy's conventions where:
-
-    - When keepdims=True: reduced dimensions become size-1 dimensions
-    - When keepdims=False: reduced dimensions are eliminated entirely
-    - Special handling for different axis patterns commonly used in ML pipelines:
-      * axis=(0,2,3): Image data where batch, height, width are reduced
-      * axis=0 or (0,): Vector data where batch dimension is reduced
-      * axis=(1,): Feature dimension reduction
-      * axis=None: Global reduction across all dimensions
+    This function transforms statistic arrays to match expected output shapes
+    based on the axis configuration and keepdims parameter.
 
     Args:
         value: The statistic array to reshape
@@ -268,136 +310,177 @@ def _reshape_single_stat(value: np.ndarray, axis, keepdims: bool, original_shape
     Returns:
         Reshaped array following NumPy broadcasting conventions
 
-    Examples:
-        Image case: (batch=10, channels=3, H=32, W=32) -> axis=(0,2,3), keepdims=True
-        - Input: value.shape = (3,)  # per-channel statistics
-        - Output: value.shape = (1, 3, 1, 1)  # broadcastable with (N, 3, H, W)
-
-        Vector case: (batch=100, features=7) -> axis=0, keepdims=True
-        - Input: value.shape = (7,)  # per-feature statistics
-        - Output: value.shape = (1, 7)  # broadcastable with (N, 7)
     """
-    if axis == (0, 2, 3) and keepdims and value.ndim == 1:
-        return value.reshape(1, -1, 1, 1)
+    if axis == (0, 2, 3):
+        return _reshape_for_image_stats(value, keepdims)
 
-    if axis in [0, (0,)] and keepdims:
-        if len(original_shape) == 1 and value.ndim > 0:
-            return value.reshape(1)
-        elif len(original_shape) >= 2 and value.ndim == 1:
-            return value.reshape(1, -1)
+    if axis in [0, (0,)]:
+        return _reshape_for_vector_stats(value, keepdims, original_shape)
 
-    if axis == (1,) and keepdims:
-        if value.ndim == 0:
-            return value.reshape(1, 1)
-        elif value.ndim == 1:
-            return value.reshape(-1, 1)
+    if axis == (1,):
+        return _reshape_for_feature_stats(value, keepdims)
 
     if axis is None:
-        if keepdims:
-            target_shape = tuple(1 for _ in original_shape)
-            return value.reshape(target_shape)
-        elif not keepdims and value.ndim > 0 and value.size == 1:
-            return value.item()
+        return _reshape_for_global_stats(value, keepdims, original_shape)
 
     return value
 
 
-def get_feature_stats(array: np.ndarray, axis: tuple, keepdims: bool) -> dict[str, np.ndarray]:
-    """Compute feature statistics including quantiles.
+def _prepare_array_for_stats(array: np.ndarray, axis: int | tuple[int, ...] | None) -> tuple[np.ndarray, int]:
+    """Prepare array for statistics computation by reshaping according to axis.
 
     Args:
         array: Input data array
-        axis: Axes along which to compute statistics
-        keepdims: Whether to keep reduced dimensions
+        axis: Axis or axes along which to compute statistics
 
     Returns:
-        Dictionary containing computed statistics
+        Tuple of (reshaped_array, sample_count)
     """
-
-    # Determine the appropriate reshaping and computation strategy based on axis
-    original_shape = array.shape
-
-    if axis == (0, 2, 3):  # Image case: (batch, channels, height, width) -> (batch*height*width, channels)
+    if axis == (0, 2, 3):  # Image data
         batch_size, channels, height, width = array.shape
-        reshaped = array.transpose(0, 2, 3, 1).reshape(-1, channels)  # (batch*height*width, channels)
-        sample_count = batch_size  # For images, count should be number of image samples, not pixels
+        reshaped = array.transpose(0, 2, 3, 1).reshape(-1, channels)
+        return reshaped, batch_size
 
-    elif axis == 0 or axis == (0,):  # Vector case - compute stats over first axis
+    if axis == 0 or axis == (0,):  # Vector data
         if array.ndim == 1:
-            # 1D array: reshape to (n_samples, 1)
             reshaped = array.reshape(-1, 1)
         else:
-            # Multi-dimensional: should already be (n_samples, n_features)
             reshaped = array
-        sample_count = array.shape[0]
+        return reshaped, array.shape[0]
 
-    elif axis == (1,):  # Compute stats along axis 1
-        # Transpose so we compute stats over features for each sample
-        reshaped = array.T  # Now shape is (n_features, n_samples)
-        sample_count = array.shape[1]  # Number of samples along axis 1
+    if axis == (1,):  # Feature-wise statistics
+        return array.T, array.shape[1]
 
-    elif axis is None:  # Flatten and compute stats over entire array
-        reshaped = array.flatten().reshape(-1, 1)  # All values as single feature
-        sample_count = array.shape[0]  # Count represents number of samples, not total elements
+    if axis is None:  # Global statistics
+        reshaped = array.reshape(-1, 1)
+        # For backward compatibility, count represents the first dimension size
+        return reshaped, array.shape[0] if array.ndim > 0 else 1
 
-    else:
-        raise ValueError(f"Unsupported axis configuration for quantile computation: {axis}")
+    raise ValueError(f"Unsupported axis configuration: {axis}")
 
-    # Compute stats using RunningQuantileStats
-    running_stats = RunningQuantileStats()
-    running_stats.update(reshaped)
 
-    # Check if we have enough samples for quantile computation
-    if reshaped.shape[0] < 2:
-        # Fallback to basic stats without quantiles for insufficient data
-        stats = {
-            "min": np.min(reshaped, axis=0),
-            "max": np.max(reshaped, axis=0),
-            "mean": np.mean(reshaped, axis=0),
-            "std": np.std(reshaped, axis=0),
-            "count": np.array([sample_count]),
-        }
-        # Add quantiles as the same value (since we only have one data point)
-        for q in DEFAULT_QUANTILES:
-            q_key = f"q{int(q * 100):02d}"
-            stats[q_key] = stats["mean"].copy()
-    else:
-        stats = running_stats.get_statistics()
-        # Fix the count to reflect the correct number of samples
-        stats["count"] = np.array([sample_count])
+def _compute_basic_stats(array: np.ndarray, sample_count: int) -> dict[str, np.ndarray]:
+    """Compute basic statistics for arrays with insufficient samples for quantiles.
 
-    # Apply keepdims and reshape stats to match expected output format
-    stats = _reshape_stats_by_axis(stats, axis, keepdims, original_shape)
+    Args:
+        array: Reshaped array ready for statistics computation
+        sample_count: Number of samples represented in the data
+
+    Returns:
+        Dictionary with basic statistics and quantiles set to mean values
+    """
+    stats = {
+        "min": np.min(array, axis=0),
+        "max": np.max(array, axis=0),
+        "mean": np.mean(array, axis=0),
+        "std": np.std(array, axis=0),
+        "count": np.array([sample_count]),
+    }
+
+    # For single-element arrays with shape (1,1), convert to scalar arrays
+    if array.shape == (1, 1):
+        for key in stats:
+            if key != "count" and stats[key].size == 1:
+                stats[key] = np.array(stats[key].item())
+
+    # Set quantiles to mean for insufficient data
+    for q in DEFAULT_QUANTILES:
+        q_key = f"q{int(q * 100):02d}"
+        stats[q_key] = stats["mean"].copy()
 
     return stats
 
 
-def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], features: dict) -> dict:
-    """Compute episode statistics including quantiles.
+def get_feature_stats(
+    array: np.ndarray, axis: int | tuple[int, ...] | None, keepdims: bool
+) -> dict[str, np.ndarray]:
+    """Compute comprehensive statistics for array features along specified axes.
+
+    This function calculates min, max, mean, std, and quantiles (1%, 10%, 50%, 90%, 99%)
+    for the input array along the specified axes. It handles different data layouts:
+    - Image data: axis=(0,2,3) computes per-channel statistics
+    - Vector data: axis=0 computes per-feature statistics
+    - Feature-wise: axis=1 computes statistics across features
+    - Global: axis=None computes statistics over entire array
 
     Args:
-        episode_data: Dictionary containing episode data
-        features: Dictionary describing feature types and shapes
+        array: Input data array with shape appropriate for the specified axis
+        axis: Axis or axes along which to compute statistics
+            - (0, 2, 3): For image data (batch, channels, height, width)
+            - 0 or (0,): For vector/tabular data (samples, features)
+            - (1,): For computing across features
+            - None: For global statistics over entire array
+        keepdims: If True, reduced axes are kept as dimensions with size 1
 
     Returns:
-        Dictionary containing computed statistics for each feature
+        Dictionary containing:
+            - 'min': Minimum values
+            - 'max': Maximum values
+            - 'mean': Mean values
+            - 'std': Standard deviation
+            - 'count': Number of samples (always shape (1,))
+            - 'q01', 'q10', 'q50', 'q90', 'q99': Quantile values
+
+    """
+    original_shape = array.shape
+    reshaped, sample_count = _prepare_array_for_stats(array, axis)
+
+    if reshaped.shape[0] < 2:
+        stats = _compute_basic_stats(reshaped, sample_count)
+    else:
+        running_stats = RunningQuantileStats()
+        running_stats.update(reshaped)
+        stats = running_stats.get_statistics()
+        stats["count"] = np.array([sample_count])
+
+    # For axis=None, the stats are computed as 1D arrays but should be 0-dimensional arrays
+    if axis is None and reshaped.shape[1] == 1:
+        for key in stats:
+            if key != "count" and stats[key].size == 1:
+                stats[key] = np.array(stats[key].item())
+
+    stats = _reshape_stats_by_axis(stats, axis, keepdims, original_shape)
+    return stats
+
+
+def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], features: dict) -> dict:
+    """Compute comprehensive statistics for all features in an episode.
+
+    Processes different data types appropriately:
+    - Images/videos: Samples from paths, computes per-channel stats, normalizes to [0,1]
+    - Numerical arrays: Computes per-feature statistics
+    - Strings: Skipped (no statistics computed)
+
+    Args:
+        episode_data: Dictionary mapping feature names to data
+            - For images/videos: list of file paths
+            - For numerical data: numpy arrays
+        features: Dictionary describing each feature's dtype and shape
+
+    Returns:
+        Dictionary mapping feature names to their statistics dictionaries.
+        Each statistics dictionary contains min, max, mean, std, count, and quantiles.
+
+    Note:
+        Image statistics are normalized to [0,1] range and have shape (3,1,1) for
+        per-channel values when dtype is 'image' or 'video'.
     """
     ep_stats = {}
     for key, data in episode_data.items():
         if features[key]["dtype"] == "string":
-            continue  # HACK: we should receive np.arrays of strings
-        elif features[key]["dtype"] in ["image", "video"]:
-            ep_ft_array = sample_images(data)  # data is a list of image paths
-            axes_to_reduce = (0, 2, 3)  # keep channel dim
+            continue
+
+        if features[key]["dtype"] in ["image", "video"]:
+            ep_ft_array = sample_images(data)
+            axes_to_reduce = (0, 2, 3)
             keepdims = True
         else:
-            ep_ft_array = data  # data is already a np.ndarray
-            axes_to_reduce = 0  # compute stats over the first axis
-            keepdims = data.ndim == 1  # keep as np.array
+            ep_ft_array = data
+            axes_to_reduce = 0
+            keepdims = data.ndim == 1
 
         ep_stats[key] = get_feature_stats(ep_ft_array, axis=axes_to_reduce, keepdims=keepdims)
 
-        # finally, we normalize and remove batch dim for images
         if features[key]["dtype"] in ["image", "video"]:
             ep_stats[key] = {
                 k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in ep_stats[key].items()
@@ -406,23 +489,37 @@ def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], featu
     return ep_stats
 
 
+def _validate_stat_value(value: np.ndarray, key: str, feature_key: str) -> None:
+    """Validate a single statistic value."""
+    if not isinstance(value, np.ndarray):
+        raise ValueError(
+            f"Stats must be composed of numpy array, but key '{key}' of feature '{feature_key}' "
+            f"is of type '{type(value)}' instead."
+        )
+
+    if value.ndim == 0:
+        raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
+
+    if key == "count" and value.shape != (1,):
+        raise ValueError(f"Shape of 'count' must be (1), but is {value.shape} instead.")
+
+    if "image" in feature_key and key != "count" and value.shape != (3, 1, 1):
+        raise ValueError(f"Shape of quantile '{key}' must be (3,1,1), but is {value.shape} instead.")
+
+
 def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
-    for i in range(len(stats_list)):
-        for fkey in stats_list[i]:
-            for k, v in stats_list[i][fkey].items():
-                if not isinstance(v, np.ndarray):
-                    raise ValueError(
-                        f"Stats must be composed of numpy array, but key '{k}' of feature '{fkey}' is of type '{type(v)}' instead."
-                    )
-                if v.ndim == 0:
-                    raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
-                if k == "count" and v.shape != (1,):
-                    raise ValueError(f"Shape of 'count' must be (1), but is {v.shape} instead.")
-                if "image" in fkey and k != "count" and not k.startswith("q") and v.shape != (3, 1, 1):
-                    raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
-                # Allow quantile keys (q01, q99, etc.) to have same shape as other stats
-                if "image" in fkey and k.startswith("q") and k[1:].isdigit() and v.shape != (3, 1, 1):
-                    raise ValueError(f"Shape of quantile '{k}' must be (3,1,1), but is {v.shape} instead.")
+    """Validate that all statistics have correct types and shapes.
+
+    Args:
+        stats_list: List of statistics dictionaries to validate
+
+    Raises:
+        ValueError: If any statistic has incorrect type or shape
+    """
+    for stats in stats_list:
+        for feature_key, feature_stats in stats.items():
+            for stat_key, stat_value in feature_stats.items():
+                _validate_stat_value(stat_value, stat_key, feature_key)
 
 
 def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
