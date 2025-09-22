@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import warnings
+from collections.abc import Mapping, Sequence
+from functools import singledispatch
 from typing import Any
 
 import einops
@@ -154,3 +156,41 @@ def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dic
         num_envs = observation[list(observation.keys())[0]].shape[0]
         observation["task"] = ["" for _ in range(num_envs)]
     return observation
+
+
+def _close_single_env(env: Any) -> None:
+    try:
+        env.close()
+    except Exception as exc:
+        print(f"Exception while closing env {env}: {exc}")
+
+
+@singledispatch
+def close_envs(obj: Any) -> None:
+    """Default: raise if the type is not recognized."""
+    raise NotImplementedError(f"close_envs not implemented for type {type(obj).__name__}")
+
+
+@close_envs.register
+def _(env: Mapping) -> None:
+    for v in env.values():
+        if isinstance(v, Mapping):
+            close_envs(v)
+        elif hasattr(v, "close"):
+            _close_single_env(v)
+
+
+@close_envs.register
+def _(envs: Sequence) -> None:
+    if isinstance(envs, (str, bytes)):
+        return
+    for v in envs:
+        if isinstance(v, Mapping) or isinstance(v, Sequence) and not isinstance(v, (str, bytes)):
+            close_envs(v)
+        elif hasattr(v, "close"):
+            _close_single_env(v)
+
+
+@close_envs.register
+def _(env: gym.Env) -> None:
+    _close_single_env(env)

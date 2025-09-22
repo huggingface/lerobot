@@ -30,11 +30,12 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env
+from lerobot.envs.utils import close_envs
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.eval import eval_policy_all
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -302,8 +303,8 @@ def train(cfg: TrainPipelineConfig):
                 torch.no_grad(),
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
             ):
-                eval_info = eval_policy(
-                    env=eval_env,
+                eval_info = eval_policy_all(
+                    envs=eval_env,  # dict[suite][task_id] -> vec_env
                     policy=policy,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
@@ -311,8 +312,16 @@ def train(cfg: TrainPipelineConfig):
                     videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
+                    max_parallel_tasks=cfg.env.max_parallel_tasks,
                 )
+            # overall metrics (suite-agnostic)
+            aggregated = eval_info["overall"]
 
+            # optional: per-suite logging
+            for suite, suite_info in eval_info.items():
+                logging.info("Suite %s aggregated: %s", suite, suite_info)
+
+            # meters/tracker
             eval_metrics = {
                 "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
                 "pc_success": AverageMeter("success", ":.1f"),
@@ -321,17 +330,16 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker = MetricsTracker(
                 cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
             )
-            eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
-            eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
-            eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
-            logging.info(eval_tracker)
+            eval_tracker.eval_s = aggregated.pop("eval_s")
+            eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
+            eval_tracker.pc_success = aggregated.pop("pc_success")
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+                wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
 
     if eval_env:
-        eval_env.close()
+        close_envs(eval_env)
     logging.info("End of training")
 
     if cfg.policy.push_to_hub:
