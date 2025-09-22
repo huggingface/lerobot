@@ -15,7 +15,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import math
 import os
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -29,6 +28,7 @@ import torch
 from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
+from robosuite.utils.transform_utils import quat2axisangle
 
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
@@ -44,7 +44,7 @@ def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     return cams
 
 
-def _get_suite(name: str) -> Any:
+def _get_suite(name: str) -> benchmark.Benchmark:
     """Instantiate a LIBERO suite by name with clear validation."""
     bench = benchmark.get_benchmark_dict()
     if name not in bench:
@@ -66,33 +66,6 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
     return ids
 
 
-def quat2axisangle(quat: np.ndarray) -> np.ndarray:
-    """
-    Copied from robosuite: https://github.com/ARISE-Initiative/robosuite/blob/eafb81f54ffc104f905ee48a16bb15f059176ad3/robosuite/utils/transform_utils.py#L490C1-L512C55
-
-    Converts quaternion to axis-angle format.
-    Returns a unit vector direction scaled by its angle in radians.
-
-    Args:
-        quat (np.array): (x,y,z,w) vec4 float angles
-
-    Returns:
-        np.array: (ax,ay,az) axis-angle exponential coordinates
-    """
-    # clip quaternion
-    if quat[3] > 1.0:
-        quat[3] = 1.0
-    elif quat[3] < -1.0:
-        quat[3] = -1.0
-
-    den = np.sqrt(1.0 - quat[3] * quat[3])
-    if math.isclose(den, 0.0):
-        # This is (close to) a zero degree rotation, immediately return
-        return np.zeros(3)
-
-    return (quat[:3] * 2.0 * math.acos(quat[3])) / den
-
-
 def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
     init_states_path = (
         Path(get_libero_path("init_states"))
@@ -110,6 +83,10 @@ def get_libero_dummy_action():
 
 OBS_STATE_DIM = 8
 ACTION_DIM = 7
+AGENT_POS_LOW = -1000.0
+AGENT_POS_HIGH = 1000.0
+ACTION_LOW = -1.0
+ACTION_HIGH = 1.0
 TASK_SUITE_MAX_STEPS: dict[str, int] = {
     "libero_spatial": 280,  # longest training demo has 193 steps
     "libero_object": 280,  # longest training demo has 254 steps
@@ -148,8 +125,8 @@ class LiberoEnv(gym.Env):
         self.visualization_width = visualization_width
         self.visualization_height = visualization_height
         self.init_states = init_states
-        self.camera_name = camera_name.split(
-            ","
+        self.camera_name = _parse_camera_names(
+            camera_name
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
 
         # Map raw camera names to "image1" and "image2".
@@ -199,15 +176,17 @@ class LiberoEnv(gym.Env):
                 {
                     "pixels": spaces.Dict(images),
                     "agent_pos": spaces.Box(
-                        low=-1000.0,
-                        high=1000.0,
+                        low=AGENT_POS_LOW,
+                        high=AGENT_POS_HIGH,
                         shape=(OBS_STATE_DIM,),
                         dtype=np.float64,
                     ),
                 }
             )
 
-        self.action_space = spaces.Box(low=-1, high=1, shape=(ACTION_DIM,), dtype=np.float32)
+        self.action_space = spaces.Box(
+            low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32
+        )
 
     def render(self):
         raw_obs = self._env.env._get_observations()
@@ -312,7 +291,6 @@ def _make_env_fns(
     gym_kwargs: Mapping[str, Any],
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
-    joined_cams = ",".join(camera_names)  # keep backward-compat: downstream expects a string
 
     def _make_env(episode_index: int, **kwargs) -> LiberoEnv:
         local_kwargs = dict(kwargs)
@@ -320,7 +298,7 @@ def _make_env_fns(
             task_suite=suite,
             task_id=task_id,
             task_suite_name=suite_name,
-            camera_name=joined_cams,
+            camera_name=camera_names,
             init_states=init_states,
             episode_index=episode_index,
             **local_kwargs,

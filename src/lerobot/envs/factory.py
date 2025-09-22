@@ -82,7 +82,7 @@ def make_env(
     gym_handle = f"{package_name}/{cfg.task}"
 
     def _make_one():
-        return gym.make(gym_handle, disable_env_checker=True, **(cfg.gym_kwargs or {}))
+        return gym.make(gym_handle, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
 
     vec = env_cls([_make_one for _ in range(n_envs)])
 

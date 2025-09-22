@@ -31,6 +31,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
     max_parallel_tasks: int = 1
+    disable_env_checker: bool = False
 
     @property
     def type(self) -> str:
