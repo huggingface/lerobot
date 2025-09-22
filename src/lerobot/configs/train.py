@@ -23,7 +23,7 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
 from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig, SwanLabConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
@@ -62,12 +62,27 @@ class TrainPipelineConfig(HubMixin):
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
+    # Select experiment tracker: "wandb", "swanlab", "both", or "none"
+    tracker: str = "none"
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    swanlab: SwanLabConfig = field(default_factory=SwanLabConfig)
 
     def __post_init__(self):
         self.checkpoint_path = None
 
     def validate(self):
+        # Validate tracker selection
+        if self.tracker not in ["wandb", "swanlab", "both", "none"]:
+            raise ValueError(
+                f"tracker must be one of 'wandb', 'swanlab', 'both', or 'none', got '{self.tracker}'"
+            )
+
+        # Enable the selected trackers
+        if self.tracker in ["wandb", "both"]:
+            self.wandb.enable = True
+        if self.tracker in ["swanlab", "both"]:
+            self.swanlab.enable = True
+
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
