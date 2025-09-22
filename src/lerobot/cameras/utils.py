@@ -40,10 +40,16 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
 
             cameras[key] = RealSenseCamera(cfg)
 
+        elif cfg.type == "reachy2_camera":
+            from .reachy2_camera.reachy2_camera import Reachy2Camera
+
+            cameras[key] = Reachy2Camera(cfg)
+
         elif hasattr(cfg, "device_class"):
             cameras[key] = make_device_from_device_class(cfg.device_class, cfg)
+
         else:
-            raise ValueError(f"The motor type '{cfg.type}' is not valid.")
+            raise ValueError(f"The camera type '{cfg.type}' is not valid.")
 
     return cameras
 

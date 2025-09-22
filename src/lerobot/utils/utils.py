@@ -282,7 +282,7 @@ def make_device_from_device_class(device_class, config):
     return getattr(module, _)(config)
 
 
-def init_third_party_devices():
+def register_third_party_devices():
     for module_info in pkgutil.iter_modules():
         name = module_info.name
         if name.startswith("lerobot_"):
@@ -290,6 +290,16 @@ def init_third_party_devices():
                 importlib.import_module(name)
             except Exception as e:
                 print(f"Could not import {name}: {e}")
+
+
+def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
+    days = int(elapsed_time_s // (24 * 3600))
+    elapsed_time_s %= 24 * 3600
+    hours = int(elapsed_time_s // 3600)
+    elapsed_time_s %= 3600
+    minutes = int(elapsed_time_s // 60)
+    seconds = elapsed_time_s % 60
+    return days, hours, minutes, seconds
 
 
 class TimerManager:

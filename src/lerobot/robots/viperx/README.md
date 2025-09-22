@@ -63,7 +63,7 @@ python lerobot/scripts/control_robot.py \
   --control.type=teleoperate
 ```
 
-By adding `--robot.max_relative_target=5`, we override the default value for `max_relative_target` defined in [`AlohaRobotConfig`](lerobot/robot_devices/robots/configs.py). It is expected to be `5` to limit the magnitude of the movement for more safety, but the teleoperation won't be smooth. When you feel confident, you can disable this limit by adding `--robot.max_relative_target=null` to the command line:
+By adding `--robot.max_relative_target=5`, we override the default value for `max_relative_target` defined in [`ViperXConfig`](./config_viperx.py). It is expected to be `5` to limit the magnitude of the movement for more safety, but the teleoperation won't be smooth. When you feel confident, you can disable this limit by adding `--robot.max_relative_target=null` to the command line:
 
 ```bash
 python lerobot/scripts/control_robot.py \
@@ -115,11 +115,11 @@ If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you c
 echo ${HF_USER}/aloha_test
 ```
 
-If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with:
+If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with [Rerun](https://github.com/rerun-io/rerun):
 
 ```bash
-python -m lerobot.scripts.visualize_dataset_html \
-  --repo-id ${HF_USER}/aloha_test
+python -m lerobot.scripts.visualize_dataset \
+  --repo-id ${HF_USER}/aloha_test --episode 0
 ```
 
 ## Replay an episode
@@ -141,10 +141,10 @@ python lerobot/scripts/control_robot.py \
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`lerobot-train`](../src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
   --dataset.repo_id=${HF_USER}/aloha_test \
   --policy.type=act \
   --output_dir=outputs/train/act_aloha_test \
@@ -192,7 +192,5 @@ As you can see, it's almost the same command as previously used to record your t
 3. We use `--control.num_image_writer_processes=1` instead of the default value (`0`). On our computer, using a dedicated process to write images from the 4 cameras on disk allows to reach constant 30 fps during inference. Feel free to explore different values for `--control.num_image_writer_processes`.
 
 ## More
-
-Follow this [previous tutorial](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#4-train-a-policy-on-your-data) for a more in-depth explanation.
 
 If you have any question or need help, please reach out on Discord in the channel `#aloha-arm`.

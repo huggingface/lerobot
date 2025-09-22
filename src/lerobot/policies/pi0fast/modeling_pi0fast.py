@@ -25,14 +25,14 @@ Disclaimer: It is not expected to perform as well as the original implementation
 
 Example of finetuning the pi0+FAST pretrained model (`pi0_fast_base` in `openpi`):
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.path=lerobot/pi0fast_base \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
 
 Example of training the pi0+FAST neural network with from scratch:
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.type=pi0fast \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
@@ -58,7 +58,6 @@ from transformers.cache_utils import HybridCache, StaticCache
 from transformers.models.auto import CONFIG_MAPPING
 
 from lerobot.constants import ACTION, OBS_STATE
-from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 
@@ -146,14 +145,6 @@ class PI0FASTPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-
         self.language_tokenizer = AutoProcessor.from_pretrained("google/paligemma-3b-pt-224")
         self.model = PI0FAST(config)
 
@@ -221,8 +212,6 @@ class PI0FASTPolicy(PreTrainedPolicy):
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
-        batch = self.normalize_inputs(batch)
-
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
@@ -234,8 +223,6 @@ class PI0FASTPolicy(PreTrainedPolicy):
                 0
             ]  # self.config.max_action_dim  # self.config.action_feature.shape[0]
             actions = actions[:, :, :original_action_dim]
-
-            actions = self.unnormalize_outputs({"action": actions})["action"]
 
             if self.config.adapt_to_pi_aloha:
                 actions = self._pi_aloha_encode_actions(actions)
@@ -249,8 +236,6 @@ class PI0FASTPolicy(PreTrainedPolicy):
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
         loss_dict = self.model.forward(batch)
         return loss_dict["loss"], loss_dict
 
@@ -488,6 +473,8 @@ class PI0FAST(nn.Module):
                 param.data = param.data.to(dtype=torch_precision)
         self.set_requires_grad()
         self.image_keys = self.config.image_features.keys()
+        # TODO: Remove this once we bump transformers to >4.52.0 because the attribute will be removed
+        # AttributeError: 'PaliGemmaConfig' object has no attribute 'ignore_index'
         self.ignore_index = self.pi0_paligemma.config.ignore_index
         self.padding_side = self.config.padding_side
 

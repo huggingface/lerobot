@@ -30,7 +30,7 @@ pip install -e ".[pi0]"
 
 Example of finetuning the pi0 pretrained model (`pi0_base` in `openpi`):
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.path=lerobot/pi0 \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
@@ -38,7 +38,7 @@ python -m lerobot.scripts.train \
 Example of finetuning the pi0 neural network with PaliGemma and expert Gemma
 pretrained with VLM default parameters before pi0 finetuning:
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
 --policy.type=pi0 \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
@@ -56,10 +56,8 @@ from collections import deque
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers import AutoTokenizer
 
-from lerobot.constants import ACTION, OBS_STATE
-from lerobot.policies.normalize import Normalize, Unnormalize
+from lerobot.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0.paligemma_with_expert import (
     PaliGemmaWithExpertConfig,
@@ -88,12 +86,6 @@ def create_sinusoidal_pos_embedding(
     sin_input = scaling_factor[None, :] * time[:, None]
     pos_emb = torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
     return pos_emb
-
-
-def sample_beta(alpha, beta, bsize, device):
-    gamma1 = torch.empty((bsize,), device=device).uniform_(0, 1).pow(1 / alpha)
-    gamma2 = torch.empty((bsize,), device=device).uniform_(0, 1).pow(1 / beta)
-    return gamma1 / (gamma1 + gamma2)
 
 
 def make_att_2d_masks(pad_masks, att_masks):
@@ -228,28 +220,17 @@ class PI0Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0Config,
-        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
                     the configuration class is used.
-            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
-                that they will be passed with a call to `load_state_dict` before the policy is used.
         """
 
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
 
-        self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
         self.model = PI0FlowMatching(config)
 
         self.reset()
@@ -289,14 +270,13 @@ class PI0Policy(PreTrainedPolicy):
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
-        batch = self.normalize_inputs(batch)
-
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
             images, img_masks = self.prepare_images(batch)
             state = self.prepare_state(batch)
-            lang_tokens, lang_masks = self.prepare_language(batch)
+            lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+            lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
             actions = self.model.sample_actions(
                 images, img_masks, lang_tokens, lang_masks, state, noise=noise
@@ -305,8 +285,6 @@ class PI0Policy(PreTrainedPolicy):
             # Unpad actions
             original_action_dim = self.config.action_feature.shape[0]
             actions = actions[:, :, :original_action_dim]
-
-            actions = self.unnormalize_outputs({"action": actions})["action"]
 
             if self.config.adapt_to_pi_aloha:
                 actions = self._pi_aloha_encode_actions(actions)
@@ -322,12 +300,10 @@ class PI0Policy(PreTrainedPolicy):
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
 
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
-
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-        lang_tokens, lang_masks = self.prepare_language(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
@@ -394,26 +370,6 @@ class PI0Policy(PreTrainedPolicy):
 
         return images, img_masks
 
-    def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
-        """Tokenize the text input"""
-        device = batch[OBS_STATE].device
-        tasks = batch["task"]
-
-        # PaliGemma prompt has to end with a new line
-        tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
-
-        tokenized_prompt = self.language_tokenizer.__call__(
-            tasks,
-            padding="max_length",
-            padding_side="right",
-            max_length=self.config.tokenizer_max_length,
-            return_tensors="pt",
-        )
-        lang_tokens = tokenized_prompt["input_ids"].to(device=device)
-        lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
-
-        return lang_tokens, lang_masks
-
     def _pi_aloha_decode_state(self, state):
         # Flip the joints.
         for motor_idx in [1, 2, 8, 9]:
@@ -479,7 +435,7 @@ class PI0FlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config):
+    def __init__(self, config: PI0Config):
         super().__init__()
         self.config = config
 
@@ -515,9 +471,10 @@ class PI0FlowMatching(nn.Module):
         return noise
 
     def sample_time(self, bsize, device):
-        time_beta = sample_beta(1.5, 1.0, bsize, device)
+        beta_dist = torch.distributions.Beta(concentration1=1.5, concentration0=1.0)
+        time_beta = beta_dist.sample((bsize,)).to(device=device, dtype=torch.float32)
         time = time_beta * 0.999 + 0.001
-        return time.to(dtype=torch.float32, device=device)
+        return time
 
     def embed_prefix(
         self, images, img_masks, lang_tokens, lang_masks

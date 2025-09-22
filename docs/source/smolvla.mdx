@@ -54,7 +54,7 @@ If you don't have a gpu device, you can train using our notebook on [![Google Co
 Pass your dataset to the training script using `--dataset.repo_id`. If you want to test your installation, run the following command where we use one of the datasets we collected for the [SmolVLA Paper](https://huggingface.co/papers/2506.01844).
 
 ```bash
-cd lerobot && python -m lerobot.scripts.train \
+cd lerobot && lerobot-train \
   --policy.path=lerobot/smolvla_base \
   --dataset.repo_id=${HF_USER}/mydataset \
   --batch_size=64 \
@@ -73,7 +73,7 @@ cd lerobot && python -m lerobot.scripts.train \
 Fine-tuning is an art. For a complete overview of the options for finetuning, run
 
 ```bash
-python -m lerobot.scripts.train --help
+lerobot-train --help
 ```
 
 <p align="center">
@@ -97,7 +97,7 @@ Similarly for when recording an episode, it is recommended that you are logged i
 Once you are logged in, you can run inference in your setup by doing:
 
 ```bash
-python -m lerobot.record \
+lerobot-record \
   --robot.type=so101_follower \
   --robot.port=/dev/ttyACM0 \ # <- Use your port
   --robot.id=my_blue_follower_arm \ # <- Use your robot id

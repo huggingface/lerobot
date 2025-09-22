@@ -62,9 +62,16 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.processor import TransitionKey
 from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.scripts.rl.gym_manipulator import make_robot_env
+from lerobot.scripts.rl.gym_manipulator import (
+    create_transition,
+    make_processors,
+    make_robot_env,
+    step_env_and_process_transition,
+)
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
+from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import (
     bytes_to_state_dict,
@@ -91,10 +98,7 @@ from lerobot.utils.utils import (
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
-
-#################################################
-# Main entry point #
-#################################################
+# Main entry point
 
 
 @parser.wrap()
@@ -201,9 +205,7 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     logging.info("[ACTOR] queues closed")
 
 
-#################################################
-# Core algorithm functions #
-#################################################
+# Core algorithm functions
 
 
 def act_with_policy(
@@ -236,7 +238,8 @@ def act_with_policy(
 
     logging.info("make_env online")
 
-    online_env = make_robot_env(cfg=cfg.env)
+    online_env, teleop_device = make_robot_env(cfg=cfg.env)
+    env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
 
     set_seed(cfg.seed)
     device = get_safe_torch_device(cfg.policy.device, log=True)
@@ -257,6 +260,12 @@ def act_with_policy(
     assert isinstance(policy, nn.Module)
 
     obs, info = online_env.reset()
+    env_processor.reset()
+    action_processor.reset()
+
+    # Process initial observation
+    transition = create_transition(observation=obs, info=info)
+    transition = env_processor(transition)
 
     # NOTE: For the moment we will solely handle the case of a single environment
     sum_reward_episode = 0
@@ -274,45 +283,71 @@ def act_with_policy(
             logging.info("[ACTOR] Shutting down act_with_policy")
             return
 
-        if interaction_step >= cfg.policy.online_step_before_learning:
-            # Time policy inference and check if it meets FPS requirement
-            with policy_timer:
-                action = policy.select_action(batch=obs)
-            policy_fps = policy_timer.fps_last
+        observation = {
+            k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
+        }
 
-            log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
+        # Time policy inference and check if it meets FPS requirement
+        with policy_timer:
+            # Extract observation from transition for policy
+            action = policy.select_action(batch=observation)
+        policy_fps = policy_timer.fps_last
 
-        else:
-            action = online_env.action_space.sample()
+        log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 
-        next_obs, reward, done, truncated, info = online_env.step(action)
+        # Use the new step function
+        new_transition = step_env_and_process_transition(
+            env=online_env,
+            transition=transition,
+            action=action,
+            env_processor=env_processor,
+            action_processor=action_processor,
+        )
+
+        # Extract values from processed transition
+        next_observation = {
+            k: v
+            for k, v in new_transition[TransitionKey.OBSERVATION].items()
+            if k in cfg.policy.input_features
+        }
+
+        # Teleop action is the action that was executed in the environment
+        # It is either the action from the teleop device or the action from the policy
+        executed_action = new_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"]
+
+        reward = new_transition[TransitionKey.REWARD]
+        done = new_transition.get(TransitionKey.DONE, False)
+        truncated = new_transition.get(TransitionKey.TRUNCATED, False)
 
         sum_reward_episode += float(reward)
-        # Increment total steps counter for intervention rate
         episode_total_steps += 1
 
-        # NOTE: We override the action if the intervention is True, because the action applied is the intervention action
-        if "is_intervention" in info and info["is_intervention"]:
-            # NOTE: The action space for demonstration before hand is with the full action space
-            # but sometimes for example we want to deactivate the gripper
-            action = info["action_intervention"]
+        # Check for intervention from transition info
+        intervention_info = new_transition[TransitionKey.INFO]
+        if intervention_info.get(TeleopEvents.IS_INTERVENTION, False):
             episode_intervention = True
-            # Increment intervention steps counter
             episode_intervention_steps += 1
 
+        complementary_info = {
+            "discrete_penalty": torch.tensor(
+                [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
+            ),
+        }
+        # Create transition for learner (convert to old format)
         list_transition_to_send_to_learner.append(
             Transition(
-                state=obs,
-                action=action,
+                state=observation,
+                action=executed_action,
                 reward=reward,
-                next_state=next_obs,
+                next_state=next_observation,
                 done=done,
-                truncated=truncated,  # TODO: (azouitine) Handle truncation properly
-                complementary_info=info,
+                truncated=truncated,
+                complementary_info=complementary_info,
             )
         )
-        # assign obs to the next obs and continue the rollout
-        obs = next_obs
+
+        # Update transition for next iteration
+        transition = new_transition
 
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
@@ -347,21 +382,27 @@ def act_with_policy(
                 )
             )
 
-            # Reset intervention counters
+            # Reset intervention counters and environment
             sum_reward_episode = 0.0
             episode_intervention = False
             episode_intervention_steps = 0
             episode_total_steps = 0
+
+            # Reset environment and processors
             obs, info = online_env.reset()
+            env_processor.reset()
+            action_processor.reset()
+
+            # Process initial observation
+            transition = create_transition(observation=obs, info=info)
+            transition = env_processor(transition)
 
         if cfg.env.fps is not None:
             dt_time = time.perf_counter() - start_time
             busy_wait(1 / cfg.env.fps - dt_time)
 
 
-#################################################
-#  Communication Functions - Group all gRPC/messaging functions  #
-#################################################
+#  Communication Functions - Group all gRPC/messaging functions
 
 
 def establish_learner_connection(
@@ -606,9 +647,7 @@ def interactions_stream(
     return services_pb2.Empty()
 
 
-#################################################
-#  Policy functions #
-#################################################
+#  Policy functions
 
 
 def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
@@ -640,9 +679,7 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
             logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
 
 
-#################################################
-#  Utilities functions #
-#################################################
+#  Utilities functions
 
 
 def push_transitions_to_transport_queue(transitions: list, transitions_queue):

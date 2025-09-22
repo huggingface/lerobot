@@ -565,10 +565,7 @@ class ReplayBuffer:
         lerobot_dataset.start_image_writer(num_processes=0, num_threads=3)
 
         # Convert transitions into episodes and frames
-        episode_index = 0
-        lerobot_dataset.episode_buffer = lerobot_dataset.create_episode_buffer(episode_index=episode_index)
 
-        frame_idx_in_episode = 0
         for idx in range(self.size):
             actual_idx = (self.position - self.size + idx) % self.capacity
 
@@ -582,6 +579,7 @@ class ReplayBuffer:
             frame_dict["action"] = self.actions[actual_idx].cpu()
             frame_dict["next.reward"] = torch.tensor([self.rewards[actual_idx]], dtype=torch.float32).cpu()
             frame_dict["next.done"] = torch.tensor([self.dones[actual_idx]], dtype=torch.bool).cpu()
+            frame_dict["task"] = task_name
 
             # Add complementary_info if available
             if self.has_complementary_info:
@@ -597,19 +595,11 @@ class ReplayBuffer:
                         frame_dict[f"complementary_info.{key}"] = val
 
             # Add to the dataset's buffer
-            lerobot_dataset.add_frame(frame_dict, task=task_name)
-
-            # Move to next frame
-            frame_idx_in_episode += 1
+            lerobot_dataset.add_frame(frame_dict)
 
             # If we reached an episode boundary, call save_episode, reset counters
             if self.dones[actual_idx] or self.truncateds[actual_idx]:
                 lerobot_dataset.save_episode()
-                episode_index += 1
-                frame_idx_in_episode = 0
-                lerobot_dataset.episode_buffer = lerobot_dataset.create_episode_buffer(
-                    episode_index=episode_index
-                )
 
         # Save any remaining frames in the buffer
         if lerobot_dataset.episode_buffer["size"] > 0:

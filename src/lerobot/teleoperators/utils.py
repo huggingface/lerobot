@@ -12,10 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.utils.utils import make_device_from_device_class
+from enum import Enum
 
+from lerobot.utils.utils import make_device_from_device_class
 from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
+
+
+class TeleopEvents(Enum):
+    """Shared constants for teleoperator events across teleoperators."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    RERECORD_EPISODE = "rerecord_episode"
+    IS_INTERVENTION = "is_intervention"
+    TERMINATE_EPISODE = "terminate_episode"
 
 
 def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
@@ -67,7 +78,14 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .bi_so100_leader import BiSO100Leader
 
         return BiSO100Leader(config)
+
+    elif config.type == "reachy2_teleoperator":
+        from .reachy2_teleoperator import Reachy2Teleoperator
+
+        return Reachy2Teleoperator(config)
+
     elif hasattr(config, "device_class"):
         return make_device_from_device_class(config.device_class, config)
+
     else:
         raise ValueError(config.type)

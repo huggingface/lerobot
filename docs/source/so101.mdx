@@ -162,7 +162,7 @@ It is advisable to install one 3-pin cable in the motor after placing them befor
 To find the port for each bus servo adapter, connect MotorBus to your computer via USB and power. Run the following script and disconnect the MotorBus when prompted:
 
 ```bash
-python -m lerobot.find_port
+lerobot-find-port
 ```
 
 <hfoptions id="example">
@@ -240,7 +240,7 @@ Connect the usb cable from your computer and the power supply to the follower ar
 <hfoption id="Command">
 
 ```bash
-python -m lerobot.setup_motors \
+lerobot-setup-motors \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem585A0076841  # <- paste here the port found at previous step
 ```
@@ -316,7 +316,7 @@ Do the same steps for the leader arm.
 <hfoption id="Command">
 
 ```bash
-python -m lerobot.setup_motors \
+lerobot-setup-motors \
     --teleop.type=so101_leader \
     --teleop.port=/dev/tty.usbmodem575E0031751  # <- paste here the port found at previous step
 ```
@@ -353,7 +353,7 @@ Run the following command or API example to calibrate the follower arm:
 <hfoption id="Command">
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
     --robot.id=my_awesome_follower_arm # <- Give the robot a unique name
@@ -402,7 +402,7 @@ Do the same steps to calibrate the leader arm, run the following command or API 
 <hfoption id="Command">
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --teleop.type=so101_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
     --teleop.id=my_awesome_leader_arm # <- Give the robot a unique name
