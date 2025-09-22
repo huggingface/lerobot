@@ -23,7 +23,7 @@ DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 class RunningQuantileStats:
     """Compute running statistics including quantiles for a batch of vectors."""
 
-    def __init__(self, num_quantile_bins: int = 5000):
+    def __init__(self, quantile_list: list[float] | None = None, num_quantile_bins: int = 5000):
         self._count = 0
         self._mean = None
         self._mean_of_squares = None
@@ -32,6 +32,11 @@ class RunningQuantileStats:
         self._histograms = None
         self._bin_edges = None
         self._num_quantile_bins = num_quantile_bins
+
+        self._quantile_list = quantile_list
+        if self._quantile_list is None:
+            self._quantile_list = DEFAULT_QUANTILES
+        self._quantile_keys = [f"q{int(q * 100):02d}" for q in self._quantile_list]
 
     def update(self, batch: np.ndarray) -> None:
         """Update the running statistics with a batch of vectors.
@@ -103,9 +108,8 @@ class RunningQuantileStats:
         }
 
         quantile_results = self._compute_quantiles()
-        for i, q in enumerate(DEFAULT_QUANTILES):
-            q_key = f"q{int(q * 100):02d}"
-            stats[q_key] = quantile_results[i]
+        for i, q in enumerate(self._quantile_keys):
+            stats[q] = quantile_results[i]
 
         return stats
 
@@ -145,15 +149,38 @@ class RunningQuantileStats:
     def _compute_quantiles(self) -> list[np.ndarray]:
         """Compute quantiles based on histograms."""
         results = []
-        for q in DEFAULT_QUANTILES:
+        for q in self._quantile_list:
             target_count = q * self._count
             q_values = []
+
             for hist, edges in zip(self._histograms, self._bin_edges, strict=True):
-                cumsum = np.cumsum(hist)
-                idx = np.searchsorted(cumsum, target_count)
-                q_values.append(edges[idx])
+                q_value = self._compute_single_quantile(hist, edges, target_count)
+                q_values.append(q_value)
+
             results.append(np.array(q_values))
         return results
+
+    def _compute_single_quantile(self, hist: np.ndarray, edges: np.ndarray, target_count: float) -> float:
+        """Compute a single quantile value from histogram and bin edges."""
+        cumsum = np.cumsum(hist)
+        idx = np.searchsorted(cumsum, target_count)
+
+        if idx == 0:
+            return edges[0]
+        if idx >= len(cumsum):
+            return edges[-1]
+
+        # If not edge case, interpolate within the bin
+        count_before = cumsum[idx - 1]
+        count_in_bin = cumsum[idx] - count_before
+
+        # If no samples in this bin, use the bin edge
+        if count_in_bin == 0:
+            return edges[idx]
+
+        # Linear interpolation within the bin
+        fraction = (target_count - count_before) / count_in_bin
+        return edges[idx] + fraction * (edges[idx + 1] - edges[idx])
 
 
 def estimate_num_samples(
@@ -359,7 +386,9 @@ def _prepare_array_for_stats(array: np.ndarray, axis: int | tuple[int, ...] | No
     raise ValueError(f"Unsupported axis configuration: {axis}")
 
 
-def _compute_basic_stats(array: np.ndarray, sample_count: int) -> dict[str, np.ndarray]:
+def _compute_basic_stats(
+    array: np.ndarray, sample_count: int, quantile_list: list[float] | None = None
+) -> dict[str, np.ndarray]:
     """Compute basic statistics for arrays with insufficient samples for quantiles.
 
     Args:
@@ -369,6 +398,10 @@ def _compute_basic_stats(array: np.ndarray, sample_count: int) -> dict[str, np.n
     Returns:
         Dictionary with basic statistics and quantiles set to mean values
     """
+    if quantile_list is None:
+        quantile_list = DEFAULT_QUANTILES
+    quantile_list_keys = [f"q{int(q * 100):02d}" for q in quantile_list]
+
     stats = {
         "min": np.min(array, axis=0),
         "max": np.max(array, axis=0),
@@ -383,16 +416,17 @@ def _compute_basic_stats(array: np.ndarray, sample_count: int) -> dict[str, np.n
             if key != "count" and stats[key].size == 1:
                 stats[key] = np.array(stats[key].item())
 
-    # Set quantiles to mean for insufficient data
-    for q in DEFAULT_QUANTILES:
-        q_key = f"q{int(q * 100):02d}"
-        stats[q_key] = stats["mean"].copy()
+    for q in quantile_list_keys:
+        stats[q] = stats["mean"].copy()
 
     return stats
 
 
 def get_feature_stats(
-    array: np.ndarray, axis: int | tuple[int, ...] | None, keepdims: bool
+    array: np.ndarray,
+    axis: int | tuple[int, ...] | None,
+    keepdims: bool,
+    quantile_list: list[float] | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute comprehensive statistics for array features along specified axes.
 
@@ -422,11 +456,14 @@ def get_feature_stats(
             - 'q01', 'q10', 'q50', 'q90', 'q99': Quantile values
 
     """
+    if quantile_list is None:
+        quantile_list = DEFAULT_QUANTILES
+
     original_shape = array.shape
     reshaped, sample_count = _prepare_array_for_stats(array, axis)
 
     if reshaped.shape[0] < 2:
-        stats = _compute_basic_stats(reshaped, sample_count)
+        stats = _compute_basic_stats(reshaped, sample_count, quantile_list)
     else:
         running_stats = RunningQuantileStats()
         running_stats.update(reshaped)
@@ -443,7 +480,11 @@ def get_feature_stats(
     return stats
 
 
-def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], features: dict) -> dict:
+def compute_episode_stats(
+    episode_data: dict[str, list[str] | np.ndarray],
+    features: dict,
+    quantile_list: list[float] | None = None,
+) -> dict:
     """Compute comprehensive statistics for all features in an episode.
 
     Processes different data types appropriately:
@@ -465,6 +506,9 @@ def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], featu
         Image statistics are normalized to [0,1] range and have shape (3,1,1) for
         per-channel values when dtype is 'image' or 'video'.
     """
+    if quantile_list is None:
+        quantile_list = DEFAULT_QUANTILES
+
     ep_stats = {}
     for key, data in episode_data.items():
         if features[key]["dtype"] == "string":
@@ -479,7 +523,9 @@ def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], featu
             axes_to_reduce = 0
             keepdims = data.ndim == 1
 
-        ep_stats[key] = get_feature_stats(ep_ft_array, axis=axes_to_reduce, keepdims=keepdims)
+        ep_stats[key] = get_feature_stats(
+            ep_ft_array, axis=axes_to_reduce, keepdims=keepdims, quantile_list=quantile_list
+        )
 
         if features[key]["dtype"] in ["image", "video"]:
             ep_stats[key] = {
@@ -550,13 +596,14 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
         "count": total_count,
     }
 
-    quantile_keys = [k for k in stats_ft_list[0].keys() if k.startswith("q") and k[1:].isdigit()]
-    for q_key in quantile_keys:
-        # For quantiles, use weighted average as approximation
-        # This is not mathematically exact but provides a reasonable estimate
-        quantile_values = np.stack([s[q_key] for s in stats_ft_list])
-        weighted_quantiles = quantile_values * counts
-        aggregated[q_key] = weighted_quantiles.sum(axis=0) / total_count
+    if stats_ft_list:
+        quantile_keys = [k for k in stats_ft_list[0].keys() if k.startswith("q") and k[1:].isdigit()]
+
+        for q_key in quantile_keys:
+            if all(q_key in s for s in stats_ft_list):
+                quantile_values = np.stack([s[q_key] for s in stats_ft_list])
+                weighted_quantiles = quantile_values * counts
+                aggregated[q_key] = weighted_quantiles.sum(axis=0) / total_count
 
     return aggregated
 
