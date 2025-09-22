@@ -17,7 +17,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
@@ -43,11 +43,18 @@ class PI0OpenPIConfig(PreTrainedConfig):
     num_inference_steps: int = 10  # Number of denoising steps during inference
     time_sampling_beta_alpha: float = 1.5  # Beta distribution alpha parameter for time sampling
     time_sampling_beta_beta: float = 1.0  # Beta distribution beta parameter for time sampling
+    time_sampling_scale: float = 0.999  # Scale factor for time sampling
+    time_sampling_offset: float = 0.001  # Offset for time sampling
     min_period: float = 4e-3  # Min period for sinusoidal positional encoding
     max_period: float = 4.0  # Max period for sinusoidal positional encoding
 
+    attention_mask_value: float = -2.3819763e38
+
     # Image preprocessing
     image_resolution: tuple[int, int] = (224, 224)  # see openpi `preprocessing_pytorch.py`
+
+    # Add empty images. Used to add empty cameras when no image features are present.
+    empty_cameras: int = 0
 
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -64,7 +71,7 @@ class PI0OpenPIConfig(PreTrainedConfig):
     compile_mode: str = "max-autotune"  # Torch compile mode
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
-    # Optimizer settings: see openpi `AdamW` and
+    # Optimizer settings: see openpi `AdamW``
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
@@ -98,12 +105,27 @@ class PI0OpenPIConfig(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
-        # Image features are now handled dynamically through dataset configuration
-        # No need to auto-add hardcoded image keys
+        for i in range(self.empty_cameras):
+            key = f"observation.images.empty_camera_{i}"
+            empty_camera = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(3, *self.image_resolution),  # Use configured image resolution
+            )
+            self.input_features[key] = empty_camera
 
-        # State and action features are also handled dynamically through dataset configuration
-        # The actual dimensions come from the feature shapes, max dimensions are used for padding only
-        pass
+        if "observation.state" not in self.input_features:
+            state_feature = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(self.max_state_dim,),  # Will be padded to max_state_dim
+            )
+            self.input_features["observation.state"] = state_feature
+
+        if "action" not in self.output_features:
+            action_feature = PolicyFeature(
+                type=FeatureType.ACTION,
+                shape=(self.max_action_dim,),  # Will be padded to max_action_dim
+            )
+            self.output_features["action"] = action_feature
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

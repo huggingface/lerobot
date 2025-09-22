@@ -5,44 +5,6 @@ It is designed as a **Vision-Language-Action model with open-world generalizatio
 
 ---
 
-### ⚠️ WARNING ⚠️
-
-This project requires **patching the Hugging Face `transformers` library**.
-
-1. Make sure you have the exact version installed:
-
-```bash
-   pip show transformers
-```
-
-It must be version **4.53.2**.
-
-2. Apply the custom patches by copying the modified files into your environment:
-
-   ```bash
-   cp -r ./src/lerobot/policies/pi0_openpi/transformers_replace/* \
-     $(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")
-   ```
-
-   These patches overwrite parts of `transformers` to:
-   - Support the **AdaRMS optimizer**,
-   - Correctly control the precision of activations,
-   - Allow the KV cache to be used without updates.
-
-**Important:**
-
-- This permanently modifies your `transformers` installation.
-- The changes survive reinstalls unless you explicitly remove the patched files or recreate the environment.
-
-To undo and restore a clean state:
-
-```bash
-pip uninstall transformers
-pip install transformers==4.53.2
-```
-
----
-
 ## Model Overview
 
 | Feature              | π₀                                                     | π₀.₅                                      |

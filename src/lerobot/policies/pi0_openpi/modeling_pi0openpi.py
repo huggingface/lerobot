@@ -563,7 +563,7 @@ $(python -c "import transformers, os; print(os.path.dirname(transformers.__file_
     def _prepare_attention_masks_4d(self, att_2d_masks):
         """Helper method to prepare 4D attention masks for transformer."""
         att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        return torch.where(att_2d_masks_4d, 0.0, -2.3819763e38)
+        return torch.where(att_2d_masks_4d, 0.0, self.config.attention_mask_value)
 
     def sample_noise(self, shape, device):
         return torch.normal(
@@ -578,7 +578,7 @@ $(python -c "import transformers, os; print(os.path.dirname(transformers.__file_
         time_beta = sample_beta(
             self.config.time_sampling_beta_alpha, self.config.time_sampling_beta_beta, bsize, device
         )
-        time = time_beta * 0.999 + 0.001
+        time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
         return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
@@ -677,6 +677,7 @@ $(python -c "import transformers, os; print(os.path.dirname(transformers.__file_
         action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
         pad_masks.append(action_time_mask)
 
+        # Set attention masks so that image, language and state inputs do not attend to action tokens
         att_masks += [1] + ([0] * (self.config.chunk_size - 1))
 
         embs = torch.cat(embs, dim=1)
