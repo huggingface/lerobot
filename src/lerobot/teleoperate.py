@@ -155,7 +155,7 @@ def teleop_loop(
         if raw_observation is not None:
             output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7} | {'RAW':>7}")
             for key, value in observation.items():
-                if not key.endswith('.pos'):
+                if not key.endswith(".pos"):
                     continue
                 raw_val = raw_observation.get(key) if isinstance(raw_observation, dict) else None
                 raw_display = f"{int(raw_val):>7}" if isinstance(raw_val, (int, float)) else f"{'N/A':>7}"
@@ -163,7 +163,7 @@ def teleop_loop(
         else:
             output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7}")
             for key, value in observation.items():
-                if not key.endswith('.pos'):
+                if not key.endswith(".pos"):
                     continue
                 output_lines.append(f"{key:<{display_len}} | {value:>7.2f}")
 
