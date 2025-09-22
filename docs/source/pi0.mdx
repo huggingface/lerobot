@@ -35,7 +35,7 @@ As described by Physical Intelligence, while AI has achieved remarkable success 
 
 2. Apply the custom patches:
    ```bash
-   cp -r ./src/lerobot/policies/pi0_openpi/transformers_replace/* \
+   cp -r ./src/lerobot/policies/pi0/transformers_replace/* \
      $(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")
    ```
 
@@ -72,7 +72,7 @@ pip install transformers==4.53.2
 To use π₀ in LeRobot, specify the policy type as:
 
 ```python
-policy.type=pi0_openpi
+policy.type=pi0
 ```
 
 ## Training
@@ -82,7 +82,7 @@ For training π₀, you can use the standard LeRobot training script with the ap
 ```bash
 python src/lerobot/scripts/train.py \
     --dataset.repo_id=your_dataset \
-    --policy.type=pi0_openpi \
+    --policy.type=pi0 \
     --output_dir=./outputs/pi0_training \
     --job_name=pi0_training \
     --policy.pretrained_path=pepijn223/pi0_base_fp32 \

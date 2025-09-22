@@ -22,9 +22,9 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
 
-@PreTrainedConfig.register_subclass("pi0_openpi")
+@PreTrainedConfig.register_subclass("pi05")
 @dataclass
-class PI0OpenPIConfig(PreTrainedConfig):
+class PI05OpenPIConfig(PreTrainedConfig):
     # Model architecture
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
@@ -71,7 +71,7 @@ class PI0OpenPIConfig(PreTrainedConfig):
     compile_mode: str = "max-autotune"  # Torch compile mode
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
-    # Optimizer settings: see openpi `AdamW``
+    # Optimizer settings: see openpi `AdamW`
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
@@ -83,7 +83,7 @@ class PI0OpenPIConfig(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 48  # pi0=48, see openpi `__post_init__`
+    tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()

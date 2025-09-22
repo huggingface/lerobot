@@ -43,7 +43,7 @@ This diverse training mixture creates a "curriculum" that enables generalization
 
 2. Apply the custom patches:
    ```bash
-   cp -r ./src/lerobot/policies/pi05_openpi/transformers_replace/* \
+   cp -r ./src/lerobot/policies/pi05/transformers_replace/* \
      $(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")
    ```
 
@@ -72,7 +72,7 @@ pip install transformers==4.53.2
 To use π₀.₅ in your LeRobot configuration, specify the policy type as:
 
 ```python
-policy.type=pi05_openpi
+policy.type=pi05
 ```
 
 ## Training
@@ -84,7 +84,7 @@ Here's a complete training command for finetuning the base π₀.₅ model on yo
 ```bash
 python src/lerobot/scripts/train.py \
     --dataset.repo_id=your_dataset \
-    --policy.type=pi05_openpi \
+    --policy.type=pi05 \
     --output_dir=./outputs/pi0_training \
     --job_name=pi0_training \
     --policy.repo_id=pepijn223/pi05_base_fp32 \

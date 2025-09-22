@@ -34,7 +34,7 @@ from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditi
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.normalize import Normalize, Unnormalize
-from lerobot.policies.pi05_openpi.configuration_pi05openpi import PI05OpenPIConfig
+from lerobot.policies.pi05.configuration_pi05openpi import PI05OpenPIConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 
 
@@ -525,7 +525,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         msg = """transformers_replace is not installed correctly.
 Please install it with `pip install transformers==4.53.2`
-and `cp -r ./src/lerobot/policies/pi0_openpi/transformers_replace/* \
+and `cp -r ./src/lerobot/policies/pi0/transformers_replace/* \
 $(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")`"""
 
         try:
@@ -820,7 +820,7 @@ class PI05OpenPIPolicy(PreTrainedPolicy):
     """PI05 OpenPI Policy for LeRobot."""
 
     config_class = PI05OpenPIConfig
-    name = "pi05_openpi"
+    name = "pi05"
 
     def __init__(  # see lerobot pi0 `__init__`
         self,

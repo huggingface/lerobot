@@ -18,8 +18,8 @@ pytestmark = pytest.mark.skipif(
     reason="This test requires HuggingFace authentication and is not meant for CI",
 )
 
-from lerobot.policies.pi0_openpi import PI0OpenPIPolicy  # noqa: E402
-from lerobot.policies.pi05_openpi.modeling_pi05openpi import PI05OpenPIPolicy  # noqa: E402
+from lerobot.policies.pi0 import PI0Policy  # noqa: E402
+from lerobot.policies.pi05.modeling_pi05openpi import PI05Policy  # noqa: E402
 
 
 def create_dummy_stats(config):
@@ -48,13 +48,13 @@ def create_dummy_stats(config):
 # Test data for all 6 base models
 MODEL_TEST_PARAMS = [
     # PI0 models
-    ("pepijn223/pi0_base_fp32", "PI0", PI0OpenPIPolicy),
-    ("pepijn223/pi0_droid_fp32", "PI0", PI0OpenPIPolicy),
-    ("pepijn223/pi0_libero_fp32", "PI0", PI0OpenPIPolicy),
+    ("pepijn223/pi0_base_fp32", "PI0", PI0Policy),
+    ("pepijn223/pi0_droid_fp32", "PI0", PI0Policy),
+    ("pepijn223/pi0_libero_fp32", "PI0", PI0Policy),
     # PI0.5 models
-    ("pepijn223/pi05_base_fp32", "PI0.5", PI05OpenPIPolicy),
-    ("pepijn223/pi05_droid_fp32", "PI0.5", PI05OpenPIPolicy),
-    ("pepijn223/pi05_libero_fp32", "PI0.5", PI05OpenPIPolicy),
+    ("pepijn223/pi05_base_fp32", "PI0.5", PI05Policy),
+    ("pepijn223/pi05_droid_fp32", "PI0.5", PI05Policy),
+    ("pepijn223/pi05_libero_fp32", "PI0.5", PI05Policy),
 ]
 
 
@@ -65,7 +65,7 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
     Args:
         model_id: HuggingFace model ID (e.g., "pepijn223/pi0_base_fp32")
         model_type: Model type ("PI0" or "PI0.5")
-        policy_class: Policy class to use (PI0OpenPIPolicy or PI05OpenPIPolicy)
+        policy_class: Policy class to use (PI0Policy or PI05Policy)
     """
     print(f"\n{'=' * 80}")
     print(f"Testing {model_type} model: {model_id}")

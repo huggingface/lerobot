@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(
     reason="This test requires local OpenPI installation and is not meant for CI",
 )
 
-from lerobot.policies.pi05_openpi import PI05OpenPIConfig, PI05OpenPIPolicy  # noqa: E402
+from lerobot.policies.pi05 import PI05Config, PI05Policy  # noqa: E402
 from tests.utils import require_cuda  # noqa: E402
 
 
@@ -22,7 +22,7 @@ def test_pi05_model_architecture():
     """Test that pi05=True creates the correct model architecture."""
 
     # Create config
-    config = PI05OpenPIConfig(
+    config = PI05Config(
         max_action_dim=7,
         max_state_dim=14,
         dtype="float32",
@@ -73,7 +73,7 @@ def test_pi05_model_architecture():
     }
 
     # Instantiate policy
-    policy = PI05OpenPIPolicy(config, dataset_stats)
+    policy = PI05Policy(config, dataset_stats)
 
     # Verify pi05 model components exist
     # Check that time_mlp layers exist (for AdaRMS conditioning)
@@ -104,7 +104,7 @@ def test_pi05_forward_pass():
     """Test forward pass with"""
 
     # Create config
-    config = PI05OpenPIConfig(
+    config = PI05Config(
         max_action_dim=7,
         max_state_dim=14,
         dtype="float32",
@@ -150,7 +150,7 @@ def test_pi05_forward_pass():
     }
 
     # Instantiate policy
-    policy = PI05OpenPIPolicy(config, dataset_stats)
+    policy = PI05Policy(config, dataset_stats)
 
     # Create test batch
     batch_size = 2

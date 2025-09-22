@@ -21,7 +21,7 @@ from openpi.models_pytorch import preprocessing_pytorch as openpi_preprocessing 
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
-from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy  # noqa: E402
+from lerobot.policies.pi0 import PI0Config, PI0Policy  # noqa: E402
 
 DUMMY_ACTION_DIM = 32
 DUMMY_STATE_DIM = 32
@@ -68,9 +68,7 @@ class PI0BaseOriginalConfig:
 def instantiate_lerobot_pi0(from_pretrained: bool = False):
     if from_pretrained:
         # Load the policy first
-        policy = PI0OpenPIPolicy.from_pretrained(
-            pretrained_name_or_path="pepijn223/pi0_base_fp32", strict=True
-        )
+        policy = PI0Policy.from_pretrained(pretrained_name_or_path="pepijn223/pi0_base_fp32", strict=True)
         # Then reinitialize the normalization with proper stats
         from lerobot.policies.normalize import Normalize, Unnormalize
 
@@ -84,10 +82,8 @@ def instantiate_lerobot_pi0(from_pretrained: bool = False):
             policy.config.output_features, policy.config.normalization_mapping, DUMMY_DATASET_STATS
         )
     else:
-        config = PI0OpenPIConfig(
-            max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32"
-        )
-        policy = PI0OpenPIPolicy(config, DUMMY_DATASET_STATS)
+        config = PI0Config(max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32")
+        policy = PI0Policy(config, DUMMY_DATASET_STATS)
     policy.to(DEVICE)
     return policy
 
