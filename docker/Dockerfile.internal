@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common build-essential git curl \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
     libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
+    cmake pkg-config ninja-build \
     && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
