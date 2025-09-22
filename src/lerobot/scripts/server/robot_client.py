@@ -52,6 +52,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_koch_follower,
     koch_follower,
     make_robot_from_config,
     so100_follower,

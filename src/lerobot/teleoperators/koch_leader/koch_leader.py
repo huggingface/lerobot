@@ -80,6 +80,7 @@ class KochLeader(Teleoperator):
             )
             self.calibrate()
 
+        self._wrap_full_turn_offsets_once()
         self.configure()
         logger.info(f"{self} connected.")
 
@@ -154,6 +155,33 @@ class KochLeader(Teleoperator):
         self.bus.enable_torque("gripper")
         if self.is_calibrated:
             self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
+
+    def _wrap_full_turn_offsets_once(self) -> None:
+        """
+        Adjust Homing_Offset by integer multiples of resolution so Present_Position is wrapped into [0, res-1]
+        for full-turn joints. This is a one-time alignment at startup; we do not modify readings afterwards.
+        """
+        full_turn_motors = ["shoulder_pan", "wrist_roll"]
+        # Ensure EEPROM writes are allowed
+        with self.bus.torque_disabled(full_turn_motors):
+            raw_by_name = self.bus.sync_read("Present_Position", normalize=False)
+            current_offsets = self.bus.sync_read("Homing_Offset", normalize=False)
+            for motor in full_turn_motors:
+                if motor not in raw_by_name:
+                    continue
+                model = self.bus.motors[motor].model
+                res = self.bus.model_resolution_table[model]
+                present = raw_by_name[motor]
+                k = present // res
+                if k != 0:
+                    new_offset = current_offsets[motor] - (k * res)
+                    if new_offset != current_offsets[motor]:
+                        self.bus.write("Homing_Offset", motor, new_offset, normalize=False)
+                        logger.info(f"({self.config.id}): Wrapped offset for motor '{motor}' from {current_offsets[motor]} to {new_offset} to keep it in [0, {res-1}]")
+        # Refresh in-memory calibration to reflect device state
+        new_cal = self.bus.read_calibration()
+        self.calibration = new_cal
+        self.bus.calibration = new_cal
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
