@@ -159,7 +159,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     assert isinstance(policy, PreTrainedPolicy)
 
     # Check that we run select_actions and get the appropriate output.
-    env = make_env(train_cfg.env, n_envs=2)
+    envs = make_env(train_cfg.env, n_envs=2)
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -188,6 +188,12 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     # reset the policy and environment
     policy.reset()
+    # For testing purposes, we only need a single environment instance.
+    # So here we unwrap the first suite_name and first task_id to grab
+    # the actual env object (SyncVectorEnv) that exposes `.reset()`.
+    suite_name = next(iter(envs))
+    task_id = next(iter(envs[suite_name]))
+    env = envs[suite_name][task_id]
     observation, _ = env.reset(seed=train_cfg.seed)
 
     # apply transform to normalize the observations

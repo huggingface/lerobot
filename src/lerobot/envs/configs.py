@@ -30,6 +30,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     fps: int = 30
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
+    max_parallel_tasks: int = 1
+    disable_env_checker: bool = True
 
     @property
     def type(self) -> str:
@@ -242,3 +244,55 @@ class HILSerlRobotEnvConfig(EnvConfig):
     @property
     def gym_kwargs(self) -> dict:
         return {}
+
+
+@EnvConfig.register_subclass("libero")
+@dataclass
+class LiberoEnv(EnvConfig):
+    task: str = "libero_10"  # can also choose libero_spatial, libero_object, etc.
+    fps: int = 30
+    episode_length: int = 520
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    camera_name: str = "agentview_image,robot0_eye_in_hand_image"
+    init_states: bool = True
+    camera_name_mapping: dict[str, str] | None = (None,)
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/agentview_image": f"{OBS_IMAGES}.image",
+            "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGES}.image2",
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            self.features["pixels/agentview_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(360, 360, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(360, 360, 3)
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(8,))
+            self.features["pixels/agentview_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(360, 360, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(360, 360, 3)
+            )
+        else:
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+        }

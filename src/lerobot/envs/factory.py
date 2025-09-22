@@ -17,7 +17,7 @@ import importlib
 
 import gymnasium as gym
 
-from lerobot.envs.configs import AlohaEnv, EnvConfig, PushtEnv, XarmEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, XarmEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -27,11 +27,15 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "xarm":
         return XarmEnv(**kwargs)
+    elif env_type == "libero":
+        return LiberoEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
 
-def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> gym.vector.VectorEnv | None:
+def make_env(
+    cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False
+) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """Makes a gym vector environment according to the config.
 
     Args:
@@ -45,13 +49,30 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
         ModuleNotFoundError: If the requested env package is not installed
 
     Returns:
-        gym.vector.VectorEnv: The parallelized gym.env instance.
+        dict[str, dict[int, gym.vector.VectorEnv]]:
+            A mapping from suite name to indexed vectorized environments.
+            - For multi-task benchmarks (e.g., LIBERO): one entry per suite, and one vec env per task_id.
+            - For single-task environments: a single suite entry (cfg.type) with task_id=0.
+
     """
     if n_envs < 1:
-        raise ValueError("`n_envs must be at least 1")
+        raise ValueError("`n_envs` must be at least 1")
+
+    env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
+
+    if "libero" in cfg.type:
+        from lerobot.envs.libero import create_libero_envs
+
+        return create_libero_envs(
+            task=cfg.task,
+            n_envs=n_envs,
+            camera_name=cfg.camera_name,
+            init_states=cfg.init_states,
+            gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+        )
 
     package_name = f"gym_{cfg.type}"
-
     try:
         importlib.import_module(package_name)
     except ModuleNotFoundError as e:
@@ -60,10 +81,11 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
 
     gym_handle = f"{package_name}/{cfg.task}"
 
-    # batched version of the env that returns an observation of shape (b, c)
-    env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
-    env = env_cls(
-        [lambda: gym.make(gym_handle, disable_env_checker=True, **cfg.gym_kwargs) for _ in range(n_envs)]
-    )
+    def _make_one():
+        return gym.make(gym_handle, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
 
-    return env
+    vec = env_cls([_make_one for _ in range(n_envs)])
+
+    # normalize to {suite: {task_id: vec_env}} for consistency
+    suite_name = cfg.type  # e.g., "pusht", "aloha"
+    return {suite_name: {0: vec}}

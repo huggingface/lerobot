@@ -29,6 +29,8 @@
 - sections:
   - local: smolvla
     title: Finetune SmolVLA
+  - local: libero
+    title: Using Libero
   title: "Policies"
 
 - sections:
