@@ -327,9 +327,9 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker = MetricsTracker(
                 cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
             )
-            eval_tracker.eval_s = aggregated.get("eval_s", 0.0)
-            eval_tracker.avg_sum_reward = aggregated.get("avg_sum_reward", float("nan"))
-            eval_tracker.pc_success = aggregated.get("pc_success", float("nan"))
+            eval_tracker.eval_s = aggregated.pop("eval_s")
+            eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
+            eval_tracker.pc_success = aggregated.pop("pc_success")
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
