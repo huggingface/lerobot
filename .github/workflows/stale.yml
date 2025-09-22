@@ -56,7 +56,7 @@ jobs:
           stale-pr-label: stale
           exempt-issue-labels: never-stale
           exempt-pr-labels: never-stale
-          days-before-issue-stale: 180 # TODO(Steven): Will modify this to 180 after initial cleanup
+          days-before-issue-stale: 180 # TODO(Steven): Will modify this to 90 after initial cleanup
           days-before-issue-close: 14
           days-before-pr-stale: 180
           days-before-pr-close: 14
