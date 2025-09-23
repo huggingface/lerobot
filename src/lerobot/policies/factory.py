@@ -150,7 +150,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
     elif policy_type == "pi0_openpi":
-        return PI0OpenPIConfig(**kwargs)
+        return PI0Config(**kwargs)
     elif policy_type == "pi05_openpi":
         return PI05OpenPIConfig(**kwargs)
     else:
@@ -272,16 +272,16 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
-    elif isinstance(policy_cfg, PI0OpenPIConfig):
-        from lerobot.policies.pi0_openpi.processor_pi0_openpi import make_pi0_openpi_pre_post_processors
+    elif isinstance(policy_cfg, PI0Config):
+        from lerobot.policies.pi0.processor_pi0_openpi import make_pi0_pre_post_processors
 
-        processors = make_pi0_openpi_pre_post_processors(
+        processors = make_pi0_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
     elif isinstance(policy_cfg, PI05OpenPIConfig):
-        from lerobot.policies.pi05_openpi.processor_pi05openpi import make_pi05_openpi_pre_post_processors
+        from lerobot.policies.pi05.processor_pi05openpi import make_pi05_openpi_pre_post_processors
 
         processors = make_pi05_openpi_pre_post_processors(
             config=policy_cfg,

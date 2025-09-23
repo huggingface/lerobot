@@ -1,15 +1,27 @@
-from copy import deepcopy
+# Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from typing import Any
 
-import numpy as np
 import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.constants import OBS_STATE, POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
-from lerobot.policies.pi05_openpi.configuration_pi05openpi import PI05OpenPIConfig
-from lerobot.policies.pi05_openpi.modeling_pi05openpi import pad_vector
+from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.policies.pi0.configuration_pi0openpi import PI0Config
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
+    ComplementaryDataProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
@@ -21,62 +33,67 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
-from lerobot.processor.core import EnvTransition, TransitionKey
 
 
-@ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
-class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
+@ProcessorStepRegistry.register(name="pi0_new_line_processor")
+class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
     """
-    Processor step to prepare the state and tokenize the language input.
+    Ensures that the task description string ends with a newline character.
+
+    This processing step is required for compatibility with the PaliGemma tokenizer,
+    which expects a newline at the end of the text prompt. It handles both single
+    strings and lists of strings for the 'task' key in complementary data.
     """
 
-    max_state_dim: int
-    task_key: str = "task"
+    def complementary_data(self, complementary_data):
+        """
+        Adds a newline to the 'task' field if it doesn't already have one.
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        transition = transition.copy()
+        Args:
+            complementary_data: A dictionary that may contain a 'task' key with a
+                                string or list of strings.
 
-        state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
-        if state is None:
-            raise ValueError("State is required for PI05")
-        tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
-        if tasks is None:
-            raise ValueError("No task found in complementary data")
+        Returns:
+            A new dictionary with the modified 'task' field.
+        """
+        if "task" not in complementary_data:
+            return complementary_data
 
-        # TODO: check if this necessary
-        state = deepcopy(state)
+        task = complementary_data["task"]
+        if task is None:
+            return complementary_data
 
-        # Prepare state (pad to max_state_dim)
-        state = pad_vector(state, self.max_state_dim)
+        new_complementary_data = dict(complementary_data)
 
-        # Normalize state to [-1, 1] range if needed (assuming it's already normalized from normalize_inputs)
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        state_np = state.cpu().numpy()
-        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+        # Handle both string and list of strings
+        if isinstance(task, str):
+            # Single string: add newline if not present
+            if not task.endswith("\n"):
+                new_complementary_data["task"] = f"{task}\n"
+        elif isinstance(task, list) and all(isinstance(t, str) for t in task):
+            # List of strings: add newline to each if not present
+            new_complementary_data["task"] = [t if t.endswith("\n") else f"{t}\n" for t in task]
+        # If task is neither string nor list of strings, leave unchanged
 
-        full_prompts = []
-        for i, task in enumerate(tasks):
-            cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
-            state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
-            full_prompts.append(full_prompt)
-
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
-        # Normalize state to [-1, 1] range if needed (assuming it's already normalized from normalize_inputs)
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        return transition
+        return new_complementary_data
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
         This step does not alter the feature definitions.
+
+        Args:
+            features: The input feature dictionary.
+
+        Returns:
+            The unchanged feature dictionary.
         """
         return features
 
 
-def make_pi05_openpi_pre_post_processors(
-    config: PI05OpenPIConfig,
+def make_pi0_pre_post_processors(
+    config: PI0Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
@@ -111,7 +128,7 @@ def make_pi05_openpi_pre_post_processors(
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
-        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+        Pi0NewLineProcessor(),  # Add newlines before tokenization for PaliGemma
         TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,
