@@ -118,7 +118,7 @@ echo ${HF_USER}/aloha_test
 If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with [Rerun](https://github.com/rerun-io/rerun):
 
 ```bash
-python -m lerobot.scripts.visualize_dataset \
+lerobot-dataset-viz \
   --repo-id ${HF_USER}/aloha_test --episode 0
 ```
 
