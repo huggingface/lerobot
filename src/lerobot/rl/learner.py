@@ -73,7 +73,6 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.robots import so100_follower  # noqa: F401
-from .learner_service import LearnerService, MAX_WORKERS, SHUTDOWN_TIMEOUT
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2_grpc
@@ -99,6 +98,8 @@ from lerobot.utils.utils import (
     init_logging,
 )
 from lerobot.utils.wandb_utils import WandBLogger
+
+from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
 
 LOG_PREFIX = "[LEARNER]"
 
