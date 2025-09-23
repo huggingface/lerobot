@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import warnings
+from collections.abc import Mapping, Sequence
+from functools import singledispatch
 from typing import Any
 
 import einops
@@ -127,10 +129,68 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
 def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
     if hasattr(env.envs[0], "task_description"):
-        observation["task"] = env.call("task_description")
+        task_result = env.call("task_description")
+
+        if isinstance(task_result, tuple):
+            task_result = list(task_result)
+
+        if not isinstance(task_result, list):
+            raise TypeError(f"Expected task_description to return a list, got {type(task_result)}")
+        if not all(isinstance(item, str) for item in task_result):
+            raise TypeError("All items in task_description result must be strings")
+
+        observation["task"] = task_result
     elif hasattr(env.envs[0], "task"):
-        observation["task"] = env.call("task")
+        task_result = env.call("task")
+
+        if isinstance(task_result, tuple):
+            task_result = list(task_result)
+
+        if not isinstance(task_result, list):
+            raise TypeError(f"Expected task to return a list, got {type(task_result)}")
+        if not all(isinstance(item, str) for item in task_result):
+            raise TypeError("All items in task result must be strings")
+
+        observation["task"] = task_result
     else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
         num_envs = observation[list(observation.keys())[0]].shape[0]
         observation["task"] = ["" for _ in range(num_envs)]
     return observation
+
+
+def _close_single_env(env: Any) -> None:
+    try:
+        env.close()
+    except Exception as exc:
+        print(f"Exception while closing env {env}: {exc}")
+
+
+@singledispatch
+def close_envs(obj: Any) -> None:
+    """Default: raise if the type is not recognized."""
+    raise NotImplementedError(f"close_envs not implemented for type {type(obj).__name__}")
+
+
+@close_envs.register
+def _(env: Mapping) -> None:
+    for v in env.values():
+        if isinstance(v, Mapping):
+            close_envs(v)
+        elif hasattr(v, "close"):
+            _close_single_env(v)
+
+
+@close_envs.register
+def _(envs: Sequence) -> None:
+    if isinstance(envs, (str, bytes)):
+        return
+    for v in envs:
+        if isinstance(v, Mapping) or isinstance(v, Sequence) and not isinstance(v, (str, bytes)):
+            close_envs(v)
+        elif hasattr(v, "close"):
+            _close_single_env(v)
+
+
+@close_envs.register
+def _(env: gym.Env) -> None:
+    _close_single_env(env)

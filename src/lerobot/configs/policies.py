@@ -26,7 +26,7 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
@@ -53,7 +53,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     """
 
     n_obs_steps: int = 1
-    normalization_mapping: dict[str, NormalizationMode] = field(default_factory=dict)
 
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
@@ -197,11 +196,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             config = json.load(f)
 
         config.pop("type")
-        with tempfile.NamedTemporaryFile("w+") as f:
+        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)
             config_file = f.name
-            f.flush()
 
-            cli_overrides = policy_kwargs.pop("cli_overrides", [])
-            with draccus.config_type("json"):
-                return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+        cli_overrides = policy_kwargs.pop("cli_overrides", [])
+        with draccus.config_type("json"):
+            return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)

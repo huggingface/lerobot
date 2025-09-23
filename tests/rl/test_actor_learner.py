@@ -90,13 +90,13 @@ def cfg():
 @require_package("grpc")
 @pytest.mark.timeout(10)  # force cross-platform watchdog
 def test_end_to_end_transitions_flow(cfg):
-    from lerobot.scripts.rl.actor import (
+    from lerobot.rl.actor import (
         establish_learner_connection,
         learner_service_client,
         push_transitions_to_transport_queue,
         send_transitions,
     )
-    from lerobot.scripts.rl.learner import start_learner
+    from lerobot.rl.learner import start_learner
     from lerobot.transport.utils import bytes_to_transitions
     from tests.transport.test_transport_utils import assert_transitions_equal
 
@@ -152,12 +152,12 @@ def test_end_to_end_transitions_flow(cfg):
 @require_package("grpc")
 @pytest.mark.timeout(10)
 def test_end_to_end_interactions_flow(cfg):
-    from lerobot.scripts.rl.actor import (
+    from lerobot.rl.actor import (
         establish_learner_connection,
         learner_service_client,
         send_interactions,
     )
-    from lerobot.scripts.rl.learner import start_learner
+    from lerobot.rl.learner import start_learner
     from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
 
     """Test complete interactions flow from actor to learner."""
@@ -226,8 +226,8 @@ def test_end_to_end_interactions_flow(cfg):
 @pytest.mark.parametrize("data_size", ["small", "large"])
 @pytest.mark.timeout(10)
 def test_end_to_end_parameters_flow(cfg, data_size):
-    from lerobot.scripts.rl.actor import establish_learner_connection, learner_service_client, receive_policy
-    from lerobot.scripts.rl.learner import start_learner
+    from lerobot.rl.actor import establish_learner_connection, learner_service_client, receive_policy
+    from lerobot.rl.learner import start_learner
     from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
 
     """Test complete parameter flow from learner to actor, with small and large data."""
