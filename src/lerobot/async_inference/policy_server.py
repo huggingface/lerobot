@@ -38,9 +38,9 @@ import grpc
 import torch
 
 from lerobot.policies.factory import get_policy_class
-from lerobot.scripts.server.configs import PolicyServerConfig
-from lerobot.scripts.server.constants import SUPPORTED_POLICIES
-from lerobot.scripts.server.helpers import (
+from .configs import PolicyServerConfig
+from .constants import SUPPORTED_POLICIES
+from .helpers import (
     FPSTracker,
     Observation,
     RemotePolicyConfig,

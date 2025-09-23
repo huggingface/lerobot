@@ -57,9 +57,9 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
-from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
-from lerobot.scripts.server.helpers import (
+from .configs import RobotClientConfig
+from .constants import SUPPORTED_ROBOTS
+from .helpers import (
     Action,
     FPSTracker,
     Observation,
