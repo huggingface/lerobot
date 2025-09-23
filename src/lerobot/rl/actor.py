@@ -64,7 +64,7 @@ from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.processor import TransitionKey
 from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.scripts.rl.gym_manipulator import (
+from .gym_manipulator import (
     create_transition,
     make_processors,
     make_robot_env,
