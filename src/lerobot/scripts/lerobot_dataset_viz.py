@@ -29,14 +29,14 @@ Examples:
 
 - Visualize data stored on a local machine:
 ```
-local$ python -m lerobot.scripts.visualize_dataset \
+local$ lerobot-dataset-viz \
     --repo-id lerobot/pusht \
     --episode-index 0
 ```
 
 - Visualize data stored on a distant machine with a local viewer:
 ```
-distant$ python -m lerobot.scripts.visualize_dataset \
+distant$ lerobot-dataset-viz \
     --repo-id lerobot/pusht \
     --episode-index 0 \
     --save 1 \
@@ -50,7 +50,7 @@ local$ rerun lerobot_pusht_episode_0.rrd
 (You need to forward the websocket port to the distant machine, with
 `ssh -L 9087:localhost:9087 username@remote-host`)
 ```
-distant$ python -m lerobot.scripts.visualize_dataset \
+distant$ lerobot-dataset-viz \
     --repo-id lerobot/pusht \
     --episode-index 0 \
     --mode distant \
