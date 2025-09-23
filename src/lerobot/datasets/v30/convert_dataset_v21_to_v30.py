@@ -404,7 +404,7 @@ def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
     info["video_files_size_in_mb"] = video_file_size_in_mb
     info["data_path"] = DEFAULT_DATA_PATH
     info["video_path"] = DEFAULT_VIDEO_PATH
-    info["fps"] = float(info["fps"])
+    info["fps"] = int(info["fps"])
     for key in info["features"]:
         if info["features"][key]["dtype"] == "video":
             # already has fps in video_info
