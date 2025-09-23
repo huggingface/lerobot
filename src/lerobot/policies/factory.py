@@ -87,9 +87,9 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
         return PI0FASTPolicy
     elif name == "pi0":
-        from lerobot.policies.pi0.modeling_pi0openpi import PI0OpenPIPolicy
+        from lerobot.policies.pi0.modeling_pi0openpi import PI0Policy
 
-        return PI0OpenPIPolicy
+        return PI0Policy
     elif name == "pi05":
         from lerobot.policies.pi05.modeling_pi05openpi import PI05OpenPIPolicy
 
