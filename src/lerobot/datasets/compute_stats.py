@@ -174,3 +174,79 @@ def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np
         aggregated_stats[key] = aggregate_feature_stats(stats_with_key)
 
     return aggregated_stats
+
+import numpy as np
+
+def aggregate_stats_multi(
+    stats_list: list[dict[str, dict]],
+    max_action_dim: int | None = None,
+    max_state_dim: int | None = None,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Aggregate stats from multiple compute_stats outputs into a single set of stats.
+    
+    Supports heterogeneous robots by padding action/state stats to the max dim.
+    The final stats will have the union of all data keys from each of the stats dicts.
+
+    - new_min  = elementwise min across datasets
+    - new_max  = elementwise max across datasets
+    - new_mean = weighted mean (by count)
+    - new_std  = recomputed from total variance
+    """
+
+    data_keys = {key for stats in stats_list for key in stats}
+    aggregated_stats = {key: {} for key in data_keys}
+
+    def _pad(arr: np.ndarray, target: int) -> np.ndarray:
+        if arr.ndim == 0:  # scalar
+            return arr
+        if target is None or target <= 0 or arr.shape[-1] == target:
+            return arr
+        pad_width = [(0, 0)] * arr.ndim
+        pad_width[-1] = (0, target - arr.shape[-1])
+        return np.pad(arr, pad_width, mode="constant")
+
+    for key in data_keys:
+        stats_with_key = [stats[key] for stats in stats_list if key in stats]
+
+        # decide if this key should be padded
+        target_dim = None
+        if "action" in key and max_action_dim:
+            target_dim = max_action_dim
+        elif "state" in key and max_state_dim:
+            target_dim = max_state_dim
+
+        padded = []
+        counts = []
+        for s in stats_with_key:
+            mean = _pad(np.array(s["mean"]), target_dim)
+            std = _pad(np.array(s["std"]), target_dim)
+            min_ = _pad(np.array(s["min"]), target_dim)
+            max_ = _pad(np.array(s["max"]), target_dim)
+            count = s.get("count", 1)
+
+            padded.append(dict(mean=mean, std=std, min=min_, max=max_, count=count))
+            counts.append(count)
+
+        counts = np.array(counts, dtype=np.float64)
+        total_count = counts.sum()
+
+        means = np.stack([p["mean"] for p in padded])
+        stds  = np.stack([p["std"]  for p in padded])
+        mins  = np.stack([p["min"]  for p in padded])
+        maxs  = np.stack([p["max"]  for p in padded])
+
+        # weighted mean (broadcast weights properly)
+        new_mean = np.average(means, axis=0, weights=counts)
+        new_var  = np.average(stds**2 + (means - new_mean)**2, axis=0, weights=counts)
+
+        new_std = np.sqrt(new_var)
+
+        aggregated_stats[key] = {
+            "min": mins.min(axis=0),
+            "max": maxs.max(axis=0),
+            "mean": new_mean,
+            "std": new_std,
+            "count": int(total_count),
+        }
+
+    return aggregated_stats
