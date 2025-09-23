@@ -15,7 +15,7 @@
 """
 Example command:
 ```shell
-python src/lerobot/scripts/server/robot_client.py \
+python src/lerobot/async_inference/robot_client.py \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
