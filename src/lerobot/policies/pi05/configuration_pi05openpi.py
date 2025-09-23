@@ -56,7 +56,7 @@ class PI05OpenPIConfig(PreTrainedConfig):
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
 
-    tokenizer_max_length: int = 48  # pi0.5=48, see openpi `__post_init__`
+    tokenizer_max_length: int = 200  # pi0.5=48, see openpi `__post_init__`
 
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
