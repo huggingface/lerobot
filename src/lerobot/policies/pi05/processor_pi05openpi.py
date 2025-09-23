@@ -32,7 +32,7 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
     Processor step to prepare the state and tokenize the language input.
     """
 
-    max_state_dim: int
+    max_state_dim: int = 32
     task_key: str = "task"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
