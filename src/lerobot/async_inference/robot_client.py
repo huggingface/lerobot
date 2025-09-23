@@ -57,6 +57,12 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
+from lerobot.transport import (
+    services_pb2,  # type: ignore
+    services_pb2_grpc,  # type: ignore
+)
+from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
+
 from .configs import RobotClientConfig
 from .constants import SUPPORTED_ROBOTS
 from .helpers import (
@@ -72,11 +78,6 @@ from .helpers import (
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
 )
-from lerobot.transport import (
-    services_pb2,  # type: ignore
-    services_pb2_grpc,  # type: ignore
-)
-from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 
 
 class RobotClient:

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import torch
 
 from lerobot.robots.config import RobotConfig
+
 from .constants import (
     DEFAULT_FPS,
     DEFAULT_INFERENCE_LATENCY,
