@@ -14,77 +14,83 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Use this script to get a quick summary of your system config.
+"""
+Use this script to get a quick summary of your system config.
 It should be able to run without any of LeRobot's dependencies or LeRobot itself installed.
+
+Example:
+
+```shell
+lerobot-info
+```
 """
 
+import importlib
 import platform
 
-HAS_HF_HUB = True
-HAS_HF_DATASETS = True
-HAS_NP = True
-HAS_TORCH = True
-HAS_LEROBOT = True
 
-try:
-    import huggingface_hub
-except ImportError:
-    HAS_HF_HUB = False
-
-try:
-    import datasets
-except ImportError:
-    HAS_HF_DATASETS = False
-
-try:
-    import numpy as np
-except ImportError:
-    HAS_NP = False
-
-try:
-    import torch
-except ImportError:
-    HAS_TORCH = False
-
-try:
-    import lerobot
-except ImportError:
-    HAS_LEROBOT = False
+def get_package_version(package_name: str) -> str:
+    """Get the version of a package if it exists, otherwise return 'N/A'."""
+    try:
+        module = importlib.import_module(package_name)
+        return getattr(module, "__version__", "Installed (version not found)")
+    except ImportError:
+        return "N/A"
 
 
-lerobot_version = lerobot.__version__ if HAS_LEROBOT else "N/A"
-hf_hub_version = huggingface_hub.__version__ if HAS_HF_HUB else "N/A"
-hf_datasets_version = datasets.__version__ if HAS_HF_DATASETS else "N/A"
-np_version = np.__version__ if HAS_NP else "N/A"
-
-torch_version = torch.__version__ if HAS_TORCH else "N/A"
-torch_cuda_available = torch.cuda.is_available() if HAS_TORCH else "N/A"
-cuda_version = torch._C._cuda_getCompiledVersion() if HAS_TORCH and torch.version.cuda is not None else "N/A"
-
-
-# TODO(aliberts): refactor into an actual command `lerobot env`
-def display_sys_info() -> dict:
+def get_sys_info() -> dict:
     """Run this to get basic system info to help for tracking issues & bugs."""
+    # General package versions
     info = {
-        "`lerobot` version": lerobot_version,
+        "lerobot version": get_package_version("lerobot"),
         "Platform": platform.platform(),
         "Python version": platform.python_version(),
-        "Huggingface_hub version": hf_hub_version,
-        "Dataset version": hf_datasets_version,
-        "Numpy version": np_version,
-        "PyTorch version (GPU?)": f"{torch_version} ({torch_cuda_available})",
-        "Cuda version": cuda_version,
-        "Using GPU in script?": "<fill in>",
-        # "Using distributed or parallel set-up in script?": "<fill in>",
+        "Huggingface Hub version": get_package_version("huggingface_hub"),
+        "Datasets version": get_package_version("datasets"),
+        "Numpy version": get_package_version("numpy"),
     }
-    print("\nCopy-and-paste the text below in your GitHub issue and FILL OUT the last point.\n")
-    print(format_dict(info))
+
+    # PyTorch and GPU specific information
+    torch_version = "N/A"
+    torch_cuda_available = "N/A"
+    cuda_version = "N/A"
+    gpu_model = "N/A"
+    try:
+        import torch
+
+        torch_version = torch.__version__
+        torch_cuda_available = torch.cuda.is_available()
+        if torch_cuda_available:
+            cuda_version = torch.version.cuda
+            # Gets the name of the first available GPU
+            gpu_model = torch.cuda.get_device_name(0)
+    except ImportError:
+        # If torch is not installed, the default "N/A" values will be used.
+        pass
+
+    info.update(
+        {
+            "PyTorch version": torch_version,
+            "Is PyTorch built with CUDA support?": torch_cuda_available,
+            "Cuda version": cuda_version,
+            "GPU model": gpu_model,
+            "Using GPU in script?": "<fill in>",
+        }
+    )
+
     return info
 
 
-def format_dict(d: dict) -> str:
-    return "\n".join([f"- {prop}: {val}" for prop, val in d.items()]) + "\n"
+def format_dict_for_markdown(d: dict) -> str:
+    """Formats a dictionary into a markdown-friendly bulleted list."""
+    return "\n".join([f"- {prop}: {val}" for prop, val in d.items()])
+
+
+def main():
+    system_info = get_sys_info()
+    print("\nCopy-and-paste the text below in your GitHub issue and FILL OUT the last point.\n")
+    print(format_dict_for_markdown(system_info))
 
 
 if __name__ == "__main__":
-    display_sys_info()
+    main()
