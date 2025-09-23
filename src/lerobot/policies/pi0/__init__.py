@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_pi0openpi import PI0OpenPIConfig
-from .modeling_pi0openpi import PI0OpenPIPolicy
+from .configuration_pi0 import PI0Config
+from .modeling_pi0 import PI0Policy
 
-__all__ = ["PI0OpenPIConfig", "PI0OpenPIPolicy"]
+__all__ = ["PI0Config", "PI0Policy"]

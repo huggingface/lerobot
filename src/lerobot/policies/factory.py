@@ -31,9 +31,9 @@ from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.pi0.configuration_pi0openpi import PI0OpenPIConfig
+from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
-from lerobot.policies.pi05.configuration_pi05openpi import PI05OpenPIConfig
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
@@ -87,13 +87,13 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
         return PI0FASTPolicy
     elif name == "pi0":
-        from lerobot.policies.pi0.modeling_pi0openpi import PI0OpenPIPolicy
+        from lerobot.policies.pi0.modeling_pi0openpi import PI0Policy
 
-        return PI0OpenPIPolicy
+        return PI0Policy
     elif name == "pi05":
-        from lerobot.policies.pi05.modeling_pi05openpi import PI05OpenPIPolicy
+        from lerobot.policies.pi05.modeling_pi05openpi import PI05Policy
 
-        return PI05OpenPIPolicy
+        return PI05Policy
     elif name == "sac":
         from lerobot.policies.sac.modeling_sac import SACPolicy
 
@@ -140,9 +140,9 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     elif policy_type == "pi0fast":
         return PI0FASTConfig(**kwargs)
     elif policy_type == "pi0":
-        return PI0OpenPIConfig(**kwargs)
+        return PI0Config(**kwargs)
     elif policy_type == "pi05":
-        return PI05OpenPIConfig(**kwargs)
+        return PI05Config(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
