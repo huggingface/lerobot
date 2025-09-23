@@ -87,11 +87,11 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
         return PI0FASTPolicy
     elif name == "pi0":
-        from lerobot.policies.pi0.modeling_pi0openpi import PI0Policy
+        from lerobot.policies.pi0.modeling_pi0 import PI0Policy
 
         return PI0Policy
     elif name == "pi05":
-        from lerobot.policies.pi05.modeling_pi05openpi import PI05Policy
+        from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 
         return PI05Policy
     elif name == "sac":
@@ -152,7 +152,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     elif policy_type == "pi0_openpi":
         return PI0Config(**kwargs)
     elif policy_type == "pi05_openpi":
-        return PI05OpenPIConfig(**kwargs)
+        return PI05Config(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
@@ -280,10 +280,10 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
-    elif isinstance(policy_cfg, PI05OpenPIConfig):
-        from lerobot.policies.pi05.processor_pi05openpi import make_pi05_openpi_pre_post_processors
+    elif isinstance(policy_cfg, PI05Config):
+        from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
 
-        processors = make_pi05_openpi_pre_post_processors(
+        processors = make_pi05_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

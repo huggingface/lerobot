@@ -18,7 +18,7 @@ import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
-from lerobot.policies.pi0.configuration_pi0openpi import PI0Config
+from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
