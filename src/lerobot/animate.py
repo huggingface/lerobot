@@ -21,11 +21,8 @@ import json
 import time
 import sys
 from pathlib import Path
-from typing import List, Dict, Any
-import numpy as np
-
 try:
-    from lerobot.robots import make_robot_from_config, RobotConfig
+    from lerobot.robots import make_robot_from_config
     from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
     LEROBOT_AVAILABLE = True
 except ImportError:
@@ -40,6 +37,8 @@ class SimpleAnimator:
         self.port = port
         self.robot = None
         self.poses = []  # List of recorded poses
+        self.speed = 1.0  # Default speed multiplier
+        self.delay = 0.5  # Default delay between poses
         # Motor names for SO101 - matching the actual motor configuration
         self.motor_names = [
             'shoulder_pan', 'shoulder_lift', 'elbow_flex', 
@@ -144,13 +143,17 @@ class SimpleAnimator:
         for motor, value in pose.items():
             print(f"    {motor:12}: {value:7.2f}")
     
-    def play_animation(self, speed=1.0, loop=False):
-        """Play recorded animation"""
+    def play_animation(self, loop=False, custom_speed=None, custom_delay=None):
+        """Play recorded animation using current or custom speed and delay settings"""
         if not self.poses:
             print("No poses recorded!")
             return
         
-        print(f"\n🎬 Playing animation ({len(self.poses)} poses, speed={speed}x)")
+        # Use custom values if provided, otherwise use instance settings
+        speed = custom_speed if custom_speed is not None else self.speed
+        delay = custom_delay if custom_delay is not None else self.delay
+        
+        print(f"\n🎬 Playing animation ({len(self.poses)} poses, speed={speed}x, delay={delay}s)")
         print("Press Ctrl+C to stop")
         
         try:
@@ -158,21 +161,22 @@ class SimpleAnimator:
                 for i, pose in enumerate(self.poses):
                     print(f"Moving to pose {i+1}/{len(self.poses)}")
                     
-                    # Calculate transition time
-                    transition_time = 2.0 / speed
+                    # Calculate transition time based on speed (much shorter base time)
+                    transition_time = 0.5 / speed  # Base 0.5 seconds instead of 2.0
                     if i == 0:
-                        transition_time = 1.0 / speed  # Faster for first pose
+                        transition_time = 0.3 / speed  # Even faster for first pose
                     
                     self.set_pose(pose, transition_time)
                     
-                    # Pause between poses
-                    time.sleep(0.5 / speed)
+                    # Delay between poses (except for last pose)
+                    if i < len(self.poses) - 1:
+                        time.sleep(delay)
                 
                 if not loop:
                     break
                     
                 print("Looping...")
-                time.sleep(1.0 / speed)
+                time.sleep(1.0)  # Fixed 1 second delay before loop restart
                 
         except KeyboardInterrupt:
             print("\n⏹️ Animation stopped")
@@ -282,22 +286,24 @@ class SimpleAnimator:
         if self.select_and_load_animation():
             print("\nAnimation loaded! Choose playback option:")
             print("1. Play normal speed")
-            print("2. Play fast (2x)")
-            print("3. Play slow (0.5x)")
-            print("4. Play in loop")
-            print("5. Cancel")
+            print("2. Play with custom speed")
+            print("3. Play in loop")
+            print("4. Cancel")
             
-            choice = input("Enter choice (1-5): ").strip()
+            choice = input("Enter choice (1-4): ").strip()
             
             if choice == '1':
                 self.play_animation()
             elif choice == '2':
-                self.play_animation(speed=2.0)
+                try:
+                    speed = float(input("Enter speed (0.1-5.0): "))
+                    delay = float(input("Enter delay between poses (0-3.0): "))
+                    self.play_animation(speed=speed, delay=delay)
+                except ValueError:
+                    print("Invalid input")
             elif choice == '3':
-                self.play_animation(speed=0.5)
-            elif choice == '4':
                 self.play_animation(loop=True)
-            elif choice == '5':
+            elif choice == '4':
                 print("Playback cancelled")
     
     def clear_poses(self):
@@ -316,10 +322,12 @@ class SimpleAnimator:
         print("  status    - Show recorded poses count")
         print()
         print("Playback (Current Animation):")
-        print("  play      - Play current animation (normal speed)")
-        print("  fast      - Play current animation (2x speed)")
-        print("  slow      - Play current animation (0.5x speed)")
+        print("  play      - Play current animation")
         print("  loop      - Play current animation in loop")
+        print()
+        print("Settings:")
+        print("  speed X   - Set animation speed (e.g., speed 0.5, speed 2)")
+        print("  delay X   - Set delay between poses (e.g., delay 1, delay 0.2)")
         print()
         print("File Operations:")
         print("  save      - Save current animation")
@@ -345,51 +353,81 @@ class SimpleAnimator:
         while True:
             try:
                 # Show current status
-                status = f"[{len(self.poses)} poses recorded]"
-                command = input(f"\n{status} > ").strip().lower()
+                status = f"[{len(self.poses)} poses | speed={self.speed}x | delay={self.delay}s]"
+                command = input(f"\n{status} > ").strip()
                 
-                if command == '' or command == 'record':
+                # Split command for multi-word commands
+                parts = command.split()
+                cmd = parts[0].lower() if parts else ''
+                
+                if command == '' or cmd == 'record':
                     self.record_pose()
                 
-                elif command == 'play':
+                elif cmd == 'play':
                     self.play_animation()
                 
-                elif command == 'fast':
-                    self.play_animation(speed=2.0)
-                
-                elif command == 'slow':
-                    self.play_animation(speed=0.5)
-                
-                elif command == 'loop':
+                elif cmd == 'loop':
                     self.play_animation(loop=True)
                 
-                elif command == 'save':
+                elif cmd == 'speed':
+                    if len(parts) > 1:
+                        try:
+                            new_speed = float(parts[1])
+                            if 0.1 <= new_speed <= 5.0:
+                                self.speed = new_speed
+                                print(f"✓ Speed set to {self.speed}x")
+                            else:
+                                print("Speed must be between 0.1 and 5.0")
+                        except ValueError:
+                            print("Invalid speed value")
+                    else:
+                        print(f"Current speed: {self.speed}x")
+                        print("Usage: speed <value> (e.g., speed 0.5, speed 2)")
+                
+                elif cmd == 'delay':
+                    if len(parts) > 1:
+                        try:
+                            new_delay = float(parts[1])
+                            if 0 <= new_delay <= 5.0:
+                                self.delay = new_delay
+                                print(f"✓ Delay set to {self.delay}s")
+                            else:
+                                print("Delay must be between 0 and 5.0 seconds")
+                        except ValueError:
+                            print("Invalid delay value")
+                    else:
+                        print(f"Current delay: {self.delay}s")
+                        print("Usage: delay <value> (e.g., delay 1, delay 0.2)")
+                
+                elif cmd == 'save':
                     self.save_animation()
                 
-                elif command == 'load':
+                elif cmd == 'load':
                     self.select_and_load_animation()
                 
-                elif command == 'library':
+                elif cmd == 'library':
                     self.play_saved_animation()
                 
-                elif command == 'list':
+                elif cmd == 'list':
                     self.list_animations()
                 
-                elif command == 'clear':
+                elif cmd == 'clear':
                     confirm = input("Clear all poses? (y/n): ").lower()
                     if confirm == 'y':
                         self.clear_poses()
                 
-                elif command == 'status':
+                elif cmd == 'status':
                     print(f"Recorded poses: {len(self.poses)}")
+                    print(f"Speed: {self.speed}x")
+                    print(f"Delay: {self.delay}s")
                     if self.poses:
                         print("Latest pose:")
                         self.print_pose(self.poses[-1])
                 
-                elif command == 'help':
+                elif cmd == 'help':
                     self.show_help()
                 
-                elif command in ['quit', 'exit', 'q']:
+                elif cmd in ['quit', 'exit', 'q']:
                     break
                 
                 else:
@@ -444,13 +482,6 @@ To find your port, run:
     )
     
     parser.add_argument(
-        "--speed",
-        type=float,
-        default=1.0,
-        help="Playback speed multiplier (default: 1.0)"
-    )
-    
-    parser.add_argument(
         "--loop",
         action="store_true",
         help="Loop animation playback"
@@ -471,7 +502,7 @@ To find your port, run:
             if animator.load_animation(args.load):
                 print(f"Auto-loaded animation: {args.load}")
                 if input("Play now? (y/n): ").lower() == 'y':
-                    animator.play_animation(speed=args.speed, loop=args.loop)
+                    animator.play_animation(loop=args.loop)
         
         # Run interactive mode
         animator.run()
