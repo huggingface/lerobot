@@ -172,6 +172,7 @@ lerobot-teleoperate="lerobot.teleoperate:main"
 lerobot-eval="lerobot.scripts.eval:main"
 lerobot-train="lerobot.scripts.train:main"
 lerobot-info="lerobot.scripts.lerobot_info:main"
+lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
