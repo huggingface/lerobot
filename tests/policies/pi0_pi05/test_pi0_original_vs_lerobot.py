@@ -23,8 +23,8 @@ from openpi.models_pytorch import preprocessing_pytorch as openpi_preprocessing 
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
-from lerobot.policies.pi0_openpi import PI0OpenPIConfig, PI0OpenPIPolicy  # noqa: E402
-from lerobot.policies.pi0_openpi.processor_pi0_openpi import make_pi0_openpi_pre_post_processors  # noqa: E402
+from lerobot.policies.pi0 import PI0Config, PI0Policy  # noqa: E402
+from lerobot.policies.pi0.processor_pi0_openpi import make_pi0_pre_post_processors  # noqa: E402
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 
 # TODO: ADDING DEFAULT IMAGES_FEATURES TO CONFIG
@@ -73,24 +73,20 @@ class PI0BaseOriginalConfig:
 def instantiate_lerobot_pi0(
     from_pretrained: bool = False,
 ) -> tuple[
-    PI0OpenPIPolicy,
+    PI0Policy,
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     if from_pretrained:
         # Load the policy first
-        policy = PI0OpenPIPolicy.from_pretrained(
-            pretrained_name_or_path="pepijn223/pi0_base_fp32", strict=True
-        )
+        policy = PI0Policy.from_pretrained(pretrained_name_or_path="pepijn223/pi0_base_fp32", strict=True)
     else:
-        config = PI0OpenPIConfig(
-            max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32"
-        )
-        policy = PI0OpenPIPolicy(config)
+        config = PI0Config(max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32")
+        policy = PI0Policy(config)
 
     policy.to(DEVICE)
     policy.config.device = DEVICE
-    preprocessor, postprocessor = make_pi0_openpi_pre_post_processors(
+    preprocessor, postprocessor = make_pi0_pre_post_processors(
         config=policy.config, dataset_stats=DUMMY_DATASET_STATS
     )
     return (policy, preprocessor, postprocessor)
