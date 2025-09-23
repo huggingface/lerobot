@@ -125,8 +125,10 @@ def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR
     save_all_transforms(cfg.image_transforms, original_frame, output_dir, n_examples)
     save_each_transform(cfg.image_transforms, original_frame, output_dir, n_examples)
 
+
 def main():
     visualize_image_transforms()
+
 
 if __name__ == "__main__":
     main()
