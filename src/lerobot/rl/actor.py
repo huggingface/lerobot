@@ -24,7 +24,7 @@ Examples of usage:
 
 - Start an actor server for real robot training with human-in-the-loop intervention:
 ```bash
-python -m lerobot.scripts.rl.actor --config_path src/lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.rl.actor --config_path src/lerobot/configs/train_config_hilserl_so100.json
 ```
 
 **NOTE**: The actor server requires a running learner server to connect to. Ensure the learner
@@ -64,12 +64,6 @@ from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.processor import TransitionKey
 from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.scripts.rl.gym_manipulator import (
-    create_transition,
-    make_processors,
-    make_robot_env,
-    step_env_and_process_transition,
-)
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2, services_pb2_grpc
@@ -94,6 +88,13 @@ from lerobot.utils.utils import (
     TimerManager,
     get_safe_torch_device,
     init_logging,
+)
+
+from .gym_manipulator import (
+    create_transition,
+    make_processors,
+    make_robot_env,
+    step_env_and_process_transition,
 )
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
