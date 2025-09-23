@@ -162,6 +162,7 @@ all = [
 ]
 
 [project.scripts]
+lerobot-animate="lerobot.animate:main"
 lerobot-calibrate="lerobot.calibrate:main"
 lerobot-find-cameras="lerobot.find_cameras:main"
 lerobot-find-port="lerobot.find_port:main"

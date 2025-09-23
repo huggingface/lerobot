@@ -1,0 +1,38 @@
+{
+  "name": "upandnown",
+  "created": "2025-09-23 20:50:13",
+  "poses": [
+    {
+      "shoulder_pan": 9.582417582417582,
+      "shoulder_lift": -108.21978021978022,
+      "elbow_flex": 91.07692307692308,
+      "wrist_flex": 65.05494505494505,
+      "wrist_roll": 9.186813186813186,
+      "gripper": 3.175631885936488
+    },
+    {
+      "shoulder_pan": 10.285714285714286,
+      "shoulder_lift": -97.67032967032966,
+      "elbow_flex": 20.571428571428573,
+      "wrist_flex": 65.14285714285714,
+      "wrist_roll": 9.186813186813186,
+      "gripper": 3.175631885936488
+    },
+    {
+      "shoulder_pan": 10.285714285714286,
+      "shoulder_lift": -111.12087912087912,
+      "elbow_flex": 97.23076923076923,
+      "wrist_flex": 65.14285714285714,
+      "wrist_roll": 9.186813186813186,
+      "gripper": 3.175631885936488
+    }
+  ],
+  "motor_names": [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_roll",
+    "gripper"
+  ]
+}
