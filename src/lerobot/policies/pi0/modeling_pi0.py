@@ -33,7 +33,7 @@ from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditi
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.normalize import Normalize, Unnormalize
-from lerobot.policies.pi0.configuration_pi0openpi import PI0OpenPIConfig
+from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 
 
@@ -492,7 +492,7 @@ class PaliGemmaWithExpertModel(
 class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI0 PyTorch model."""
 
-    def __init__(self, config: PI0OpenPIConfig):
+    def __init__(self, config: PI0Config):
         super().__init__()
         self.config = config
 
@@ -523,10 +523,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             # Also compile the main forward pass used during training
             self.forward = torch.compile(self.forward, mode=config.compile_mode)
 
-        msg = """transformers_replace is not installed correctly.
-Please install it with `pip install transformers==4.53.2`
-and `cp -r ./src/lerobot/policies/pi0/transformers_replace/* \
-$(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")`"""
+        msg = """An incorrect transformer version is used, please create an issue on https://github.com/huggingface/lerobot/issues"""
 
         try:
             from transformers.models.siglip import check
@@ -842,15 +839,15 @@ $(python -c "import transformers, os; print(os.path.dirname(transformers.__file_
         return self.action_out_proj(suffix_out)
 
 
-class PI0OpenPIPolicy(PreTrainedPolicy):
+class PI0Policy(PreTrainedPolicy):
     """PI0 OpenPI Policy for LeRobot."""
 
-    config_class = PI0OpenPIConfig
+    config_class = PI0Config
     name = "pi0"
 
     def __init__(  # see lerobot pi0 `__init__`
         self,
-        config: PI0OpenPIConfig,
+        config: PI0Config,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """

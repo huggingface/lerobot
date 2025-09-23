@@ -34,7 +34,7 @@ from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditi
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.normalize import Normalize, Unnormalize
-from lerobot.policies.pi05.configuration_pi05openpi import PI05OpenPIConfig
+from lerobot.policies.pi05.configuration_pi05openpi import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 
 
@@ -495,7 +495,7 @@ class PaliGemmaWithExpertModel(
 class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
-    def __init__(self, config: PI05OpenPIConfig):
+    def __init__(self, config: PI05Config):
         super().__init__()
         self.config = config
 
@@ -523,10 +523,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
 
-        msg = """transformers_replace is not installed correctly.
-Please install it with `pip install transformers==4.53.2`
-and `cp -r ./src/lerobot/policies/pi0/transformers_replace/* \
-$(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")`"""
+        msg = """An incorrect transformer version is used, please create an issue on https://github.com/huggingface/lerobot/issues"""
 
         try:
             from transformers.models.siglip import check
@@ -816,15 +813,15 @@ $(python -c "import transformers, os; print(os.path.dirname(transformers.__file_
         return self.action_out_proj(suffix_out)
 
 
-class PI05OpenPIPolicy(PreTrainedPolicy):
+class PI05Policy(PreTrainedPolicy):
     """PI05 OpenPI Policy for LeRobot."""
 
-    config_class = PI05OpenPIConfig
+    config_class = PI05Config
     name = "pi05"
 
     def __init__(  # see lerobot pi0 `__init__`
         self,
-        config: PI05OpenPIConfig,
+        config: PI05Config,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
