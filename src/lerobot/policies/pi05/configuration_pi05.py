@@ -24,7 +24,7 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
 @PreTrainedConfig.register_subclass("pi05")
 @dataclass
-class PI05OpenPIConfig(PreTrainedConfig):
+class PI05Config(PreTrainedConfig):
     # Model architecture
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
@@ -56,12 +56,14 @@ class PI05OpenPIConfig(PreTrainedConfig):
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
 
+    tokenizer_max_length: int = 200  # pi0.5=48, see openpi `__post_init__`
+
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": NormalizationMode.IDENTITY,  # Images are normalized to [-1, 1] in preprocessing
-            "STATE": NormalizationMode.MEAN_STD,
-            "ACTION": NormalizationMode.MEAN_STD,
+            "VISUAL": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for images
+            "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
+            "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
         }
     )
 

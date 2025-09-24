@@ -24,15 +24,13 @@ from typing import Literal
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers import AutoTokenizer
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.gemma import modeling_gemma
 from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
 from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.constants import ACTION, OBS_STATE
-from lerobot.policies.normalize import Normalize, Unnormalize
+from lerobot.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 
@@ -50,7 +48,7 @@ def get_safe_dtype(target_dtype, device_type):  # see openpi `get_safe_dtype` (e
 
 
 def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedding` (exact copy)
-    time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu"
+    time: torch.Tensor, dimension: int, min_period: float, max_period: float, device="cpu"
 ) -> Tensor:
     """Computes sine-cosine positional embedding vectors for scalar positions."""
     if dimension % 2 != 0:
@@ -848,30 +846,14 @@ class PI0Policy(PreTrainedPolicy):
     def __init__(  # see lerobot pi0 `__init__`
         self,
         config: PI0Config,
-        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
         Args:
             config: Policy configuration class instance.
-            dataset_stats: Dataset statistics to be used for normalization.
         """
         super().__init__(config)
         config.validate_features()
         self.config = config
-
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-
-        # Create tokenizer for language input
-        self.tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
-
-        # Set max token length for tokenizer (from OpenPI)
-        self.max_token_len = config.tokenizer_max_length
 
         # Initialize the core PI0 model
         self.model = PI0Pytorch(config)
@@ -879,6 +861,8 @@ class PI0Policy(PreTrainedPolicy):
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
+
+        self.model.to(config.device)
 
         self.reset()
 
@@ -923,8 +907,7 @@ class PI0Policy(PreTrainedPolicy):
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
-        dataset_stats = kwargs.get("dataset_stats")  # TODO(Adil, Pepijn): Remove this with pipeline
-        model = cls(config, dataset_stats=dataset_stats, **kwargs)
+        model = cls(config, **kwargs)
 
         # Now manually load and remap the state dict
         try:
@@ -962,10 +945,7 @@ class PI0Policy(PreTrainedPolicy):
             remap_count = 0
 
             for key, value in fixed_state_dict.items():
-                if not key.startswith("model.") and not any(
-                    key.startswith(prefix)
-                    for prefix in ["normalize_inputs.", "normalize_targets.", "unnormalize_outputs."]
-                ):
+                if not key.startswith("model."):
                     new_key = f"model.{key}"
                     remapped_state_dict[new_key] = value
                     remap_count += 1
@@ -1140,44 +1120,6 @@ class PI0Policy(PreTrainedPolicy):
 
         return images, img_masks
 
-    def _tokenize_language(
-        self, batch: dict[str, Tensor]
-    ) -> tuple[Tensor, Tensor]:  # see lerobot pi0 `prepare_language`
-        """Tokenize language input using PaliGemma tokenizer."""
-        device = next(self.parameters()).device
-
-        # Get task description
-        if "task" in batch:
-            tasks = batch["task"]
-            if isinstance(tasks, str):
-                tasks = [tasks]
-            elif isinstance(tasks, list) and len(tasks) == 1:
-                # Expand to batch size
-                batch_size = batch[next(iter(batch.keys()))].shape[0]
-                tasks = tasks * batch_size
-        else:
-            # Default task if not provided
-            batch_size = batch[next(iter(batch.keys()))].shape[0]
-            tasks = ["Pick up the object"] * batch_size
-
-        # PaliGemma prompt has to end with a new line
-        tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
-
-        # Tokenize with max_length padding to match OpenPI's expected format
-        tokenized = self.tokenizer(
-            tasks,
-            padding="max_length",  # Use max_length padding as per OpenPI
-            padding_side="right",  # from lerobot pi0 `prepare_language`
-            truncation=True,
-            max_length=self.max_token_len,  # Use the max token length from config
-            return_tensors="pt",
-        )
-
-        lang_tokens = tokenized["input_ids"].to(device)
-        lang_masks = tokenized["attention_mask"].to(device, dtype=torch.bool)
-
-        return lang_tokens, lang_masks
-
     def prepare_state(self, batch):  # see lerobot pi0 `prepare_state` (exact copy)
         """Pad state"""
         state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
@@ -1206,11 +1148,9 @@ class PI0Policy(PreTrainedPolicy):
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
-        batch = self.normalize_inputs(batch)
-
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        lang_tokens, lang_masks = self._tokenize_language(batch)
+        lang_tokens, lang_masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         state = self.prepare_state(batch)
 
         # Sample actions using the model
@@ -1220,17 +1160,14 @@ class PI0Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
-        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:  # see lerobot pi0 `forward`
         """Run the batch through the model and compute the loss for training."""
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
-        lang_tokens, lang_masks = self._tokenize_language(batch)
+        lang_tokens, lang_masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         state = self.prepare_state(batch)
         actions = self.prepare_action(batch)
 

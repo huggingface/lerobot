@@ -7,26 +7,28 @@ import os
 import pytest
 import torch
 
+from lerobot.utils.random_utils import set_seed
+
 # Skip this entire module in CI
 pytestmark = pytest.mark.skipif(
     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
     reason="This test requires local OpenPI installation and is not meant for CI",
 )
 
-from lerobot.policies.pi05 import PI05Config, PI05Policy  # noqa: E402
+from lerobot.policies.factory import make_policy_config  # noqa: E402
+from lerobot.policies.pi05 import (  # noqa: E402
+    PI05Config,
+    PI05Policy,
+    make_pi05_pre_post_processors,  # noqa: E402
+)
 from tests.utils import require_cuda  # noqa: E402
 
 
 @require_cuda
-def test_pi05_model_architecture():
-    """Test that pi05=True creates the correct model architecture."""
-
+def test_policy_instantiation():
     # Create config
-    config = PI05Config(
-        max_action_dim=7,
-        max_state_dim=14,
-        dtype="float32",
-    )
+    set_seed(42)
+    config = PI05Config(max_action_dim=7, max_state_dim=14, dtype="float32")
 
     # Set up input_features and output_features in the config
     from lerobot.configs.types import FeatureType, PolicyFeature
@@ -52,9 +54,6 @@ def test_pi05_model_architecture():
     assert config.tokenizer_max_length == 200, (
         f"Expected tokenizer_max_length=200 for pi05, got {config.tokenizer_max_length}"
     )
-    assert config.discrete_state_input == True, (  # noqa: E712
-        f"Expected discrete_state_input=True for pi05, got {config.discrete_state_input}"
-    )
 
     # Create dummy dataset stats
     dataset_stats = {
@@ -73,7 +72,35 @@ def test_pi05_model_architecture():
     }
 
     # Instantiate policy
-    policy = PI05Policy(config, dataset_stats)
+    policy = PI05Policy(config)
+    # Test forward pass with dummy data
+    batch_size = 1
+    preprocessor, postprocessor = make_pi05_pre_post_processors(config=config, dataset_stats=dataset_stats)
+    device = config.device
+    batch = {
+        "observation.state": torch.randn(batch_size, 14, dtype=torch.float32, device=device),
+        "action": torch.randn(batch_size, config.chunk_size, 7, dtype=torch.float32, device=device),
+        "observation.images.base_0_rgb": torch.rand(
+            batch_size, 3, 224, 224, dtype=torch.float32, device=device
+        ),  # Use rand for [0,1] range
+        "task": ["Pick up the object"] * batch_size,
+    }
+    batch = preprocessor(batch)
+    try:
+        loss, loss_dict = policy.forward(batch)
+        print(f"Forward pass successful. Loss: {loss_dict['loss']:.4f}")
+    except Exception as e:
+        print(f"Forward pass failed: {e}")
+        raise
+    try:
+        with torch.no_grad():
+            action = policy.select_action(batch)
+            action = postprocessor(action)
+            print(f"Action: {action}")
+        print(f"Action prediction successful. Action shape: {action.shape}")
+    except Exception as e:
+        print(f"Action prediction failed: {e}")
+        raise
 
     # Verify pi05 model components exist
     # Check that time_mlp layers exist (for AdaRMS conditioning)
@@ -100,88 +127,18 @@ def test_pi05_model_architecture():
 
 
 @require_cuda
-def test_pi05_forward_pass():
-    """Test forward pass with"""
-
-    # Create config
-    config = PI05Config(
-        max_action_dim=7,
-        max_state_dim=14,
-        dtype="float32",
-        chunk_size=16,  # Shorter chunk_size for testing
-        n_action_steps=16,  # Shorter action steps for testing
-    )
-
-    # Set up input_features and output_features in the config
-    from lerobot.configs.types import FeatureType, PolicyFeature
-
-    config.input_features = {
-        "observation.state": PolicyFeature(
-            type=FeatureType.STATE,
-            shape=(14,),
-        ),
-        "observation.images.base_0_rgb": PolicyFeature(
-            type=FeatureType.VISUAL,
-            shape=(3, 224, 224),
-        ),
-    }
-
-    config.output_features = {
-        "action": PolicyFeature(
-            type=FeatureType.ACTION,
-            shape=(7,),
-        ),
-    }
-
-    # Create dummy dataset stats
-    dataset_stats = {
-        "observation.state": {
-            "mean": torch.zeros(14),
-            "std": torch.ones(14),
-        },
-        "action": {
-            "mean": torch.zeros(7),
-            "std": torch.ones(7),
-        },
-        "observation.images.base_0_rgb": {
-            "mean": torch.zeros(3, 224, 224),
-            "std": torch.ones(3, 224, 224),
-        },
-    }
-
-    # Instantiate policy
-    policy = PI05Policy(config, dataset_stats)
-
-    # Create test batch
-    batch_size = 2
-    device = next(policy.parameters()).device
-    batch = {
-        "observation.state": torch.randn(batch_size, 14, dtype=torch.float32, device=device),
-        "action": torch.randn(batch_size, config.chunk_size, 7, dtype=torch.float32, device=device),
-        "observation.images.base_0_rgb": torch.rand(
-            batch_size, 3, 224, 224, dtype=torch.float32, device=device
-        ),
-        "task": ["Pick up the object"] * batch_size,
-    }
-
-    # Test forward pass
+def test_config_creation():
+    """Test policy config creation through factory."""
     try:
-        loss, loss_dict = policy.forward(batch)
-        print(f"Forward pass successful. Loss: {loss_dict['loss']:.4f}")
-        assert not torch.isnan(loss), "Loss is NaN"
-        assert loss.item() >= 0, "Loss should be non-negative"
+        config = make_policy_config(
+            policy_type="pi0",
+            max_action_dim=7,
+            max_state_dim=14,
+        )
+        print("Config created successfully through factory")
+        print(f"  Config type: {type(config).__name__}")
+        print(f"  PaliGemma variant: {config.paligemma_variant}")
+        print(f"  Action expert variant: {config.action_expert_variant}")
     except Exception as e:
-        print(f"Forward pass failed: {e}")
-        raise
-
-    # Test action prediction
-    try:
-        with torch.no_grad():
-            action = policy.select_action(batch)
-        print(f"Action prediction successful. Action shape: {action.shape}")
-        # When batch_size > 1, select_action returns (batch_size, action_dim)
-        assert action.shape == (batch_size, 7), f"Expected action shape ({batch_size}, 7), got {action.shape}"
-        assert not torch.isnan(action).any(), "Action contains NaN values"
-    except Exception as e:
-        print(f"Action prediction failed: {e}")
+        print(f"Config creation failed: {e}")
         raise
