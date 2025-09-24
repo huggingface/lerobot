@@ -866,7 +866,6 @@ class PI0Policy(PreTrainedPolicy):
             self.model.gradient_checkpointing_enable()
 
         self.reset()
-        self.model.to(config.device)
 
     @classmethod
     def from_pretrained(
