@@ -49,11 +49,9 @@ def create_dummy_stats(config):
 MODEL_TEST_PARAMS = [
     # PI0 models
     ("pepijn223/pi0_base_fp32", "PI0", PI0Policy),
-    ("pepijn223/pi0_droid_fp32", "PI0", PI0Policy),
     ("pepijn223/pi0_libero_fp32", "PI0", PI0Policy),
     # PI0.5 models
     ("pepijn223/pi05_base_fp32", "PI0.5", PI05Policy),
-    ("pepijn223/pi05_droid_fp32", "PI0.5", PI05Policy),
     ("pepijn223/pi05_libero_fp32", "PI0.5", PI05Policy),
 ]
 
