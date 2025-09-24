@@ -15,7 +15,7 @@
 """
 Example:
 ```shell
-python src/lerobot/scripts/server/policy_server.py \
+python src/lerobot/async_inference/policy_server.py \
      --host=127.0.0.1 \
      --port=8080 \
      --fps=30 \
@@ -38,9 +38,15 @@ import grpc
 import torch
 
 from lerobot.policies.factory import get_policy_class
-from lerobot.scripts.server.configs import PolicyServerConfig
-from lerobot.scripts.server.constants import SUPPORTED_POLICIES
-from lerobot.scripts.server.helpers import (
+from lerobot.transport import (
+    services_pb2,  # type: ignore
+    services_pb2_grpc,  # type: ignore
+)
+from lerobot.transport.utils import receive_bytes_in_chunks
+
+from .configs import PolicyServerConfig
+from .constants import SUPPORTED_POLICIES
+from .helpers import (
     FPSTracker,
     Observation,
     RemotePolicyConfig,
@@ -50,11 +56,6 @@ from lerobot.scripts.server.helpers import (
     observations_similar,
     raw_observation_to_observation,
 )
-from lerobot.transport import (
-    services_pb2,  # type: ignore
-    services_pb2_grpc,  # type: ignore
-)
-from lerobot.transport.utils import receive_bytes_in_chunks
 
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
