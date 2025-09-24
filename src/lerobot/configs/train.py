@@ -63,6 +63,10 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    # Accelerate configuration for multi-GPU training
+    use_accelerate: bool = False
+    gradient_accumulation_steps: int = 1
+    mixed_precision: str = "no"  # Options: "no", "fp16", "bf16"
 
     def __post_init__(self):
         self.checkpoint_path = None
