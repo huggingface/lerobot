@@ -159,7 +159,14 @@ class SMOLANDFAST(nn.Module):
         super().__init__()
         self.config = config
 
-        self.vlm = AutoModelForImageTextToText.from_pretrained(self.config.vlm_checkpoint)
+        self.vlm = AutoModelForImageTextToText.from_pretrained(self.config.vlm_checkpoint,
+                                                               torch_dtype=torch.bfloat16)
+        for param in self.vlm.model.vision_model.parameters():
+            param.requires_grad = False
+
+        for param in self.vlm.model.connector.parameters():
+            param.requires_grad = False
+
         self.processor = AutoProcessor.from_pretrained(self.config.vlm_checkpoint)
 
         fast_tokenizer_path = "physical-intelligence/fast"
@@ -170,24 +177,23 @@ class SMOLANDFAST(nn.Module):
         self.action_dim = self.config.action_feature.shape[
             0
         ]  # self.config.max_action_dim  # self.config.action_feature.shape[0]
-        precision = config.precision
-        torch_precision = PRECISION.get(precision, torch.float32)
+        # precision = config.precision
+        # torch_precision = PRECISION.get(precision, torch.float32)
         
         self.pad_token_id = self.processor.tokenizer.pad_token_id
         self.eos_token_id = self.processor.tokenizer.eos_token_id
 
-
         # change important stuff in bf16
-        params_to_change_dtype = [
-            "text_model",
-            "connector",
-            "lm_head",
-            "vision_model",
-        ]
+        # params_to_change_dtype = [
+        #     "text_model",
+        #     "connector",
+        #     "lm_head",
+        #     "vision_model",
+        # ]
     
-        for name, param in self.vlm.named_parameters():
-            if any(selector in name for selector in params_to_change_dtype):
-                param.data = param.data.to(dtype=torch_precision)
+        # for name, param in self.vlm.named_parameters():
+        #     if any(selector in name for selector in params_to_change_dtype):
+        #         param.data = param.data.to(dtype=torch_precision)
 
         self.embed_func = self.vlm.get_input_embeddings()
         # TODO: Remove this once we bump transformers to >4.52.0 because the attribute will be removed
@@ -252,7 +258,7 @@ class SMOLANDFAST(nn.Module):
                                                    images=images,
                                                    lang_text=lang_text)
     
-        prefix_out["pixel_values"] = torch.tensor(np.array(prefix_out["pixel_values"]),dtype=torch.float32, device=device)
+        prefix_out["pixel_values"] = torch.tensor(np.array(prefix_out["pixel_values"]),dtype=torch.bfloat16, device=device)
         prefix_out["pixel_attention_mask"] = torch.tensor(np.array(prefix_out["pixel_attention_mask"]),dtype=torch.long, device=device)
         obs_ids = prefix_out["input_ids"]
 
