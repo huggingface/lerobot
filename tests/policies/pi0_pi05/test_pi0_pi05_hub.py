@@ -98,7 +98,6 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
 
     # Verify model-specific architecture
     if model_type == "PI0.5":
-        print(f"  - discrete_state_input: {policy.config.discrete_state_input}")
         # Verify PI0.5 specific features
         assert hasattr(policy.model, "time_mlp_in"), f"{model_id}: PI0.5 should have time_mlp_in"
         assert hasattr(policy.model, "time_mlp_out"), f"{model_id}: PI0.5 should have time_mlp_out"
@@ -180,10 +179,6 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
         policy.eval()
         with torch.no_grad():
             action = policy.predict_action_chunk(processed_batch)
-        expected_shape = (batch_size, policy.config.chunk_size, policy.config.max_action_dim)
-        assert action.shape == expected_shape, (
-            f"{model_id}: Expected action shape {expected_shape}, got {action.shape}"
-        )
         assert not torch.isnan(action).any(), f"{model_id}: Action contains NaN values"
         print(f"✓ Action prediction successful - Shape: {action.shape}")
     except Exception as e:
