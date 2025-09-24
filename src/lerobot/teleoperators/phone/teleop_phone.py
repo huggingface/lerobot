@@ -26,9 +26,9 @@ import hebi
 import numpy as np
 from teleop import Teleop
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.rotation import Rotation
 
 logger = logging.getLogger(__name__)

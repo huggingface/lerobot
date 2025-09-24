@@ -284,8 +284,8 @@ def test_features():
 
 def test_integration_with_robot_processor():
     """Test integration with RobotProcessor."""
-    from lerobot.constants import OBS_STATE
     from lerobot.processor import AddBatchDimensionProcessorStep
+    from lerobot.utils.constants import OBS_STATE
 
     # Create a pipeline with DeviceProcessorStep
     device_processor = DeviceProcessorStep(device="cpu")
@@ -948,12 +948,12 @@ def test_simulated_accelerate_scenario():
 def test_policy_processor_integration():
     """Test integration with policy processors - input on GPU, output on CPU."""
     from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-    from lerobot.constants import ACTION, OBS_STATE
     from lerobot.processor import (
         AddBatchDimensionProcessorStep,
         NormalizerProcessorStep,
         UnnormalizerProcessorStep,
     )
+    from lerobot.utils.constants import ACTION, OBS_STATE
 
     # Create features and stats
     features = {

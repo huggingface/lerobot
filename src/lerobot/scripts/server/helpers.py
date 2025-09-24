@@ -22,12 +22,12 @@ from pathlib import Path
 import torch
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.constants import OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
 from lerobot.policies import ACTConfig, DiffusionConfig, PI0Config, SmolVLAConfig, VQBeTConfig  # noqa: F401
 from lerobot.robots.robot import Robot
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 from lerobot.utils.utils import init_logging
 
 Action = torch.Tensor

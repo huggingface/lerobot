@@ -19,7 +19,7 @@ from unittest.mock import patch
 from lerobot.calibrate import CalibrateConfig, calibrate
 from lerobot.record import DatasetRecordConfig, RecordConfig, record
 from lerobot.replay import DatasetReplayConfig, ReplayConfig, replay
-from lerobot.teleoperate import TeleoperateConfig, teleoperate
+from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleopConfig

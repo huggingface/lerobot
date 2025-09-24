@@ -112,7 +112,7 @@ def test_dataset_initialization(tmp_path, lerobot_dataset_factory):
 # and test the small resulting function that validates the features
 def test_dataset_feature_with_forward_slash_raises_error():
     # make sure dir does not exist
-    from lerobot.constants import HF_LEROBOT_HOME
+    from lerobot.utils.constants import HF_LEROBOT_HOME
 
     dataset_dir = HF_LEROBOT_HOME / "lerobot/test/with/slash"
     # make sure does not exist
