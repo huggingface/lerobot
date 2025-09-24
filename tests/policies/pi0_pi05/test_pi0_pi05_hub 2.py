@@ -2,7 +2,7 @@
 
 # TODO(pepijn): Remove these tests before merging
 
-"""Test script to load PI0OpenPI model from HuggingFace hub and run inference."""
+"""Test script to load PI0 model from HuggingFace hub and run inference."""
 
 import os
 
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 from lerobot.policies.pi0 import PI0Policy  # noqa: E402
-from lerobot.policies.pi05.modeling_pi05openpi import PI05Policy  # noqa: E402
+from lerobot.policies.pi05.modeling_pi05 import PI05Policy  # noqa: E402
 
 
 def create_dummy_stats(config):

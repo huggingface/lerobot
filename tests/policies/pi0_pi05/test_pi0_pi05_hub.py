@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 from lerobot.policies.pi0 import PI0Policy  # noqa: E402
-from lerobot.policies.pi05.modeling_pi05 import PI05Policy  # noqa: E402
+from lerobot.policies.pi05.modeling_pi05openpi import PI05Policy  # noqa: E402
 
 
 def create_dummy_stats(config):

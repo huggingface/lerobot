@@ -23,8 +23,8 @@ from openpi.models_pytorch import preprocessing_pytorch as openpi_preprocessing 
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
-from lerobot.policies.pi0 import PI0Config, PI0Policy  # noqa: E402
-from lerobot.policies.pi0.processor_pi0_openpi import make_pi0_pre_post_processors  # noqa: E402
+from lerobot.policies.pi05 import PI05Config, PI05Policy  # noqa: E402
+from lerobot.policies.pi05.processor_pi05 import make_pi05_openpi_pre_post_processors  # noqa: E402
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 
 # TODO: ADDING DEFAULT IMAGES_FEATURES TO CONFIG
@@ -38,23 +38,33 @@ DUMMY_DATASET_STATS = {
     "observation.state": {
         "mean": torch.zeros(DUMMY_STATE_DIM),
         "std": torch.ones(DUMMY_STATE_DIM),
+        "q01": torch.zeros(DUMMY_STATE_DIM),
+        "q99": torch.ones(DUMMY_STATE_DIM),
     },
     "action": {
         "mean": torch.zeros(DUMMY_ACTION_DIM),
         "std": torch.ones(DUMMY_ACTION_DIM),
+        "q01": torch.zeros(DUMMY_ACTION_DIM),
+        "q99": torch.ones(DUMMY_ACTION_DIM),
     },
     "images": {
         "base_0_rgb": {
             "mean": torch.zeros(3, 224, 224),
             "std": torch.ones(3, 224, 224),
+            "q01": torch.zeros(3, 224, 224),
+            "q99": torch.ones(3, 224, 224),
         },
         "left_wrist_0_rgb": {
             "mean": torch.zeros(3, 224, 224),
             "std": torch.ones(3, 224, 224),
+            "q01": torch.zeros(3, 224, 224),
+            "q99": torch.ones(3, 224, 224),
         },
         "right_wrist_0_rgb": {
             "mean": torch.zeros(3, 224, 224),
             "std": torch.ones(3, 224, 224),
+            "q01": torch.zeros(3, 224, 224),
+            "q99": torch.ones(3, 224, 224),
         },
     },
 }
@@ -66,39 +76,39 @@ class PI0BaseOriginalConfig:
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     precision: str = "float32"
-    pi05: bool = False
+    pi05: bool = True
     dtype: str = "float32"
 
 
 def instantiate_lerobot_pi0(
     from_pretrained: bool = False,
 ) -> tuple[
-    PI0Policy,
+    PI05Policy,
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     if from_pretrained:
         # Load the policy first
-        policy = PI0Policy.from_pretrained(pretrained_name_or_path="pepijn223/pi0_base_fp32", strict=True)
+        policy = PI05Policy.from_pretrained(pretrained_name_or_path="pepijn223/pi05_base_fp32", strict=True)
     else:
-        config = PI0Config(max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32")
-        policy = PI0Policy(config)
+        config = PI05Config(max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32")
+        policy = PI05Policy(config)
 
     policy.to(DEVICE)
     policy.config.device = DEVICE
-    preprocessor, postprocessor = make_pi0_pre_post_processors(
+    preprocessor, postprocessor = make_pi05_openpi_pre_post_processors(
         config=policy.config, dataset_stats=DUMMY_DATASET_STATS
     )
     return (policy, preprocessor, postprocessor)
 
 
-def instantiate_original_pi0(from_pretrained: bool = False, model_path: str = None):
+def instantiate_original_pi0(from_pretrained: bool = False, model_path: str | None = None):
     config = PI0BaseOriginalConfig()
     policy = PI0Pytorch(config)
 
     if from_pretrained:
         try:
-            print("Loading converted PyTorch weights from HuggingFace Hub (pepijn223/pi0_base_fp32)...")
+            print("Loading converted PyTorch weights from HuggingFace Hub (pepijn223/pi05_base_fp32)...")
 
             # Download the model from HuggingFace Hub
             import safetensors.torch
@@ -109,7 +119,7 @@ def instantiate_original_pi0(from_pretrained: bool = False, model_path: str = No
                 cache_dir = model_path
                 print(f"Using cached model from: {cache_dir}")
             else:
-                cache_dir = snapshot_download(repo_id="pepijn223/pi0_base_fp32", repo_type="model")
+                cache_dir = snapshot_download(repo_id="pepijn223/pi05_base_fp32", repo_type="model")
                 print(f"Downloaded model to: {cache_dir}")
 
             # Try to load safetensors format first
