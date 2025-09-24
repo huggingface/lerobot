@@ -34,7 +34,7 @@ from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditi
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.normalize import Normalize, Unnormalize
-from lerobot.policies.pi05.configuration_pi05openpi import PI05Config
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 
 
@@ -874,7 +874,7 @@ class PI05Policy(PreTrainedPolicy):
     ) -> T:
         """Override the from_pretrained method to handle key remapping and display important disclaimer."""
         print(
-            "⚠️  DISCLAIMER: The PI05OpenPI model is a direct PyTorch port of the OpenPI implementation. \n"
+            "⚠️  DISCLAIMER: The PI05 model is a direct PyTorch port of the OpenPI implementation. \n"
             "   This implementation follows the original OpenPI structure for compatibility. \n"
             "   Original implementation: https://github.com/Physical-Intelligence/openpi"
         )

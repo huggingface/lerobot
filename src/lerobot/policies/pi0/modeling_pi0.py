@@ -900,7 +900,7 @@ class PI0Policy(PreTrainedPolicy):
     ) -> T:
         """Override the from_pretrained method to handle key remapping and display important disclaimer."""
         print(
-            "⚠️  DISCLAIMER: The PI0OpenPI model is a direct PyTorch port of the OpenPI implementation. \n"
+            "⚠️  DISCLAIMER: The PI0 model is a direct PyTorch port of the OpenPI implementation. \n"
             "   This implementation follows the original OpenPI structure for compatibility. \n"
             "   Original implementation: https://github.com/Physical-Intelligence/openpi"
         )

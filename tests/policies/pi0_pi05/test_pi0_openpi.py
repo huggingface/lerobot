@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""Test script to verify PI0OpenPI policy integration with LeRobot, only meant to be run locally!"""
+"""Test script to verify PI0 policy integration with LeRobot, only meant to be run locally!"""
 
 import os
 
@@ -14,14 +14,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 from lerobot.policies.factory import make_policy_config  # noqa: E402
-from lerobot.policies.pi0 import PI0OpenPIConfig, PI0OpenPIPolicy  # noqa: E402
+from lerobot.policies.pi0 import PI0Config, PI0Policy  # noqa: E402
 from tests.utils import require_cuda  # noqa: E402
 
 
 @require_cuda
 def test_policy_instantiation():
     # Create config
-    config = PI0OpenPIConfig(max_action_dim=7, max_state_dim=14, dtype="float32")
+    config = PI0Config(max_action_dim=7, max_state_dim=14, dtype="float32")
 
     # Set up input_features and output_features in the config
     from lerobot.configs.types import FeatureType, PolicyFeature
@@ -61,7 +61,7 @@ def test_policy_instantiation():
     }
 
     # Instantiate policy
-    policy = PI0OpenPIPolicy(config, dataset_stats)
+    policy = PI0Policy(config, dataset_stats)
 
     # Test forward pass with dummy data
     batch_size = 1

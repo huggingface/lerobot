@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""Test script to verify PI0.5 (pi05) support in PI0OpenPI policy, only meant to be run locally!"""
+"""Test script to verify PI0.5 (pi05) support in PI0 policy, only meant to be run locally!"""
 
 import os
 

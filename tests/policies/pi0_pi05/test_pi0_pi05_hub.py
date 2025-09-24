@@ -2,7 +2,7 @@
 
 # TODO(pepijn): Remove these tests before merging
 
-"""Test script to load PI0OpenPI model from HuggingFace hub and run inference."""
+"""Test script to load PI0 model from HuggingFace hub and run inference."""
 
 import os
 
