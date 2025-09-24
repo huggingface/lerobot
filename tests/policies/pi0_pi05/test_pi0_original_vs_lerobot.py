@@ -1,4 +1,4 @@
-"""Test script to verify PI0OpenPI policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
+"""Test script to verify PI0 policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
 
 import os
 from copy import deepcopy

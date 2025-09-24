@@ -520,10 +520,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
 
-        msg = """transformers_replace is not installed correctly.
-Please install it with `pip install transformers==4.53.2`
-and `cp -r ./src/lerobot/policies/pi0/transformers_replace/* \
-$(python -c "import transformers, os; print(os.path.dirname(transformers.__file__))")`"""
+        msg = """An incorrect transformer version is used, please create an issue on https://github.com/huggingface/lerobot/issues"""
 
         try:
             from transformers.models.siglip import check
@@ -860,7 +857,7 @@ class PI05Policy(PreTrainedPolicy):
     ) -> T:
         """Override the from_pretrained method to handle key remapping and display important disclaimer."""
         print(
-            "⚠️  DISCLAIMER: The PI05OpenPI model is a direct PyTorch port of the OpenPI implementation. \n"
+            "⚠️  DISCLAIMER: The PI05 model is a direct PyTorch port of the OpenPI implementation. \n"
             "   This implementation follows the original OpenPI structure for compatibility. \n"
             "   Original implementation: https://github.com/Physical-Intelligence/openpi"
         )
