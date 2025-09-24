@@ -31,7 +31,7 @@ from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditi
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
-from lerobot.policies.pi0.configuration_pi0openpi import PI0Config
+from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 
 

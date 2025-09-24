@@ -31,7 +31,7 @@ from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditi
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
-from lerobot.policies.pi05.configuration_pi05openpi import PI05OpenPIConfig
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 
 
@@ -492,7 +492,7 @@ class PaliGemmaWithExpertModel(
 class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
-    def __init__(self, config: PI05OpenPIConfig):
+    def __init__(self, config: PI05Config):
         super().__init__()
         self.config = config
 
@@ -813,15 +813,15 @@ $(python -c "import transformers, os; print(os.path.dirname(transformers.__file_
         return self.action_out_proj(suffix_out)
 
 
-class PI05OpenPIPolicy(PreTrainedPolicy):
-    """PI05 OpenPI Policy for LeRobot."""
+class PI05Policy(PreTrainedPolicy):
+    """PI05 Policy for LeRobot."""
 
-    config_class = PI05OpenPIConfig
+    config_class = PI05Config
     name = "pi05"
 
     def __init__(  # see lerobot pi0 `__init__`
         self,
-        config: PI05OpenPIConfig,
+        config: PI05Config,
     ):
         """
         Args:

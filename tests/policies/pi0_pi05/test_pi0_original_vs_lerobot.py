@@ -24,7 +24,7 @@ from openpi.models_pytorch.pi0_pytorch import PI0Pytorch  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
 from lerobot.policies.pi0 import PI0Config, PI0Policy  # noqa: E402
-from lerobot.policies.pi0.processor_pi0_openpi import make_pi0_pre_post_processors  # noqa: E402
+from lerobot.policies.pi0.processor_pi0 import make_pi0_pre_post_processors  # noqa: E402
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 
 # TODO: ADDING DEFAULT IMAGES_FEATURES TO CONFIG

@@ -7,8 +7,8 @@ import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.constants import OBS_STATE, POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
-from lerobot.policies.pi05.configuration_pi05openpi import PI05OpenPIConfig
-from lerobot.policies.pi05.modeling_pi05openpi import pad_vector
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
+from lerobot.policies.pi05.modeling_pi05 import pad_vector
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -77,8 +77,8 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         return features
 
 
-def make_pi05_openpi_pre_post_processors(
-    config: PI05OpenPIConfig,
+def make_pi05_pre_post_processors(
+    config: PI05Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
