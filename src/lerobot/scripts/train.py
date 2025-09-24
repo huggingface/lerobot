@@ -248,17 +248,6 @@ def train(cfg: TrainPipelineConfig):
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
-    # Scale learning rate for multi-GPU training
-    if accelerator is not None and accelerator.num_processes > 1 and cfg.scale_lr_with_num_gpus:
-        # Scale learning rate linearly with number of GPUs
-        original_lr = optimizer.param_groups[0]["lr"]
-        for param_group in optimizer.param_groups:
-            param_group["lr"] *= accelerator.num_processes
-        if accelerator.is_main_process:
-            logging.info(
-                f"Scaled learning rate by {accelerator.num_processes}x for multi-GPU training: {original_lr:.2e} -> {optimizer.param_groups[0]['lr']:.2e}"
-            )
-
     grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
 
     step = 0  # number of policy updates (forward + backward + optim)
@@ -292,10 +281,9 @@ def train(cfg: TrainPipelineConfig):
         if accelerator is not None:
             logging.info(f"Per-GPU batch size: {cfg.batch_size}")
             logging.info(f"Effective batch size (total): {cfg.batch_size * accelerator.num_processes}")
-            logging.info(f"Learning rate (scaled): {optimizer.param_groups[0]['lr']:.2e}")
         else:
             logging.info(f"Batch size: {cfg.batch_size}")
-            logging.info(f"Learning rate: {optimizer.param_groups[0]['lr']:.2e}")
+        logging.info(f"Learning rate: {optimizer.param_groups[0]['lr']:.2e}")
 
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
