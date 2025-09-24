@@ -18,7 +18,6 @@ from typing import Any
 
 import torch
 
-from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
@@ -30,6 +29,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
 def make_pi0fast_pre_post_processors(

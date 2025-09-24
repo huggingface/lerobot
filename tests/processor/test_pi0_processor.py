@@ -21,7 +21,6 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi0.processor_pi0 import Pi0NewLineProcessor, make_pi0_pre_post_processors
 from lerobot.processor import (
@@ -35,6 +34,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 
 class MockTokenizerProcessorStep(ProcessorStep):

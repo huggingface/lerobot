@@ -24,7 +24,6 @@ from typing_extensions import Unpack
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
-from lerobot.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.envs.configs import EnvConfig
@@ -46,6 +45,7 @@ from lerobot.processor.converters import (
     transition_to_batch,
     transition_to_policy_action,
 )
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:

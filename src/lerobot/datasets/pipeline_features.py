@@ -17,9 +17,9 @@ from collections.abc import Sequence
 from typing import Any
 
 from lerobot.configs.types import PipelineFeatureType
-from lerobot.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.processor import DataProcessorPipeline
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 
 def create_initial_features(

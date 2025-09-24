@@ -57,9 +57,9 @@ from transformers import AutoProcessor, AutoTokenizer, PaliGemmaForConditionalGe
 from transformers.cache_utils import HybridCache, StaticCache
 from transformers.models.auto import CONFIG_MAPPING
 
-from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 PRECISION = {
     "float16": torch.float16,
