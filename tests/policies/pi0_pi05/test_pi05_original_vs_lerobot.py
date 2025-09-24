@@ -413,3 +413,7 @@ def test_pi05_original_vs_lerobot():
     print(f"Actions close (atol=1e-4): {torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-4)}")
     print(f"Actions close (atol=1e-2): {torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-2)}")
     print(f"Max absolute difference: {torch.abs(lerobot_actions_own - openpi_actions).max().item():.6f}")
+
+    assert torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-4)
+    assert torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-2)
+    assert torch.abs(lerobot_actions_own - openpi_actions).max().item() < 1e-4
