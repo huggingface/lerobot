@@ -394,30 +394,3 @@ def test_pi0_original_vs_lerobot():
     print(f"Actions close (atol=1e-4): {torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-4)}")
     print(f"Actions close (atol=1e-2): {torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-2)}")
     print(f"Max absolute difference: {torch.abs(lerobot_actions_own - openpi_actions).max().item():.6f}")
-
-    # # Test 2: Both models with LeRobot preprocessing (isolates model differences)
-    # print("\nTEST 2: Both models with LeRobot preprocessing (model comparison)")
-    # print("Creating observation for OpenPI using LeRobot's preprocessing...")
-    # pi0_obs_lerobot = create_original_observation_from_lerobot(lerobot_pi0, batch)
-
-    # print("Testing OpenPI with LeRobot preprocessing...")
-    # torch.manual_seed(42)  # Set seed for reproducibility
-    # with torch.no_grad():
-    #     openpi_actions_lerobot_preproc = original_pi0.sample_actions(
-    #         device=DEVICE, observation=pi0_obs_lerobot, noise=fixed_noise, num_steps=10
-    #     )
-    # print(f"OpenPI (LeRobot preprocessing) Actions shape: {openpi_actions_lerobot_preproc.shape}")
-    # print(f"OpenPI (LeRobot preprocessing) Actions mean: {openpi_actions_lerobot_preproc.mean().item():.6f}")
-    # print(f"OpenPI (LeRobot preprocessing) Actions std: {openpi_actions_lerobot_preproc.std().item():.6f}")
-
-    # print("\nComparing models with same preprocessing:")
-    # is_close_1e4 = torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-4)
-    # is_close_1e2 = torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-2)
-    # max_diff = torch.abs(lerobot_actions_own - openpi_actions_lerobot_preproc).max().item()
-
-    # print(f"Actions close (atol=1e-4): {is_close_1e4}")
-    # print(f"Actions close (atol=1e-2): {is_close_1e2}")
-    # print(f"Max absolute difference: {max_diff:.6f}")
-
-    # # Add assertions for pytest
-    # assert is_close_1e2, f"Models should produce similar results (atol=1e-2), max diff: {max_diff}"
