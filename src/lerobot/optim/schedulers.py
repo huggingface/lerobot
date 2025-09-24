@@ -92,13 +92,18 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
         def lr_lambda(current_step):
             def linear_warmup_schedule(current_step):
                 if current_step <= 0:
-                    return 1 / (self.num_warmup_steps + 1)
-                frac = 1 - current_step / self.num_warmup_steps
-                return (1 / (self.num_warmup_steps + 1) - 1) * frac + 1
+                    return 0.1  # Start at 10% instead of 0.1% of peak LR
+                if current_step >= self.num_warmup_steps:
+                    return 1.0  # Reach peak at end of warmup
+                # Linear interpolation from 10% to 100% of peak LR
+                return 0.1 + 0.9 * (current_step / self.num_warmup_steps)
 
             def cosine_decay_schedule(current_step):
-                step = min(current_step, self.num_decay_steps)
-                cosine_decay = 0.5 * (1 + math.cos(math.pi * step / self.num_decay_steps))
+                # CRITICAL FIX: Decay should count from END of warmup, not from step 0!
+                decay_step = current_step - self.num_warmup_steps
+                decay_step = max(0, min(decay_step, self.num_decay_steps))
+
+                cosine_decay = 0.5 * (1 + math.cos(math.pi * decay_step / self.num_decay_steps))
                 alpha = self.decay_lr / self.peak_lr
                 decayed = (1 - alpha) * cosine_decay + alpha
                 return decayed
