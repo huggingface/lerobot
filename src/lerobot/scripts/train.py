@@ -33,7 +33,7 @@ from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env
 from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.scripts.eval import eval_policy
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
@@ -63,6 +63,28 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
 ) -> tuple[MetricsTracker, dict]:
+    """
+    Performs a single training step to update the policy's weights.
+
+    This function executes the forward and backward passes, clips gradients, and steps the optimizer and
+    learning rate scheduler. It also handles mixed-precision training via a GradScaler.
+
+    Args:
+        train_metrics: A MetricsTracker instance to record training statistics.
+        policy: The policy model to be trained.
+        batch: A batch of training data.
+        optimizer: The optimizer used to update the policy's parameters.
+        grad_clip_norm: The maximum norm for gradient clipping.
+        grad_scaler: The GradScaler for automatic mixed-precision training.
+        lr_scheduler: An optional learning rate scheduler.
+        use_amp: A boolean indicating whether to use automatic mixed precision.
+        lock: An optional lock for thread-safe optimizer updates.
+
+    Returns:
+        A tuple containing:
+        - The updated MetricsTracker with new statistics for this step.
+        - A dictionary of outputs from the policy's forward pass, for logging purposes.
+    """
     start_time = time.perf_counter()
     policy.train()
 
@@ -103,6 +125,20 @@ def update_policy(
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
+    """
+    Main function to train a policy.
+
+    This function orchestrates the entire training pipeline, including:
+    - Setting up logging, seeding, and device configuration.
+    - Creating the dataset, evaluation environment (if applicable), policy, and optimizer.
+    - Handling resumption from a checkpoint.
+    - Running the main training loop, which involves fetching data batches and calling `update_policy`.
+    - Periodically logging metrics, saving model checkpoints, and evaluating the policy.
+    - Pushing the final trained model to the Hugging Face Hub if configured.
+
+    Args:
+        cfg: A `TrainPipelineConfig` object containing all training configurations.
+    """
     cfg.validate()
 
     # Initialize accelerator with DDP configuration for unused parameters
@@ -172,6 +208,18 @@ def train(cfg: TrainPipelineConfig):
 
     if accelerator.is_main_process:
         logging.info("Creating optimizer and scheduler")
+
+    processor_kwargs = {}
+    if not (cfg.resume and cfg.policy.pretrained_path):
+        # Only provide dataset_stats when not resuming from saved processor state
+        processor_kwargs["dataset_stats"] = dataset.meta.stats
+
+    if cfg.policy.pretrained_path is not None:
+        processor_kwargs["preprocessor_overrides"] = {"device_processor": {"device": device.type}}
+
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path, **processor_kwargs
+    )
 
     # Scale learning rate and scheduler parameters for distributed training
     original_lr = cfg.optimizer.lr
@@ -280,10 +328,8 @@ def train(cfg: TrainPipelineConfig):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
-
-        # No need for manual device transfers - accelerator handles this
-        # The dataloader is already prepared and tensors are on the correct device
 
         train_tracker, output_dict = update_policy(
             train_tracker,
@@ -319,7 +365,16 @@ def train(cfg: TrainPipelineConfig):
 
                 # Use accelerator to unwrap the model before saving
                 unwrapped_policy = accelerator.unwrap_model(policy)
-                save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
+                save_checkpoint(
+                    checkpoint_dir,
+                    step,
+                    cfg,
+                    unwrapped_policy,
+                    optimizer,
+                    lr_scheduler,
+                    preprocessor,
+                    postprocessor,
+                )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
@@ -346,6 +401,8 @@ def train(cfg: TrainPipelineConfig):
                         videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                         max_episodes_rendered=4,
                         start_seed=cfg.seed,
+                        preprocessor=preprocessor,
+                        postprocessor=postprocessor,
                     )
 
                 eval_metrics = {

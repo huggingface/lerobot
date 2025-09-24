@@ -29,10 +29,6 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .so100_follower import SO100Follower
 
         return SO100Follower(config)
-    elif config.type == "so100_follower_end_effector":
-        from .so100_follower import SO100FollowerEndEffector
-
-        return SO100FollowerEndEffector(config)
     elif config.type == "so101_follower":
         from .so101_follower import SO101Follower
 
@@ -73,6 +69,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         raise ValueError(config.type)
 
 
+# TODO(pepijn): Move to pipeline step to make sure we don't have to do this in the robot code and send action to robot is clean for use in dataset
 def ensure_safe_goal_position(
     goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[str, float]
 ) -> dict[str, float]:
