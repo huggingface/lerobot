@@ -23,7 +23,7 @@ from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
+from lerobot.utils.visualization_utils import init_rerun
 
 NUM_EPISODES = 2
 FPS = 30
@@ -73,7 +73,7 @@ teleop_action_processor, robot_action_processor, robot_observation_processor = m
 
 # Initialize the keyboard listener and rerun visualization
 listener, events = init_keyboard_listener()
-_init_rerun(session_name="lekiwi_evaluate")
+init_rerun(session_name="lekiwi_evaluate")
 
 if not robot.is_connected:
     raise ValueError("Robot is not connected!")
