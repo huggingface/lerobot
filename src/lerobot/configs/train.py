@@ -67,6 +67,7 @@ class TrainPipelineConfig(HubMixin):
     use_accelerate: bool = False
     gradient_accumulation_steps: int = 1
     mixed_precision: str = "no"  # Options: "no", "fp16", "bf16"
+    scale_lr_with_num_gpus: bool = True  # Automatically scale learning rate with number of GPUs
 
     def __post_init__(self):
         self.checkpoint_path = None
