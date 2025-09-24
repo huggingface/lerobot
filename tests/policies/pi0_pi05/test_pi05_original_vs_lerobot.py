@@ -31,7 +31,7 @@ from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E40
 DUMMY_ACTION_DIM = 32
 DUMMY_STATE_DIM = 32
 DUMMY_ACTION_HORIZON = 50
-DUMMY_MAX_TOKEN_LEN = 48  # Default for PI0 (non-pi05)
+DUMMY_MAX_TOKEN_LEN = 200
 DEVICE = "cpu"  # Use CPU to avoid memory issues for testing
 
 DUMMY_DATASET_STATS = {
