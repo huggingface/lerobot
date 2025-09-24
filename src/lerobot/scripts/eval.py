@@ -46,16 +46,20 @@ Note that in both examples, the repo/folder should contain at least `config.json
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
 
+import concurrent.futures as cf
 import json
 import logging
 import threading
 import time
+from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict
+from functools import partial
 from pathlib import Path
 from pprint import pformat
+from typing import Any, TypedDict
 
 import einops
 import gymnasium as gym
@@ -68,10 +72,15 @@ from tqdm import trange
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env
-from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
-from lerobot.policies.factory import make_policy
+from lerobot.envs.utils import (
+    add_envs_task,
+    check_env_attributes_and_types,
+    close_envs,
+    preprocess_observation,
+)
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import get_device_from_parameters
+from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -84,6 +93,8 @@ from lerobot.utils.utils import (
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
@@ -120,7 +131,6 @@ def rollout(
         The dictionary described above.
     """
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
-    device = get_device_from_parameters(policy)
 
     # Reset the policy and environments.
     policy.reset()
@@ -145,29 +155,26 @@ def rollout(
         leave=False,
     )
     check_env_attributes_and_types(env)
-    while not np.all(done):
+    while not np.all(done) and step < max_steps:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
 
-        observation = {
-            key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
-        }
-
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
-
+        observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
+        action = postprocessor(action)
 
         # Convert to CPU / numpy.
-        action = action.to("cpu").numpy()
-        assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
+        action_numpy: np.ndarray = action.to("cpu").numpy()
+        assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
         # Apply the next action.
-        observation, reward, terminated, truncated, info = env.step(action)
+        observation, reward, terminated, truncated, info = env.step(action_numpy)
         if render_callback is not None:
             render_callback(env)
 
@@ -179,9 +186,14 @@ def rollout(
             successes = [False] * env.num_envs
 
         # Keep track of which environments are done so far.
+        # Mark the episode as done if we reach the maximum step limit.
+        # This ensures that the rollout always terminates cleanly at `max_steps`,
+        # and allows logging/saving (e.g., videos) to be triggered consistently.
         done = terminated | truncated | done
+        if step + 1 == max_steps:
+            done = np.ones_like(done, dtype=bool)
 
-        all_actions.append(torch.from_numpy(action))
+        all_actions.append(torch.from_numpy(action_numpy))
         all_rewards.append(torch.from_numpy(reward))
         all_dones.append(torch.from_numpy(done))
         all_successes.append(torch.tensor(successes))
@@ -220,6 +232,8 @@ def rollout(
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     n_episodes: int,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
@@ -296,8 +310,10 @@ def eval_policy(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
         rollout_data = rollout(
-            env,
-            policy,
+            env=env,
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
@@ -471,7 +487,7 @@ def eval_main(cfg: EvalPipelineConfig):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
     logging.info("Making environment.")
-    env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+    envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Making policy.")
 
@@ -479,26 +495,253 @@ def eval_main(cfg: EvalPipelineConfig):
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
-    policy.eval()
 
+    policy.eval()
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        pretrained_path=cfg.policy.pretrained_path,
+        # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
+        preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
+    )
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
-        info = eval_policy(
-            env,
-            policy,
-            cfg.eval.n_episodes,
+        info = eval_policy_all(
+            envs=envs,
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            n_episodes=cfg.eval.n_episodes,
             max_episodes_rendered=10,
             videos_dir=Path(cfg.output_dir) / "videos",
             start_seed=cfg.seed,
+            max_parallel_tasks=cfg.env.max_parallel_tasks,
         )
-    print(info["aggregated"])
+        print("Overall Aggregated Metrics:")
+        print(info["overall"])
+
+        # Print per-suite stats
+        for task_group, task_group_info in info.items():
+            print(f"\nAggregated Metrics for {task_group}:")
+            print(task_group_info)
+    # Close all vec envs
+    close_envs(envs)
 
     # Save info
     with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
         json.dump(info, f, indent=2)
 
-    env.close()
-
     logging.info("End of eval")
+
+
+# ---- typed payload returned by one task eval ----
+class TaskMetrics(TypedDict):
+    sum_rewards: list[float]
+    max_rewards: list[float]
+    successes: list[bool]
+    video_paths: list[str]
+
+
+ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths")
+
+
+def eval_one(
+    env: gym.vector.VectorEnv,
+    *,
+    policy: PreTrainedPolicy,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    n_episodes: int,
+    max_episodes_rendered: int,
+    videos_dir: Path | None,
+    return_episode_data: bool,
+    start_seed: int | None,
+) -> TaskMetrics:
+    """Evaluates one task_id of one suite using the provided vec env."""
+
+    task_videos_dir = videos_dir
+
+    task_result = eval_policy(
+        env=env,
+        policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+        n_episodes=n_episodes,
+        max_episodes_rendered=max_episodes_rendered,
+        videos_dir=task_videos_dir,
+        return_episode_data=return_episode_data,
+        start_seed=start_seed,
+    )
+
+    per_episode = task_result["per_episode"]
+    return TaskMetrics(
+        sum_rewards=[ep["sum_reward"] for ep in per_episode],
+        max_rewards=[ep["max_reward"] for ep in per_episode],
+        successes=[ep["success"] for ep in per_episode],
+        video_paths=task_result.get("video_paths", []),
+    )
+
+
+def run_one(
+    task_group: str,
+    task_id: int,
+    env,
+    *,
+    policy,
+    preprocessor,
+    postprocessor,
+    n_episodes: int,
+    max_episodes_rendered: int,
+    videos_dir: Path | None,
+    return_episode_data: bool,
+    start_seed: int | None,
+):
+    """
+    Run eval_one for a single (task_group, task_id, env).
+    Returns (task_group, task_id, task_metrics_dict).
+    This function is intentionally module-level to make it easy to test.
+    """
+    task_videos_dir = None
+    if videos_dir is not None:
+        task_videos_dir = videos_dir / f"{task_group}_{task_id}"
+        task_videos_dir.mkdir(parents=True, exist_ok=True)
+
+    # Call the existing eval_one (assumed to return TaskMetrics-like dict)
+    metrics = eval_one(
+        env,
+        policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+        n_episodes=n_episodes,
+        max_episodes_rendered=max_episodes_rendered,
+        videos_dir=task_videos_dir,
+        return_episode_data=return_episode_data,
+        start_seed=start_seed,
+    )
+    # ensure we always provide video_paths key to simplify accumulation
+    if max_episodes_rendered > 0:
+        metrics.setdefault("video_paths", [])
+    return task_group, task_id, metrics
+
+
+def eval_policy_all(
+    envs: dict[str, dict[int, gym.vector.VectorEnv]],
+    policy,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    n_episodes: int,
+    *,
+    max_episodes_rendered: int = 0,
+    videos_dir: Path | None = None,
+    return_episode_data: bool = False,
+    start_seed: int | None = None,
+    max_parallel_tasks: int = 1,
+) -> dict:
+    """
+    Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
+    This implementation flattens tasks, runs them sequentially or via ThreadPoolExecutor,
+    accumulates per-group and overall statistics, and returns the same aggregate metrics
+    schema as the single-env evaluator (avg_sum_reward / avg_max_reward / pc_success / timings)
+    plus per-task infos.
+    """
+    start_t = time.time()
+
+    # Flatten envs into list of (task_group, task_id, env)
+    tasks = [(tg, tid, vec) for tg, group in envs.items() for tid, vec in group.items()]
+
+    # accumulators: track metrics at both per-group level and across all groups
+    group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
+    overall: dict[str, list] = {k: [] for k in ACC_KEYS}
+    per_task_infos: list[dict] = []
+
+    # small inline helper to accumulate one task's metrics into accumulators
+    def _accumulate_to(group: str, metrics: dict):
+        # metrics expected to contain 'sum_rewards', 'max_rewards', 'successes', optionally 'video_paths'
+        # but eval_one may store per-episode lists; we assume metrics uses scalars averaged per task as before.
+        # To be robust, accept scalars or lists.
+        def _append(key, value):
+            if value is None:
+                return
+            if isinstance(value, list):
+                group_acc[group][key].extend(value)
+                overall[key].extend(value)
+            else:
+                group_acc[group][key].append(value)
+                overall[key].append(value)
+
+        _append("sum_rewards", metrics.get("sum_rewards"))
+        _append("max_rewards", metrics.get("max_rewards"))
+        _append("successes", metrics.get("successes"))
+        # video_paths is list-like
+        paths = metrics.get("video_paths", [])
+        if paths:
+            group_acc[group]["video_paths"].extend(paths)
+            overall["video_paths"].extend(paths)
+
+    # Choose runner (sequential vs threaded)
+    task_runner = partial(
+        run_one,
+        policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+        n_episodes=n_episodes,
+        max_episodes_rendered=max_episodes_rendered,
+        videos_dir=videos_dir,
+        return_episode_data=return_episode_data,
+        start_seed=start_seed,
+    )
+
+    if max_parallel_tasks <= 1:
+        # sequential path (single accumulator path on the main thread)
+        # NOTE: keeping a single-threaded accumulator avoids concurrent list appends or locks
+        for task_group, task_id, env in tasks:
+            tg, tid, metrics = task_runner(task_group, task_id, env)
+            _accumulate_to(tg, metrics)
+            per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+    else:
+        # threaded path: submit all tasks, consume completions on main thread and accumulate there
+        with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
+            fut2meta = {}
+            for task_group, task_id, env in tasks:
+                fut = executor.submit(task_runner, task_group, task_id, env)
+                fut2meta[fut] = (task_group, task_id)
+            for fut in cf.as_completed(fut2meta):
+                tg, tid, metrics = fut.result()
+                _accumulate_to(tg, metrics)
+                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+
+    # compute aggregated metrics helper (robust to lists/scalars)
+    def _agg_from_list(xs):
+        if not xs:
+            return float("nan")
+        arr = np.array(xs, dtype=float)
+        return float(np.nanmean(arr))
+
+    # compute per-group aggregates
+    groups_aggregated = {}
+    for group, acc in group_acc.items():
+        groups_aggregated[group] = {
+            "avg_sum_reward": _agg_from_list(acc["sum_rewards"]),
+            "avg_max_reward": _agg_from_list(acc["max_rewards"]),
+            "pc_success": _agg_from_list(acc["successes"]) * 100 if acc["successes"] else float("nan"),
+            "n_episodes": len(acc["sum_rewards"]),
+            "video_paths": list(acc["video_paths"]),
+        }
+
+    # overall aggregates
+    overall_agg = {
+        "avg_sum_reward": _agg_from_list(overall["sum_rewards"]),
+        "avg_max_reward": _agg_from_list(overall["max_rewards"]),
+        "pc_success": _agg_from_list(overall["successes"]) * 100 if overall["successes"] else float("nan"),
+        "n_episodes": len(overall["sum_rewards"]),
+        "eval_s": time.time() - start_t,
+        "eval_ep_s": (time.time() - start_t) / max(1, len(overall["sum_rewards"])),
+        "video_paths": list(overall["video_paths"]),
+    }
+
+    return {
+        "per_task": per_task_infos,
+        "per_group": groups_aggregated,
+        "overall": overall_agg,
+    }
 
 
 def main():

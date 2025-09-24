@@ -32,10 +32,8 @@ import torch
 import torch.utils
 from datasets import Dataset
 from huggingface_hub import HfApi, snapshot_download
-from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.constants import HF_LEROBOT_HOME
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.datasets.utils import (
@@ -79,6 +77,7 @@ from lerobot.datasets.video_utils import (
     get_video_duration_in_s,
     get_video_info,
 )
+from lerobot.utils.constants import HF_LEROBOT_HOME
 
 CODEBASE_VERSION = "v3.0"
 
@@ -142,6 +141,10 @@ class LeRobotDatasetMetadata:
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
         )
+
+    @property
+    def url_root(self) -> str:
+        return f"hf://datasets/{self.repo_id}"
 
     @property
     def _version(self) -> packaging.version.Version:
@@ -698,11 +701,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             hub_api.upload_folder(**upload_kwargs)
 
-        if not hub_api.file_exists(self.repo_id, REPOCARD_NAME, repo_type="dataset", revision=branch):
-            card = create_lerobot_dataset_card(
-                tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
-            )
-            card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
+        card = create_lerobot_dataset_card(
+            tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
+        )
+        card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
 
         if tag_version:
             with contextlib.suppress(RevisionNotFoundError):

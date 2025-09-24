@@ -19,8 +19,7 @@ import time
 import numpy as np
 import torch
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.scripts.server.helpers import (
+from lerobot.async_inference.helpers import (
     FPSTracker,
     TimedAction,
     TimedObservation,
@@ -30,6 +29,7 @@ from lerobot.scripts.server.helpers import (
     raw_observation_to_observation,
     resize_robot_observation_image,
 )
+from lerobot.configs.types import FeatureType, PolicyFeature
 
 # ---------------------------------------------------------------------
 # FPSTracker

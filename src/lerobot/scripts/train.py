@@ -30,11 +30,12 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
 from lerobot.envs.factory import make_env
+from lerobot.envs.utils import close_envs
 from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.eval import eval_policy_all
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -64,6 +65,28 @@ def update_policy(
     use_amp: bool = False,
     lock=None,
 ) -> tuple[MetricsTracker, dict]:
+    """
+    Performs a single training step to update the policy's weights.
+
+    This function executes the forward and backward passes, clips gradients, and steps the optimizer and
+    learning rate scheduler. It also handles mixed-precision training via a GradScaler.
+
+    Args:
+        train_metrics: A MetricsTracker instance to record training statistics.
+        policy: The policy model to be trained.
+        batch: A batch of training data.
+        optimizer: The optimizer used to update the policy's parameters.
+        grad_clip_norm: The maximum norm for gradient clipping.
+        grad_scaler: The GradScaler for automatic mixed-precision training.
+        lr_scheduler: An optional learning rate scheduler.
+        use_amp: A boolean indicating whether to use automatic mixed precision.
+        lock: An optional lock for thread-safe optimizer updates.
+
+    Returns:
+        A tuple containing:
+        - The updated MetricsTracker with new statistics for this step.
+        - A dictionary of outputs from the policy's forward pass, for logging purposes.
+    """
     start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
     policy.train()
@@ -107,6 +130,20 @@ def update_policy(
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
+    """
+    Main function to train a policy.
+
+    This function orchestrates the entire training pipeline, including:
+    - Setting up logging, seeding, and device configuration.
+    - Creating the dataset, evaluation environment (if applicable), policy, and optimizer.
+    - Handling resumption from a checkpoint.
+    - Running the main training loop, which involves fetching data batches and calling `update_policy`.
+    - Periodically logging metrics, saving model checkpoints, and evaluating the policy.
+    - Pushing the final trained model to the Hugging Face Hub if configured.
+
+    Args:
+        cfg: A `TrainPipelineConfig` object containing all training configurations.
+    """
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
@@ -139,6 +176,19 @@ def train(cfg: TrainPipelineConfig):
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
+    )
+
+    # Create processors - only provide dataset_stats if not resuming from saved processors
+    processor_kwargs = {}
+    if not (cfg.resume and cfg.policy.pretrained_path):
+        # Only provide dataset_stats when not resuming from saved processor state
+        processor_kwargs["dataset_stats"] = dataset.meta.stats
+
+    if cfg.policy.pretrained_path is not None:
+        processor_kwargs["preprocessor_overrides"] = {"device_processor": {"device": device.type}}
+
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path, **processor_kwargs
     )
 
     logging.info("Creating optimizer and scheduler")
@@ -179,10 +229,11 @@ def train(cfg: TrainPipelineConfig):
         dataset,
         num_workers=cfg.num_workers,
         batch_size=cfg.batch_size,
-        shuffle=shuffle,
+        shuffle=shuffle and not cfg.dataset.streaming,
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
+        prefetch_factor=2,
     )
     dl_iter = cycle(dataloader)
 
@@ -204,11 +255,8 @@ def train(cfg: TrainPipelineConfig):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
-
-        for key in batch:
-            if isinstance(batch[key], torch.Tensor):
-                batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")
 
         train_tracker, output_dict = update_policy(
             train_tracker,
@@ -241,7 +289,9 @@ def train(cfg: TrainPipelineConfig):
         if cfg.save_checkpoint and is_saving_step:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler)
+            save_checkpoint(
+                checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler, preprocessor, postprocessor
+            )
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
                 wandb_logger.log_policy(checkpoint_dir)
@@ -253,15 +303,25 @@ def train(cfg: TrainPipelineConfig):
                 torch.no_grad(),
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
             ):
-                eval_info = eval_policy(
-                    eval_env,
-                    policy,
-                    cfg.eval.n_episodes,
+                eval_info = eval_policy_all(
+                    envs=eval_env,  # dict[suite][task_id] -> vec_env
+                    policy=policy,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    n_episodes=cfg.eval.n_episodes,
                     videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                     max_episodes_rendered=4,
                     start_seed=cfg.seed,
+                    max_parallel_tasks=cfg.env.max_parallel_tasks,
                 )
+            # overall metrics (suite-agnostic)
+            aggregated = eval_info["overall"]
 
+            # optional: per-suite logging
+            for suite, suite_info in eval_info.items():
+                logging.info("Suite %s aggregated: %s", suite, suite_info)
+
+            # meters/tracker
             eval_metrics = {
                 "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
                 "pc_success": AverageMeter("success", ":.1f"),
@@ -270,21 +330,22 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker = MetricsTracker(
                 cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
             )
-            eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
-            eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
-            eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
-            logging.info(eval_tracker)
+            eval_tracker.eval_s = aggregated.pop("eval_s")
+            eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
+            eval_tracker.pc_success = aggregated.pop("pc_success")
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+                wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
 
     if eval_env:
-        eval_env.close()
+        close_envs(eval_env)
     logging.info("End of training")
 
     if cfg.policy.push_to_hub:
         policy.push_model_to_hub(cfg)
+        preprocessor.push_to_hub(cfg.policy.repo_id)
+        postprocessor.push_to_hub(cfg.policy.repo_id)
 
 
 def main():
