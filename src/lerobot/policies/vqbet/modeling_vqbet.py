@@ -27,11 +27,11 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
 
-from lerobot.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.vqbet.vqbet_utils import GPT, ResidualVQ
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 # ruff: noqa: N806
 

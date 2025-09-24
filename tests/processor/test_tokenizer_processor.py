@@ -9,9 +9,9 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.constants import OBS_LANGUAGE
 from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep, TransitionKey
 from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.utils.constants import OBS_LANGUAGE
 from tests.utils import require_package
 
 
