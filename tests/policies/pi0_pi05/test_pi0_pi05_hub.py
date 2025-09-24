@@ -19,7 +19,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 from lerobot.policies.pi0 import PI0Policy  # noqa: E402
+from lerobot.policies.pi0.processor_pi0 import make_pi0_pre_post_processors  # noqa: E402
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy  # noqa: E402
+from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors  # noqa: E402
 
 
 def create_dummy_stats(config):
@@ -77,37 +79,11 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
         print(f"✗ Failed to load model {model_id}: {e}")
         raise
 
-    # Set up input_features and output_features in the config (not set by from_pretrained)
-    from lerobot.configs.types import FeatureType, PolicyFeature
-
-    policy.config.input_features = {
-        "observation.state": PolicyFeature(
-            type=FeatureType.STATE,
-            shape=(policy.config.max_state_dim,),
-        ),
-        "observation.images.base_0_rgb": PolicyFeature(
-            type=FeatureType.VISUAL,
-            shape=(3, 224, 224),
-        ),
-        "observation.images.left_wrist_0_rgb": PolicyFeature(
-            type=FeatureType.VISUAL,
-            shape=(3, 224, 224),
-        ),
-        "observation.images.right_wrist_0_rgb": PolicyFeature(
-            type=FeatureType.VISUAL,
-            shape=(3, 224, 224),
-        ),
-    }
-
-    policy.config.output_features = {
-        "action": PolicyFeature(
-            type=FeatureType.ACTION,
-            shape=(policy.config.max_action_dim,),
-        ),
-    }
-
     # Get model info
     device = next(policy.parameters()).device
+
+    # Set device for policy config
+    policy.config.device = device
     print("\nModel configuration:")
     print(f"  - Model ID: {model_id}")
     print(f"  - Model type: {model_type}")
@@ -153,18 +129,15 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
             "std": stats["std"].to(device),
         }
 
-    # Initialize normalization layers with dummy stats
-    from lerobot.policies.normalize import Normalize, Unnormalize
-
-    policy.normalize_inputs = Normalize(
-        policy.config.input_features, policy.config.normalization_mapping, dummy_stats
-    )
-    policy.normalize_targets = Normalize(
-        policy.config.output_features, policy.config.normalization_mapping, dummy_stats
-    )
-    policy.unnormalize_outputs = Unnormalize(
-        policy.config.output_features, policy.config.normalization_mapping, dummy_stats
-    )
+    # Create processor pipeline based on model type
+    if model_type == "PI0.5":
+        preprocessor, postprocessor = make_pi05_pre_post_processors(
+            config=policy.config, dataset_stats=dummy_stats
+        )
+    else:  # PI0
+        preprocessor, postprocessor = make_pi0_pre_post_processors(
+            config=policy.config, dataset_stats=dummy_stats
+        )
 
     # Create test batch
     batch_size = 1
@@ -186,11 +159,14 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
     for key in policy.config.image_features.keys():
         batch[key] = torch.rand(batch_size, 3, 224, 224, dtype=torch.float32, device=device)
 
+    # Process batch with pipeline
+    processed_batch = preprocessor(batch)
+
     # Test forward pass
     print(f"\nTesting forward pass for {model_id}...")
     try:
         policy.train()
-        loss, loss_dict = policy.forward(batch)
+        loss, loss_dict = policy.forward(processed_batch)
         assert not torch.isnan(loss), f"{model_id}: Forward pass produced NaN loss"
         assert loss.item() >= 0, f"{model_id}: Loss should be non-negative"
         print(f"✓ Forward pass successful - Loss: {loss_dict['loss']:.4f}")
@@ -203,8 +179,8 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
     try:
         policy.eval()
         with torch.no_grad():
-            action = policy.select_action(batch)
-        expected_shape = (batch_size, policy.config.max_action_dim)
+            action = policy.predict_action_chunk(processed_batch)
+        expected_shape = (batch_size, policy.config.chunk_size, policy.config.max_action_dim)
         assert action.shape == expected_shape, (
             f"{model_id}: Expected action shape {expected_shape}, got {action.shape}"
         )
