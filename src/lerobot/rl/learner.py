@@ -62,12 +62,6 @@ from torch.optim.optimizer import Optimizer
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.constants import (
-    CHECKPOINTS_DIR,
-    LAST_CHECKPOINT_LINK,
-    PRETRAINED_MODEL_DIR,
-    TRAINING_STATE_DIR,
-)
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
@@ -83,6 +77,12 @@ from lerobot.transport.utils import (
     state_to_bytes,
 )
 from lerobot.utils.buffer import ReplayBuffer, concatenate_batch_transitions
+from lerobot.utils.constants import (
+    CHECKPOINTS_DIR,
+    LAST_CHECKPOINT_LINK,
+    PRETRAINED_MODEL_DIR,
+    TRAINING_STATE_DIR,
+)
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (

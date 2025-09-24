@@ -21,7 +21,6 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
 from lerobot.processor import (
@@ -34,6 +33,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 
 def create_default_config():
