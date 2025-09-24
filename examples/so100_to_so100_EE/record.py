@@ -39,7 +39,7 @@ from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderCo
 from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
+from lerobot.utils.visualization_utils import init_rerun
 
 NUM_EPISODES = 2
 FPS = 30
@@ -101,7 +101,6 @@ ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservati
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
-            max_ee_twist_step_rad=0.50,
         ),
         InverseKinematicsEEToJoints(
             kinematics=follower_kinematics_solver,
@@ -143,7 +142,7 @@ follower.connect()
 
 # Initialize the keyboard listener and rerun visualization
 listener, events = init_keyboard_listener()
-_init_rerun(session_name="recording_phone")
+init_rerun(session_name="recording_phone")
 
 if not leader.is_connected or not follower.is_connected:
     raise ValueError("Robot or teleop is not connected!")

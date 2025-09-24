@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from lerobot.processor import TransitionKey
+from lerobot.utils.constants import OBS_STATE
 
 
 @pytest.fixture
@@ -72,7 +73,7 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
 
     # Build EnvTransition dict
     obs = {
-        "observation.state.temperature": np.float32(25.0),
+        f"{OBS_STATE}.temperature": np.float32(25.0),
         # CHW image should be converted to HWC for rr.Image
         "observation.camera": np.zeros((3, 10, 20), dtype=np.uint8),
     }
@@ -97,7 +98,7 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
     # - action.throttle -> Scalar
     # - action.vector_0, action.vector_1 -> Scalars
     expected_keys = {
-        "observation.state.temperature",
+        f"{OBS_STATE}.temperature",
         "observation.camera",
         "action.throttle",
         "action.vector_0",
@@ -106,7 +107,7 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
     assert set(_keys(calls)) == expected_keys
 
     # Check scalar types and values
-    temp_obj = _obj_for(calls, "observation.state.temperature")
+    temp_obj = _obj_for(calls, f"{OBS_STATE}.temperature")
     assert type(temp_obj).__name__ == "DummyScalar"
     assert temp_obj.value == pytest.approx(25.0)
 

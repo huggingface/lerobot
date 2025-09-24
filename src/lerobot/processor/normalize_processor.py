@@ -26,6 +26,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import ACTION
 
 from .converters import from_tensor_to_numpy, to_tensor
 from .core import EnvTransition, PolicyAction, TransitionKey
@@ -118,13 +119,12 @@ class _NormalizationMixin:
                     )
                 self.features = reconstructed
 
-        if self.norm_map:
-            # if keys are strings (JSON), rebuild enum map
-            if all(isinstance(k, str) for k in self.norm_map.keys()):
-                reconstructed = {}
-                for ft_type_str, norm_mode_str in self.norm_map.items():
-                    reconstructed[FeatureType(ft_type_str)] = NormalizationMode(norm_mode_str)
-                self.norm_map = reconstructed
+        # if keys are strings (JSON), rebuild enum map
+        if self.norm_map and all(isinstance(k, str) for k in self.norm_map):
+            reconstructed = {}
+            for ft_type_str, norm_mode_str in self.norm_map.items():
+                reconstructed[FeatureType(ft_type_str)] = NormalizationMode(norm_mode_str)
+            self.norm_map = reconstructed
 
         # Convert stats to tensors and move to the target device once during initialization.
         self.stats = self.stats or {}
@@ -272,7 +272,7 @@ class _NormalizationMixin:
         Returns:
             The transformed action tensor.
         """
-        processed_action = self._apply_transform(action, "action", FeatureType.ACTION, inverse=inverse)
+        processed_action = self._apply_transform(action, ACTION, FeatureType.ACTION, inverse=inverse)
         return processed_action
 
     def _apply_transform(

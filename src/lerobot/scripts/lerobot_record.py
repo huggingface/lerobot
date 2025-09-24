@@ -109,6 +109,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so101_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
+from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -122,7 +123,7 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
-from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 
 @dataclass
@@ -266,11 +267,7 @@ def record_loop(
                 for t in teleop
                 if isinstance(
                     t,
-                    (
-                        so100_leader.SO100Leader,
-                        so101_leader.SO101Leader,
-                        koch_leader.KochLeader,
-                    ),
+                    (so100_leader.SO100Leader | so101_leader.SO101Leader | koch_leader.KochLeader),
                 )
             ),
             None,
@@ -303,7 +300,7 @@ def record_loop(
         obs_processed = robot_observation_processor(obs)
 
         if policy is not None or dataset is not None:
-            observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix="observation")
+            observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
@@ -318,7 +315,7 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
-            action_names = dataset.features["action"]["names"]
+            action_names = dataset.features[ACTION]["names"]
             act_processed_policy: RobotAction = {
                 f"{name}": float(action_values[i]) for i, name in enumerate(action_names)
             }
@@ -360,7 +357,7 @@ def record_loop(
 
         # Write to dataset
         if dataset is not None:
-            action_frame = build_dataset_frame(dataset.features, action_values, prefix="action")
+            action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
 
@@ -378,7 +375,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        _init_rerun(session_name="recording")
+        init_rerun(session_name="recording")
 
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None

@@ -105,7 +105,7 @@ class HopeJrArm(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
-    def calibrate(self, limb_name: str = None) -> None:
+    def calibrate(self) -> None:
         groups = {
             "all": list(self.bus.motors.keys()),
             "shoulder": ["shoulder_pitch", "shoulder_yaw", "shoulder_roll"],

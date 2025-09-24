@@ -81,6 +81,7 @@ from lerobot.envs.utils import (
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.utils.constants import ACTION, DONE, OBS_STR, REWARD
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -212,7 +213,7 @@ def rollout(
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
-        "action": torch.stack(all_actions, dim=1),
+        ACTION: torch.stack(all_actions, dim=1),
         "reward": torch.stack(all_rewards, dim=1),
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
@@ -221,7 +222,7 @@ def rollout(
         stacked_observations = {}
         for key in all_observations[0]:
             stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
-        ret["observation"] = stacked_observations
+        ret[OBS_STR] = stacked_observations
 
     if hasattr(policy, "use_original_modules"):
         policy.use_original_modules()
@@ -439,28 +440,28 @@ def _compile_episode_data(
     """
     ep_dicts = []
     total_frames = 0
-    for ep_ix in range(rollout_data["action"].shape[0]):
+    for ep_ix in range(rollout_data[ACTION].shape[0]):
         # + 2 to include the first done frame and the last observation frame.
         num_frames = done_indices[ep_ix].item() + 2
         total_frames += num_frames
 
         # Here we do `num_frames - 1` as we don't want to include the last observation frame just yet.
         ep_dict = {
-            "action": rollout_data["action"][ep_ix, : num_frames - 1],
+            ACTION: rollout_data[ACTION][ep_ix, : num_frames - 1],
             "episode_index": torch.tensor([start_episode_index + ep_ix] * (num_frames - 1)),
             "frame_index": torch.arange(0, num_frames - 1, 1),
             "timestamp": torch.arange(0, num_frames - 1, 1) / fps,
-            "next.done": rollout_data["done"][ep_ix, : num_frames - 1],
+            DONE: rollout_data["done"][ep_ix, : num_frames - 1],
             "next.success": rollout_data["success"][ep_ix, : num_frames - 1],
-            "next.reward": rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
+            REWARD: rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
         }
 
         # For the last observation frame, all other keys will just be copy padded.
         for k in ep_dict:
             ep_dict[k] = torch.cat([ep_dict[k], ep_dict[k][-1:]])
 
-        for key in rollout_data["observation"]:
-            ep_dict[key] = rollout_data["observation"][key][ep_ix, :num_frames]
+        for key in rollout_data[OBS_STR]:
+            ep_dict[key] = rollout_data[OBS_STR][key][ep_ix, :num_frames]
 
         ep_dicts.append(ep_dict)
 
