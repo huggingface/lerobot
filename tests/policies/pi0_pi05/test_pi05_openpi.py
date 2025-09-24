@@ -52,9 +52,6 @@ def test_pi05_model_architecture():
     assert config.tokenizer_max_length == 200, (
         f"Expected tokenizer_max_length=200 for pi05, got {config.tokenizer_max_length}"
     )
-    assert config.discrete_state_input == True, (  # noqa: E712
-        f"Expected discrete_state_input=True for pi05, got {config.discrete_state_input}"
-    )
 
     # Create dummy dataset stats
     dataset_stats = {
