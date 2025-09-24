@@ -63,6 +63,7 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.processor import TransitionKey
+from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import so100_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
@@ -75,7 +76,6 @@ from lerobot.transport.utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
-from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.queue import get_last_item_from_queue
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import busy_wait
