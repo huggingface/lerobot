@@ -19,8 +19,8 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import make_default_processors
-from lerobot.record import record_loop
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.scripts.lerobot_record import record_loop
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import _init_rerun
