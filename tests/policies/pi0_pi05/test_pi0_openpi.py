@@ -22,13 +22,10 @@ from lerobot.policies.pi0 import (  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda  # noqa: E402
 
-# Set seed
-
 
 @require_cuda
 def test_policy_instantiation():
     # Create config
-
     set_seed(42)
     config = PI0Config(max_action_dim=7, max_state_dim=14, dtype="float32")
 
