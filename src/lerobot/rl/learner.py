@@ -66,6 +66,7 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
 from lerobot.robots import so100_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
@@ -76,7 +77,6 @@ from lerobot.transport.utils import (
     bytes_to_transitions,
     state_to_bytes,
 )
-from lerobot.utils.buffer import ReplayBuffer, concatenate_batch_transitions
 from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
