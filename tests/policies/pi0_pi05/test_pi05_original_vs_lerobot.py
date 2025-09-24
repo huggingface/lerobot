@@ -4,6 +4,7 @@ import os
 from copy import deepcopy
 from typing import Any
 
+import numpy as np
 import pytest
 import torch
 
@@ -235,37 +236,45 @@ class PI05Observation:
 
 
 def create_original_observation_with_openpi_preprocessing(batch):
-    """Create observation object for OpenPI using OpenPI's own preprocessing."""
+    """Create observation object for OpenPI using OpenPI's own preprocessing with pi05 state tokenizer."""
     batch_size = batch["observation.state"].shape[0]
     device = batch["observation.state"].device
 
     # Create tokenizer for OpenPI (same as LeRobot uses)
     tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
 
-    # Get task description
-    if "task" in batch:
-        tasks = batch["task"]
-        if isinstance(tasks, str):
-            # Single string: add newline if not present, then convert to list
-            if not tasks.endswith("\n"):
-                tasks = f"{tasks}\n"
-            tasks = [tasks]
-        elif isinstance(tasks, list) and all(isinstance(t, str) for t in tasks):
-            # List of strings: add newline to each if not present
-            tasks = [t if t.endswith("\n") else f"{t}\n" for t in tasks]
-            if len(tasks) == 1:
-                # Expand to batch size
-                tasks = tasks * batch_size
-                if len(tasks) != batch_size:
-                    raise ValueError(f"Expected batch size {batch_size}, got {len(tasks)}")
-        # If task is neither string nor list of strings, leave unchanged
-    else:
-        # Default task if not provided
-        tasks = ["Pick up the object\n"] * batch_size
+    # Get task description (pi05 processor handles all text formatting)
+    tasks = batch.get("task", ["Pick up the object"] * batch_size)
+    if isinstance(tasks, str):
+        tasks = [tasks] * batch_size
+    elif len(tasks) == 1:
+        tasks = tasks * batch_size
+
+    # Use pi05 state and input tokenizer logic (same as Pi05PrepareStateTokenizerProcessorStep)
+    state = batch["observation.state"]
+    state = deepcopy(state)
+
+    # Prepare state (pad to max_state_dim)
+    from lerobot.policies.pi05.modeling_pi05 import pad_vector
+
+    state = pad_vector(state, DUMMY_STATE_DIM)
+
+    # Normalize state to [-1, 1] range if needed (assuming it's already normalized from normalize_inputs)
+    # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+    state_np = state.cpu().numpy()
+    discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+
+    # Create pi05-formatted prompts that include state information
+    full_prompts = []
+    for i, task in enumerate(tasks):
+        cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
+        state_str = " ".join(map(str, discretized_states[i]))
+        full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+        full_prompts.append(full_prompt)
 
     # Tokenize with max_length padding to match OpenPI's expected format
     tokenized = tokenizer(
-        tasks,
+        full_prompts,
         padding="max_length",
         padding_side="right",
         truncation=True,

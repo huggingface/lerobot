@@ -38,23 +38,33 @@ DUMMY_DATASET_STATS = {
     "observation.state": {
         "mean": torch.zeros(DUMMY_STATE_DIM),
         "std": torch.ones(DUMMY_STATE_DIM),
+        "q01": torch.zeros(DUMMY_STATE_DIM),
+        "q99": torch.ones(DUMMY_STATE_DIM),
     },
     "action": {
         "mean": torch.zeros(DUMMY_ACTION_DIM),
         "std": torch.ones(DUMMY_ACTION_DIM),
+        "q01": torch.zeros(DUMMY_ACTION_DIM),
+        "q99": torch.ones(DUMMY_ACTION_DIM),
     },
     "images": {
         "base_0_rgb": {
             "mean": torch.zeros(3, 224, 224),
             "std": torch.ones(3, 224, 224),
+            "q01": torch.zeros(3, 224, 224),
+            "q99": torch.ones(3, 224, 224),
         },
         "left_wrist_0_rgb": {
             "mean": torch.zeros(3, 224, 224),
             "std": torch.ones(3, 224, 224),
+            "q01": torch.zeros(3, 224, 224),
+            "q99": torch.ones(3, 224, 224),
         },
         "right_wrist_0_rgb": {
             "mean": torch.zeros(3, 224, 224),
             "std": torch.ones(3, 224, 224),
+            "q01": torch.zeros(3, 224, 224),
+            "q99": torch.ones(3, 224, 224),
         },
     },
 }

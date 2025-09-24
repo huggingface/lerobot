@@ -61,7 +61,7 @@ class PI05Config(PreTrainedConfig):
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": NormalizationMode.IDENTITY,  # Images are normalized to [-1, 1] in preprocessing
+            "VISUAL": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for images
             "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
             "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
         }
