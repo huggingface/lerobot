@@ -33,7 +33,7 @@ To Install LIBERO, after following LeRobot official instructions, just do:
 Evaluate a policy on one LIBERO suite:
 
 ```bash
-python src/lerobot/scripts/eval.py \
+lerobot-eval \
   --policy.path="your-policy-id" \
   --env.type=libero \
   --env.task=libero_object \
@@ -52,7 +52,7 @@ python src/lerobot/scripts/eval.py \
 Benchmark a policy across multiple suites at once:
 
 ```bash
-python src/lerobot/scripts/eval.py \
+lerobot-eval \
   --policy.path="your-policy-id" \
   --env.type=libero \
   --env.task=libero_object,libero_spatial \
@@ -103,10 +103,10 @@ For reference, here is the **original dataset** published by Physical Intelligen
 ### Example training command
 
 ```bash
-python src/lerobot/scripts/train.py \
+lerobot-train \
   --policy.type=smolvla \
   --policy.repo_id=${HF_USER}/libero-test \
-  --dataset.repo_id=jadechoghari/smol-libero3 \
+  --dataset.repo_id=HuggingFaceVLA/libero \
   --env.type=libero \
   --env.task=libero_10 \
   --output_dir=./outputs/ \

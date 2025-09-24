@@ -13,10 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 from pathlib import Path
 
-from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -34,10 +32,6 @@ from lerobot.utils.constants import (
     TRAINING_STEP,
 )
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
-
-
-def log_output_dir(out_dir):
-    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
 
 
 def get_step_identifier(step: int, total_steps: int) -> str:
