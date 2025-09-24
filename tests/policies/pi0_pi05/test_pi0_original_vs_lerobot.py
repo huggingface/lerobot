@@ -348,8 +348,8 @@ def test_pi0_original_vs_lerobot():
     batch = create_dummy_data()
     batch_lerobot = deepcopy(batch)
 
-    # Test 1: Each model with its own preprocessing (more realistic end-to-end test)
-    print("\nTEST 1: Each model with its own preprocessing")
+    # Test each model with its own preprocessing (more realistic end-to-end test)
+    print("\nTest each model with its own preprocessing")
     print("Creating observation for OpenPI using OpenPI's own preprocessing...")
     pi0_obs_openpi = create_original_observation_with_openpi_preprocessing(batch)
 

@@ -48,11 +48,11 @@ def create_dummy_stats(config):
 # Test data for all 6 base models
 MODEL_TEST_PARAMS = [
     # PI0 models
-    ("pepijn223/pi0_base_fp32", "PI0", PI0Policy),
-    ("pepijn223/pi0_libero_fp32", "PI0", PI0Policy),
+    ("pepijn223/pi0_base", "PI0", PI0Policy),
+    ("pepijn223/pi0_libero", "PI0", PI0Policy),
     # PI0.5 models
-    ("pepijn223/pi05_base_fp32", "PI0.5", PI05Policy),
-    ("pepijn223/pi05_libero_fp32", "PI0.5", PI05Policy),
+    ("pepijn223/pi05_base", "PI0.5", PI05Policy),
+    ("pepijn223/pi05_libero", "PI0.5", PI05Policy),
 ]
 
 
@@ -61,7 +61,7 @@ def test_all_base_models_hub_loading(model_id, model_type, policy_class):
     """Test loading and basic functionality of all 6 base models from HuggingFace Hub.
 
     Args:
-        model_id: HuggingFace model ID (e.g., "pepijn223/pi0_base_fp32")
+        model_id: HuggingFace model ID (e.g., "pepijn223/pi0_base")
         model_type: Model type ("PI0" or "PI0.5")
         policy_class: Policy class to use (PI0Policy or PI05Policy)
     """

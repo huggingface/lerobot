@@ -70,7 +70,7 @@ DUMMY_DATASET_STATS = {
 }
 
 
-class PI0BaseOriginalConfig:
+class PI05BaseOriginalConfig:
     action_dim: int = DUMMY_ACTION_DIM
     action_horizon: int = DUMMY_ACTION_HORIZON
     paligemma_variant: str = "gemma_2b"
@@ -80,7 +80,7 @@ class PI0BaseOriginalConfig:
     dtype: str = "float32"
 
 
-def instantiate_lerobot_pi0(
+def instantiate_lerobot_pi05(
     from_pretrained: bool = False,
 ) -> tuple[
     PI05Policy,
@@ -102,8 +102,8 @@ def instantiate_lerobot_pi0(
     return (policy, preprocessor, postprocessor)
 
 
-def instantiate_original_pi0(from_pretrained: bool = False, model_path: str | None = None):
-    config = PI0BaseOriginalConfig()
+def instantiate_original_pi05(from_pretrained: bool = False, model_path: str | None = None):
+    config = PI05BaseOriginalConfig()
     policy = PI0Pytorch(config)
 
     if from_pretrained:
@@ -212,7 +212,7 @@ def extract_lerobot_processed_inputs(lerobot_pi0, batch):
     return images, img_masks, lang_tokens, lang_masks, token_ar_mask, token_loss_mask
 
 
-class PI0Observation:
+class PI05Observation:
     """Observation class that matches the original OpenPI format."""
 
     def __init__(
@@ -293,7 +293,7 @@ def create_original_observation_with_openpi_preprocessing(batch):
         image_masks_dict[key] = torch.ones(batch_size, dtype=torch.bool, device=device)
 
     # Create raw observation object (before preprocessing)
-    raw_observation = PI0Observation(
+    raw_observation = PI05Observation(
         state=batch["observation.state"],
         images=image_dict,
         image_masks=image_masks_dict,
@@ -333,7 +333,7 @@ def create_original_observation_from_lerobot(lerobot_pi0, batch):
         "right_wrist_0_rgb": img_masks[2],
     }
 
-    return PI0Observation(
+    return PI05Observation(
         state=batch["observation.state"],
         images=image_dict,
         image_masks=image_masks_dict,
@@ -344,13 +344,13 @@ def create_original_observation_from_lerobot(lerobot_pi0, batch):
     )
 
 
-def test_pi0_original_vs_lerobot():
-    """Test PI0 original implementation vs LeRobot implementation."""
+def test_pi05_original_vs_lerobot():
+    """Test PI05 original implementation vs LeRobot implementation."""
     print("Initializing models...")
-    lerobot_pi0, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_pi0(
+    lerobot_pi05, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_pi05(
         from_pretrained=True
     )  # Load pretrained LeRobot model
-    original_pi0 = instantiate_original_pi0(
+    original_pi0 = instantiate_original_pi05(
         from_pretrained=True
     )  # Load pretrained OpenPI model from HuggingFace Hub
 
@@ -358,8 +358,8 @@ def test_pi0_original_vs_lerobot():
     batch = create_dummy_data()
     batch_lerobot = deepcopy(batch)
 
-    # Test 1: Each model with its own preprocessing (more realistic end-to-end test)
-    print("\nTEST 1: Each model with its own preprocessing")
+    # Test each model with its own preprocessing (more realistic end-to-end test)
+    print("\nTest each model with its own preprocessing")
     print("Creating observation for OpenPI using OpenPI's own preprocessing...")
     pi0_obs_openpi = create_original_observation_with_openpi_preprocessing(batch)
 
@@ -386,12 +386,12 @@ def test_pi0_original_vs_lerobot():
     print(f"OpenPI (own preprocessing) Actions std: {openpi_actions.std().item():.6f}")
 
     print("Testing LeRobot with own preprocessing...")
-    lerobot_pi0.eval()
+    lerobot_pi05.eval()
     torch.manual_seed(42)  # Set the same seed
 
     batch_lerobot_processed = lerobot_preprocessor(batch_lerobot)
     with torch.no_grad():
-        lerobot_actions_own = lerobot_pi0.predict_action_chunk(
+        lerobot_actions_own = lerobot_pi05.predict_action_chunk(
             batch_lerobot_processed
         )  # batch_size, n_action_steps, action_dim
         lerobot_actions_unit = lerobot_actions_own[:, 0, :]
@@ -404,30 +404,3 @@ def test_pi0_original_vs_lerobot():
     print(f"Actions close (atol=1e-4): {torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-4)}")
     print(f"Actions close (atol=1e-2): {torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-2)}")
     print(f"Max absolute difference: {torch.abs(lerobot_actions_own - openpi_actions).max().item():.6f}")
-
-    # # Test 2: Both models with LeRobot preprocessing (isolates model differences)
-    # print("\nTEST 2: Both models with LeRobot preprocessing (model comparison)")
-    # print("Creating observation for OpenPI using LeRobot's preprocessing...")
-    # pi0_obs_lerobot = create_original_observation_from_lerobot(lerobot_pi0, batch)
-
-    # print("Testing OpenPI with LeRobot preprocessing...")
-    # torch.manual_seed(42)  # Set seed for reproducibility
-    # with torch.no_grad():
-    #     openpi_actions_lerobot_preproc = original_pi0.sample_actions(
-    #         device=DEVICE, observation=pi0_obs_lerobot, noise=fixed_noise, num_steps=10
-    #     )
-    # print(f"OpenPI (LeRobot preprocessing) Actions shape: {openpi_actions_lerobot_preproc.shape}")
-    # print(f"OpenPI (LeRobot preprocessing) Actions mean: {openpi_actions_lerobot_preproc.mean().item():.6f}")
-    # print(f"OpenPI (LeRobot preprocessing) Actions std: {openpi_actions_lerobot_preproc.std().item():.6f}")
-
-    # print("\nComparing models with same preprocessing:")
-    # is_close_1e4 = torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-4)
-    # is_close_1e2 = torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-2)
-    # max_diff = torch.abs(lerobot_actions_own - openpi_actions_lerobot_preproc).max().item()
-
-    # print(f"Actions close (atol=1e-4): {is_close_1e4}")
-    # print(f"Actions close (atol=1e-2): {is_close_1e2}")
-    # print(f"Max absolute difference: {max_diff:.6f}")
-
-    # # Add assertions for pytest
-    # assert is_close_1e2, f"Models should produce similar results (atol=1e-2), max diff: {max_diff}"
