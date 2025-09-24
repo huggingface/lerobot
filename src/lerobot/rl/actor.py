@@ -35,7 +35,7 @@ gamepad to take control of the robot during training. Initially intervene freque
 reduce interventions as the policy improves.
 
 **WORKFLOW**:
-1. Determine robot workspace bounds using `find_joint_limits.py`
+1. Determine robot workspace bounds using `lerobot-find-joint-limits`
 2. Record demonstrations with `gym_manipulator.py` in record mode
 3. Process the dataset and determine camera crops with `crop_dataset_roi.py`
 4. Start the learner server with the training configuration

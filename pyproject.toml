@@ -173,6 +173,7 @@ lerobot-eval="lerobot.scripts.eval:main"
 lerobot-train="lerobot.scripts.train:main"
 lerobot-dataset-viz="lerobot.scripts.lerobot_dataset_viz:main"
 lerobot-info="lerobot.scripts.lerobot_info:main"
+lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 
 # ---------------- Tool Configurations ----------------
