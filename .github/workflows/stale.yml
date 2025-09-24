@@ -31,11 +31,11 @@ env:
     Feel free to reopen if is still relevant, or to ping a collaborator if you have any questions.
   WARN_ISSUE_MESSAGE: >
     This issue has been automatically marked as stale because it has not had
-    recent activity (1 year). It will be closed if no further activity occurs.
+    recent activity (6 months). It will be closed if no further activity occurs.
     Thank you for your contributions.
   WARN_PR_MESSAGE: >
     This PR has been automatically marked as stale because it has not had
-    recent activity (1 year). It will be closed if no further activity occurs.
+    recent activity (6 months). It will be closed if no further activity occurs.
     Thank you for your contributions.
 
 jobs:
