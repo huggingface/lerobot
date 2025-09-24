@@ -74,6 +74,7 @@ from lerobot.robots import (  # noqa: F401
     hope_jr,
     koch_follower,
     make_robot_from_config,
+    piper,
     so100_follower,
     so101_follower,
 )
