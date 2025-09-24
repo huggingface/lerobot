@@ -18,13 +18,13 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.constants import OBS_STATE
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
 )
+from lerobot.utils.constants import OBS_STATE
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position

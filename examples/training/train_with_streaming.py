@@ -20,13 +20,13 @@ from pathlib import Path
 import torch
 
 from lerobot.configs.types import FeatureType
-from lerobot.constants import ACTION
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
+from lerobot.utils.constants import ACTION
 
 
 def main():
