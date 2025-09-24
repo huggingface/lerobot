@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_pi05openpi import PI05OpenPIConfig
-from .modeling_pi05openpi import PI05OpenPIPolicy
-from .processor_pi05openpi import make_pi05_openpi_pre_post_processors
+from .configuration_pi05 import PI05Config
+from .modeling_pi05 import PI05Policy
+from .processor_pi05 import make_pi05_openpi_pre_post_processors
 
-__all__ = ["PI05OpenPIConfig", "PI05OpenPIPolicy", "make_pi05_openpi_pre_post_processors"]
+__all__ = ["PI05Config", "PI05Policy", "make_pi05_openpi_pre_post_processors"]
