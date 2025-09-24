@@ -39,7 +39,7 @@ from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderCo
 from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
+from lerobot.utils.visualization_utils import init_rerun
 
 NUM_EPISODES = 2
 FPS = 30
@@ -143,7 +143,7 @@ follower.connect()
 
 # Initialize the keyboard listener and rerun visualization
 listener, events = init_keyboard_listener()
-_init_rerun(session_name="recording_phone")
+init_rerun(session_name="recording_phone")
 
 if not leader.is_connected or not follower.is_connected:
     raise ValueError("Robot or teleop is not connected!")

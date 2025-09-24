@@ -41,7 +41,7 @@ from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAct
 from lerobot.teleoperators.phone.teleop_phone import Phone
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
+from lerobot.utils.visualization_utils import init_rerun
 
 NUM_EPISODES = 2
 FPS = 30
@@ -143,7 +143,7 @@ phone.connect()
 
 # Initialize the keyboard listener and rerun visualization
 listener, events = init_keyboard_listener()
-_init_rerun(session_name="phone_so100_record")
+init_rerun(session_name="phone_so100_record")
 
 if not robot.is_connected or not phone.is_connected:
     raise ValueError("Robot or teleop is not connected!")
