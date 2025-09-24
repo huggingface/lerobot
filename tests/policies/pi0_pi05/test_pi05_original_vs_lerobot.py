@@ -1,9 +1,10 @@
-"""Test script to verify PI0 policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
+"""Test script to verify PI0OpenPI policy integration with LeRobot vs the original implementation, only meant to be run locally!"""
 
 import os
 from copy import deepcopy
 from typing import Any
 
+import numpy as np
 import pytest
 import torch
 
@@ -24,14 +25,14 @@ from openpi.models_pytorch.pi0_pytorch import PI0Pytorch  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
 from lerobot.policies.pi05 import PI05Config, PI05Policy  # noqa: E402
-from lerobot.policies.pi05.processor_pi05 import make_pi05_openpi_pre_post_processors  # noqa: E402
+from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors  # noqa: E402
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline  # noqa: E402
 
 # TODO: ADDING DEFAULT IMAGES_FEATURES TO CONFIG
 DUMMY_ACTION_DIM = 32
 DUMMY_STATE_DIM = 32
 DUMMY_ACTION_HORIZON = 50
-DUMMY_MAX_TOKEN_LEN = 48  # Default for PI0 (non-pi05)
+DUMMY_MAX_TOKEN_LEN = 200
 DEVICE = "cpu"  # Use CPU to avoid memory issues for testing
 
 DUMMY_DATASET_STATS = {
@@ -70,7 +71,7 @@ DUMMY_DATASET_STATS = {
 }
 
 
-class PI0BaseOriginalConfig:
+class PI05BaseOriginalConfig:
     action_dim: int = DUMMY_ACTION_DIM
     action_horizon: int = DUMMY_ACTION_HORIZON
     paligemma_variant: str = "gemma_2b"
@@ -80,7 +81,7 @@ class PI0BaseOriginalConfig:
     dtype: str = "float32"
 
 
-def instantiate_lerobot_pi0(
+def instantiate_lerobot_pi05(
     from_pretrained: bool = False,
 ) -> tuple[
     PI05Policy,
@@ -89,26 +90,26 @@ def instantiate_lerobot_pi0(
 ]:
     if from_pretrained:
         # Load the policy first
-        policy = PI05Policy.from_pretrained(pretrained_name_or_path="pepijn223/pi05_base_fp32", strict=True)
+        policy = PI05Policy.from_pretrained(pretrained_name_or_path="pepijn223/pi05_base", strict=True)
     else:
         config = PI05Config(max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32")
         policy = PI05Policy(config)
 
     policy.to(DEVICE)
     policy.config.device = DEVICE
-    preprocessor, postprocessor = make_pi05_openpi_pre_post_processors(
+    preprocessor, postprocessor = make_pi05_pre_post_processors(
         config=policy.config, dataset_stats=DUMMY_DATASET_STATS
     )
     return (policy, preprocessor, postprocessor)
 
 
-def instantiate_original_pi0(from_pretrained: bool = False, model_path: str | None = None):
-    config = PI0BaseOriginalConfig()
+def instantiate_original_pi05(from_pretrained: bool = False, model_path: str | None = None):
+    config = PI05BaseOriginalConfig()
     policy = PI0Pytorch(config)
 
     if from_pretrained:
         try:
-            print("Loading converted PyTorch weights from HuggingFace Hub (pepijn223/pi05_base_fp32)...")
+            print("Loading converted PyTorch weights from HuggingFace Hub (pepijn223/pi05_base)...")
 
             # Download the model from HuggingFace Hub
             import safetensors.torch
@@ -119,7 +120,7 @@ def instantiate_original_pi0(from_pretrained: bool = False, model_path: str | No
                 cache_dir = model_path
                 print(f"Using cached model from: {cache_dir}")
             else:
-                cache_dir = snapshot_download(repo_id="pepijn223/pi05_base_fp32", repo_type="model")
+                cache_dir = snapshot_download(repo_id="pepijn223/pi05_base", repo_type="model")
                 print(f"Downloaded model to: {cache_dir}")
 
             # Try to load safetensors format first
@@ -212,7 +213,7 @@ def extract_lerobot_processed_inputs(lerobot_pi0, batch):
     return images, img_masks, lang_tokens, lang_masks, token_ar_mask, token_loss_mask
 
 
-class PI0Observation:
+class PI05Observation:
     """Observation class that matches the original OpenPI format."""
 
     def __init__(
@@ -235,37 +236,45 @@ class PI0Observation:
 
 
 def create_original_observation_with_openpi_preprocessing(batch):
-    """Create observation object for OpenPI using OpenPI's own preprocessing."""
+    """Create observation object for OpenPI using OpenPI's own preprocessing with pi05 state tokenizer."""
     batch_size = batch["observation.state"].shape[0]
     device = batch["observation.state"].device
 
     # Create tokenizer for OpenPI (same as LeRobot uses)
     tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
 
-    # Get task description
-    if "task" in batch:
-        tasks = batch["task"]
-        if isinstance(tasks, str):
-            # Single string: add newline if not present, then convert to list
-            if not tasks.endswith("\n"):
-                tasks = f"{tasks}\n"
-            tasks = [tasks]
-        elif isinstance(tasks, list) and all(isinstance(t, str) for t in tasks):
-            # List of strings: add newline to each if not present
-            tasks = [t if t.endswith("\n") else f"{t}\n" for t in tasks]
-            if len(tasks) == 1:
-                # Expand to batch size
-                tasks = tasks * batch_size
-                if len(tasks) != batch_size:
-                    raise ValueError(f"Expected batch size {batch_size}, got {len(tasks)}")
-        # If task is neither string nor list of strings, leave unchanged
-    else:
-        # Default task if not provided
-        tasks = ["Pick up the object\n"] * batch_size
+    # Get task description (pi05 processor handles all text formatting)
+    tasks = batch.get("task", ["Pick up the object"] * batch_size)
+    if isinstance(tasks, str):
+        tasks = [tasks] * batch_size
+    elif len(tasks) == 1:
+        tasks = tasks * batch_size
+
+    # Use pi05 state and input tokenizer logic (same as Pi05PrepareStateTokenizerProcessorStep)
+    state = batch["observation.state"]
+    state = deepcopy(state)
+
+    # Prepare state (pad to max_state_dim)
+    from lerobot.policies.pi05.modeling_pi05 import pad_vector
+
+    state = pad_vector(state, DUMMY_STATE_DIM)
+
+    # Normalize state to [-1, 1] range if needed (assuming it's already normalized from normalize_inputs)
+    # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+    state_np = state.cpu().numpy()
+    discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+
+    # Create pi05-formatted prompts that include state information
+    full_prompts = []
+    for i, task in enumerate(tasks):
+        cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
+        state_str = " ".join(map(str, discretized_states[i]))
+        full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+        full_prompts.append(full_prompt)
 
     # Tokenize with max_length padding to match OpenPI's expected format
     tokenized = tokenizer(
-        tasks,
+        full_prompts,
         padding="max_length",
         padding_side="right",
         truncation=True,
@@ -293,7 +302,7 @@ def create_original_observation_with_openpi_preprocessing(batch):
         image_masks_dict[key] = torch.ones(batch_size, dtype=torch.bool, device=device)
 
     # Create raw observation object (before preprocessing)
-    raw_observation = PI0Observation(
+    raw_observation = PI05Observation(
         state=batch["observation.state"],
         images=image_dict,
         image_masks=image_masks_dict,
@@ -333,7 +342,7 @@ def create_original_observation_from_lerobot(lerobot_pi0, batch):
         "right_wrist_0_rgb": img_masks[2],
     }
 
-    return PI0Observation(
+    return PI05Observation(
         state=batch["observation.state"],
         images=image_dict,
         image_masks=image_masks_dict,
@@ -344,13 +353,13 @@ def create_original_observation_from_lerobot(lerobot_pi0, batch):
     )
 
 
-def test_pi0_original_vs_lerobot():
-    """Test PI0 original implementation vs LeRobot implementation."""
+def test_pi05_original_vs_lerobot():
+    """Test PI05 original implementation vs LeRobot implementation."""
     print("Initializing models...")
-    lerobot_pi0, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_pi0(
+    lerobot_pi05, lerobot_preprocessor, lerobot_postprocessor = instantiate_lerobot_pi05(
         from_pretrained=True
     )  # Load pretrained LeRobot model
-    original_pi0 = instantiate_original_pi0(
+    original_pi0 = instantiate_original_pi05(
         from_pretrained=True
     )  # Load pretrained OpenPI model from HuggingFace Hub
 
@@ -358,8 +367,8 @@ def test_pi0_original_vs_lerobot():
     batch = create_dummy_data()
     batch_lerobot = deepcopy(batch)
 
-    # Test 1: Each model with its own preprocessing (more realistic end-to-end test)
-    print("\nTEST 1: Each model with its own preprocessing")
+    # Test each model with its own preprocessing (more realistic end-to-end test)
+    print("\nTest each model with its own preprocessing")
     print("Creating observation for OpenPI using OpenPI's own preprocessing...")
     pi0_obs_openpi = create_original_observation_with_openpi_preprocessing(batch)
 
@@ -386,12 +395,12 @@ def test_pi0_original_vs_lerobot():
     print(f"OpenPI (own preprocessing) Actions std: {openpi_actions.std().item():.6f}")
 
     print("Testing LeRobot with own preprocessing...")
-    lerobot_pi0.eval()
+    lerobot_pi05.eval()
     torch.manual_seed(42)  # Set the same seed
 
     batch_lerobot_processed = lerobot_preprocessor(batch_lerobot)
     with torch.no_grad():
-        lerobot_actions_own = lerobot_pi0.predict_action_chunk(
+        lerobot_actions_own = lerobot_pi05.predict_action_chunk(
             batch_lerobot_processed
         )  # batch_size, n_action_steps, action_dim
         lerobot_actions_unit = lerobot_actions_own[:, 0, :]
@@ -405,29 +414,6 @@ def test_pi0_original_vs_lerobot():
     print(f"Actions close (atol=1e-2): {torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-2)}")
     print(f"Max absolute difference: {torch.abs(lerobot_actions_own - openpi_actions).max().item():.6f}")
 
-    # # Test 2: Both models with LeRobot preprocessing (isolates model differences)
-    # print("\nTEST 2: Both models with LeRobot preprocessing (model comparison)")
-    # print("Creating observation for OpenPI using LeRobot's preprocessing...")
-    # pi0_obs_lerobot = create_original_observation_from_lerobot(lerobot_pi0, batch)
-
-    # print("Testing OpenPI with LeRobot preprocessing...")
-    # torch.manual_seed(42)  # Set seed for reproducibility
-    # with torch.no_grad():
-    #     openpi_actions_lerobot_preproc = original_pi0.sample_actions(
-    #         device=DEVICE, observation=pi0_obs_lerobot, noise=fixed_noise, num_steps=10
-    #     )
-    # print(f"OpenPI (LeRobot preprocessing) Actions shape: {openpi_actions_lerobot_preproc.shape}")
-    # print(f"OpenPI (LeRobot preprocessing) Actions mean: {openpi_actions_lerobot_preproc.mean().item():.6f}")
-    # print(f"OpenPI (LeRobot preprocessing) Actions std: {openpi_actions_lerobot_preproc.std().item():.6f}")
-
-    # print("\nComparing models with same preprocessing:")
-    # is_close_1e4 = torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-4)
-    # is_close_1e2 = torch.allclose(lerobot_actions_own, openpi_actions_lerobot_preproc, atol=1e-2)
-    # max_diff = torch.abs(lerobot_actions_own - openpi_actions_lerobot_preproc).max().item()
-
-    # print(f"Actions close (atol=1e-4): {is_close_1e4}")
-    # print(f"Actions close (atol=1e-2): {is_close_1e2}")
-    # print(f"Max absolute difference: {max_diff:.6f}")
-
-    # # Add assertions for pytest
-    # assert is_close_1e2, f"Models should produce similar results (atol=1e-2), max diff: {max_diff}"
+    assert torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-4)
+    assert torch.allclose(lerobot_actions_own, openpi_actions, atol=1e-2)
+    assert torch.abs(lerobot_actions_own - openpi_actions).max().item() < 1e-4

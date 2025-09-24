@@ -811,7 +811,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
 
 class PI05Policy(PreTrainedPolicy):
-    """PI05 OpenPI Policy for LeRobot."""
+    """PI05 Policy for LeRobot."""
 
     config_class = PI05Config
     name = "pi05"
@@ -834,6 +834,8 @@ class PI05Policy(PreTrainedPolicy):
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
+
+        self.model.to(config.device)
 
         self.reset()
 
