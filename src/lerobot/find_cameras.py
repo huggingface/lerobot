@@ -42,6 +42,8 @@ from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+from lerobot.cameras.rpi.camera_rpi import RPiCamera
+from lerobot.cameras.rpi.configuration_rpi import RPiCameraConfig
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +90,34 @@ def find_all_realsense_cameras() -> list[dict[str, Any]]:
     return all_realsense_cameras_info
 
 
+def find_all_rpi_cameras() -> list[dict[str, Any]]:
+    """
+    Finds all available Raspberry Pi cameras plugged into the system.
+
+    Returns:
+        A list of all available Raspberry Pi cameras with their metadata.
+    """
+    all_rpi_cameras_info: list[dict[str, Any]] = []
+    logger.info("Searching for Raspberry Pi cameras...")
+    try:
+        rpi_cameras = RPiCamera.find_cameras()
+        for cam_info in rpi_cameras:
+            all_rpi_cameras_info.append(cam_info)
+        logger.info(f"Found {len(rpi_cameras)} Raspberry Pi cameras.")
+    except ImportError:
+        logger.warning("Skipping Raspberry Pi camera search: picamera2 library not found or not importable.")
+    except Exception as e:
+        logger.error(f"Error finding Raspberry Pi cameras: {e}")
+
+    return all_rpi_cameras_info
+
+
 def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[str, Any]]:
     """
     Finds available cameras based on an optional filter and prints their information.
 
     Args:
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type_filter: Optional string to filter cameras ("realsense", "opencv", or "rpi").
                             If None, lists all cameras.
 
     Returns:
@@ -108,12 +132,14 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
         all_cameras_info.extend(find_all_opencv_cameras())
     if camera_type_filter is None or camera_type_filter == "realsense":
         all_cameras_info.extend(find_all_realsense_cameras())
+    if camera_type_filter is None or camera_type_filter == "rpi":
+        all_cameras_info.extend(find_all_rpi_cameras())
 
     if not all_cameras_info:
         if camera_type_filter:
             logger.warning(f"No {camera_type_filter} cameras were detected.")
         else:
-            logger.warning("No cameras (OpenCV or RealSense) were detected.")
+            logger.warning("No cameras (OpenCV, RealSense, or Raspberry Pi) were detected.")
     else:
         print("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
@@ -174,6 +200,11 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
                 color_mode=ColorMode.RGB,
             )
             instance = RealSenseCamera(rs_config)
+        elif cam_type == "RPi":
+            rp_config = RPiCameraConfig(
+                index=cam_id,
+            )
+            instance = RPiCamera(rp_config)
         else:
             logger.warning(f"Unknown camera type: {cam_type} for ID {cam_id}. Skipping.")
             return None
@@ -296,8 +327,8 @@ def main():
         type=str,
         nargs="?",
         default=None,
-        choices=["realsense", "opencv"],
-        help="Specify camera type to capture from (e.g., 'realsense', 'opencv'). Captures from all if omitted.",
+        choices=["realsense", "opencv", "rpi"],
+        help="Specify camera type to capture from (e.g., 'realsense', 'opencv', 'rpi'). Captures from all if omitted.",
     )
     parser.add_argument(
         "--output-dir",

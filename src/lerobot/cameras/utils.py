@@ -43,6 +43,11 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
 
             cameras[key] = Reachy2Camera(cfg)
 
+        elif cfg.type == "rpi":
+            from .rpi import RPiCamera
+
+            cameras[key] = RPiCamera(cfg)
+
         else:
             raise ValueError(f"The camera type '{cfg.type}' is not valid.")
 
