@@ -185,7 +185,13 @@ def train(cfg: TrainPipelineConfig):
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
     if cfg.policy.pretrained_path is not None:
-        processor_kwargs["preprocessor_overrides"] = {"device_processor": {"device": device.type}}
+        processor_kwargs["preprocessor_overrides"] = {
+            "device_processor": {"device": device.type},
+            "normalizer_processor": {"stats": dataset.meta.stats},
+        }
+        processor_kwargs["postprocessor_overrides"] = {
+            "unnormalizer_processor": {"stats": dataset.meta.stats},
+        }
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path, **processor_kwargs
