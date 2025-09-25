@@ -20,6 +20,7 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 
 @PreTrainedConfig.register_subclass("pi0")
@@ -84,6 +85,9 @@ class PI0Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
+
+    # Real Time Chunking configuration
+    rtc_config: RTCConfig = RTCConfig()
 
     # TODO: Add EMA
 
