@@ -15,7 +15,7 @@
 """
 Example command:
 ```shell
-python src/lerobot/scripts/server/robot_client.py \
+python src/lerobot/async_inference/robot_client.py \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
@@ -57,9 +57,15 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
-from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
-from lerobot.scripts.server.helpers import (
+from lerobot.transport import (
+    services_pb2,  # type: ignore
+    services_pb2_grpc,  # type: ignore
+)
+from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
+
+from .configs import RobotClientConfig
+from .constants import SUPPORTED_ROBOTS
+from .helpers import (
     Action,
     FPSTracker,
     Observation,
@@ -72,11 +78,6 @@ from lerobot.scripts.server.helpers import (
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
 )
-from lerobot.transport import (
-    services_pb2,  # type: ignore
-    services_pb2_grpc,  # type: ignore
-)
-from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 
 
 class RobotClient:

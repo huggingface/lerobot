@@ -15,25 +15,18 @@
 # limitations under the License.
 import logging
 import os
-import os.path as osp
 import platform
 import select
 import subprocess
 import sys
 import time
 from copy import copy, deepcopy
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from statistics import mean
 
 import numpy as np
 import torch
-
-
-def none_or_int(value):
-    if value == "None":
-        return None
-    return int(value)
 
 
 def inside_slurm():
@@ -163,36 +156,6 @@ def format_big_number(num, precision=0):
         num /= divisor
 
     return num
-
-
-def _relative_path_between(path1: Path, path2: Path) -> Path:
-    """Returns path1 relative to path2."""
-    path1 = path1.absolute()
-    path2 = path2.absolute()
-    try:
-        return path1.relative_to(path2)
-    except ValueError:  # most likely because path1 is not a subpath of path2
-        common_parts = Path(osp.commonpath([path1, path2])).parts
-        return Path(
-            "/".join([".."] * (len(path2.parts) - len(common_parts)) + list(path1.parts[len(common_parts) :]))
-        )
-
-
-def print_cuda_memory_usage():
-    """Use this function to locate and debug memory leak."""
-    import gc
-
-    gc.collect()
-    # Also clear the cache if you want to fully release the memory
-    torch.cuda.empty_cache()
-    print(f"Current GPU Memory Allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
-    print(f"Maximum GPU Memory Allocated: {torch.cuda.max_memory_allocated(0) / 1024**2:.2f} MB")
-    print(f"Current GPU Memory Reserved: {torch.cuda.memory_reserved(0) / 1024**2:.2f} MB")
-    print(f"Maximum GPU Memory Reserved: {torch.cuda.max_memory_reserved(0) / 1024**2:.2f} MB")
-
-
-def capture_timestamp_utc():
-    return datetime.now(timezone.utc)
 
 
 def say(text: str, blocking: bool = False):
