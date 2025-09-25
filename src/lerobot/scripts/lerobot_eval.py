@@ -81,6 +81,7 @@ from lerobot.envs.utils import (
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.utils.constants import OBS_STR
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -221,7 +222,7 @@ def rollout(
         stacked_observations = {}
         for key in all_observations[0]:
             stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
-        ret["observation"] = stacked_observations
+        ret[OBS_STR] = stacked_observations
 
     if hasattr(policy, "use_original_modules"):
         policy.use_original_modules()
@@ -459,8 +460,8 @@ def _compile_episode_data(
         for k in ep_dict:
             ep_dict[k] = torch.cat([ep_dict[k], ep_dict[k][-1:]])
 
-        for key in rollout_data["observation"]:
-            ep_dict[key] = rollout_data["observation"][key][ep_ix, :num_frames]
+        for key in rollout_data[OBS_STR]:
+            ep_dict[key] = rollout_data[OBS_STR][key][ep_ix, :num_frames]
 
         ep_dicts.append(ep_dict)
 

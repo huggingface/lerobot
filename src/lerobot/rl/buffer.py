@@ -24,6 +24,7 @@ import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import OBS_IMAGE
 from lerobot.utils.transition import Transition
 
 
@@ -240,7 +241,7 @@ class ReplayBuffer:
         idx = torch.randint(low=0, high=high, size=(batch_size,), device=self.storage_device)
 
         # Identify image keys that need augmentation
-        image_keys = [k for k in self.states if k.startswith("observation.image")] if self.use_drq else []
+        image_keys = [k for k in self.states if k.startswith(OBS_IMAGE)] if self.use_drq else []
 
         # Create batched state and next_state
         batch_state = {}

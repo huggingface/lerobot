@@ -38,7 +38,7 @@ from torch import Tensor
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_STATE, REWARD
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_PREFIX, OBS_STATE, OBS_STR, REWARD
 
 
 class TDMPCPolicy(PreTrainedPolicy):
@@ -91,13 +91,13 @@ class TDMPCPolicy(PreTrainedPolicy):
         called on `env.reset()`
         """
         self._queues = {
-            "observation.state": deque(maxlen=1),
+            OBS_STATE: deque(maxlen=1),
             "action": deque(maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)),
         }
         if self.config.image_features:
-            self._queues["observation.image"] = deque(maxlen=1)
+            self._queues[OBS_IMAGE] = deque(maxlen=1)
         if self.config.env_state_feature:
-            self._queues["observation.environment_state"] = deque(maxlen=1)
+            self._queues[OBS_ENV_STATE] = deque(maxlen=1)
         # Previous mean obtained from the cross-entropy method (CEM) used during MPC. It is used to warm start
         # CEM for the next step.
         self._prev_mean: torch.Tensor | None = None
@@ -325,7 +325,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         action = batch[ACTION]  # (t, b, action_dim)
         reward = batch[REWARD]  # (t, b)
-        observations = {k: v for k, v in batch.items() if k.startswith("observation.")}
+        observations = {k: v for k, v in batch.items() if k.startswith(OBS_PREFIX)}
 
         # Apply random image augmentations.
         if self.config.image_features and self.config.max_random_shift_ratio > 0:
@@ -387,10 +387,10 @@ class TDMPCPolicy(PreTrainedPolicy):
                 temporal_loss_coeffs
                 * F.mse_loss(z_preds[1:], z_targets, reduction="none").mean(dim=-1)
                 # `z_preds` depends on the current observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
+                * ~batch[f"{OBS_STR}.state_is_pad"][0]
                 * ~batch["action_is_pad"]
                 # `z_targets` depends on the next observation.
-                * ~batch["observation.state_is_pad"][1:]
+                * ~batch[f"{OBS_STR}.state_is_pad"][1:]
             )
             .sum(0)
             .mean()
@@ -403,7 +403,7 @@ class TDMPCPolicy(PreTrainedPolicy):
                 * F.mse_loss(reward_preds, reward, reduction="none")
                 * ~batch["next.reward_is_pad"]
                 # `reward_preds` depends on the current observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
+                * ~batch[f"{OBS_STR}.state_is_pad"][0]
                 * ~batch["action_is_pad"]
             )
             .sum(0)
@@ -419,11 +419,11 @@ class TDMPCPolicy(PreTrainedPolicy):
                     reduction="none",
                 ).sum(0)  # sum over ensemble
                 # `q_preds_ensemble` depends on the first observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
+                * ~batch[f"{OBS_STR}.state_is_pad"][0]
                 * ~batch["action_is_pad"]
                 # q_targets depends on the reward and the next observations.
                 * ~batch["next.reward_is_pad"]
-                * ~batch["observation.state_is_pad"][1:]
+                * ~batch[f"{OBS_STR}.state_is_pad"][1:]
             )
             .sum(0)
             .mean()
@@ -441,7 +441,7 @@ class TDMPCPolicy(PreTrainedPolicy):
                 temporal_loss_coeffs
                 * raw_v_value_loss
                 # `v_targets` depends on the first observation and the actions, as does `v_preds`.
-                * ~batch["observation.state_is_pad"][0]
+                * ~batch[f"{OBS_STR}.state_is_pad"][0]
                 * ~batch["action_is_pad"]
             )
             .sum(0)
@@ -477,7 +477,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             * mse
             * temporal_loss_coeffs
             # `action_preds` depends on the first observation and the actions.
-            * ~batch["observation.state_is_pad"][0]
+            * ~batch[f"{OBS_STR}.state_is_pad"][0]
             * ~batch["action_is_pad"]
         ).mean()
 
