@@ -128,6 +128,56 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def _validate_policy_dataset_features(
+    policy_input_features: set[str],
+    policy_output_features: set[str],
+    dataset_features: set[str],
+    cfg: TrainPipelineConfig,
+) -> None:
+    """
+    Validates that policy features are present in the dataset.
+
+    For pretrained models, provides guidance on using rename_map to fix missing features.
+    For training from scratch, suggests fixing the policy configuration.
+
+    Args:
+        policy_input_features: Set of input feature names required by the policy.
+        policy_output_features: Set of output feature names required by the policy.
+        dataset_features: Set of feature names available in the dataset.
+        cfg: Training pipeline configuration.
+
+    Raises:
+        ValueError: If any required features are missing from the dataset.
+    """
+    missing_input_features = policy_input_features - dataset_features
+    missing_output_features = policy_output_features - dataset_features
+
+    if missing_input_features or missing_output_features:
+        error_msg_parts = []
+
+        if missing_input_features:
+            error_msg_parts.append(f"Missing input features: {sorted(missing_input_features)}")
+
+        if missing_output_features:
+            error_msg_parts.append(f"Missing output features: {sorted(missing_output_features)}")
+
+        error_msg = "Policy features are not present in the dataset.\n" + "\n".join(error_msg_parts)
+        error_msg += f"\n\nDataset features: {sorted(dataset_features)}"
+        error_msg += f"\nPolicy input features: {sorted(policy_input_features)}"
+        error_msg += f"\nPolicy output features: {sorted(policy_output_features)}"
+
+        # Only suggest rename_map for pretrained models
+        if missing_input_features and cfg.policy.pretrained_path is not None:
+            error_msg += "\n\nTo fix this, you can provide a rename mapping using the 'rename_map' argument:"
+            example_mapping = dict.fromkeys(sorted(missing_input_features), "<your_dataset_key>")
+            error_msg += f"\n  --rename_map '{example_mapping}'"
+            error_msg += "\n\nReplace '<your_dataset_key>' with the corresponding key name from your dataset."
+        elif missing_input_features and cfg.policy.pretrained_path is None:
+            error_msg += "\n\nFor training from scratch, ensure your policy configuration matches the dataset features."
+
+        raise ValueError(error_msg)
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     """
@@ -177,6 +227,17 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
+    policy_input_features = policy.config.input_features.keys()
+    policy_output_features = policy.config.output_features.keys()
+    dataset_features = dataset.meta.stats.keys()
+
+    # Validate that policy features are present in the dataset
+    _validate_policy_dataset_features(
+        policy_input_features=set(policy_input_features),
+        policy_output_features=set(policy_output_features),
+        dataset_features=set(dataset_features),
+        cfg=cfg,
+    )
 
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
@@ -192,6 +253,12 @@ def train(cfg: TrainPipelineConfig):
         processor_kwargs["postprocessor_overrides"] = {
             "unnormalizer_processor": {"stats": dataset.meta.stats},
         }
+
+        # Add rename map override if provided (only for pretrained models)
+        if cfg.rename_map is not None:
+            processor_kwargs["preprocessor_overrides"]["rename_observations_processor"] = {
+                "rename_map": cfg.rename_map
+            }
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path, **processor_kwargs

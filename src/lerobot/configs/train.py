@@ -63,6 +63,7 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    rename_map: dict[str, str] | None = None
 
     def __post_init__(self):
         self.checkpoint_path = None
