@@ -569,7 +569,7 @@ class LanguageEncoder(nn.Module):
             return_tensors="pt",
         )
         tokens = {k: v.to(device) for k, v in tokens.items()}
-        lang_emb = self.lang_emb_model(**tokens).last_hidden_state.sum(1)
+        lang_emb = self.lang_emb_model(**tokens).last_hidden_state.mean(1)
         return lang_emb
 
 
