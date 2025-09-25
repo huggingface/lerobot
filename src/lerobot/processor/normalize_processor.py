@@ -364,7 +364,7 @@ class _NormalizationMixin:
             q99 = stats.get("q99", None)
             if q01 is None or q99 is None:
                 raise ValueError(
-                    "QUANTILES normalization mode requires q01 and q99 stats, please update the dataset with the correct stats"
+                    "QUANTILES normalization mode requires q01 and q99 stats, please update the dataset with the correct stats using the `augment_dataset_quantile_stats.py` script"
                 )
 
             denom = q99 - q01
@@ -381,7 +381,7 @@ class _NormalizationMixin:
             q90 = stats.get("q90", None)
             if q10 is None or q90 is None:
                 raise ValueError(
-                    "QUANTILE10 normalization mode requires q10 and q90 stats, please update the dataset with the correct stats"
+                    "QUANTILE10 normalization mode requires q10 and q90 stats, please update the dataset with the correct stats using the `augment_dataset_quantile_stats.py` script"
                 )
 
             denom = q90 - q10
