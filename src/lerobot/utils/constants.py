@@ -17,18 +17,20 @@ from pathlib import Path
 
 from huggingface_hub.constants import HF_HOME
 
-OBS_ENV_STATE = "observation.environment_state"
-OBS_STATE = "observation.state"
-OBS_IMAGE = "observation.image"
-OBS_IMAGES = "observation.images"
-OBS_LANGUAGE = "observation.language"
+OBS_STR = "observation"
+OBS_PREFIX = OBS_STR + "."
+OBS_ENV_STATE = OBS_STR + ".environment_state"
+OBS_STATE = OBS_STR + ".state"
+OBS_IMAGE = OBS_STR + ".image"
+OBS_IMAGES = OBS_IMAGE + "s"
+OBS_LANGUAGE = OBS_STR + ".language"
+OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
+OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
+
 ACTION = "action"
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
-
-OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
-OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
 
 ROBOTS = "robots"
 ROBOT_TYPE = "robot_type"
