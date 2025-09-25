@@ -446,6 +446,8 @@ def train(cfg: TrainPipelineConfig):
             # Use unwrapped model for pushing to hub
             unwrapped_policy = accelerator.unwrap_model(policy)
             unwrapped_policy.push_model_to_hub(cfg)
+            preprocessor.push_to_hub(cfg.policy.repo_id)
+            postprocessor.push_to_hub(cfg.policy.repo_id)
 
 
 def main():
