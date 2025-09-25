@@ -65,7 +65,7 @@ def close_service_stub(channel, server):
 
 @require_package("grpc")
 def test_establish_learner_connection_success():
-    from lerobot.scripts.rl.actor import establish_learner_connection
+    from lerobot.rl.actor import establish_learner_connection
 
     """Test successful connection establishment."""
     stub, _servicer, channel, server = create_learner_service_stub()
@@ -82,7 +82,7 @@ def test_establish_learner_connection_success():
 
 @require_package("grpc")
 def test_establish_learner_connection_failure():
-    from lerobot.scripts.rl.actor import establish_learner_connection
+    from lerobot.rl.actor import establish_learner_connection
 
     """Test connection failure."""
     stub, servicer, channel, server = create_learner_service_stub()
@@ -101,7 +101,7 @@ def test_establish_learner_connection_failure():
 
 @require_package("grpc")
 def test_push_transitions_to_transport_queue():
-    from lerobot.scripts.rl.actor import push_transitions_to_transport_queue
+    from lerobot.rl.actor import push_transitions_to_transport_queue
     from lerobot.transport.utils import bytes_to_transitions
     from tests.transport.test_transport_utils import assert_transitions_equal
 
@@ -137,7 +137,7 @@ def test_push_transitions_to_transport_queue():
 @require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_transitions_stream():
-    from lerobot.scripts.rl.actor import transitions_stream
+    from lerobot.rl.actor import transitions_stream
 
     """Test transitions stream functionality."""
     shutdown_event = Event()
@@ -169,7 +169,7 @@ def test_transitions_stream():
 @require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_interactions_stream():
-    from lerobot.scripts.rl.actor import interactions_stream
+    from lerobot.rl.actor import interactions_stream
     from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
 
     """Test interactions stream functionality."""
