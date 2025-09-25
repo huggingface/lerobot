@@ -19,20 +19,30 @@ import logging
 import math
 from collections import deque
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers.models.auto import CONFIG_MAPPING
-from transformers.models.gemma import modeling_gemma
-from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
-from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
+
+from lerobot.utils.import_utils import _transformers_available
+
+# Conditional import for type checking and lazy loading
+if TYPE_CHECKING or _transformers_available:
+    from transformers.models.auto import CONFIG_MAPPING
+    from transformers.models.gemma import modeling_gemma
+    from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
+    from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
+else:
+    CONFIG_MAPPING = None
+    modeling_gemma = None
+    GemmaForCausalLM = None
+    PaliGemmaForConditionalGeneration = None
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 
 # Helper functions

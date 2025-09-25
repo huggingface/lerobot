@@ -24,7 +24,7 @@ Examples of usage:
 
 - Start an actor server for real robot training with human-in-the-loop intervention:
 ```bash
-python -m lerobot.scripts.rl.actor --config_path src/lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.rl.actor --config_path src/lerobot/configs/train_config_hilserl_so100.json
 ```
 
 **NOTE**: The actor server requires a running learner server to connect to. Ensure the learner
@@ -35,7 +35,7 @@ gamepad to take control of the robot during training. Initially intervene freque
 reduce interventions as the policy improves.
 
 **WORKFLOW**:
-1. Determine robot workspace bounds using `find_joint_limits.py`
+1. Determine robot workspace bounds using `lerobot-find-joint-limits`
 2. Record demonstrations with `gym_manipulator.py` in record mode
 3. Process the dataset and determine camera crops with `crop_dataset_roi.py`
 4. Start the learner server with the training configuration
@@ -63,13 +63,9 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.processor import TransitionKey
+from lerobot.rl.process import ProcessSignalHandler
+from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.scripts.rl.gym_manipulator import (
-    create_transition,
-    make_processors,
-    make_robot_env,
-    step_env_and_process_transition,
-)
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2, services_pb2_grpc
@@ -81,8 +77,6 @@ from lerobot.transport.utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
-from lerobot.utils.process import ProcessSignalHandler
-from lerobot.utils.queue import get_last_item_from_queue
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.transition import (
@@ -94,6 +88,13 @@ from lerobot.utils.utils import (
     TimerManager,
     get_safe_torch_device,
     init_logging,
+)
+
+from .gym_manipulator import (
+    create_transition,
+    make_processors,
+    make_robot_env,
+    step_env_and_process_transition,
 )
 
 ACTOR_SHUTDOWN_TIMEOUT = 30

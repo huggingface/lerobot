@@ -25,7 +25,7 @@ body:
     id: system-info
     attributes:
       label: System Info
-      description: If needed, you can share your lerobot configuration with us by running `python -m lerobot.scripts.display_sys_info` and copy-pasting its outputs below
+      description: Please share your LeRobot configuration by running `lerobot-info` (if installed) or `python -m lerobot.scripts.display_sys_info` (if not installed) and pasting the output below.
       render: Shell
       placeholder: lerobot version, OS, python version, numpy version, torch version, and lerobot's configuration
     validations:

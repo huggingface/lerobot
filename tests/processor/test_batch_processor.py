@@ -21,7 +21,6 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
@@ -29,6 +28,7 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
 
 def test_state_1d_to_2d():
