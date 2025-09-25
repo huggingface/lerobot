@@ -160,12 +160,12 @@ class SMOLANDFAST(nn.Module):
         self.config = config
 
         self.vlm = AutoModelForImageTextToText.from_pretrained(self.config.vlm_checkpoint,
-                                                               torch_dtype=torch.bfloat16)
-        for param in self.vlm.model.vision_model.parameters():
-            param.requires_grad = False
+                                                               torch_dtype=torch.float32)
+        # for param in self.vlm.model.vision_model.parameters():
+        #     param.requires_grad = False
 
-        for param in self.vlm.model.connector.parameters():
-            param.requires_grad = False
+        # for param in self.vlm.model.connector.parameters():
+        #     param.requires_grad = False
 
         self.processor = AutoProcessor.from_pretrained(self.config.vlm_checkpoint)
 
@@ -174,32 +174,10 @@ class SMOLANDFAST(nn.Module):
         self.fast_skip_tokens = self.config.fast_skip_tokens
         self.max_input_seq_len = self.config.max_input_seq_len
         self.action_horizon = self.config.chunk_size
-        self.action_dim = self.config.action_feature.shape[
-            0
-        ]  # self.config.max_action_dim  # self.config.action_feature.shape[0]
-        # precision = config.precision
-        # torch_precision = PRECISION.get(precision, torch.float32)
+        self.action_dim = self.config.action_feature.shape[0] 
         
         self.pad_token_id = self.processor.tokenizer.pad_token_id
         self.eos_token_id = self.processor.tokenizer.eos_token_id
-
-        # change important stuff in bf16
-        # params_to_change_dtype = [
-        #     "text_model",
-        #     "connector",
-        #     "lm_head",
-        #     "vision_model",
-        # ]
-    
-        # for name, param in self.vlm.named_parameters():
-        #     if any(selector in name for selector in params_to_change_dtype):
-        #         param.data = param.data.to(dtype=torch_precision)
-
-        self.embed_func = self.vlm.get_input_embeddings()
-        # TODO: Remove this once we bump transformers to >4.52.0 because the attribute will be removed
-        # AttributeError: 'llmConfig' object has no attribute 'ignore_index'
-        # self.ignore_index = self.vlm.config.ignore_index # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        self.padding_side = self.config.padding_side
 
     def create_obs_prefix_tokens(self, states, images, lang_text):
         device = states.device
@@ -227,16 +205,17 @@ class SMOLANDFAST(nn.Module):
                 }]
             prefix_texts.append(message)
         prompts = [self.processor.apply_chat_template(m, add_generation_prompt=True) for m in prefix_texts]
-
         images = list(torch.unbind(images, dim=0))
         # Convert each tensor to PIL
-        pil_images = [[img] for img in images]
+        images = [[to_pil_image(img).resize((512,512))] for img in images]
         prefix_out = self.processor(
-            images=pil_images,
+            images=images,
             text=prompts,
-            padding=False
+            do_resize=False,
+            do_rescale=False,
         )
         return prefix_out
+    
 
     def embed_tokens(self, tokens: torch.Tensor):
         lang_emb = self.embed_func(tokens)
@@ -258,7 +237,7 @@ class SMOLANDFAST(nn.Module):
                                                    images=images,
                                                    lang_text=lang_text)
     
-        prefix_out["pixel_values"] = torch.tensor(np.array(prefix_out["pixel_values"]),dtype=torch.bfloat16, device=device)
+        prefix_out["pixel_values"] = torch.tensor(np.array(prefix_out["pixel_values"]),dtype=torch.float32, device=device)
         prefix_out["pixel_attention_mask"] = torch.tensor(np.array(prefix_out["pixel_attention_mask"]),dtype=torch.long, device=device)
         obs_ids = prefix_out["input_ids"]
 
@@ -279,9 +258,6 @@ class SMOLANDFAST(nn.Module):
                 loss_mask.append([0]*len(obs_seq)+[1]*len(act_seq) + [1])
             prefix_mask = [[1]*len(tokens) for tokens in prefix_tokens]
 
-            # print(prefix_tokens)
-            # print(loss_mask)
-
             max_len = max([len(seq) for seq in prefix_tokens])
 
             prefix_pad = []
@@ -293,10 +269,6 @@ class SMOLANDFAST(nn.Module):
                 prefix_pad.append(seq + [self.pad_token_id]*(max_len - seq_len))
                 prefix_mask_pad.append(seq_mask + [0]*(max_len - seq_len))
                 loss_mask_pad.append(seq_loss + [0]*(max_len - seq_len))
-
-            # print(prefix_tokens)
-            # print(prefix_mask)
-            # print(loss_mask)
 
             prefix_tokens = torch.tensor(prefix_pad, dtype=torch.long).to(device)
             prefix_pad_mask = torch.tensor(prefix_mask_pad, dtype=torch.long).to(device)
@@ -319,8 +291,6 @@ class SMOLANDFAST(nn.Module):
                 prefix_tokens.append([self.pad_token_id]*(max_len - seq_len) + seq)
                 prefix_pad_mask.append([0]*(max_len - seq_len) + [1]*seq_len)
 
-            # print(prefix_tokens)
-            # print(prefix_pad_mask)
             prefix_tokens = torch.tensor(prefix_tokens, dtype=torch.long).to(device)
             prefix_pad_mask = torch.tensor(prefix_pad_mask, dtype=torch.long).to(device)
 
@@ -329,8 +299,6 @@ class SMOLANDFAST(nn.Module):
                     "pixel_values": prefix_out["pixel_values"],
                     "pixel_attention_mask": prefix_out["pixel_attention_mask"],
                     "loss_mask": None}
-
-    
 
     def forward(self, batch: dict[str, Tensor]):
         device = batch[OBS_STATE].device
@@ -342,22 +310,12 @@ class SMOLANDFAST(nn.Module):
             actions=batch[ACTION],
         )
 
-        # embed tokens
-        # tokens_embs = self.embed_tokens(padded_outs["input_ids"].to(device))
-        # att_2d_masks = make_att_2d_masks(padded_outs["pad_masks"], padded_outs["att_masks"])
-        # position_ids = torch.cumsum(padded_outs["pad_masks"], dim=1)
-
-        # # Prepare attention masks
-        # att_2d_masks_4d = prepare_attention_masks_4d(att_2d_masks)
         
         outputs = self.vlm.forward(
             input_ids=padded_outs["input_ids"],
-            # attention_mask=att_2d_masks_4d,
             attention_mask=padded_outs["pad_masks"],
             pixel_values=padded_outs["pixel_values"],
             pixel_attention_mask=padded_outs["pixel_attention_mask"],
-            # inputs_embeds=tokens_embs,
-            # position_ids=position_ids,
             use_cache=self.config.use_cache,
         )
 
@@ -451,10 +409,6 @@ class SMOLANDFAST(nn.Module):
             actions=None,
         )
 
-        # # embed tokens
-        # tokens_embs = self.embed_tokens(padded_outs["input_ids"].to(device))
-        # position_ids = torch.cumsum(padded_outs["pad_masks"], dim=1)
-
         input_len = padded_outs["input_ids"].shape[1]
 
         def make_fast_band_processor(low, high, special_tokens):
@@ -479,8 +433,6 @@ class SMOLANDFAST(nn.Module):
             attention_mask=padded_outs["pad_masks"],
             pixel_values=padded_outs["pixel_values"],
             pixel_attention_mask=padded_outs["pixel_attention_mask"],
-            # inputs_embeds=tokens_embs,
-            # position_ids=position_ids,
             use_cache=self.config.use_cache,
             max_new_tokens=self.config.max_decoding_steps,
             do_sample=False,
