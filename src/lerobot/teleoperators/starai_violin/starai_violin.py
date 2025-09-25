@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.starai import (
     StaraiMotorsBus,

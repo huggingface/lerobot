@@ -7,8 +7,8 @@ from fashionstar_uart_sdk.uart_pocket_handler import (
     SyncPositionControlOptions,
 )
 
-from lerobot.errors import DeviceNotConnectedError
-from lerobot.utils.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
+from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.motors.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
 
 from ..motors_bus import Motor, MotorCalibration, MotorNormMode, MotorsBus, NameOrID, Value
 from .tables import (
