@@ -133,7 +133,7 @@ class VQBeTPolicy(PreTrainedPolicy):
             batch.pop(ACTION)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
         # NOTE: It's important that this happens after stacking the images into a single key.
-        batch["observation.images"] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+        batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
         if ACTION in batch:
             batch.pop(ACTION)
@@ -340,14 +340,12 @@ class VQBeTModel(nn.Module):
 
     def forward(self, batch: dict[str, Tensor], rollout: bool) -> tuple[dict, dict]:
         # Input validation.
-        assert set(batch).issuperset({"observation.state", "observation.images"})
-        batch_size, n_obs_steps = batch["observation.state"].shape[:2]
+        assert set(batch).issuperset({OBS_STATE, OBS_IMAGES})
+        batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
         assert n_obs_steps == self.config.n_obs_steps
 
         # Extract image feature (first combine batch and sequence dims).
-        img_features = self.rgb_encoder(
-            einops.rearrange(batch["observation.images"], "b s n ... -> (b s n) ...")
-        )
+        img_features = self.rgb_encoder(einops.rearrange(batch[OBS_IMAGES], "b s n ... -> (b s n) ..."))
         # Separate batch and sequence dims.
         img_features = einops.rearrange(
             img_features, "(b s n) ... -> b s n ...", b=batch_size, s=n_obs_steps, n=self.num_images
@@ -359,9 +357,7 @@ class VQBeTModel(nn.Module):
             img_features
         )  # (batch, obs_step, number of different cameras, projection dims)
         input_tokens = [rgb_tokens[:, :, i] for i in range(rgb_tokens.size(2))]
-        input_tokens.append(
-            self.state_projector(batch["observation.state"])
-        )  # (batch, obs_step, projection dims)
+        input_tokens.append(self.state_projector(batch[OBS_STATE]))  # (batch, obs_step, projection dims)
         input_tokens.append(einops.repeat(self.action_token, "1 1 d -> b n d", b=batch_size, n=n_obs_steps))
         # Interleave tokens by stacking and rearranging.
         input_tokens = torch.stack(input_tokens, dim=2)

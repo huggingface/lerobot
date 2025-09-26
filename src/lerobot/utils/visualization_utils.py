@@ -19,6 +19,8 @@ from typing import Any
 import numpy as np
 import rerun as rr
 
+from .constants import OBS_PREFIX, OBS_STR
+
 
 def init_rerun(session_name: str = "lerobot_control_loop") -> None:
     """Initializes the Rerun SDK for visualizing the control loop."""
@@ -63,7 +65,7 @@ def log_rerun_data(
         for k, v in observation.items():
             if v is None:
                 continue
-            key = k if str(k).startswith("observation.") else f"observation.{k}"
+            key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
 
             if _is_scalar(v):
                 rr.log(key, rr.Scalar(float(v)))
