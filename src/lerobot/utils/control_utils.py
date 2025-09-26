@@ -22,6 +22,7 @@ import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from typing import Any
 
 import numpy as np
 import torch
@@ -31,10 +32,25 @@ from termcolor import colored
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_FEATURES
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.robots import Robot
 
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
+    """
+    Logs performance metrics for a single step of the robot control loop.
+
+    This function formats and prints a single line of log information, including episode/frame counters,
+    total loop time (dt), and detailed timings for various robot and camera operations. It can also
+    highlight performance drops in yellow if the actual FPS is lower than the target FPS.
+
+    Args:
+        robot: The `Robot` instance, used to access its internal logs for detailed timings.
+        dt_s: The total duration of the control loop step in seconds.
+        episode_index: The index of the current episode.
+        frame_index: The index of the current frame within the episode.
+        fps: The target frames per second, used to check for performance degradation.
+    """
     log_items = []
     if episode_index is not None:
         log_items.append(f"ep:{episode_index}")
@@ -80,7 +96,16 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
 
 @cache
 def is_headless():
-    """Detects if python is running without a monitor."""
+    """
+    Detects if the Python script is running in a headless environment (e.g., without a display).
+
+    This function attempts to import `pynput`, a library that requires a graphical environment.
+    If the import fails, it assumes the environment is headless. The result is cached to avoid
+    re-running the check.
+
+    Returns:
+        True if the environment is determined to be headless, False otherwise.
+    """
     try:
         import pynput  # noqa
 
@@ -101,10 +126,35 @@ def predict_action(
     observation: dict[str, np.ndarray],
     policy: PreTrainedPolicy,
     device: torch.device,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     use_amp: bool,
     task: str | None = None,
     robot_type: str | None = None,
 ):
+    """
+    Performs a single-step inference to predict a robot action from an observation.
+
+    This function encapsulates the full inference pipeline:
+    1. Prepares the observation by converting it to PyTorch tensors and adding a batch dimension.
+    2. Runs the preprocessor pipeline on the observation.
+    3. Feeds the processed observation to the policy to get a raw action.
+    4. Runs the postprocessor pipeline on the raw action.
+    5. Formats the final action by removing the batch dimension and moving it to the CPU.
+
+    Args:
+        observation: A dictionary of NumPy arrays representing the robot's current observation.
+        policy: The `PreTrainedPolicy` model to use for action prediction.
+        device: The `torch.device` (e.g., 'cuda' or 'cpu') to run inference on.
+        preprocessor: The `PolicyProcessorPipeline` for preprocessing observations.
+        postprocessor: The `PolicyProcessorPipeline` for postprocessing actions.
+        use_amp: A boolean to enable/disable Automatic Mixed Precision for CUDA inference.
+        task: An optional string identifier for the task.
+        robot_type: An optional string identifier for the robot type.
+
+    Returns:
+        A `torch.Tensor` containing the predicted action, ready for the robot.
+    """
     observation = copy(observation)
     with (
         torch.inference_mode(),
@@ -122,9 +172,13 @@ def predict_action(
         observation["task"] = task if task else ""
         observation["robot_type"] = robot_type if robot_type else ""
 
+        observation = preprocessor(observation)
+
         # Compute the next action with the policy
         # based on the current observation
         action = policy.select_action(observation)
+
+        action = postprocessor(action)
 
         # Remove batch dimension
         action = action.squeeze(0)
@@ -136,6 +190,18 @@ def predict_action(
 
 
 def init_keyboard_listener():
+    """
+    Initializes a non-blocking keyboard listener for real-time user interaction.
+
+    This function sets up a listener for specific keys (right arrow, left arrow, escape) to control
+    the program flow during execution, such as stopping recording or exiting loops. It gracefully
+    handles headless environments where keyboard listening is not possible.
+
+    Returns:
+        A tuple containing:
+        - The `pynput.keyboard.Listener` instance, or `None` if in a headless environment.
+        - A dictionary of event flags (e.g., `exit_early`) that are set by key presses.
+    """
     # Allow to exit early while recording an episode or resetting the environment,
     # by tapping the right arrow key '->'. This might require a sudo permission
     # to allow your terminal to monitor keyboard events.
@@ -177,6 +243,19 @@ def init_keyboard_listener():
 
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
+    """
+    Validates the dataset repository name against the presence of a policy configuration.
+
+    This function enforces a naming convention: a dataset repository ID should start with "eval_"
+    if and only if a policy configuration is provided for evaluation purposes.
+
+    Args:
+        repo_id: The Hugging Face Hub repository ID of the dataset.
+        policy_cfg: The configuration object for the policy, or `None`.
+
+    Raises:
+        ValueError: If the naming convention is violated.
+    """
     _, dataset_name = repo_id.split("/")
     # either repo_id doesnt start with "eval_" and there is no policy
     # or repo_id starts with "eval_" and there is a policy
@@ -197,6 +276,21 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
 def sanity_check_dataset_robot_compatibility(
     dataset: LeRobotDataset, robot: Robot, fps: int, features: dict
 ) -> None:
+    """
+    Checks if a dataset's metadata is compatible with the current robot and recording setup.
+
+    This function compares key metadata fields (`robot_type`, `fps`, and `features`) from the
+    dataset against the current configuration to ensure that appended data will be consistent.
+
+    Args:
+        dataset: The `LeRobotDataset` instance to check.
+        robot: The `Robot` instance representing the current hardware setup.
+        fps: The current recording frequency (frames per second).
+        features: The dictionary of features for the current recording session.
+
+    Raises:
+        ValueError: If any of the checked metadata fields do not match.
+    """
     fields = [
         ("robot_type", dataset.meta.robot_type, robot.robot_type),
         ("fps", dataset.fps, fps),

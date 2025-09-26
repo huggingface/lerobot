@@ -59,7 +59,7 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 dependencies = [
 
     # Hugging Face dependencies
-    "datasets>=2.19.0,<=3.6.0", # TODO: Bumb dependency
+    "datasets>=4.0.0",
     "diffusers>=0.27.2",
     "huggingface-hub[hf-transfer,cli]>=0.34.2",
 
@@ -84,7 +84,6 @@ dependencies = [
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
-    "flask>=3.0.3,<4.0.0",
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
     "termcolor>=2.4.0,<4.0.0",
 ]
@@ -95,7 +94,7 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1"]
 placo-dep = ["placo>=0.9.6"]
-transformers-dep = ["transformers>=4.50.3,<4.52.0"] # TODO: Bumb dependency
+transformers-dep = ["transformers>=4.52.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
 
 # Motors
@@ -112,6 +111,7 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
 ]
+phone = ["hebi-py>=2.8.0", "teleop>=0.1.0"]
 # stretch = [
 #     "hello-robot-stretch-body>=0.7.27 ; sys_platform == 'linux'",
 #     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
@@ -121,7 +121,7 @@ intelrealsense = [
 # Policies
 pi0 = ["lerobot[transformers-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
-hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.9", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
@@ -135,6 +135,8 @@ video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 aloha = ["gym-aloha>=0.1.1"]
 pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 xarm = ["gym-xarm>=0.1.1"]
+libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
+
 
 # All
 all = [
@@ -154,19 +156,25 @@ all = [
     "lerobot[video_benchmark]",
     "lerobot[aloha]",
     "lerobot[pusht]",
-    "lerobot[xarm]"
+    "lerobot[xarm]",
+    "lerobot[phone]",
+    "lerobot[libero]",
 ]
 
 [project.scripts]
-lerobot-calibrate="lerobot.calibrate:main"
-lerobot-find-cameras="lerobot.find_cameras:main"
-lerobot-find-port="lerobot.find_port:main"
-lerobot-record="lerobot.record:main"
-lerobot-replay="lerobot.replay:main"
-lerobot-setup-motors="lerobot.setup_motors:main"
-lerobot-teleoperate="lerobot.teleoperate:main"
-lerobot-eval="lerobot.scripts.eval:main"
-lerobot-train="lerobot.scripts.train:main"
+lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
+lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
+lerobot-find-port="lerobot.scripts.lerobot_find_port:main"
+lerobot-record="lerobot.scripts.lerobot_record:main"
+lerobot-replay="lerobot.scripts.lerobot_replay:main"
+lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
+lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
+lerobot-eval="lerobot.scripts.lerobot_eval:main"
+lerobot-train="lerobot.scripts.lerobot_train:main"
+lerobot-dataset-viz="lerobot.scripts.lerobot_dataset_viz:main"
+lerobot-info="lerobot.scripts.lerobot_info:main"
+lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
+lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]

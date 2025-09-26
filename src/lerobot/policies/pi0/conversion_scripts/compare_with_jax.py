@@ -21,6 +21,7 @@ import torch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.policies.factory import make_policy
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
 
 def display(tensor: torch.Tensor):
@@ -60,26 +61,26 @@ def main():
 
     # Override stats
     dataset_meta = LeRobotDatasetMetadata(dataset_repo_id)
-    dataset_meta.stats["observation.state"]["mean"] = torch.tensor(
+    dataset_meta.stats[OBS_STATE]["mean"] = torch.tensor(
         norm_stats["norm_stats"]["state"]["mean"][:num_motors], dtype=torch.float32
     )
-    dataset_meta.stats["observation.state"]["std"] = torch.tensor(
+    dataset_meta.stats[OBS_STATE]["std"] = torch.tensor(
         norm_stats["norm_stats"]["state"]["std"][:num_motors], dtype=torch.float32
     )
 
     # Create LeRobot batch from Jax
     batch = {}
     for cam_key, uint_chw_array in example["images"].items():
-        batch[f"observation.images.{cam_key}"] = torch.from_numpy(uint_chw_array) / 255.0
-    batch["observation.state"] = torch.from_numpy(example["state"])
+        batch[f"{OBS_IMAGES}.{cam_key}"] = torch.from_numpy(uint_chw_array) / 255.0
+    batch[OBS_STATE] = torch.from_numpy(example["state"])
     batch["action"] = torch.from_numpy(outputs["actions"])
     batch["task"] = example["prompt"]
 
     if model_name == "pi0_aloha_towel":
-        del batch["observation.images.cam_low"]
+        del batch[f"{OBS_IMAGES}.cam_low"]
     elif model_name == "pi0_aloha_sim":
-        batch["observation.images.top"] = batch["observation.images.cam_high"]
-        del batch["observation.images.cam_high"]
+        batch[f"{OBS_IMAGES}.top"] = batch[f"{OBS_IMAGES}.cam_high"]
+        del batch[f"{OBS_IMAGES}.cam_high"]
 
     # Batchify
     for key in batch:
