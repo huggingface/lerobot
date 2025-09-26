@@ -132,7 +132,7 @@ def aggregate_pipeline_dataset_features(
     # Convert the processed features into the final dataset format.
     dataset_features = {}
     if processed_features[ACTION]:
-        dataset_features.update(hw_to_dataset_features(processed_features["action"], ACTION, use_videos))
+        dataset_features.update(hw_to_dataset_features(processed_features[ACTION], ACTION, use_videos))
     if processed_features[OBS_STR]:
         dataset_features.update(hw_to_dataset_features(processed_features[OBS_STR], OBS_STR, use_videos))
 
