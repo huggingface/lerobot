@@ -468,12 +468,23 @@ def _manifest_create(root: Path, work_dir: Path, episodes_per_batch: int, data_m
 def _load_manifest_header(man_dir: Path) -> dict:
     return json.loads((man_dir / "manifest.json").read_text())
 
-def _load_batch_record(man_dir: Path, part_id: int) -> dict:
-    with jsonlines.open(man_dir / "batches.jsonl", "r") as r:
-        for rec in r:
-            if rec["part_id"] == int(part_id):
+def _load_batch_record(man_dir: Path, part_id: int):
+    """Return the JSON record for part_id from batches.jsonl, or None if not present."""
+    path = man_dir / "batches.jsonl"
+    if not path.exists():
+        return None
+    with path.open("r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if rec.get("part_id") == int(part_id):
                 return rec
-    raise ValueError(f"part_id={part_id} not in batches.jsonl")
+    return None
 
 def _lease_next_batch(man_dir: Path, total_batches: int) -> Optional[int]:
     """
@@ -604,27 +615,41 @@ def _writer_thread(
         acc_size_mb = 0.0
 
     while not stop_event.is_set():
+        # Stop if all batches are accounted for (prevents reacting to stale .done files)
+        if next_part >= batches_total:
+            break
+
         done_marker = man_dir / f"part-{next_part}.done"
         if done_marker.exists():
-            shard = _tmp_data_dir(work_dir) / f"part-{next_part:06d}.parquet"
             rec = _load_batch_record(man_dir, next_part)
+            if rec is None:
+                # Stale marker from a previous run; skip this index
+                next_part += 1
+                continue
+
+            shard = _tmp_data_dir(work_dir) / f"part-{next_part:06d}.parquet"
+            if not shard.exists():
+                # Marker arrived before the shard is visible; wait a bit
+                time.sleep(0.05)
+                continue
+
             # If adding this shard would exceed the threshold, flush the current file first.
             shard_mb = get_parquet_file_size_in_mb(shard)
             if acc_size_mb + shard_mb >= data_mb and acc_paths:
                 _flush_data_file()
+
             # Assign mapping for all episodes in this shard to current (chunk_idx, file_idx)
             for ep in range(rec["episode_start"], rec["episode_end"] + 1):
                 episodes_meta_out[ep]["data/chunk_index"] = chunk_idx
                 episodes_meta_out[ep]["data/file_index"] = file_idx
+
             # Accumulate shard and continue
             acc_paths.append(shard)
             acc_size_mb += shard_mb
             next_part += 1
-            # loop continues to wait for the next shard
             continue
-        # If all parts are done/leased exhausted, break; else wait a bit
-        if next_part >= batches_total:
-            break
+
+        # nothing to do yet; wait for workers
         time.sleep(0.05)
 
     # Final flush if anything pending
@@ -718,7 +743,11 @@ def _orchestrate(
     old_root = HF_LEROBOT_HOME / f"{repo_id}_old"
     new_root = HF_LEROBOT_HOME / f"{repo_id}_v30"
     work_dir = Path(work_dir_opt) if work_dir_opt else _work_root(repo_id)
-    man_dir = _manifest_dir(work_dir)
+    # Clean work dir to avoid stale markers/shards from previous runs
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    man_dir = _manifest_dir(work_dir)  # recreate after clean           
     # reset dirs
     if old_root.is_dir() and root.is_dir():
         shutil.rmtree(str(root))
