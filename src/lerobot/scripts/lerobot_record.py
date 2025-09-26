@@ -109,6 +109,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so101_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
+from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -303,7 +304,7 @@ def record_loop(
         obs_processed = robot_observation_processor(obs)
 
         if policy is not None or dataset is not None:
-            observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix="observation")
+            observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
@@ -318,7 +319,7 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
-            action_names = dataset.features["action"]["names"]
+            action_names = dataset.features[ACTION]["names"]
             act_processed_policy: RobotAction = {
                 f"{name}": float(action_values[i]) for i, name in enumerate(action_names)
             }
@@ -360,7 +361,7 @@ def record_loop(
 
         # Write to dataset
         if dataset is not None:
-            action_frame = build_dataset_frame(dataset.features, action_values, prefix="action")
+            action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
 
