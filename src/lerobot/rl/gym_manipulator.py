@@ -73,7 +73,7 @@ from lerobot.teleoperators import (
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
@@ -602,8 +602,8 @@ def control_loop(
         action_features = teleop_device.action_features
         features = {
             ACTION: action_features,
-            "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
-            "next.done": {"dtype": "bool", "shape": (1,), "names": None},
+            REWARD: {"dtype": "float32", "shape": (1,), "names": None},
+            DONE: {"dtype": "bool", "shape": (1,), "names": None},
         }
         if use_gripper:
             features["complementary_info.discrete_penalty"] = {
@@ -673,8 +673,8 @@ def control_loop(
             frame = {
                 **observations,
                 ACTION: action_to_record.cpu(),
-                "next.reward": np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
-                "next.done": np.array([terminated or truncated], dtype=bool),
+                REWARD: np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
+                DONE: np.array([terminated or truncated], dtype=bool),
             }
             if use_gripper:
                 discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)

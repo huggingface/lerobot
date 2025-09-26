@@ -75,7 +75,7 @@ import torch.utils.data
 import tqdm
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD
 
 
 class EpisodeSampler(torch.utils.data.Sampler):
@@ -166,11 +166,11 @@ def visualize_dataset(
                 for dim_idx, val in enumerate(batch[OBS_STATE][i]):
                     rr.log(f"state/{dim_idx}", rr.Scalar(val.item()))
 
-            if "next.done" in batch:
-                rr.log("next.done", rr.Scalar(batch["next.done"][i].item()))
+            if DONE in batch:
+                rr.log(DONE, rr.Scalar(batch[DONE][i].item()))
 
-            if "next.reward" in batch:
-                rr.log("next.reward", rr.Scalar(batch["next.reward"][i].item()))
+            if REWARD in batch:
+                rr.log(REWARD, rr.Scalar(batch[REWARD][i].item()))
 
             if "next.success" in batch:
                 rr.log("next.success", rr.Scalar(batch["next.success"][i].item()))

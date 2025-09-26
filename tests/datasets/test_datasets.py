@@ -46,7 +46,7 @@ from lerobot.datasets.utils import (
 from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
 from lerobot.robots import make_robot_from_config
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, OBS_STR
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, OBS_STR, REWARD
 from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.utils import require_x86_64_kernel
@@ -399,8 +399,8 @@ def test_factory(env_name, repo_id, policy_name):
         ("timestamp", 0, True),
         # TODO(rcadene): should we rename it agent_pos?
         (OBS_STATE, 1, True),
-        ("next.reward", 0, False),
-        ("next.done", 0, False),
+        (REWARD, 0, False),
+        (DONE, 0, False),
     ]
 
     # test number of dimensions
