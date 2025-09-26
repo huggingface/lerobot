@@ -24,15 +24,6 @@ PRECISION = {
     "bfloat16": torch.bfloat16,
 }
 
-
-def normalize(x, min_val, max_val):
-    return (x - min_val) / (max_val - min_val)
-
-
-def unnormalize(x, min_val, max_val):
-    return x * (max_val - min_val) + min_val
-
-
 class SMOLANDFASTPolicy(PreTrainedPolicy):
     """Wrapper class around PI0FAST tokenizer and SMOLANDFAST model to train and run inference within LeRobot."""
 
@@ -64,7 +55,6 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
             config.output_features, config.normalization_mapping, dataset_stats
         )
 
-        self.language_tokenizer = AutoProcessor.from_pretrained("gpt2")
         self.model = SMOLANDFAST(config)
 
         self.reset()
@@ -118,56 +108,25 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
         loss_dict = self.model.forward(batch)
         return loss_dict["loss"], loss_dict
 
-def make_att_2d_masks(pad_masks, att_masks):
-    """Copied from big_vision.
-
-    Tokens can attend to valid inputs tokens which have a cumulative mask_ar
-    smaller or equal to theirs. This way `mask_ar` int[B, N] can be used to
-    setup several types of attention, for example:
-
-      [[1 1 1 1 1 1]]: pure causal attention.
-
-      [[0 0 0 1 1 1]]: prefix-lm attention. The first 3 tokens can attend between
-          themselves and the last 3 tokens have a causal attention. The first
-          entry could also be a 1 without changing behaviour.
-
-      [[1 0 1 0 1 0 0 1 0 0]]: causal attention between 4 blocks. Tokens of a
-          block can attend all previous blocks and all tokens on the same block.
-
-    Args:
-      input_mask: bool[B, N] true if its part of the input, false if padding.
-      mask_ar: int32[B, N] mask that's 1 where previous tokens cannot depend on
-        it and 0 where it shares the same attention mask as the previous token.
-    """
-    if att_masks.ndim != 2:
-        raise ValueError(att_masks.ndim)
-    if pad_masks.ndim != 2:
-        raise ValueError(pad_masks.ndim)
-
-    cumsum = torch.cumsum(att_masks, dim=1)
-    att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
-    pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
-    return att_2d_masks & pad_2d_masks
-
-def prepare_attention_masks_4d(att_2d_masks):
-    """Helper method to prepare 4D attention masks for transformer."""
-    att_2d_masks_4d = att_2d_masks[:, None, :, :].to(dtype=torch.bool)
-    return torch.where(att_2d_masks_4d, 0.0, -2.3819763e38)
 
 class SMOLANDFAST(nn.Module):
     def __init__(self, config: SMOLANDFASTConfig):
         super().__init__()
         self.config = config
 
+        self.torch_precision = PRECISION.get(config.precision, torch.float32)
         self.vlm = AutoModelForImageTextToText.from_pretrained(self.config.vlm_checkpoint,
-                                                               torch_dtype=torch.float32)
-        # for param in self.vlm.model.vision_model.parameters():
-        #     param.requires_grad = False
-
-        # for param in self.vlm.model.connector.parameters():
-        #     param.requires_grad = False
-
+                                                               torch_dtype=self.torch_precision)
         self.processor = AutoProcessor.from_pretrained(self.config.vlm_checkpoint)
+        if config.scale_factor is not None:
+            scale_factor = config.scale_factor
+            self.processor.image_seq_len = int(1024/(scale_factor**2))
+            self.vlm.scale_factor = scale_factor
+            self.vlm.model.connector.scale_factor = scale_factor
+            self.vlm.model.connector.modality_projection = nn.Linear(768*(scale_factor**2),
+                                                                    576,
+                                                                    bias=False,
+                                                                    dtype=self.torch_precision)
 
         fast_tokenizer_path = "physical-intelligence/fast"
         self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
@@ -175,6 +134,13 @@ class SMOLANDFAST(nn.Module):
         self.max_input_seq_len = self.config.max_input_seq_len
         self.action_horizon = self.config.chunk_size
         self.action_dim = self.config.action_feature.shape[0] 
+
+        if config.train_only_text_model:
+            for param in self.vlm.model.vision_model.parameters():
+                param.requires_grad = False
+
+            for param in self.vlm.model.connector.parameters():
+                param.requires_grad = False
         
         self.pad_token_id = self.processor.tokenizer.pad_token_id
         self.eos_token_id = self.processor.tokenizer.eos_token_id
@@ -204,10 +170,11 @@ class SMOLANDFAST(nn.Module):
                 ],
                 }]
             prefix_texts.append(message)
+
         prompts = [self.processor.apply_chat_template(m, add_generation_prompt=True) for m in prefix_texts]
         images = list(torch.unbind(images, dim=0))
-        # Convert each tensor to PIL
-        images = [[to_pil_image(img).resize((512,512))] for img in images]
+        images = [[img] for img in images]
+
         prefix_out = self.processor(
             images=images,
             text=prompts,
@@ -215,12 +182,7 @@ class SMOLANDFAST(nn.Module):
             do_rescale=False,
         )
         return prefix_out
-    
 
-    def embed_tokens(self, tokens: torch.Tensor):
-        lang_emb = self.embed_func(tokens)
-        lang_emb_dim = lang_emb.shape[-1]
-        return lang_emb * math.sqrt(lang_emb_dim)
 
     def _act_tokens_to_llm_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         llm_tokens = self.processor.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
@@ -237,9 +199,16 @@ class SMOLANDFAST(nn.Module):
                                                    images=images,
                                                    lang_text=lang_text)
     
-        prefix_out["pixel_values"] = torch.tensor(np.array(prefix_out["pixel_values"]),dtype=torch.float32, device=device)
-        prefix_out["pixel_attention_mask"] = torch.tensor(np.array(prefix_out["pixel_attention_mask"]),dtype=torch.long, device=device)
+        prefix_out["pixel_values"] = torch.tensor(np.array(prefix_out["pixel_values"]),
+                                                  dtype=self.torch_precision,
+                                                  device=device)
+        prefix_out["pixel_attention_mask"] = torch.tensor(np.array(prefix_out["pixel_attention_mask"]),
+                                                          dtype=torch.long,
+                                                          device=device)
         obs_ids = prefix_out["input_ids"]
+        # print(f"tokens len:{len(obs_ids[0])}")
+        # print(f"tokens: {obs_ids[0]}")
+        # print(da)
 
         if actions is not None:
             fast_action_tokens = self.fast_tokenizer(actions.detach().cpu())

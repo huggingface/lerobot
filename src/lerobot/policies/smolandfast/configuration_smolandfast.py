@@ -24,17 +24,12 @@ class SMOLANDFASTConfig(PreTrainedConfig):
         }
     )
 
-    n_state_bins = 512
+    n_state_bins = 256
 
-    # Tokenizer
-    tokenizer_max_length: int = 48
-
-    # Projector
-    proj_width: int = 1024
 
     # Decoding
     max_decoding_steps: int = 512
-    fast_skip_tokens: int = 280  # Skip last 128 tokens in PaliGemma vocab since they are special tokens
+    fast_skip_tokens: int = 280  # Skip last 280 tokens
     max_input_seq_len: int = 512  # 512
 
     # Utils
@@ -56,8 +51,10 @@ class SMOLANDFASTConfig(PreTrainedConfig):
     # llm_checkpoint = "gpt2"
     # llm_checkpoint = "google/gemma-3-270m"
 
-    padding_side: str = "right"
-    precision: str = "bfloat16"
+    precision: str = "float32"
+    train_only_text_model: bool = False
+    scale_factor = 1
+
     grad_clip_norm: float = 1
 
     # Allows padding/truncation of generated action tokens during detokenization to ensure decoding.
