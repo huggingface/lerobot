@@ -31,7 +31,7 @@ from torch.distributions import MultivariateNormal, TanhTransform, Transform, Tr
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig, is_image_feature
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 
 DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 
@@ -51,7 +51,7 @@ class SACPolicy(
         self.config = config
 
         # Determine action dimension and initialize all components
-        continuous_action_dim = config.output_features["action"].shape[0]
+        continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
         self._init_critics(continuous_action_dim)
         self._init_actor(continuous_action_dim)
@@ -158,7 +158,7 @@ class SACPolicy(
             The computed loss tensor
         """
         # Extract common components from batch
-        actions: Tensor = batch["action"]
+        actions: Tensor = batch[ACTION]
         observations: dict[str, Tensor] = batch["state"]
         observation_features: Tensor = batch.get("observation_feature")
 

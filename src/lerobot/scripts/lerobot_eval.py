@@ -81,7 +81,7 @@ from lerobot.envs.utils import (
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
-from lerobot.utils.constants import OBS_STR
+from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -213,7 +213,7 @@ def rollout(
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
-        "action": torch.stack(all_actions, dim=1),
+        ACTION: torch.stack(all_actions, dim=1),
         "reward": torch.stack(all_rewards, dim=1),
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
@@ -440,14 +440,14 @@ def _compile_episode_data(
     """
     ep_dicts = []
     total_frames = 0
-    for ep_ix in range(rollout_data["action"].shape[0]):
+    for ep_ix in range(rollout_data[ACTION].shape[0]):
         # + 2 to include the first done frame and the last observation frame.
         num_frames = done_indices[ep_ix].item() + 2
         total_frames += num_frames
 
         # Here we do `num_frames - 1` as we don't want to include the last observation frame just yet.
         ep_dict = {
-            "action": rollout_data["action"][ep_ix, : num_frames - 1],
+            ACTION: rollout_data[ACTION][ep_ix, : num_frames - 1],
             "episode_index": torch.tensor([start_episode_index + ep_ix] * (num_frames - 1)),
             "frame_index": torch.arange(0, num_frames - 1, 1),
             "timestamp": torch.arange(0, num_frames - 1, 1) / fps,
