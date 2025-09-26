@@ -43,7 +43,7 @@ from lerobot.datasets.backward_compatibility import (
     BackwardCompatibilityError,
     ForwardCompatibilityError,
 )
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_STR
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STR
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
@@ -646,7 +646,7 @@ def hw_to_dataset_features(
     }
     cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
 
-    if joint_fts and prefix == "action":
+    if joint_fts and prefix == ACTION:
         features[prefix] = {
             "dtype": "float32",
             "shape": (len(joint_fts),),
@@ -733,7 +733,7 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             type = FeatureType.ENV
         elif key.startswith(OBS_STR):
             type = FeatureType.STATE
-        elif key.startswith("action"):
+        elif key.startswith(ACTION):
             type = FeatureType.ACTION
         else:
             continue

@@ -34,6 +34,7 @@ python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
 """
 
 import argparse
+import logging
 import shutil
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,7 @@ from lerobot.datasets.utils import (
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.utils import init_logging
 
 V21 = "v2.1"
 
@@ -144,6 +146,7 @@ def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
 
 
 def convert_tasks(root, new_root):
+    logging.info(f"Converting tasks from {root} to {new_root}")
     tasks, _ = legacy_load_tasks(root)
     task_indices = tasks.keys()
     task_strings = tasks.values()
@@ -185,7 +188,10 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
     num_frames = 0
     paths_to_cat = []
     episodes_metadata = []
-    for ep_path in ep_paths:
+
+    logging.info(f"Converting data files from {len(ep_paths)} episodes")
+
+    for ep_path in tqdm.tqdm(ep_paths, desc="convert data files"):
         ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
         ep_num_frames = get_parquet_num_frames(ep_path)
         ep_metadata = {
@@ -209,7 +215,6 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
         # Reset for the next file
         size_in_mb = ep_size_in_mb
-        num_frames = ep_num_frames
         paths_to_cat = [ep_path]
 
         chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
@@ -236,6 +241,8 @@ def get_image_keys(root):
 
 
 def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
+    logging.info(f"Converting videos from {root} to {new_root}")
+
     video_keys = get_video_keys(root)
     if len(video_keys) == 0:
         return None
@@ -254,7 +261,7 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
     episods_metadata = []
     num_cameras = len(video_keys)
     num_episodes = num_eps_per_cam[0]
-    for ep_idx in range(num_episodes):
+    for ep_idx in tqdm.tqdm(range(num_episodes), desc="convert videos"):
         # Sanity check
         ep_ids = [eps_metadata_per_cam[cam_idx][ep_idx]["episode_index"] for cam_idx in range(num_cameras)]
         ep_ids += [ep_idx]
@@ -281,6 +288,7 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
     duration_in_s = 0.0
     paths_to_cat = []
     episodes_metadata = []
+
     for ep_path in tqdm.tqdm(ep_paths, desc=f"convert videos of {video_key}"):
         ep_size_in_mb = get_video_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
@@ -374,6 +382,8 @@ def generate_episode_metadata_dict(
 
 
 def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_metadata=None):
+    logging.info(f"Converting episodes metadata from {root} to {new_root}")
+
     episodes_legacy_metadata = legacy_load_episodes(root)
     episodes_stats = legacy_load_episodes_stats(root)
 
@@ -405,6 +415,7 @@ def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
     info["data_path"] = DEFAULT_DATA_PATH
     info["video_path"] = DEFAULT_VIDEO_PATH
     info["fps"] = int(info["fps"])
+    logging.info(f"Converting info from {root} to {new_root}")
     for key in info["features"]:
         if info["features"][key]["dtype"] == "video":
             # already has fps in video_info
@@ -469,6 +480,7 @@ def convert_dataset(
 
 
 if __name__ == "__main__":
+    init_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--repo-id",
