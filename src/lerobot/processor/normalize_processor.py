@@ -288,8 +288,8 @@ class _NormalizationMixin:
         Normalization Modes:
           - MEAN_STD: Centers data around zero with unit variance.
           - MIN_MAX: Scales data to [-1, 1] range using actual min/max values.
-          - QUANTILES: Scales data to [0, 1] range using 1st and 99th percentiles (q01/q99).
-          - QUANTILE10: Scales data to [0, 1] range using 10th and 90th percentiles (q10/q90).
+          - QUANTILES: Scales data to [-1, 1] range using 1st and 99th percentiles (q01/q99).
+          - QUANTILE10: Scales data to [-1, 1] range using 10th and 90th percentiles (q10/q90).
 
         Args:
             tensor: The input tensor to transform.
