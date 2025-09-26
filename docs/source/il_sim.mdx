@@ -22,13 +22,38 @@ pip install -e ".[hilserl]"
 
 ## Teleoperate and Record a Dataset
 
-To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_gym_hil_il.json).
+To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file can be found [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/sim_il/env_config.json).
 
-To teleoperate and collect a dataset, we need to modify this config file and you should add your `repo_id` here: `"repo_id": "il_gym",` and `"num_episodes": 30,` and make sure you set `mode` to `record`, "mode": "record".
+To teleoperate and collect a dataset, we need to modify this config file. Here's an example configuration for imitation learning data collection:
 
-If you do not have a Nvidia GPU also change `"device": "cuda"` parameter in the config file (for example to `mps` for MacOS).
+```json
+{
+  "env": {
+    "type": "gym_manipulator",
+    "name": "gym_hil",
+    "task": "PandaPickCubeGamepad-v0",
+    "fps": 10
+  },
+  "dataset": {
+    "repo_id": "your_username/il_gym",
+    "root": null,
+    "task": "pick_cube",
+    "num_episodes_to_record": 30,
+    "replay_episode": null,
+    "push_to_hub": true
+  },
+  "mode": "record",
+  "device": "cuda"
+}
+```
 
-By default the config file assumes you use a controller. To use your keyboard please change the envoirment specified at `"task"` in the config file and set it to `"PandaPickCubeKeyboard-v0"`.
+Key configuration points:
+
+- Set your `repo_id` in the `dataset` section: `"repo_id": "your_username/il_gym"`
+- Set `num_episodes_to_record: 30` to collect 30 demonstration episodes
+- Ensure `mode` is set to `"record"`
+- If you don't have an NVIDIA GPU, change `"device": "cuda"` to `"mps"` for macOS or `"cpu"`
+- To use keyboard instead of gamepad, change `"task"` to `"PandaPickCubeKeyboard-v0"`
 
 Then we can run this command to start:
 
@@ -36,14 +61,14 @@ Then we can run this command to start:
 <hfoption id="Linux">
 
 ```bash
-python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
+python -m lerobot.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
 ```
 
 </hfoption>
 <hfoption id="MacOS">
 
 ```bash
-mjpython -m lerobot.scripts.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
+mjpython -m lerobot.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
 ```
 
 </hfoption>
@@ -140,9 +165,32 @@ huggingface-cli upload ${HF_USER}/il_sim_test${CKPT} \
 
 ## Evaluate your policy in Sim
 
-To evaluate your policy we have to use the config file that can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/eval_config_gym_hil.json).
+To evaluate your policy we have to use a configuration file. An example can be found [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/sim_il/eval_config.json).
 
-Make sure to replace the `repo_id` with the dataset you trained on, for example `pepijn223/il_sim_dataset` and replace the `pretrained_policy_name_or_path` with your model id, for example `pepijn223/il_sim_model`
+Here's an example evaluation configuration:
+
+```json
+{
+  "env": {
+    "type": "gym_manipulator",
+    "name": "gym_hil",
+    "task": "PandaPickCubeGamepad-v0",
+    "fps": 10
+  },
+  "dataset": {
+    "repo_id": "your_username/il_sim_dataset",
+    "dataset_root": null,
+    "task": "pick_cube"
+  },
+  "pretrained_policy_name_or_path": "your_username/il_sim_model",
+  "device": "cuda"
+}
+```
+
+Make sure to replace:
+
+- `repo_id` with the dataset you trained on (e.g., `your_username/il_sim_dataset`)
+- `pretrained_policy_name_or_path` with your model ID (e.g., `your_username/il_sim_model`)
 
 Then you can run this command to visualize your trained policy
 
@@ -150,14 +198,14 @@ Then you can run this command to visualize your trained policy
 <hfoption id="Linux">
 
 ```bash
-python -m lerobot.scripts.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
+python -m lerobot.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
 ```
 
 </hfoption>
 <hfoption id="MacOS">
 
 ```bash
-mjpython -m lerobot.scripts.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
+mjpython -m lerobot.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
 ```
 
 </hfoption>
