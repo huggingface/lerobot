@@ -29,14 +29,14 @@ Examples:
 
 - Visualize data stored on a local machine:
 ```
-local$ python -m lerobot.scripts.visualize_dataset \
+local$ lerobot-dataset-viz \
     --repo-id lerobot/pusht \
     --episode-index 0
 ```
 
 - Visualize data stored on a distant machine with a local viewer:
 ```
-distant$ python -m lerobot.scripts.visualize_dataset \
+distant$ lerobot-dataset-viz \
     --repo-id lerobot/pusht \
     --episode-index 0 \
     --save 1 \
@@ -50,7 +50,7 @@ local$ rerun lerobot_pusht_episode_0.rrd
 (You need to forward the websocket port to the distant machine, with
 `ssh -L 9087:localhost:9087 username@remote-host`)
 ```
-distant$ python -m lerobot.scripts.visualize_dataset \
+distant$ lerobot-dataset-viz \
     --repo-id lerobot/pusht \
     --episode-index 0 \
     --mode distant \
@@ -75,6 +75,7 @@ import torch.utils.data
 import tqdm
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 
 class EpisodeSampler(torch.utils.data.Sampler):
@@ -156,13 +157,13 @@ def visualize_dataset(
                 rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
 
             # display each dimension of action space (e.g. actuators command)
-            if "action" in batch:
-                for dim_idx, val in enumerate(batch["action"][i]):
-                    rr.log(f"action/{dim_idx}", rr.Scalar(val.item()))
+            if ACTION in batch:
+                for dim_idx, val in enumerate(batch[ACTION][i]):
+                    rr.log(f"{ACTION}/{dim_idx}", rr.Scalar(val.item()))
 
             # display each dimension of observed state space (e.g. agent position in joint space)
-            if "observation.state" in batch:
-                for dim_idx, val in enumerate(batch["observation.state"][i]):
+            if OBS_STATE in batch:
+                for dim_idx, val in enumerate(batch[OBS_STATE][i]):
                     rr.log(f"state/{dim_idx}", rr.Scalar(val.item()))
 
             if "next.done" in batch:

@@ -19,9 +19,9 @@ import logging
 import torch
 from torch import Tensor, nn
 
-from lerobot.constants import OBS_IMAGE, REWARD
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
+from lerobot.utils.constants import OBS_IMAGE, REWARD
 
 
 class ClassifierOutput:

@@ -26,6 +26,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import ACTION
 
 from .converters import from_tensor_to_numpy, to_tensor
 from .core import EnvTransition, PolicyAction, TransitionKey
@@ -272,7 +273,7 @@ class _NormalizationMixin:
         Returns:
             The transformed action tensor.
         """
-        processed_action = self._apply_transform(action, "action", FeatureType.ACTION, inverse=inverse)
+        processed_action = self._apply_transform(action, ACTION, FeatureType.ACTION, inverse=inverse)
         return processed_action
 
     def _apply_transform(

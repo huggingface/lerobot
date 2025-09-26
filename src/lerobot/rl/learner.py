@@ -25,7 +25,7 @@ Examples of usage:
 
 - Start a learner server for training:
 ```bash
-python -m lerobot.scripts.rl.learner --config_path src/lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.rl.learner --config_path src/lerobot/configs/train_config_hilserl_so100.json
 ```
 
 **NOTE**: Start the learner server before launching the actor server. The learner opens a gRPC server
@@ -62,18 +62,14 @@ from torch.optim.optimizer import Optimizer
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.constants import (
-    CHECKPOINTS_DIR,
-    LAST_CHECKPOINT_LINK,
-    PRETRAINED_MODEL_DIR,
-    TRAINING_STATE_DIR,
-)
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
+from lerobot.rl.process import ProcessSignalHandler
+from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.scripts.rl import learner_service
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2_grpc
@@ -83,8 +79,13 @@ from lerobot.transport.utils import (
     bytes_to_transitions,
     state_to_bytes,
 )
-from lerobot.utils.buffer import ReplayBuffer, concatenate_batch_transitions
-from lerobot.utils.process import ProcessSignalHandler
+from lerobot.utils.constants import (
+    ACTION,
+    CHECKPOINTS_DIR,
+    LAST_CHECKPOINT_LINK,
+    PRETRAINED_MODEL_DIR,
+    TRAINING_STATE_DIR,
+)
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
@@ -98,7 +99,8 @@ from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
 )
-from lerobot.utils.wandb_utils import WandBLogger
+
+from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
 
 LOG_PREFIX = "[LEARNER]"
 
@@ -152,7 +154,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 
     # Setup WandB logging if enabled
     if cfg.wandb.enable and cfg.wandb.project:
-        from lerobot.utils.wandb_utils import WandBLogger
+        from lerobot.rl.wandb_utils import WandBLogger
 
         wandb_logger = WandBLogger(cfg)
     else:
@@ -401,7 +403,7 @@ def add_actor_information_and_train(
                     left_batch_transitions=batch, right_batch_transition=batch_offline
                 )
 
-            actions = batch["action"]
+            actions = batch[ACTION]
             rewards = batch["reward"]
             observations = batch["state"]
             next_observations = batch["next_state"]
@@ -414,7 +416,7 @@ def add_actor_information_and_train(
 
             # Create a batch dictionary with all required elements for the forward method
             forward_batch = {
-                "action": actions,
+                ACTION: actions,
                 "reward": rewards,
                 "state": observations,
                 "next_state": next_observations,
@@ -459,7 +461,7 @@ def add_actor_information_and_train(
                 left_batch_transitions=batch, right_batch_transition=batch_offline
             )
 
-        actions = batch["action"]
+        actions = batch[ACTION]
         rewards = batch["reward"]
         observations = batch["state"]
         next_observations = batch["next_state"]
@@ -473,7 +475,7 @@ def add_actor_information_and_train(
 
         # Create a batch dictionary with all required elements for the forward method
         forward_batch = {
-            "action": actions,
+            ACTION: actions,
             "reward": rewards,
             "state": observations,
             "next_state": next_observations,
@@ -639,7 +641,7 @@ def start_learner(
         # TODO: Check if its useful
         _ = ProcessSignalHandler(False, display_pid=True)
 
-    service = learner_service.LearnerService(
+    service = LearnerService(
         shutdown_event=shutdown_event,
         parameters_queue=parameters_queue,
         seconds_between_pushes=cfg.policy.actor_learner_config.policy_parameters_push_frequency,
@@ -649,7 +651,7 @@ def start_learner(
     )
 
     server = grpc.server(
-        ThreadPoolExecutor(max_workers=learner_service.MAX_WORKERS),
+        ThreadPoolExecutor(max_workers=MAX_WORKERS),
         options=[
             ("grpc.max_receive_message_length", MAX_MESSAGE_SIZE),
             ("grpc.max_send_message_length", MAX_MESSAGE_SIZE),
@@ -670,7 +672,7 @@ def start_learner(
 
     shutdown_event.wait()
     logging.info("[LEARNER] Stopping gRPC server...")
-    server.stop(learner_service.SHUTDOWN_TIMEOUT)
+    server.stop(SHUTDOWN_TIMEOUT)
     logging.info("[LEARNER] gRPC server stopped")
 
 
@@ -1154,7 +1156,7 @@ def process_transitions(
             # Skip transitions with NaN values
             if check_nan_in_transition(
                 observations=transition["state"],
-                actions=transition["action"],
+                actions=transition[ACTION],
                 next_state=transition["next_state"],
             ):
                 logging.warning("[LEARNER] NaN detected in transition, skipping")

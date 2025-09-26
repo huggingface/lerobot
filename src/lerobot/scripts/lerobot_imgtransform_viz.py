@@ -20,10 +20,10 @@ Additionally, each individual transform can be visualized separately as well as 
 
 Example:
 ```bash
-python -m lerobot.scripts.visualize_image_transforms \
-    --repo_id=lerobot/pusht \
-    --episodes='[0]' \
-    --image_transforms.enable=True
+lerobot-imgtransform-viz \
+  --repo_id=lerobot/pusht \
+  --episodes='[0]' \
+  --image_transforms.enable=True
 ```
 """
 
@@ -126,5 +126,9 @@ def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR
     save_each_transform(cfg.image_transforms, original_frame, output_dir, n_examples)
 
 
-if __name__ == "__main__":
+def main():
     visualize_image_transforms()
+
+
+if __name__ == "__main__":
+    main()
