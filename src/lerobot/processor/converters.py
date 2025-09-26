@@ -23,6 +23,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from lerobot.utils.constants import OBS_PREFIX
+
 from .core import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 
 
@@ -347,7 +349,7 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
     # Extract observation and complementary data keys.
-    observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
+    observation_keys = {k: v for k, v in batch.items() if k.startswith(OBS_PREFIX)}
     complementary_data = _extract_complementary_data(batch)
 
     return create_transition(

@@ -31,6 +31,7 @@ from torch.distributions import MultivariateNormal, TanhTransform, Transform, Tr
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig, is_image_feature
 from lerobot.policies.utils import get_device_from_parameters
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_STATE
 
 DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 
@@ -513,17 +514,17 @@ class SACObservationEncoder(nn.Module):
             )
 
     def _init_state_layers(self) -> None:
-        self.has_env = "observation.environment_state" in self.config.input_features
-        self.has_state = "observation.state" in self.config.input_features
+        self.has_env = OBS_ENV_STATE in self.config.input_features
+        self.has_state = OBS_STATE in self.config.input_features
         if self.has_env:
-            dim = self.config.input_features["observation.environment_state"].shape[0]
+            dim = self.config.input_features[OBS_ENV_STATE].shape[0]
             self.env_encoder = nn.Sequential(
                 nn.Linear(dim, self.config.latent_dim),
                 nn.LayerNorm(self.config.latent_dim),
                 nn.Tanh(),
             )
         if self.has_state:
-            dim = self.config.input_features["observation.state"].shape[0]
+            dim = self.config.input_features[OBS_STATE].shape[0]
             self.state_encoder = nn.Sequential(
                 nn.Linear(dim, self.config.latent_dim),
                 nn.LayerNorm(self.config.latent_dim),
@@ -549,9 +550,9 @@ class SACObservationEncoder(nn.Module):
                 cache = self.get_cached_image_features(obs)
             parts.append(self._encode_images(cache, detach))
         if self.has_env:
-            parts.append(self.env_encoder(obs["observation.environment_state"]))
+            parts.append(self.env_encoder(obs[OBS_ENV_STATE]))
         if self.has_state:
-            parts.append(self.state_encoder(obs["observation.state"]))
+            parts.append(self.state_encoder(obs[OBS_STATE]))
         if parts:
             return torch.cat(parts, dim=-1)
 

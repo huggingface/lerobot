@@ -21,7 +21,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
@@ -171,7 +171,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
 
                 # Prefix-based rules (e.g. pixels.cam1 -> OBS_IMAGES.cam1)
                 for old_prefix, new_prefix in prefix_pairs.items():
-                    prefixed_old = f"observation.{old_prefix}"
+                    prefixed_old = f"{OBS_STR}.{old_prefix}"
                     if key.startswith(prefixed_old):
                         suffix = key[len(prefixed_old) :]
                         new_key = f"{new_prefix}{suffix}"
@@ -191,7 +191,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
 
                 # Exact-name rules (pixels, environment_state, agent_pos)
                 for old, new in exact_pairs.items():
-                    if key == old or key == f"observation.{old}":
+                    if key == old or key == f"{OBS_STR}.{old}":
                         new_key = new
                         new_features[src_ft][new_key] = feat
                         handled = True

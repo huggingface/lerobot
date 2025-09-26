@@ -21,6 +21,7 @@ import pytest
 import torch
 from torch.multiprocessing import Event, Queue
 
+from lerobot.utils.constants import OBS_STR
 from lerobot.utils.transition import Transition
 from tests.utils import require_package
 
@@ -110,12 +111,12 @@ def test_push_transitions_to_transport_queue():
     transitions = []
     for i in range(3):
         transition = Transition(
-            state={"observation": torch.randn(3, 64, 64), "state": torch.randn(10)},
+            state={OBS_STR: torch.randn(3, 64, 64), "state": torch.randn(10)},
             action=torch.randn(5),
             reward=torch.tensor(1.0 + i),
             done=torch.tensor(False),
             truncated=torch.tensor(False),
-            next_state={"observation": torch.randn(3, 64, 64), "state": torch.randn(10)},
+            next_state={OBS_STR: torch.randn(3, 64, 64), "state": torch.randn(10)},
             complementary_info={"step": torch.tensor(i)},
         )
         transitions.append(transition)

@@ -73,6 +73,7 @@ from lerobot.teleoperators import (
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
@@ -180,7 +181,7 @@ class RobotEnv(gym.Env):
 
         # Define observation spaces for images and other states.
         if current_observation is not None and "pixels" in current_observation:
-            prefix = "observation.images"
+            prefix = OBS_IMAGES
             observation_spaces = {
                 f"{prefix}.{key}": gym.spaces.Box(
                     low=0, high=255, shape=current_observation["pixels"][key].shape, dtype=np.uint8
@@ -190,7 +191,7 @@ class RobotEnv(gym.Env):
 
         if current_observation is not None:
             agent_pos = current_observation["agent_pos"]
-            observation_spaces["observation.state"] = gym.spaces.Box(
+            observation_spaces[OBS_STATE] = gym.spaces.Box(
                 low=0,
                 high=10,
                 shape=agent_pos.shape,
@@ -612,7 +613,7 @@ def control_loop(
             }
 
         for key, value in transition[TransitionKey.OBSERVATION].items():
-            if key == "observation.state":
+            if key == OBS_STATE:
                 features[key] = {
                     "dtype": "float32",
                     "shape": value.squeeze(0).shape,

@@ -19,7 +19,7 @@ from typing import Any
 from lerobot.configs.types import PipelineFeatureType
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.processor import DataProcessorPipeline
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, OBS_STR
 
 
 def create_initial_features(
@@ -92,8 +92,8 @@ def aggregate_pipeline_dataset_features(
 
     # Intermediate storage for categorized and filtered features.
     processed_features: dict[str, dict[str, Any]] = {
-        "action": {},
-        "observation": {},
+        ACTION: {},
+        OBS_STR: {},
     }
     images_token = OBS_IMAGES.split(".")[-1]
 
@@ -125,17 +125,15 @@ def aggregate_pipeline_dataset_features(
             # 3. Add the feature to the appropriate group with a clean name.
             name = strip_prefix(key, PREFIXES_TO_STRIP)
             if is_action:
-                processed_features["action"][name] = value
+                processed_features[ACTION][name] = value
             else:
-                processed_features["observation"][name] = value
+                processed_features[OBS_STR][name] = value
 
     # Convert the processed features into the final dataset format.
     dataset_features = {}
-    if processed_features["action"]:
+    if processed_features[ACTION]:
         dataset_features.update(hw_to_dataset_features(processed_features["action"], ACTION, use_videos))
-    if processed_features["observation"]:
-        dataset_features.update(
-            hw_to_dataset_features(processed_features["observation"], "observation", use_videos)
-        )
+    if processed_features[OBS_STR]:
+        dataset_features.update(hw_to_dataset_features(processed_features[OBS_STR], OBS_STR, use_videos))
 
     return dataset_features

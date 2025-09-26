@@ -26,6 +26,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.utils import get_channel_first_image_shape
 
 
@@ -41,9 +42,9 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     return_observations = {}
     if "pixels" in observations:
         if isinstance(observations["pixels"], dict):
-            imgs = {f"observation.images.{key}": img for key, img in observations["pixels"].items()}
+            imgs = {f"{OBS_IMAGES}.{key}": img for key, img in observations["pixels"].items()}
         else:
-            imgs = {"observation.image": observations["pixels"]}
+            imgs = {OBS_IMAGE: observations["pixels"]}
 
         for imgkey, img in imgs.items():
             # TODO(aliberts, rcadene): use transforms.ToTensor()?
@@ -72,13 +73,13 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
         if env_state.dim() == 1:
             env_state = env_state.unsqueeze(0)
 
-        return_observations["observation.environment_state"] = env_state
+        return_observations[OBS_ENV_STATE] = env_state
 
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
     agent_pos = torch.from_numpy(observations["agent_pos"]).float()
     if agent_pos.dim() == 1:
         agent_pos = agent_pos.unsqueeze(0)
-    return_observations["observation.state"] = agent_pos
+    return_observations[OBS_STATE] = agent_pos
 
     return return_observations
 

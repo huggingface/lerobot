@@ -21,6 +21,7 @@ import torch
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import DataProcessorPipeline, DeviceProcessorStep, TransitionKey
 from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
 
 def test_basic_functionality():
@@ -28,7 +29,7 @@ def test_basic_functionality():
     processor = DeviceProcessorStep(device="cpu")
 
     # Create a transition with CPU tensors
-    observation = {"observation.state": torch.randn(10), "observation.image": torch.randn(3, 224, 224)}
+    observation = {OBS_STATE: torch.randn(10), OBS_IMAGE: torch.randn(3, 224, 224)}
     action = torch.randn(5)
     reward = torch.tensor(1.0)
     done = torch.tensor(False)
@@ -41,8 +42,8 @@ def test_basic_functionality():
     result = processor(transition)
 
     # Check that all tensors are on CPU
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cpu"
-    assert result[TransitionKey.OBSERVATION]["observation.image"].device.type == "cpu"
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cpu"
+    assert result[TransitionKey.OBSERVATION][OBS_IMAGE].device.type == "cpu"
     assert result[TransitionKey.ACTION].device.type == "cpu"
     assert result[TransitionKey.REWARD].device.type == "cpu"
     assert result[TransitionKey.DONE].device.type == "cpu"
@@ -55,7 +56,7 @@ def test_cuda_functionality():
     processor = DeviceProcessorStep(device="cuda")
 
     # Create a transition with CPU tensors
-    observation = {"observation.state": torch.randn(10), "observation.image": torch.randn(3, 224, 224)}
+    observation = {OBS_STATE: torch.randn(10), OBS_IMAGE: torch.randn(3, 224, 224)}
     action = torch.randn(5)
     reward = torch.tensor(1.0)
     done = torch.tensor(False)
@@ -68,8 +69,8 @@ def test_cuda_functionality():
     result = processor(transition)
 
     # Check that all tensors are on CUDA
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
-    assert result[TransitionKey.OBSERVATION]["observation.image"].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION][OBS_IMAGE].device.type == "cuda"
     assert result[TransitionKey.ACTION].device.type == "cuda"
     assert result[TransitionKey.REWARD].device.type == "cuda"
     assert result[TransitionKey.DONE].device.type == "cuda"
@@ -81,14 +82,14 @@ def test_specific_cuda_device():
     """Test device processor with specific CUDA device."""
     processor = DeviceProcessorStep(device="cuda:0")
 
-    observation = {"observation.state": torch.randn(10)}
+    observation = {OBS_STATE: torch.randn(10)}
     action = torch.randn(5)
 
     transition = create_transition(observation=observation, action=action)
     result = processor(transition)
 
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device.index == 0
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device.index == 0
     assert result[TransitionKey.ACTION].device.type == "cuda"
     assert result[TransitionKey.ACTION].device.index == 0
 
@@ -98,7 +99,7 @@ def test_non_tensor_values():
     processor = DeviceProcessorStep(device="cpu")
 
     observation = {
-        "observation.state": torch.randn(10),
+        OBS_STATE: torch.randn(10),
         "observation.metadata": {"key": "value"},  # Non-tensor data
         "observation.list": [1, 2, 3],  # Non-tensor data
     }
@@ -110,7 +111,7 @@ def test_non_tensor_values():
     result = processor(transition)
 
     # Check tensors are processed
-    assert isinstance(result[TransitionKey.OBSERVATION]["observation.state"], torch.Tensor)
+    assert isinstance(result[TransitionKey.OBSERVATION][OBS_STATE], torch.Tensor)
     assert isinstance(result[TransitionKey.ACTION], torch.Tensor)
 
     # Check non-tensor values are preserved
@@ -130,9 +131,9 @@ def test_none_values():
     assert result[TransitionKey.ACTION].device.type == "cpu"
 
     # Test with None action
-    transition = create_transition(observation={"observation.state": torch.randn(10)}, action=None)
+    transition = create_transition(observation={OBS_STATE: torch.randn(10)}, action=None)
     result = processor(transition)
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cpu"
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cpu"
     assert result[TransitionKey.ACTION] is None
 
 
@@ -271,9 +272,7 @@ def test_features():
     processor = DeviceProcessorStep(device="cpu")
 
     features = {
-        PipelineFeatureType.OBSERVATION: {
-            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,))
-        },
+        PipelineFeatureType.OBSERVATION: {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
         PipelineFeatureType.ACTION: {"action": PolicyFeature(type=FeatureType.ACTION, shape=(5,))},
     }
 
@@ -376,7 +375,7 @@ def test_reward_done_truncated_types():
 
     # Test with scalar values (not tensors)
     transition = create_transition(
-        observation={"observation.state": torch.randn(5)},
+        observation={OBS_STATE: torch.randn(5)},
         action=torch.randn(3),
         reward=1.0,  # float
         done=False,  # bool
@@ -392,7 +391,7 @@ def test_reward_done_truncated_types():
 
     # Test with tensor values
     transition = create_transition(
-        observation={"observation.state": torch.randn(5)},
+        observation={OBS_STATE: torch.randn(5)},
         action=torch.randn(3),
         reward=torch.tensor(1.0),
         done=torch.tensor(False),
@@ -422,7 +421,7 @@ def test_complementary_data_preserved():
     }
 
     transition = create_transition(
-        observation={"observation.state": torch.randn(5)}, complementary_data=complementary_data
+        observation={OBS_STATE: torch.randn(5)}, complementary_data=complementary_data
     )
 
     result = processor(transition)
@@ -491,13 +490,13 @@ def test_float_dtype_bfloat16():
     """Test conversion to bfloat16."""
     processor = DeviceProcessorStep(device="cpu", float_dtype="bfloat16")
 
-    observation = {"observation.state": torch.randn(5, dtype=torch.float32)}
+    observation = {OBS_STATE: torch.randn(5, dtype=torch.float32)}
     action = torch.randn(3, dtype=torch.float64)
 
     transition = create_transition(observation=observation, action=action)
     result = processor(transition)
 
-    assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.bfloat16
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.bfloat16
     assert result[TransitionKey.ACTION].dtype == torch.bfloat16
 
 
@@ -505,13 +504,13 @@ def test_float_dtype_float64():
     """Test conversion to float64."""
     processor = DeviceProcessorStep(device="cpu", float_dtype="float64")
 
-    observation = {"observation.state": torch.randn(5, dtype=torch.float16)}
+    observation = {OBS_STATE: torch.randn(5, dtype=torch.float16)}
     action = torch.randn(3, dtype=torch.float32)
 
     transition = create_transition(observation=observation, action=action)
     result = processor(transition)
 
-    assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.float64
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.float64
     assert result[TransitionKey.ACTION].dtype == torch.float64
 
 
@@ -541,8 +540,8 @@ def test_float_dtype_with_mixed_tensors():
     processor = DeviceProcessorStep(device="cpu", float_dtype="float32")
 
     observation = {
-        "observation.image": torch.randint(0, 255, (3, 64, 64), dtype=torch.uint8),  # Should not convert
-        "observation.state": torch.randn(10, dtype=torch.float64),  # Should convert
+        OBS_IMAGE: torch.randint(0, 255, (3, 64, 64), dtype=torch.uint8),  # Should not convert
+        OBS_STATE: torch.randn(10, dtype=torch.float64),  # Should convert
         "observation.mask": torch.tensor([True, False, True], dtype=torch.bool),  # Should not convert
         "observation.indices": torch.tensor([1, 2, 3], dtype=torch.long),  # Should not convert
     }
@@ -552,8 +551,8 @@ def test_float_dtype_with_mixed_tensors():
     result = processor(transition)
 
     # Check conversions
-    assert result[TransitionKey.OBSERVATION]["observation.image"].dtype == torch.uint8  # Unchanged
-    assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.float32  # Converted
+    assert result[TransitionKey.OBSERVATION][OBS_IMAGE].dtype == torch.uint8  # Unchanged
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.float32  # Converted
     assert result[TransitionKey.OBSERVATION]["observation.mask"].dtype == torch.bool  # Unchanged
     assert result[TransitionKey.OBSERVATION]["observation.indices"].dtype == torch.long  # Unchanged
     assert result[TransitionKey.ACTION].dtype == torch.float32  # Converted
@@ -612,7 +611,7 @@ def test_complementary_data_index_fields():
         "episode_id": 123,  # Non-tensor field
     }
     transition = create_transition(
-        observation={"observation.state": torch.randn(1, 7)},
+        observation={OBS_STATE: torch.randn(1, 7)},
         action=torch.randn(1, 4),
         complementary_data=complementary_data,
     )
@@ -736,7 +735,7 @@ def test_complementary_data_full_pipeline_cuda():
     processor = DeviceProcessorStep(device="cuda:0", float_dtype="float16")
 
     # Create full transition with mixed CPU tensors
-    observation = {"observation.state": torch.randn(1, 7, dtype=torch.float32)}
+    observation = {OBS_STATE: torch.randn(1, 7, dtype=torch.float32)}
     action = torch.randn(1, 4, dtype=torch.float32)
     reward = torch.tensor(1.5, dtype=torch.float32)
     done = torch.tensor(False)
@@ -757,7 +756,7 @@ def test_complementary_data_full_pipeline_cuda():
     result = processor(transition)
 
     # Check all components moved to CUDA
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
     assert result[TransitionKey.ACTION].device.type == "cuda"
     assert result[TransitionKey.REWARD].device.type == "cuda"
     assert result[TransitionKey.DONE].device.type == "cuda"
@@ -768,7 +767,7 @@ def test_complementary_data_full_pipeline_cuda():
     assert processed_comp_data["task_index"].device.type == "cuda"
 
     # Check float conversion happened for float tensors
-    assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.float16
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.float16
     assert result[TransitionKey.ACTION].dtype == torch.float16
     assert result[TransitionKey.REWARD].dtype == torch.float16
 
@@ -782,7 +781,7 @@ def test_complementary_data_empty():
     processor = DeviceProcessorStep(device="cpu")
 
     transition = create_transition(
-        observation={"observation.state": torch.randn(1, 7)},
+        observation={OBS_STATE: torch.randn(1, 7)},
         complementary_data={},
     )
 
@@ -797,7 +796,7 @@ def test_complementary_data_none():
     processor = DeviceProcessorStep(device="cpu")
 
     transition = create_transition(
-        observation={"observation.state": torch.randn(1, 7)},
+        observation={OBS_STATE: torch.randn(1, 7)},
         complementary_data=None,
     )
 
@@ -814,8 +813,8 @@ def test_preserves_gpu_placement():
 
     # Create tensors already on GPU
     observation = {
-        "observation.state": torch.randn(10).cuda(),  # Already on GPU
-        "observation.image": torch.randn(3, 224, 224).cuda(),  # Already on GPU
+        OBS_STATE: torch.randn(10).cuda(),  # Already on GPU
+        OBS_IMAGE: torch.randn(3, 224, 224).cuda(),  # Already on GPU
     }
     action = torch.randn(5).cuda()  # Already on GPU
 
@@ -823,14 +822,12 @@ def test_preserves_gpu_placement():
     result = processor(transition)
 
     # Check that tensors remain on their original GPU
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
-    assert result[TransitionKey.OBSERVATION]["observation.image"].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION][OBS_IMAGE].device.type == "cuda"
     assert result[TransitionKey.ACTION].device.type == "cuda"
 
     # Verify no unnecessary copies were made (same data pointer)
-    assert torch.equal(
-        result[TransitionKey.OBSERVATION]["observation.state"], observation["observation.state"]
-    )
+    assert torch.equal(result[TransitionKey.OBSERVATION][OBS_STATE], observation[OBS_STATE])
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -842,8 +839,8 @@ def test_multi_gpu_preservation():
     # Create tensors on cuda:1 (simulating Accelerate placement)
     cuda1_device = torch.device("cuda:1")
     observation = {
-        "observation.state": torch.randn(10).to(cuda1_device),
-        "observation.image": torch.randn(3, 224, 224).to(cuda1_device),
+        OBS_STATE: torch.randn(10).to(cuda1_device),
+        OBS_IMAGE: torch.randn(3, 224, 224).to(cuda1_device),
     }
     action = torch.randn(5).to(cuda1_device)
 
@@ -851,20 +848,20 @@ def test_multi_gpu_preservation():
     result = processor_gpu(transition)
 
     # Check that tensors remain on cuda:1 (not moved to cuda:0)
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device == cuda1_device
-    assert result[TransitionKey.OBSERVATION]["observation.image"].device == cuda1_device
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device == cuda1_device
+    assert result[TransitionKey.OBSERVATION][OBS_IMAGE].device == cuda1_device
     assert result[TransitionKey.ACTION].device == cuda1_device
 
     # Test 2: GPU-to-CPU should move to CPU (not preserve GPU)
     processor_cpu = DeviceProcessorStep(device="cpu")
 
     transition_gpu = create_transition(
-        observation={"observation.state": torch.randn(10).cuda()}, action=torch.randn(5).cuda()
+        observation={OBS_STATE: torch.randn(10).cuda()}, action=torch.randn(5).cuda()
     )
     result_cpu = processor_cpu(transition_gpu)
 
     # Check that tensors are moved to CPU
-    assert result_cpu[TransitionKey.OBSERVATION]["observation.state"].device.type == "cpu"
+    assert result_cpu[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cpu"
     assert result_cpu[TransitionKey.ACTION].device.type == "cpu"
 
 
@@ -933,14 +930,14 @@ def test_simulated_accelerate_scenario():
 
         # Simulate data already placed by Accelerate
         device = torch.device(f"cuda:{gpu_id}")
-        observation = {"observation.state": torch.randn(1, 10).to(device)}
+        observation = {OBS_STATE: torch.randn(1, 10).to(device)}
         action = torch.randn(1, 5).to(device)
 
         transition = create_transition(observation=observation, action=action)
         result = processor(transition)
 
         # Verify data stays on the GPU where Accelerate placed it
-        assert result[TransitionKey.OBSERVATION]["observation.state"].device == device
+        assert result[TransitionKey.OBSERVATION][OBS_STATE].device == device
         assert result[TransitionKey.ACTION].device == device
 
 
@@ -1081,7 +1078,7 @@ def test_mps_float64_with_complementary_data():
     }
 
     transition = create_transition(
-        observation={"observation.state": torch.randn(5, dtype=torch.float64)},
+        observation={OBS_STATE: torch.randn(5, dtype=torch.float64)},
         action=torch.randn(3, dtype=torch.float64),
         complementary_data=complementary_data,
     )
@@ -1089,7 +1086,7 @@ def test_mps_float64_with_complementary_data():
     result = processor(transition)
 
     # Check that all tensors are on MPS device
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "mps"
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "mps"
     assert result[TransitionKey.ACTION].device.type == "mps"
 
     processed_comp_data = result[TransitionKey.COMPLEMENTARY_DATA]
@@ -1099,7 +1096,7 @@ def test_mps_float64_with_complementary_data():
     assert processed_comp_data["float32_tensor"].device.type == "mps"
 
     # Check dtype conversions
-    assert result[TransitionKey.OBSERVATION]["observation.state"].dtype == torch.float32  # Converted
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].dtype == torch.float32  # Converted
     assert result[TransitionKey.ACTION].dtype == torch.float32  # Converted
     assert processed_comp_data["float64_tensor"].dtype == torch.float32  # Converted
     assert processed_comp_data["float32_tensor"].dtype == torch.float32  # Unchanged

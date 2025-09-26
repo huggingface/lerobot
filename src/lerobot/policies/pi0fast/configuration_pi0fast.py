@@ -6,6 +6,7 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
+from lerobot.utils.constants import OBS_IMAGES
 
 
 @PreTrainedConfig.register_subclass("pi0fast")
@@ -99,7 +100,7 @@ class PI0FASTConfig(PreTrainedConfig):
 
     def validate_features(self) -> None:
         for i in range(self.empty_cameras):
-            key = f"observation.images.empty_camera_{i}"
+            key = f"{OBS_IMAGES}.empty_camera_{i}"
             empty_camera = PolicyFeature(
                 type=FeatureType.VISUAL,
                 shape=(3, 480, 640),

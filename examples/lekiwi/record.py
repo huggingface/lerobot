@@ -22,6 +22,7 @@ from lerobot.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
+from lerobot.utils.constants import OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
@@ -48,7 +49,7 @@ teleop_action_processor, robot_action_processor, robot_observation_processor = m
 
 # Configure the dataset features
 action_features = hw_to_dataset_features(robot.action_features, "action")
-obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR)
 dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
