@@ -73,7 +73,7 @@ from lerobot.teleoperators import (
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
@@ -601,9 +601,9 @@ def control_loop(
     if cfg.mode == "record":
         action_features = teleop_device.action_features
         features = {
-            "action": action_features,
-            "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
-            "next.done": {"dtype": "bool", "shape": (1,), "names": None},
+            ACTION: action_features,
+            REWARD: {"dtype": "float32", "shape": (1,), "names": None},
+            DONE: {"dtype": "bool", "shape": (1,), "names": None},
         }
         if use_gripper:
             features["complementary_info.discrete_penalty"] = {
@@ -672,9 +672,9 @@ def control_loop(
             )
             frame = {
                 **observations,
-                "action": action_to_record.cpu(),
-                "next.reward": np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
-                "next.done": np.array([terminated or truncated], dtype=bool),
+                ACTION: action_to_record.cpu(),
+                REWARD: np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
+                DONE: np.array([terminated or truncated], dtype=bool),
             }
             if use_gripper:
                 discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
@@ -733,7 +733,7 @@ def replay_trajectory(
         download_videos=False,
     )
     episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.replay_episode)
-    actions = episode_frames.select_columns("action")
+    actions = episode_frames.select_columns(ACTION)
 
     _, info = env.reset()
 
@@ -741,7 +741,7 @@ def replay_trajectory(
         start_time = time.perf_counter()
         transition = create_transition(
             observation=env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {},
-            action=action_data["action"],
+            action=action_data[ACTION],
         )
         transition = action_processor(transition)
         env.step(transition[TransitionKey.ACTION])

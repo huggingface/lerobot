@@ -23,7 +23,7 @@ from torch import Tensor, nn
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.modeling_sac import MLP, SACPolicy
-from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.utils.random_utils import seeded_context, set_seed
 
 try:
@@ -105,7 +105,7 @@ def create_default_train_batch(
     batch_size: int = 8, state_dim: int = 10, action_dim: int = 10
 ) -> dict[str, Tensor]:
     return {
-        "action": create_dummy_action(batch_size, action_dim),
+        ACTION: create_dummy_action(batch_size, action_dim),
         "reward": torch.randn(batch_size),
         "state": create_dummy_state(batch_size, state_dim),
         "next_state": create_dummy_state(batch_size, state_dim),
@@ -117,7 +117,7 @@ def create_train_batch_with_visual_input(
     batch_size: int = 8, state_dim: int = 10, action_dim: int = 10
 ) -> dict[str, Tensor]:
     return {
-        "action": create_dummy_action(batch_size, action_dim),
+        ACTION: create_dummy_action(batch_size, action_dim),
         "reward": torch.randn(batch_size),
         "state": create_dummy_with_visual_input(batch_size, state_dim),
         "next_state": create_dummy_with_visual_input(batch_size, state_dim),
@@ -182,13 +182,13 @@ def create_default_config(
 
     config = SACConfig(
         input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))},
-        output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(continuous_action_dim,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(continuous_action_dim,))},
         dataset_stats={
             OBS_STATE: {
                 "min": [0.0] * state_dim,
                 "max": [1.0] * state_dim,
             },
-            "action": {
+            ACTION: {
                 "min": [0.0] * continuous_action_dim,
                 "max": [1.0] * continuous_action_dim,
             },

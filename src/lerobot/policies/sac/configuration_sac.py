@@ -225,7 +225,7 @@ class SACConfig(PreTrainedConfig):
                 "You must provide either 'observation.state' or an image observation (key starting with 'observation.image') in the input features"
             )
 
-        if "action" not in self.output_features:
+        if ACTION not in self.output_features:
             raise ValueError("You must provide 'action' in the output features")
 
     @property
