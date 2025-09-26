@@ -25,7 +25,14 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
-from lerobot.policies import ACTConfig, DiffusionConfig, PI0Config, SmolVLAConfig, VQBeTConfig  # noqa: F401
+from lerobot.policies import (  # noqa: F401
+    ACTConfig,
+    DiffusionConfig,
+    PI0Config,
+    PI05Config,
+    SmolVLAConfig,
+    VQBeTConfig,
+)
 from lerobot.robots.robot import Robot
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import init_logging
