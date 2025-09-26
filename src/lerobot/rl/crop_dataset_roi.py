@@ -25,6 +25,7 @@ import torchvision.transforms.functional as F  # type: ignore  # noqa: N812
 from tqdm import tqdm  # type: ignore
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import DONE, REWARD
 
 
 def select_rect_roi(img):
@@ -212,7 +213,7 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
         for key, value in frame.items():
             if key in ("task_index", "timestamp", "episode_index", "frame_index", "index", "task"):
                 continue
-            if key in ("next.done", "next.reward"):
+            if key in (DONE, REWARD):
                 # if not isinstance(value, str) and len(value.shape) == 0:
                 value = value.unsqueeze(0)
 
