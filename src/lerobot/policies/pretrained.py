@@ -37,7 +37,7 @@ from lerobot.utils.hub import HubMixin
 T = TypeVar("T", bound="PreTrainedPolicy")
 
 
-class ActionSelectKwargs(TypedDict):
+class ActionSelectKwargs(TypedDict, total=False):
     noise: Tensor | None
 
 
