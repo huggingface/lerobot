@@ -31,7 +31,6 @@ from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import init_logging
 
 Action = torch.Tensor
-ActionChunk = torch.Tensor
 
 # observation as received from the robot
 RawObservation = dict[str, torch.Tensor]
@@ -46,7 +45,7 @@ Observation = dict[str, torch.Tensor]
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots()
+    _, ax = plt.subplots()
     ax.set_title("Action Queue Size Over Time")
     ax.set_xlabel("Environment steps")
     ax.set_ylabel("Action Queue Size")

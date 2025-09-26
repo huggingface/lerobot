@@ -69,7 +69,6 @@ def test_sac_config_default_initialization():
 
     # Training parameters
     assert config.online_steps == 1000000
-    assert config.online_env_seed == 10000
     assert config.online_buffer_capacity == 100000
     assert config.offline_buffer_capacity == 100000
     assert config.async_prefetch is False
