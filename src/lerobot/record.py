@@ -235,18 +235,25 @@ def record_loop(
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
+        start_time = time.time()
+        print(timestamp, control_time_s)
         start_loop_t = time.perf_counter()
 
         if events["exit_early"]:
             events["exit_early"] = False
             break
 
+        curr_time = time.time()
         observation = robot.get_observation()
+        print("getting observation took", time.time() - curr_time)
 
+        curr_time = time.time()
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
+        print("building dataset frame", time.time() - curr_time)
 
         if policy is not None:
+            curr_time = time.time()
             action_values = predict_action(
                 observation_frame,
                 policy,
@@ -255,6 +262,7 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
+            print("done predicting action took ", time.time() - curr_time)
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
         elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
@@ -288,7 +296,7 @@ def record_loop(
             log_rerun_data(observation, action)
 
         dt_s = time.perf_counter() - start_loop_t
-        busy_wait(1 / fps - dt_s)
+        # busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
 

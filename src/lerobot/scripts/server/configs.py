@@ -195,3 +195,64 @@ class RobotClientConfig:
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
         }
+
+
+@dataclass
+class RobotOpenpiClientConfig:
+    """Configuration for RobotClient.
+
+    This class defines all configurable parameters for the RobotClient,
+    including network connection, policy settings, and control behavior.
+    """
+    # Robot configuration (for CLI usage - robot instance will be created from this)
+    robot: RobotConfig = field(metadata={"help": "Robot configuration"})
+
+    # Policies typically output K actions at max, but we can use less to avoid wasting bandwidth (as actions
+    # would be aggregated on the client side anyway, depending on the value of `chunk_size_threshold`)
+    actions_per_chunk: int = field(metadata={"help": "Number of actions per chunk"})
+
+    # Task instruction for the robot to execute (e.g., 'fold my tshirt')
+    task: str = field(default="", metadata={"help": "Task instruction for the robot to execute"})
+
+    # Network configuration
+    server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})
+
+    # Control behavior configuration
+    fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
+
+    # Device configuration
+    device: str = field(default="cpu", metadata={"help": "Device for policy inference"})
+
+
+
+    @property
+    def environment_dt(self) -> float:
+        """Environment time step, in seconds"""
+        return 1 / self.fps
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        if not self.server_address:
+            raise ValueError("server_address cannot be empty")
+
+        if self.fps <= 0:
+            raise ValueError(f"fps must be positive, got {self.fps}")
+
+        if self.actions_per_chunk <= 0:
+            raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
+
+
+    @classmethod
+    def from_dict(cls, config_dict: dict) -> "RobotClientConfig":
+        """Create a RobotClientConfig from a dictionary."""
+        return cls(**config_dict)
+
+    def to_dict(self) -> dict:
+        """Convert the configuration to a dictionary."""
+        return {
+            "server_address": self.server_address,
+            "fps": self.fps,
+            "actions_per_chunk": self.actions_per_chunk,
+            "task": self.task,
+            "device": self.device,
+        }
