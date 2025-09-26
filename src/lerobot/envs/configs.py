@@ -256,7 +256,7 @@ class LiberoEnv(EnvConfig):
     render_mode: str = "rgb_array"
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
-    camera_name_mapping: dict[str, str] | None = (None,)
+    camera_name_mapping: dict[str, str] | None = None
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
