@@ -28,6 +28,7 @@ from lerobot.datasets.compute_stats import (
     sample_images,
     sample_indices,
 )
+from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
 
 def mock_load_image_as_numpy(path, dtype, channel_first):
@@ -136,21 +137,21 @@ def test_get_feature_stats_single_value():
 
 def test_compute_episode_stats():
     episode_data = {
-        "observation.image": [f"image_{i}.jpg" for i in range(100)],
-        "observation.state": np.random.rand(100, 10),
+        OBS_IMAGE: [f"image_{i}.jpg" for i in range(100)],
+        OBS_STATE: np.random.rand(100, 10),
     }
     features = {
-        "observation.image": {"dtype": "image"},
-        "observation.state": {"dtype": "numeric"},
+        OBS_IMAGE: {"dtype": "image"},
+        OBS_STATE: {"dtype": "numeric"},
     }
 
     with patch("lerobot.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy):
         stats = compute_episode_stats(episode_data, features)
 
-    assert "observation.image" in stats and "observation.state" in stats
-    assert stats["observation.image"]["count"].item() == 100
-    assert stats["observation.state"]["count"].item() == 100
-    assert stats["observation.image"]["mean"].shape == (3, 1, 1)
+    assert OBS_IMAGE in stats and OBS_STATE in stats
+    assert stats[OBS_IMAGE]["count"].item() == 100
+    assert stats[OBS_STATE]["count"].item() == 100
+    assert stats[OBS_IMAGE]["mean"].shape == (3, 1, 1)
 
 
 def test_assert_type_and_shape_valid():
@@ -224,38 +225,38 @@ def test_aggregate_feature_stats():
 def test_aggregate_stats():
     all_stats = [
         {
-            "observation.image": {
+            OBS_IMAGE: {
                 "min": [1, 2, 3],
                 "max": [10, 20, 30],
                 "mean": [5.5, 10.5, 15.5],
                 "std": [2.87, 5.87, 8.87],
                 "count": 10,
             },
-            "observation.state": {"min": 1, "max": 10, "mean": 5.5, "std": 2.87, "count": 10},
+            OBS_STATE: {"min": 1, "max": 10, "mean": 5.5, "std": 2.87, "count": 10},
             "extra_key_0": {"min": 5, "max": 25, "mean": 15, "std": 6, "count": 6},
         },
         {
-            "observation.image": {
+            OBS_IMAGE: {
                 "min": [2, 1, 0],
                 "max": [15, 10, 5],
                 "mean": [8.5, 5.5, 2.5],
                 "std": [3.42, 2.42, 1.42],
                 "count": 15,
             },
-            "observation.state": {"min": 2, "max": 15, "mean": 8.5, "std": 3.42, "count": 15},
+            OBS_STATE: {"min": 2, "max": 15, "mean": 8.5, "std": 3.42, "count": 15},
             "extra_key_1": {"min": 0, "max": 20, "mean": 10, "std": 5, "count": 5},
         },
     ]
 
     expected_agg_stats = {
-        "observation.image": {
+        OBS_IMAGE: {
             "min": [1, 1, 0],
             "max": [15, 20, 30],
             "mean": [7.3, 7.5, 7.7],
             "std": [3.5317, 4.8267, 8.5581],
             "count": 25,
         },
-        "observation.state": {
+        OBS_STATE: {
             "min": 1,
             "max": 15,
             "mean": 7.3,
@@ -283,7 +284,7 @@ def test_aggregate_stats():
         for fkey, stats in ep_stats.items():
             for k in stats:
                 stats[k] = np.array(stats[k], dtype=np.int64 if k == "count" else np.float32)
-                if fkey == "observation.image" and k != "count":
+                if fkey == OBS_IMAGE and k != "count":
                     stats[k] = stats[k].reshape(3, 1, 1)  # for normalization on image channels
                 else:
                     stats[k] = stats[k].reshape(1)
@@ -292,7 +293,7 @@ def test_aggregate_stats():
     for fkey, stats in expected_agg_stats.items():
         for k in stats:
             stats[k] = np.array(stats[k], dtype=np.int64 if k == "count" else np.float32)
-            if fkey == "observation.image" and k != "count":
+            if fkey == OBS_IMAGE and k != "count":
                 stats[k] = stats[k].reshape(3, 1, 1)  # for normalization on image channels
             else:
                 stats[k] = stats[k].reshape(1)
