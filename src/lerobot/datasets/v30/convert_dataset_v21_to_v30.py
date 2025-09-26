@@ -209,7 +209,6 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
         # Reset for the next file
         size_in_mb = ep_size_in_mb
-        num_frames = ep_num_frames
         paths_to_cat = [ep_path]
 
         chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
