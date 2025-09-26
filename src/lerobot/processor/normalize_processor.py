@@ -374,7 +374,7 @@ class _NormalizationMixin:
             )
             if inverse:
                 return tensor * denom + q01
-            return (tensor - q01) / denom
+            return 2.0 * (tensor - q01) / denom - 1.0
 
         if norm_mode == NormalizationMode.QUANTILE10:
             q10 = stats.get("q10", None)
@@ -391,7 +391,7 @@ class _NormalizationMixin:
             )
             if inverse:
                 return tensor * denom + q10
-            return (tensor - q10) / denom
+            return 2.0 * (tensor - q10) / denom - 1.0
 
         # If necessary stats are missing, return input unchanged.
         return tensor
