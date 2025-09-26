@@ -92,7 +92,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         """
         self._queues = {
             OBS_STATE: deque(maxlen=1),
-            "action": deque(maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)),
+            ACTION: deque(maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)),
         }
         if self.config.image_features:
             self._queues[OBS_IMAGE] = deque(maxlen=1)

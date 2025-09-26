@@ -60,6 +60,7 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
+from lerobot.utils.constants import ACTION
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     init_logging,
@@ -99,7 +100,7 @@ def replay(cfg: ReplayConfig):
 
     # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
     episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.episode)
-    actions = episode_frames.select_columns("action")
+    actions = episode_frames.select_columns(ACTION)
 
     robot.connect()
 
@@ -107,9 +108,9 @@ def replay(cfg: ReplayConfig):
     for idx in range(len(episode_frames)):
         start_episode_t = time.perf_counter()
 
-        action_array = actions[idx]["action"]
+        action_array = actions[idx][ACTION]
         action = {}
-        for i, name in enumerate(dataset.features["action"]["names"]):
+        for i, name in enumerate(dataset.features[ACTION]["names"]):
             action[name] = action_array[i]
 
         robot_obs = robot.get_observation()
