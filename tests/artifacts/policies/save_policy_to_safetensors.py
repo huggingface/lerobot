@@ -24,6 +24,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_policy_config, make_pre_post_processors
+from lerobot.utils.constants import OBS_STR
 from lerobot.utils.random_utils import set_seed
 
 
@@ -92,7 +93,7 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
         # for backward compatibility
         if k == "task":
             continue
-        if k.startswith("observation"):
+        if k.startswith(OBS_STR):
             obs[k] = batch[k]
 
     if hasattr(train_cfg.policy, "n_action_steps"):
