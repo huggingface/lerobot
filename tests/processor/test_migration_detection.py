@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from lerobot.processor.pipeline import DataProcessorPipeline, ProcessorMigrationError
+from lerobot.utils.constants import OBS_STATE
 
 
 def test_is_processor_config_valid_configs():
@@ -111,7 +112,7 @@ def test_should_suggest_migration_with_model_config_only():
         # Create a model config (like old LeRobot format)
         model_config = {
             "type": "act",
-            "input_features": {"observation.state": {"shape": [7]}},
+            "input_features": {OBS_STATE: {"shape": [7]}},
             "output_features": {"action": {"shape": [7]}},
             "hidden_dim": 256,
             "n_obs_steps": 1,

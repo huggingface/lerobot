@@ -23,6 +23,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -203,7 +204,7 @@ class LeKiwiClient(Robot):
 
         state_vec = np.array([flat_state[key] for key in self._state_order], dtype=np.float32)
 
-        obs_dict: dict[str, Any] = {**flat_state, "observation.state": state_vec}
+        obs_dict: dict[str, Any] = {**flat_state, OBS_STATE: state_vec}
 
         # Decode images
         current_frames: dict[str, np.ndarray] = {}
