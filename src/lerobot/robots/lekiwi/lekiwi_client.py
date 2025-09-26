@@ -23,7 +23,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -330,7 +330,7 @@ class LeKiwiClient(Robot):
         actions = np.array([action.get(k, 0.0) for k in self._state_order], dtype=np.float32)
 
         action_sent = {key: actions[i] for i, key in enumerate(self._state_order)}
-        action_sent["action"] = actions
+        action_sent[ACTION] = actions
         return action_sent
 
     def disconnect(self):

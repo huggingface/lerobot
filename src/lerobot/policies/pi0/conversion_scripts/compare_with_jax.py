@@ -21,7 +21,7 @@ import torch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.policies.factory import make_policy
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 
 def display(tensor: torch.Tensor):
@@ -73,7 +73,7 @@ def main():
     for cam_key, uint_chw_array in example["images"].items():
         batch[f"{OBS_IMAGES}.{cam_key}"] = torch.from_numpy(uint_chw_array) / 255.0
     batch[OBS_STATE] = torch.from_numpy(example["state"])
-    batch["action"] = torch.from_numpy(outputs["actions"])
+    batch[ACTION] = torch.from_numpy(outputs["actions"])
     batch["task"] = example["prompt"]
 
     if model_name == "pi0_aloha_towel":
@@ -117,7 +117,7 @@ def main():
         actions.append(action)
 
     actions = torch.stack(actions, dim=1)
-    pi_actions = batch["action"]
+    pi_actions = batch[ACTION]
     print("actions")
     display(actions)
     print()

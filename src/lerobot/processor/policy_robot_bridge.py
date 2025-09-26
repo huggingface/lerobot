@@ -5,6 +5,7 @@ import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.processor import ActionProcessorStep, PolicyAction, ProcessorStepRegistry, RobotAction
+from lerobot.utils.constants import ACTION
 
 
 @dataclass
@@ -23,7 +24,7 @@ class RobotActionToPolicyActionProcessorStep(ActionProcessorStep):
         return asdict(self)
 
     def transform_features(self, features):
-        features[PipelineFeatureType.ACTION]["action"] = PolicyFeature(
+        features[PipelineFeatureType.ACTION][ACTION] = PolicyFeature(
             type=FeatureType.ACTION, shape=(len(self.motor_names),)
         )
         return features
