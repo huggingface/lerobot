@@ -53,12 +53,12 @@ class AlohaEnv(EnvConfig):
     render_mode: str = "rgb_array"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
         }
     )
     features_map: dict[str, str] = field(
         default_factory=lambda: {
-            "action": ACTION,
+            ACTION: ACTION,
             "agent_pos": OBS_STATE,
             "top": f"{OBS_IMAGE}.top",
             "pixels/top": f"{OBS_IMAGES}.top",
@@ -93,13 +93,13 @@ class PushtEnv(EnvConfig):
     visualization_height: int = 384
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
             "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(2,)),
         }
     )
     features_map: dict[str, str] = field(
         default_factory=lambda: {
-            "action": ACTION,
+            ACTION: ACTION,
             "agent_pos": OBS_STATE,
             "environment_state": OBS_ENV_STATE,
             "pixels": OBS_IMAGE,
@@ -135,13 +135,13 @@ class XarmEnv(EnvConfig):
     visualization_height: int = 384
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
             "pixels": PolicyFeature(type=FeatureType.VISUAL, shape=(84, 84, 3)),
         }
     )
     features_map: dict[str, str] = field(
         default_factory=lambda: {
-            "action": ACTION,
+            ACTION: ACTION,
             "agent_pos": OBS_STATE,
             "pixels": OBS_IMAGE,
         }
@@ -259,12 +259,12 @@ class LiberoEnv(EnvConfig):
     camera_name_mapping: dict[str, str] | None = (None,)
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
         }
     )
     features_map: dict[str, str] = field(
         default_factory=lambda: {
-            "action": ACTION,
+            ACTION: ACTION,
             "agent_pos": OBS_STATE,
             "pixels/agentview_image": f"{OBS_IMAGES}.image",
             "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGES}.image2",

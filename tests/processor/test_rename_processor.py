@@ -28,7 +28,7 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.processor.rename_processor import rename_stats
-from lerobot.utils.constants import OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from tests.conftest import assert_contract_is_typed
 
 
@@ -488,7 +488,7 @@ def test_features_chained_processors(policy_feature_factory):
 def test_rename_stats_basic():
     orig = {
         OBS_STATE: {"mean": np.array([0.0]), "std": np.array([1.0])},
-        "action": {"mean": np.array([0.0])},
+        ACTION: {"mean": np.array([0.0])},
     }
     mapping = {OBS_STATE: "observation.robot_state"}
     renamed = rename_stats(orig, mapping)

@@ -21,7 +21,7 @@ from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import make_default_processors
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.scripts.lerobot_record import record_loop
-from lerobot.utils.constants import OBS_STR
+from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
@@ -42,7 +42,7 @@ robot = LeKiwiClient(robot_config)
 policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 
 # Configure the dataset features
-action_features = hw_to_dataset_features(robot.action_features, "action")
+action_features = hw_to_dataset_features(robot.action_features, ACTION)
 obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR)
 dataset_features = {**action_features, **obs_features}
 

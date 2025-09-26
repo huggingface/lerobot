@@ -59,7 +59,7 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
         },
     }
     motor_features = {
-        "action": {
+        ACTION: {
             "dtype": "float32",
             "shape": (6,),
             "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
@@ -287,7 +287,7 @@ def test_multikey_construction(multikey: bool):
         ),
     }
     output_features = {
-        "action": PolicyFeature(
+        ACTION: PolicyFeature(
             type=FeatureType.ACTION,
             shape=(5,),
         ),
@@ -304,7 +304,7 @@ def test_multikey_construction(multikey: bool):
         output_features = {}
         output_features["action.first_three_motors"] = PolicyFeature(type=FeatureType.ACTION, shape=(3,))
         output_features["action.last_two_motors"] = PolicyFeature(type=FeatureType.ACTION, shape=(2,))
-        output_features["action"] = PolicyFeature(
+        output_features[ACTION] = PolicyFeature(
             type=FeatureType.ACTION,
             shape=(5,),
         )
