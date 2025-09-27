@@ -203,14 +203,15 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     max_ee_twist_step_rad: float = 0.20
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
     _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
+    prefix: str = ""
 
     def action(self, action: RobotAction) -> RobotAction:
-        x = action["ee.x"]
-        y = action["ee.y"]
-        z = action["ee.z"]
-        wx = action["ee.wx"]
-        wy = action["ee.wy"]
-        wz = action["ee.wz"]
+        x = action[f"{self.prefix}ee.x"]
+        y = action[f"{self.prefix}ee.y"]
+        z = action[f"{self.prefix}ee.z"]
+        wx = action[f"{self.prefix}ee.wx"]
+        wy = action[f"{self.prefix}ee.wy"]
+        wz = action[f"{self.prefix}ee.wz"]
         # TODO(Steven): ee.gripper_vel does not need to be bounded
 
         if None in (x, y, z, wx, wy, wz):
@@ -235,12 +236,12 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
         self._last_pos = pos
         self._last_twist = twist
 
-        action["ee.x"] = float(pos[0])
-        action["ee.y"] = float(pos[1])
-        action["ee.z"] = float(pos[2])
-        action["ee.wx"] = float(twist[0])
-        action["ee.wy"] = float(twist[1])
-        action["ee.wz"] = float(twist[2])
+        action[f"{self.prefix}ee.x"] = float(pos[0])
+        action[f"{self.prefix}ee.y"] = float(pos[1])
+        action[f"{self.prefix}ee.z"] = float(pos[2])
+        action[f"{self.prefix}ee.wx"] = float(twist[0])
+        action[f"{self.prefix}ee.wy"] = float(twist[1])
+        action[f"{self.prefix}ee.wz"] = float(twist[2])
         return action
 
     def reset(self):
@@ -275,15 +276,16 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     motor_names: list[str]
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True
+    prefix: str = ""
 
     def action(self, action: RobotAction) -> RobotAction:
-        x = action.pop("ee.x")
-        y = action.pop("ee.y")
-        z = action.pop("ee.z")
-        wx = action.pop("ee.wx")
-        wy = action.pop("ee.wy")
-        wz = action.pop("ee.wz")
-        gripper_pos = action.pop("ee.gripper_pos")
+        x = action.pop(f"{self.prefix}ee.x")
+        y = action.pop(f"{self.prefix}ee.y")
+        z = action.pop(f"{self.prefix}ee.z")
+        wx = action.pop(f"{self.prefix}ee.wx")
+        wy = action.pop(f"{self.prefix}ee.wy")
+        wz = action.pop(f"{self.prefix}ee.wz")
+        gripper_pos = action.pop(f"{self.prefix}ee.gripper_pos")
 
         if None in (x, y, z, wx, wy, wz, gripper_pos):
             raise ValueError(
@@ -318,10 +320,10 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
 
         # TODO: This is sentitive to order of motor_names = q_target mapping
         for i, name in enumerate(self.motor_names):
-            if name != "gripper":
+            if "gripper" not in name:
                 action[f"{name}.pos"] = float(q_target[i])
             else:
-                action["gripper.pos"] = float(gripper_pos)
+                action[f"{name}.pos"] = float(gripper_pos)
 
         return action
 
@@ -407,7 +409,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
 
 def compute_forward_kinematics_joints_to_ee(
-    joints: dict[str, Any], kinematics: RobotKinematics, motor_names: list[str]
+    joints: dict[str, Any], kinematics: RobotKinematics, motor_names: list[str], gripper_name: str
 ) -> dict[str, Any]:
     motor_joint_values = [joints[f"{n}.pos"] for n in motor_names]
 
@@ -415,16 +417,22 @@ def compute_forward_kinematics_joints_to_ee(
     t = kinematics.forward_kinematics(q)
     pos = t[:3, 3]
     tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
-    gripper_pos = joints["gripper.pos"]
+    gripper_pos = joints[f"{gripper_name}.pos"]
     for n in motor_names:
         joints.pop(f"{n}.pos")
-    joints["ee.x"] = float(pos[0])
-    joints["ee.y"] = float(pos[1])
-    joints["ee.z"] = float(pos[2])
-    joints["ee.wx"] = float(tw[0])
-    joints["ee.wy"] = float(tw[1])
-    joints["ee.wz"] = float(tw[2])
-    joints["ee.gripper_pos"] = float(gripper_pos)
+    if "left_" in motor_names[0]:
+        prefix = "left_"
+    elif "right_" in motor_names[0]:
+        prefix = "right_"
+    else:
+        prefix = ""
+    joints[f"{prefix}ee.x"] = float(pos[0])
+    joints[f"{prefix}ee.y"] = float(pos[1])
+    joints[f"{prefix}ee.z"] = float(pos[2])
+    joints[f"{prefix}ee.wx"] = float(tw[0])
+    joints[f"{prefix}ee.wy"] = float(tw[1])
+    joints[f"{prefix}ee.wz"] = float(tw[2])
+    joints[f"{prefix}ee.gripper_pos"] = float(gripper_pos)
     return joints
 
 
@@ -443,9 +451,10 @@ class ForwardKinematicsJointsToEEObservation(ObservationProcessorStep):
 
     kinematics: RobotKinematics
     motor_names: list[str]
+    gripper_name: str
 
     def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
-        return compute_forward_kinematics_joints_to_ee(observation, self.kinematics, self.motor_names)
+        return compute_forward_kinematics_joints_to_ee(observation, self.kinematics, self.motor_names, self.gripper_name)
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -476,9 +485,10 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
 
     kinematics: RobotKinematics
     motor_names: list[str]
+    gripper_name: str
 
     def action(self, action: RobotAction) -> RobotAction:
-        return compute_forward_kinematics_joints_to_ee(action, self.kinematics, self.motor_names)
+        return compute_forward_kinematics_joints_to_ee(action, self.kinematics, self.motor_names, self.gripper_name)
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -486,9 +496,16 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
         # We only use the ee pose in the dataset, so we don't need the joint positions
         for n in self.motor_names:
             features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
+        # Preserve the prefix
+        if "left_" in self.motor_names[0]:
+            prefix = "left_"
+        elif "right_" in self.motor_names[0]:
+            prefix = "right_"
+        else:
+            prefix = ""
         # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
-            features[PipelineFeatureType.ACTION][f"ee.{k}"] = PolicyFeature(
+            features[PipelineFeatureType.ACTION][f"{prefix}ee.{k}"] = PolicyFeature(
                 type=FeatureType.STATE, shape=(1,)
             )
         return features
@@ -499,13 +516,14 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
 class ForwardKinematicsJointsToEE(ProcessorStep):
     kinematics: RobotKinematics
     motor_names: list[str]
+    gripper_name: str
 
     def __post_init__(self):
         self.joints_to_ee_action_processor = ForwardKinematicsJointsToEEAction(
-            kinematics=self.kinematics, motor_names=self.motor_names
+            kinematics=self.kinematics, motor_names=self.motor_names, gripper_name=self.gripper_name
         )
         self.joints_to_ee_observation_processor = ForwardKinematicsJointsToEEObservation(
-            kinematics=self.kinematics, motor_names=self.motor_names
+            kinematics=self.kinematics, motor_names=self.motor_names, gripper_name=self.gripper_name
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

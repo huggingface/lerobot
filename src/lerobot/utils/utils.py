@@ -233,8 +233,12 @@ def enter_pressed() -> bool:
 
 
 def move_cursor_up(lines):
-    """Move the cursor up by a specified number of lines."""
-    print(f"\033[{lines}A", end="")
+    """Move the cursor up and clear that many lines."""
+    for _ in range(lines):
+        # Move cursor up one line
+        print("\033[1A", end="")
+        # Move to beginning of line and clear it
+        print("\033[2K", end="")
 
 
 def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):

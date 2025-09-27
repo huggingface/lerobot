@@ -94,6 +94,20 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
+# FK and IK stuff
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.processor.converters import (
+    robot_action_observation_to_transition,
+    robot_action_to_transition,
+    transition_to_robot_action,
+)
+
+from lerobot.robots.so100_follower.robot_kinematic_processor import (
+    EEBoundsAndSafety,
+    ForwardKinematicsJointsToEE,
+    InverseKinematicsEEToJoints,
+)
+
 
 @dataclass
 class TeleoperateConfig:
@@ -135,6 +149,10 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+    for _ in range(10):
+        print('\n')
+
+
 
     while True:
         loop_start = time.perf_counter()
@@ -159,14 +177,16 @@ def teleop_loop(
             log_rerun_data(obs, raw_action)
 
         # Process teleop action through pipeline
-        teleop_action = teleop_action_processor((raw_action, obs))
-
+        # teleop_action = teleop_action_processor((raw_action, obs))
+        teleop_action = teleop_action_processor(raw_action)
         # Process action for robot through pipeline
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
         # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
         _ = robot.send_action(robot_action_to_send)
 
+        output_lines: list[str] = []
+        output_lines.append("-" * (display_len + 10))
         if display_data:
             # Process robot observation through pipeline
             obs_transition = robot_observation_processor(obs)
@@ -176,31 +196,31 @@ def teleop_loop(
                 action=teleop_action,
             )
 
-            # print("\n" + "-" * (display_len + 10))
-            # print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-            # # Display the final robot action that was sent
-            # for motor, value in robot_action_to_send.items():
-            #     print(f"{motor:<{display_len}} | {value:>7.2f}")
-            # move_cursor_up(len(robot_action_to_send) + 5)
+            output_lines.append(f"{'TELEOP NAME':<{display_len}} | {'NORM':>7}")
+            # Display the final robot action that was sent
+            for motor, value in teleop_action.items():
+                output_lines.append(f"{motor:<{display_len}} | {value * 100:>7.2f}")
+
+            output_lines.append(f"{'ROBOT NAME':<{display_len}} | {'NORM':>7}")
+            for motor, value in robot_action_to_send.items():
+                output_lines.append(f"{motor:<{display_len}} | {value:>7.2f}")
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
         loop_s = time.perf_counter() - loop_start
 
-        output_lines: list[str] = []
         output_lines.append("-" * (display_len + 20))
-
         # Actions block
         output_lines.append("ACTIONS")
         if unnormalized_action is not None:
             output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7} | {'RAW':>7}")
-            for motor, value in unnormalized_action.items():
+            for motor, value in raw_action.items():
                 raw_val = unnormalized_action.get(motor) if isinstance(unnormalized_action, dict) else None
                 raw_display = f"{int(raw_val):>7}" if isinstance(raw_val, (int, float)) else f"{'N/A':>7}"
                 output_lines.append(f"{motor:<{display_len}} | {value:>7.2f} | {raw_display}")
         else:
             output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7}")
-            for motor, value in unnormalized_action.items():
+            for motor, value in raw_action.items():
                 output_lines.append(f"{motor:<{display_len}} | {value:>7.2f}")
 
         # Observations block
@@ -230,7 +250,8 @@ def teleop_loop(
             return
 
         # Move cursor up exactly the number of lines we printed
-        move_cursor_up(len(output_lines))
+        move_cursor_up(len(output_lines) + 10)
+
 
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):
@@ -241,7 +262,97 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
+
+    # Build pipeline to convert teleop joints to EE action
+    left_robot_kinematics_solver = RobotKinematics(
+        urdf_path="assets/koch_follower.urdf",
+        target_frame_name="link_6",
+        entity_path_prefix="follower_left",
+        display_data=cfg.display_data,
+        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
+        offset=0.0,
+    )
+    right_robot_kinematics_solver = RobotKinematics(
+        urdf_path="assets/koch_follower.urdf",
+        target_frame_name="link_6",
+        entity_path_prefix="follower_right",
+        display_data=cfg.display_data,
+        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
+        offset=0.2,
+    )
+
+    left_teleop_kinematics_solver = RobotKinematics(
+        urdf_path="assets/koch_follower.urdf",
+        target_frame_name="link_6",
+        entity_path_prefix="leader_left",
+        display_data=cfg.display_data,
+        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
+        offset=0.4,
+    )
+    right_teleop_kinematics_solver = RobotKinematics(
+        urdf_path="assets/koch_follower.urdf",
+        target_frame_name="link_6",
+        entity_path_prefix="leader_right",
+        display_data=cfg.display_data,
+        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
+        offset=0.6,
+    )
+
+    teleop_motor_names = list(teleop.left_arm.bus.motors.keys())
+    robot_motor_names = list(robot.left_arm.bus.motors.keys())
+    left_teleop_motor_names = ["left_" + motor for motor in teleop_motor_names]
+    right_teleop_motor_names = ["right_" + motor for motor in teleop_motor_names]
+    left_robot_motor_names = ["left_" + motor for motor in robot_motor_names]
+    right_robot_motor_names = ["right_" + motor for motor in robot_motor_names]
+
+    teleop_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
+        steps=[
+            ForwardKinematicsJointsToEE(
+                kinematics=left_teleop_kinematics_solver, motor_names=left_teleop_motor_names, gripper_name="left_gripper"
+            ),
+            ForwardKinematicsJointsToEE(
+                kinematics=right_teleop_kinematics_solver, motor_names=right_teleop_motor_names, gripper_name="right_gripper"
+            ),
+        ],
+        to_transition=robot_action_to_transition,
+        to_output=transition_to_robot_action,
+    )
+
+    # build pipeline to convert EE action to robot joints
+    ee_to_robot_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
+        [
+            EEBoundsAndSafety(
+                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+                max_ee_step_m=0.10,
+                max_ee_twist_step_rad=0.50,
+                prefix="left_",
+            ),
+            EEBoundsAndSafety(
+                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+                max_ee_step_m=0.10,
+                max_ee_twist_step_rad=0.50,
+                prefix="right_",
+            ),
+            InverseKinematicsEEToJoints(
+                kinematics=left_robot_kinematics_solver,
+                motor_names=left_robot_motor_names,
+                initial_guess_current_joints=False,
+                prefix="left_",
+            ),
+            InverseKinematicsEEToJoints(
+                kinematics=right_robot_kinematics_solver,
+                motor_names=right_robot_motor_names,
+                initial_guess_current_joints=False,
+                prefix="right_",
+            ),
+        ],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+    # Use the IK version
+    teleop_action_processor = teleop_to_ee
+    robot_action_processor = ee_to_robot_joints
 
     teleop.connect()
     robot.connect()

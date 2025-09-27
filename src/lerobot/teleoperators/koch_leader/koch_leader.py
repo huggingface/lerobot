@@ -44,15 +44,16 @@ class KochLeader(Teleoperator):
     def __init__(self, config: KochLeaderConfig):
         super().__init__(config)
         self.config = config
+        norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "xl330-m077", MotorNormMode.RANGE_M100_100),
-                "shoulder_lift": Motor(2, "xl330-m077", MotorNormMode.RANGE_M100_100),
-                "elbow_flex": Motor(3, "xl330-m077", MotorNormMode.RANGE_M100_100),
-                "wrist_flex": Motor(4, "xl330-m077", MotorNormMode.RANGE_M100_100),
-                "wrist_roll": Motor(5, "xl330-m077", MotorNormMode.RANGE_M100_100),
-                "gripper": Motor(6, "xl330-m077", MotorNormMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, "xl330-m077", norm_mode_body),
+                "shoulder_lift": Motor(2, "xl330-m077", norm_mode_body),
+                "elbow_flex": Motor(3, "xl330-m077", norm_mode_body),
+                "wrist_flex": Motor(4, "xl330-m077", norm_mode_body),
+                "wrist_roll": Motor(5, "xl330-m077", norm_mode_body),
+                "gripper": Motor(6, "xl330-m077", norm_mode_body),
             },
             calibration=self.calibration,
         )

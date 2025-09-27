@@ -35,5 +35,5 @@ class KochFollowerConfig(RobotConfig):
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
-    # Set to `True` for backward compatibility with previous policies/dataset
-    use_degrees: bool = False
+    # Set to `True` for backward compatibility with previous policies/dataset. Use degrees for the IK.
+    use_degrees: bool = True
