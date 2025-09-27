@@ -26,7 +26,7 @@ def lekiwi_cameras_config() -> dict[str, CameraConfig]:
             index_or_path="/dev/video0", fps=30, width=640, height=480, rotation=Cv2Rotation.ROTATE_180
         ),
         "wrist": OpenCVCameraConfig(
-            index_or_path="/dev/video2", fps=30, width=480, height=640, rotation=Cv2Rotation.ROTATE_90
+            index_or_path="/dev/video2", fps=30, width=480, height=640, rotation=Cv2Rotation.ROTATE_270
         ),
     }
 
@@ -57,9 +57,11 @@ class LeKiwiHostConfig:
 
     # Duration of the application
     connection_time_s: int = 30
+    # connection_time_s: int = 3600
 
     # Watchdog: stop the robot if no command is received for over 0.5 seconds.
     watchdog_timeout_ms: int = 500
+    # watchdog_timeout_ms: int = 3600
 
     # If robot jitters decrease the frequency and monitor cpu load with `top` in cmd
     max_loop_freq_hz: int = 30

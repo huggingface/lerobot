@@ -18,20 +18,26 @@ import time
 
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
+from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 FPS = 30
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="my_lekiwi")
-teleop_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
+# Robot (LeKiwi host)
+# 将 remote_ip 改为你的机器人 IP（示例：192.168.0.100 或 Tailscale 100.x.y.z）
+robot_config = LeKiwiClientConfig(remote_ip="192.168.0.100", id="lekiwi")
+
+# Teleop leader arm (SO101)
+# Windows 用 "COMx"，Linux 用 "/dev/ttyACM0" 或 "/dev/ttyUSB0"
+# 如不确定串口，可先运行：python -m lerobot.find_port
+teleop_arm_config = SO101LeaderConfig(port="COM6", id="so101_leader")
 keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
 # Initialize the robot and teleoperator
 robot = LeKiwiClient(robot_config)
-leader_arm = SO100Leader(teleop_arm_config)
+leader_arm = SO101Leader(teleop_arm_config)
 keyboard = KeyboardTeleop(keyboard_config)
 
 # Connect to the robot and teleoperator
