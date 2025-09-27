@@ -262,6 +262,9 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """
     for key in items_dict:
         first_item = items_dict[key][0]
+        if key == "observation.image" and isinstance(first_item, dict):
+            first_item = PILImage.open(io.BytesIO(first_item['bytes']))
+            items_dict[key] = [PILImage.open(io.BytesIO(item['bytes'])) for item in items_dict[key]]
         if isinstance(first_item, PILImage.Image):
             to_tensor = transforms.ToTensor()
             items_dict[key] = [to_tensor(img) for img in items_dict[key]]

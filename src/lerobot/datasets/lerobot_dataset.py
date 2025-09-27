@@ -72,6 +72,7 @@ from lerobot.datasets.video_utils import (
     get_safe_default_codec,
     get_video_info,
 )
+import time
 
 CODEBASE_VERSION = "v2.1"
 
@@ -326,6 +327,16 @@ class LeRobotDatasetMetadata:
         obj.revision = None
         return obj
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+def _to_uint8_array(x):
+    import numpy as np, torch
+    if isinstance(x, torch.Tensor):
+        x = x.detach().cpu().numpy()
+    if x.dtype != np.uint8:
+        x = np.clip(x, 0, 255).astype(np.uint8)
+    return np.ascontiguousarray(x)  # avoid strided surprises
 
 class LeRobotDataset(torch.utils.data.Dataset):
     def __init__(
@@ -495,6 +506,32 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.delta_timestamps is not None:
             check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
+
+        self._img_pool = ThreadPoolExecutor(max_workers=8)  # tune: 4–16
+        self._img_sem = threading.Semaphore(256)            # max in-flight images
+        self._img_futs = []
+
+    def _save_image_async(self, image, fpath):
+        arr = _to_uint8_array(image).copy()  # decouple from caller’s buffer
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+
+        def job(img=arr, path=fpath):
+            try:
+                # your existing fast path (can swap in TurboJPEG/OpenCV later)
+                self._save_image(img, path)
+            finally:
+                self._img_sem.release()
+
+        self._img_sem.acquire()                 # backpressure if producer outruns disk
+        fut = self._img_pool.submit(job)
+        self._img_futs.append(fut)
+
+    def _flush_images(self, timeout=None):
+        # Wait for all scheduled writes before packaging/parquet
+        for fut in self._img_futs:
+            fut.result(timeout=timeout)
+        self._img_futs.clear()
+
 
     def push_to_hub(
         self,
@@ -783,7 +820,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if isinstance(frame[name], torch.Tensor):
                 frame[name] = frame[name].numpy()
 
+        # time this
+        perf_counter_start = time.perf_counter()
         validate_frame(frame, self.features)
+
+        perf_counter_end = time.perf_counter()
+        print(f"ln787 validate frame time: {perf_counter_end - perf_counter_start}")
 
         if self.episode_buffer is None:
             self.episode_buffer = self.create_episode_buffer()
@@ -802,14 +844,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 raise ValueError(
                     f"An element of the frame is not in the features. '{key}' not in '{self.features.keys()}'."
                 )
-
             if self.features[key]["dtype"] in ["image", "video"]:
                 img_path = self._get_image_file_path(
-                    episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
+                    episode_index=self.episode_buffer["episode_index"],
+                    image_key=key, frame_index=frame_index
                 )
-                if frame_index == 0:
-                    img_path.parent.mkdir(parents=True, exist_ok=True)
-                self._save_image(frame[key], img_path)
+                # async write instead of blocking
+                self._save_image_async(frame[key], img_path)
                 self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
@@ -829,6 +870,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
         """
+        self._flush_images()           # ensure all frames exist on disk
+
         if not episode_data:
             episode_buffer = self.episode_buffer
         else:
@@ -907,6 +950,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if not episode_data:  # Reset the buffer
             self.episode_buffer = self.create_episode_buffer()
+
 
     def _save_episode_table(self, episode_buffer: dict, episode_index: int) -> None:
         episode_dict = {key: episode_buffer[key] for key in self.hf_features}
