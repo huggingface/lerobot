@@ -190,7 +190,7 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
     # 1. Create a new (empty) LeRobotDataset for writing.
     new_dataset = LeRobotDataset.create(
         repo_id=new_repo_id,
-        fps=original_dataset.fps,
+        fps=int(original_dataset.fps),
         root=new_dataset_root,
         robot_type=original_dataset.meta.robot_type,
         features=original_dataset.meta.info["features"],
