@@ -59,7 +59,9 @@ class SpatialLearnedEmbeddings(nn.Module):
         super().__init__()
         self.height = height
         self.width = width
-        self.channel = channel
+        self.channel = (
+            channel  # TODO(fracapuano): this gives issues with non-square images bc is hardcoded to 4
+        )
         self.num_features = num_features
 
         self.kernel = nn.Parameter(torch.empty(channel, height, width, num_features))
