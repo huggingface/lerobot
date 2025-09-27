@@ -99,12 +99,6 @@ class Motor:
     norm_mode: MotorNormMode
 
 
-class JointOutOfRangeError(Exception):
-    def __init__(self, message="Joint is out of range"):
-        self.message = message
-        super().__init__(self.message)
-
-
 class PortHandler(Protocol):
     def __init__(self, port_name):
         self.is_open: bool

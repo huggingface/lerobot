@@ -193,16 +193,12 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     Attributes:
         end_effector_bounds: A dictionary with "min" and "max" keys for position clipping.
         max_ee_step_m: The maximum allowed change in position (in meters) between steps.
-        max_ee_twist_step_rad: The maximum allowed change in orientation (in radians) between steps.
         _last_pos: Internal state storing the last commanded position.
-        _last_twist: Internal state storing the last commanded orientation.
     """
 
     end_effector_bounds: dict
     max_ee_step_m: float = 0.05
-    max_ee_twist_step_rad: float = 0.20
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
-    _last_twist: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def action(self, action: RobotAction) -> RobotAction:
         x = action["ee.x"]
@@ -233,7 +229,6 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
                 raise ValueError(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
 
         self._last_pos = pos
-        self._last_twist = twist
 
         action["ee.x"] = float(pos[0])
         action["ee.y"] = float(pos[1])
@@ -246,7 +241,6 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     def reset(self):
         """Resets the last known position and orientation."""
         self._last_pos = None
-        self._last_twist = None
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

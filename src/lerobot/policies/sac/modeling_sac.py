@@ -1061,15 +1061,3 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
             x = transform(x)
 
         return x
-
-
-def _convert_normalization_params_to_tensor(normalization_params: dict) -> dict:
-    converted_params = {}
-    for outer_key, inner_dict in normalization_params.items():
-        converted_params[outer_key] = {}
-        for key, value in inner_dict.items():
-            converted_params[outer_key][key] = torch.tensor(value)
-            if "image" in outer_key:
-                converted_params[outer_key][key] = converted_params[outer_key][key].view(3, 1, 1)
-
-    return converted_params

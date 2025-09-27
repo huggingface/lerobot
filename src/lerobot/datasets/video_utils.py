@@ -585,19 +585,6 @@ def get_video_pixel_channels(pix_fmt: str) -> int:
         raise ValueError("Unknown format")
 
 
-def get_image_pixel_channels(image: Image):
-    if image.mode == "L":
-        return 1  # Grayscale
-    elif image.mode == "LA":
-        return 2  # Grayscale + Alpha
-    elif image.mode == "RGB":
-        return 3  # RGB
-    elif image.mode == "RGBA":
-        return 4  # RGBA
-    else:
-        raise ValueError("Unknown format")
-
-
 def get_video_duration_in_s(video_path: Path | str) -> float:
     """
     Get the duration of a video file in seconds using PyAV.

@@ -112,10 +112,6 @@ class Stretch3GamePad(Teleoperator):
     def send_feedback(self, feedback: np.ndarray) -> None:
         pass
 
-    def print_logs(self) -> None:
-        pass
-        # TODO(aliberts): move robot-specific logs logic here
-
     def disconnect(self) -> None:
         self.api.stop()
         self.is_connected = False

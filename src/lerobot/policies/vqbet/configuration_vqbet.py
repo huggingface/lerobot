@@ -82,7 +82,6 @@ class VQBeTConfig(PreTrainedConfig):
         gpt_n_head: Number of headers of GPT
         gpt_hidden_dim: Size of hidden dimensions of GPT
         dropout: Dropout rate for GPT
-        mlp_hidden_dim: Size of hidden dimensions of offset header / bin prediction headers parts of VQ-BeT
         offset_loss_weight:  A constant that is multiplied to the offset loss
         primary_code_loss_weight: A constant that is multiplied to the primary code prediction loss
         secondary_code_loss_weight: A constant that is multiplied to the secondary code prediction loss
@@ -125,7 +124,6 @@ class VQBeTConfig(PreTrainedConfig):
     gpt_n_head: int = 8
     gpt_hidden_dim: int = 512
     dropout: float = 0.1
-    mlp_hidden_dim: int = 1024
     offset_loss_weight: float = 10000.0
     primary_code_loss_weight: float = 5.0
     secondary_code_loss_weight: float = 0.5

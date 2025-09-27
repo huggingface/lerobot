@@ -101,7 +101,6 @@ ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservati
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
-            max_ee_twist_step_rad=0.50,
         ),
         InverseKinematicsEEToJoints(
             kinematics=follower_kinematics_solver,
