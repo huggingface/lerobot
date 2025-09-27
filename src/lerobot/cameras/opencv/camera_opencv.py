@@ -199,6 +199,9 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
         if self.fps is None:
             self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         else:
@@ -219,6 +222,12 @@ class OpenCVCamera(Camera):
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""
 
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        if self.fps is None:
+            raise ValueError(f"{self} FPS is not set")
+
         success = self.videocapture.set(cv2.CAP_PROP_FPS, float(self.fps))
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         # Use math.isclose for robust float comparison
@@ -227,6 +236,12 @@ class OpenCVCamera(Camera):
 
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
+
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        if self.capture_width is None or self.capture_height is None:
+            raise ValueError(f"{self} capture_width or capture_height is not set")
 
         width_success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
         height_success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
@@ -262,7 +277,7 @@ class OpenCVCamera(Camera):
             possible_paths = sorted(Path("/dev").glob("video*"), key=lambda p: p.name)
             targets_to_scan = [str(p) for p in possible_paths]
         else:
-            targets_to_scan = list(range(MAX_OPENCV_INDEX))
+            targets_to_scan = [str(i) for i in range(MAX_OPENCV_INDEX)]
 
         for target in targets_to_scan:
             camera = cv2.VideoCapture(target)
@@ -316,6 +331,9 @@ class OpenCVCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         start_time = time.perf_counter()
+
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
 
         ret, frame = self.videocapture.read()
 
