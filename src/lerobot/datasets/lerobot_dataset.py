@@ -93,7 +93,7 @@ class LeRobotDatasetMetadata:
     ):
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
-        self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+        self.root = Path(root) / repo_id if root is not None else HF_LEROBOT_HOME / repo_id
 
         try:
             if force_cache_sync:
@@ -442,7 +442,7 @@ class LeRobotDatasetMetadata:
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+        obj.root = Path(root) / repo_id if root is not None else HF_LEROBOT_HOME / repo_id
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
@@ -589,7 +589,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
+        self.root = Path(root) / repo_id if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
@@ -608,7 +608,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id, root, self.revision, force_cache_sync=force_cache_sync
         )
 
         # Load actual data
