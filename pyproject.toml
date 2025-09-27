@@ -332,9 +332,9 @@ default.extend-ignore-identifiers-re = [
 # module = "lerobot.rl.*"
 # # include = "src/lerobot/rl/**/*.py"
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.envs.*"
-# # include = "src/lerobot/envs/**/*.py"
+[[tool.mypy.overrides]]
+module = "lerobot.envs.*"
+include = "src/lerobot/envs/**/*.py"
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.async_inference.*"
