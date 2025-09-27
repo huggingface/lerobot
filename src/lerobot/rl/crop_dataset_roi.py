@@ -160,7 +160,7 @@ def get_image_from_lerobot_dataset(dataset: LeRobotDataset):
     return image_dict
 
 
-def convert_lerobot_dataset_to_cropper_lerobot_dataset(
+def convert_lerobot_dataset_to_cropped_lerobot_dataset(
     original_dataset: LeRobotDataset,
     crop_params_dict: dict[str, tuple[int, int, int, int]],
     new_repo_id: str,
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     new_repo_id = args.repo_id + "_cropped_resized"
     new_dataset_root = Path(str(dataset.root) + "_cropped_resized")
 
-    cropped_resized_dataset = convert_lerobot_dataset_to_cropper_lerobot_dataset(
+    cropped_resized_dataset = convert_lerobot_dataset_to_cropped_lerobot_dataset(
         original_dataset=dataset,
         crop_params_dict=rois,
         new_repo_id=new_repo_id,
