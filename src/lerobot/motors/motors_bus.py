@@ -360,8 +360,8 @@ class MotorsBus(abc.ABC):
             raise ValueError(f"Some motors have the same id!\n{self}")
 
         # Ensure ctrl table available for all models
-        for model in self.models:
-            get_ctrl_table(self.model_ctrl_table, model)
+        # for model in self.models:
+        #     get_ctrl_table(self.model_ctrl_table, model)
 
     def _is_comm_success(self, comm: int) -> bool:
         return comm == self._comm_success

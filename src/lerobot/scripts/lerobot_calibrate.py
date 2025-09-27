@@ -36,21 +36,26 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_starai_follower,
     hope_jr,
     koch_follower,
     lekiwi,
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    starai_cello,
+    starai_viola,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bi_starai_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    starai_violin,
 )
 from lerobot.utils.utils import init_logging
 
