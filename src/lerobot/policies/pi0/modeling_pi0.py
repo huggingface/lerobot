@@ -253,7 +253,7 @@ class PI0Policy(PreTrainedPolicy):
         return super().from_pretrained(*args, **kwargs)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         raise NotImplementedError("Currently not implemented for PI0")
 
