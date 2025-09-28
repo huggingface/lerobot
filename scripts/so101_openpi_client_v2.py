@@ -8,7 +8,7 @@ WS_HOST = "127.0.0.1"
 WS_PORT = 8000
 CAM_FRONT = 0    # 机側（front）
 CAM_ABOVE = 2    # 真上（above）
-FPS = 5          # 推論頻度を下げて安定性向上
+FPS = 10          # 推論頻度を下げて安定性向上
 ROBOT_PORT = "/dev/ttyACM1"
 ROBOT_ID = "my_follower_arm"
 JOINT_ORDER = ["shoulder_pan","shoulder_lift","elbow_flex","wrist_flex","wrist_roll","gripper"]
@@ -53,16 +53,6 @@ def create_client():
         print(f"WebSocket接続失敗: {e}")
         return None
 
-def reconnect_client():
-    """WebSocketクライアント再接続（リトライロジック付き）"""
-    for attempt in range(MAX_RECONNECT_ATTEMPTS):
-        print(f"再接続試行 {attempt + 1}/{MAX_RECONNECT_ATTEMPTS}...")
-        client = create_client()
-        if client:
-            return client
-        if attempt < MAX_RECONNECT_ATTEMPTS - 1:
-            time.sleep(RECONNECT_DELAY * (attempt + 1))  # 段階的遅延
-    return None
 
 def main():
     # 初期WebSocket接続
@@ -90,8 +80,6 @@ def main():
     print("制御ループ開始。Ctrl-Cで停止。")
     try:
         step_count = 0
-        consecutive_errors = 0
-        max_consecutive_errors = 10
         
         while True:
             ok_f, frame_front = cap_front.read()
@@ -126,66 +114,27 @@ def main():
                 cv2.imwrite(f"debug_front_{ts}.png", frame_front)
                 cv2.imwrite(f"debug_above_{ts}.png", frame_above)
 
-            # 状態ログ（10ステップごと）
-            # if step_count % 10 == 0:
             print(f"Step {step_count}, State: [{', '.join(f'{s:6.1f}' for s in state)}]")
             
-            try:
-                # 推論実行
-                out = client.infer(obs)
-                actions = np.asarray(out.get("actions", []), dtype=np.float32)
-                
-                # 成功時はエラーカウンタをリセット
-                consecutive_errors = 0
-                
-                if actions.size > 0:
-                    # アクション次元チェック
-                    if actions.ndim > 1:
-                        action = actions[0]  # アクションホライゾンの最初のアクション
-                    else:
-                        action = actions
-                    
-                    # SO101用に6次元に制限
-                    if len(action) >= 6:
-                        action = action[:6]
-                        print(f"受信アクション: [{', '.join(f'{a:6.1f}' for a in action)}]")
-                        # if step_count % 10 == 0:
-                            # print(f"Action: [{', '.join(f'{a:6.1f}' for a in action)}]")
-                        
-                        if not DRY_RUN:
-                            cmd = {f"{j}.pos": float(action[i]) for i, j in enumerate(JOINT_ORDER)}
-                            robot.send_action(cmd)
-                            # print(f"[ACTION] {cmd}")
-                    else:
-                        print(f"警告: アクション次元が不正。期待値6、実際{len(action)}")
-                else:
-                    print("警告: 空のアクションを受信")
-                    
-            except Exception as e:
-                consecutive_errors += 1
-                print(f"推論エラー ({consecutive_errors}/{max_consecutive_errors}): {e}")
-                
-                # 連続エラーが多い場合は終了
-                if consecutive_errors >= max_consecutive_errors:
-                    print(f"連続エラーが{max_consecutive_errors}回に達しました。終了します。")
-                    break
-                
-                # 再接続を試行
-                print("WebSocket再接続を試行中...")
-                client = reconnect_client()
-                if not client:
-                    print("再接続に失敗しました。終了します。")
-                    break
-                
-                # 再接続後は少し待つ
-                time.sleep(1.0)
+            # 推論実行
+            out = client.infer(obs)
+            actions = np.asarray(out.get("actions", []), dtype=np.float32)
+            print(f"受信アクション形状: {actions.shape}")
             
+            if actions.size > 0 and actions.ndim > 1:
+                for i in range(len(actions)):
+                    action = actions[i]
+                    print(f"受信アクション {i}: [{', '.join(f'{a:6.1f}' for a in action)}]")
+                    print(f"受信アクション: [{', '.join(f'{a:6.1f}' for a in action)}]")
+                    
+                    if not DRY_RUN:
+                        cmd = {f"{j}.pos": float(action[i]) for i, j in enumerate(JOINT_ORDER)}
+                        robot.send_action(cmd)
+                        time.sleep(1.0/FPS)
+                        # print(f"[ACTION] {cmd}")
+                                
             step_count += 1
             time.sleep(1.0/FPS)
-    except KeyboardInterrupt:
-        print("\n停止シグナル受信、シャットダウン中...")
-    except Exception as e:
-        print(f"予期しないエラー: {e}")
     finally:
         print("クリーンアップ中...")
         cap_front.release()
