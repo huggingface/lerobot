@@ -64,6 +64,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
 from typing import Any
+import cv2
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -357,6 +358,7 @@ def record_loop(
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
         # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
+        print(f"Sending action to robot: {robot_action_to_send}")
         _sent_action = robot.send_action(robot_action_to_send)
 
         # Write to dataset
