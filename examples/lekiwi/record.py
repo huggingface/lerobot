@@ -75,6 +75,14 @@ init_rerun(session_name="lekiwi_record")
 if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
     raise ValueError("Robot or teleop is not connected!")
 
+# check that the robot and leader_arm not big difference
+observation = robot.get_observation()
+action = leader_arm.get_action()
+is_different, score, details = LeKiwiClient.check_robot_pose_difference(observation, action, 30)
+if is_different:
+    print(f"leader arm and follower arm have a big different!  {is_different}, score: {score}")
+    exit(-1)
+
 print("Starting record loop...")
 recorded_episodes = 0
 while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
