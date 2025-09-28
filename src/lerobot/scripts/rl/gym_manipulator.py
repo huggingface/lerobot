@@ -2098,8 +2098,12 @@ def record_dataset(env, policy, cfg):
                 break
 
             # For teleop, get action from intervention
-            recorded_action = {
-                "action": info["action_intervention"].cpu().squeeze(0).float() if policy is None else action
+            # recorded_action = {
+            #     "action": info["action_intervention"].cpu().squeeze(0).float() if policy is None else action
+            # }
+
+            recorded_action = { 
+                "action": torch.tensor(info["teleop_action"], dtype=torch.float32) if policy is None else action 
             }
 
             # Process observation for dataset
