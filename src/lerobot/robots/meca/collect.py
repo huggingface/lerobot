@@ -15,7 +15,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 # ------------------------
 # Experiment parameters
 # ------------------------
-NUM_EPISODES = 5
+NUM_EPISODES = 10
 FPS = 30
 EPISODE_TIME_SEC = 60
 RESET_TIME_SEC = 10
@@ -28,7 +28,7 @@ TASK_DESCRIPTION = "Microsurgery teleop task"
 # Cameras (adapt indices to your setup)
 camera_config = {
     "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS),
-    "bottom": OpenCVCameraConfig(index_or_path=3, width=1280, height=720, fps=260),
+    "bottom": OpenCVCameraConfig(index_or_path=2, width=1280, height=720, fps=260),
 }
 
 # Meca robot config
@@ -54,20 +54,20 @@ dataset_features = {**action_features, **obs_features}
 
 
 
-try:
-    dataset = LeRobotDataset("dylanmcguir3/meca-needle-pick")
-    print("📂 Loaded existing dataset")
-except Exception:
+# try:
+#     dataset = LeRobotDataset("dylanmcguir3/meca-needle-pick-lr")
+#     print("📂 Loaded existing dataset")
+# except Exception:
     # Otherwise, create it fresh
-    dataset = LeRobotDataset.create(
-        repo_id="dylanmcguir3/meca-needle-pick",
-        fps=FPS,
-        features=dataset_features,
-        robot_type=robot.name,
-        use_videos=True,
-        image_writer_threads=4,
-    )
-    print("📂 Created new dataset")
+dataset = LeRobotDataset.create(
+    repo_id="dylanmcguir3/meca-needle-pick-lr",
+    fps=FPS,
+    features=dataset_features,
+    robot_type=robot.name,
+    use_videos=True,
+    image_writer_threads=4,
+)
+print("📂 Created new dataset")
 
 # ------------------------
 # Setup utils

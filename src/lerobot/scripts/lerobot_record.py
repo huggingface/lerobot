@@ -296,6 +296,7 @@ def record_loop(
 
         if events["exit_early"]:
             events["exit_early"] = False
+            robot.move_rest_position()
             break
 
         # Get robot observation

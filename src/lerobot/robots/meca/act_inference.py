@@ -4,7 +4,7 @@ import time
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
-from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
+from lerobot.policies.act.modeling_act import ACTPolicy  # 👈 change here
 from lerobot.robots.meca.mecaconfig import MecaConfig
 from lerobot.robots.meca.meca import Meca
 from lerobot.utils.control_utils import init_keyboard_listener
@@ -25,8 +25,8 @@ TASK_DESCRIPTION = "Microsurgery teleop task"
 
 # 👇 Fill in your actual repos
 HF_USER = "dylanmcguir3"
-HF_MODEL_ID = f"{HF_USER}/needle-pick"        # trained diffusion policy
-HF_DATASET_ID = f"{HF_USER}/meca-needle-pick"        # dataset to store evaluation rollouts
+HF_MODEL_ID = f"{HF_USER}/needle-pick-act"        # ACT policy model
+HF_DATASET_ID = f"{HF_USER}/meca-needle-pick"    # dataset to store evaluation rollouts
 
 # -------------------------
 # Robot + camera config
@@ -40,9 +40,9 @@ robot_config = MecaConfig(ip="192.168.0.100", id="meca_eval_robot", cameras=came
 robot = Meca(robot_config)
 
 # -------------------------
-# Load trained policy
+# Load trained ACT policy
 # -------------------------
-policy = DiffusionPolicy.from_pretrained(Path("/home/dylan/LeRobot/lerobot/outputs/train/needle-pick-diffusion-test/checkpoints/040000/pretrained_model"))
+policy = ACTPolicy.from_pretrained(Path("/home/dylan/LeRobot/lerobot/outputs/train/needle-pick-act-test/checkpoints/100000/pretrained_model"))
 
 # -------------------------
 # Dataset features
@@ -52,7 +52,7 @@ obs_features = hw_to_dataset_features(robot.observation_features, "observation")
 dataset_features = {**action_features, **obs_features}
 
 dataset = LeRobotDataset.create(
-    repo_id=HF_DATASET_ID + "-eval",
+    repo_id=HF_DATASET_ID + "-act-eval",
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,
@@ -64,21 +64,25 @@ dataset = LeRobotDataset.create(
 # Keyboard + visualization
 # -------------------------
 _, events = init_keyboard_listener()
-init_rerun(session_name="policy_eval")
+init_rerun(session_name="policy_eval_act")
 
 # -------------------------
 # Connect robot
 # -------------------------
 robot.connect()
 
-# Pre/post processors for policy I/O
-preprocessor, postprocessor = make_pre_post_processors(policy, pretrained_path=Path("/home/dylan/LeRobot/lerobot/outputs/train/needle-pick-diffusion-test/checkpoints/040000/pretrained_model"), dataset_stats=dataset.meta.stats)
+# Pre/post processors for ACT policy
+preprocessor, postprocessor = make_pre_post_processors(
+    policy, 
+    pretrained_path=Path("/home/dylan/LeRobot/lerobot/outputs/train/needle-pick-act-test/checkpoints/100000/pretrained_model"),
+    dataset_stats=dataset.meta.stats
+)
 
 # -------------------------
 # Evaluation loop
 # -------------------------
 for episode_idx in range(NUM_EPISODES):
-    log_say(f"Running inference, recording eval episode {episode_idx + 1}/{NUM_EPISODES}")
+    log_say(f"Running inference, recording ACT eval episode {episode_idx + 1}/{NUM_EPISODES}")
 
     record_loop(
         robot=robot,
@@ -98,7 +102,6 @@ for episode_idx in range(NUM_EPISODES):
 
     if cv2.waitKey(1) & 0xFF == ord("r"):
         robot.reset()
-
 
     dataset.save_episode()
 

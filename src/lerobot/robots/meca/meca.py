@@ -17,6 +17,7 @@ class Meca(Robot):
         self.robot = MecademicRobot()
         self.cameras = make_cameras_from_configs(config.cameras)
         self.connected = False
+        self.resetting = False
         self.gripper_state = 0  # Assume gripper starts open
         self.ip = config.ip
 
@@ -60,6 +61,7 @@ class Meca(Robot):
         return self._ee_pose_delta
 
     def connect(self, calibrate: bool = True) -> None:
+        self.resetting = True
         self.robot.Connect(self.ip)
         self.robot.ResetError()
         
@@ -72,10 +74,12 @@ class Meca(Robot):
         self.robot.SetJointVel(10)
         self.robot.SetJointAcc(50)
         self.robot.SetCartAcc(100)
+        
+        self.robot.GripperOpen()
         self.robot.MoveJoints(1, 44, 17, 1, -30, 0)
+
         print("🤖 Robot ready.")
 
-        
         # 🔑 Connect all cameras here
         for cam in self.cameras.values():
             try:
@@ -85,6 +89,7 @@ class Meca(Robot):
                 print(f"⚠️ Failed to connect {cam}: {e}")
 
         self.connected = True
+        self.resetting = False
 
 
 
@@ -112,6 +117,13 @@ class Meca(Robot):
         self.robot.MoveJoints(1, 44, 17, 1, -30, 0)
         self.gripper_state = 0  # Assume gripper starts open
         print("🤖 Robot reset and ready.")
+
+    def move_rest_position(self) -> dict:
+        self.resetting = True
+        self.robot.MoveJoints(1, 44, 17, 1, -30, 0)
+        self.robot.GripperOpen()
+        self.gripper_state = 0
+        self.resetting = False
 
     @property
     def is_connected(self) -> bool:
@@ -149,6 +161,8 @@ class Meca(Robot):
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if not self.connected:
             raise RuntimeError("Robot not connected. Call connect() before sending actions.")
+        if self.resetting:
+            return self.get_observation()  # Ignore actions while resetting
 
         dx = action.get("dx", 0.0)
         dy = action.get("dy", 0.0)
@@ -203,13 +217,6 @@ class Meca(Robot):
             if cam in processed:
                 img = processed[cam]
 
-                # Try explicit color conversion (MJPEG/YUYV → BGR)
-                try:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                                        # Debug visualization
-                except cv2.error:
-                    # If conversion fails, just leave as-is
-                    pass
 
                 # Crop
                 processed[cam] = self.center_crop(img, (224, 224))
@@ -218,7 +225,6 @@ class Meca(Robot):
                 if cam == "bottom":
                     processed[cam] = cv2.flip(processed[cam], -1)
                 else:  
-                    cv2.imshow("flipped", processed[cam])
                     cv2.waitKey(1)
 
 
