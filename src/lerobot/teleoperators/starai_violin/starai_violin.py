@@ -94,7 +94,7 @@ class StaraiViolin(Teleoperator):
                 return
 
         logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
+        # self.bus.disable_torque()
         # for motor in self.bus.motors:
         #     self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
