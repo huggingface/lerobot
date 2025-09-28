@@ -1,7 +1,7 @@
 import logging
 from copy import deepcopy
 from enum import Enum
-
+import time
 from fashionstar_uart_sdk.uart_pocket_handler import (
     PortHandler as starai_PortHandler,
     SyncPositionControlOptions,
@@ -262,6 +262,7 @@ class StaraiMotorsBus(MotorsBus):
         return
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0,mode:str="damping") -> None:
+        time.sleep(0.01)
         for motor in self._get_motors_list(motors):
             self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id, mode, 900)
 
