@@ -155,6 +155,7 @@ class StaraiMotorsBus(MotorsBus):
         values: Value | dict[str, Value],
         *,
         normalize: bool = True,
+        motion_time: int = None,
     ) -> None:
         """Write the same register on multiple motors.
 
@@ -197,12 +198,16 @@ class StaraiMotorsBus(MotorsBus):
                         raise NotImplementedError
                     else:
                         raise NotImplementedError
+            if motion_time is None:
+                data_motion_time = self.default_motion_time
+            else:
+                data_motion_time = motion_time
 
             for motor in values_:
                 data = SyncPositionControlOptions(
                     self.motors[motor].id,
                     int(((values_[motor] / 4096 * 360) - 180) * 10),
-                    self.default_motion_time,
+                    data_motion_time,
                     0,
                     DEFAULT_ACC_TIME,
                     DEFAULT_DEC_TIME,

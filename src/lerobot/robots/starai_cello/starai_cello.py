@@ -86,11 +86,8 @@ class StaraiCello(Robot):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
-        self.bus.disable_torque()
         logger.info(f"{self} slow start in progress, please wait for 3 seconds.")
-   
-        time.sleep(3)
-        self.bus.disable_torque(mode="unlocked")
+        self.move_to_initial_position()
         if not self.is_calibrated and calibrate:
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
@@ -104,7 +101,7 @@ class StaraiCello(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.bus.is_calibrated
+        return self.calibration
 
     def calibrate(self) -> None:
         if self.calibration:
@@ -221,3 +218,32 @@ class StaraiCello(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
+
+    def get_action(self) -> dict[str, float]:
+        start = time.perf_counter()
+        action = self.bus.sync_read("Present_Position")
+        action = {f"{motor}.pos": val for motor, val in action.items()}
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read action: {dt_ms:.1f}ms")
+        return action
+    
+    def move_to_initial_position(self)-> dict[str, Any]:
+        postion = self.get_action()
+
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        goal_pos = {key.removesuffix(".pos"): val for key, val in postion.items() if key.endswith(".pos")}
+        goal_pos["Motor_0"] = 0
+        goal_pos["Motor_1"] = -80
+        goal_pos["Motor_2"] = 80
+        goal_pos["Motor_3"] = 0
+        goal_pos["Motor_4"] = 0
+        goal_pos["Motor_5"] = 0
+        goal_pos["gripper"] = 80
+        self.bus.sync_write("Goal_Position", goal_pos,motion_time = 1500)
+        time.sleep(1.5)
+        self.bus.disable_torque()
+        time.sleep(2)
+        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
