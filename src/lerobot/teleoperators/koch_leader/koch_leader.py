@@ -53,7 +53,7 @@ class KochLeader(Teleoperator):
                 "elbow_flex": Motor(3, "xl330-m077", norm_mode_body),
                 "wrist_flex": Motor(4, "xl330-m077", norm_mode_body),
                 "wrist_roll": Motor(5, "xl330-m077", norm_mode_body),
-                "gripper": Motor(6, "xl330-m077", norm_mode_body),
+                "gripper": Motor(6, "xl330-m077", MotorNormMode.RANGE_0_100), # Always use the percentage for the grippers
             },
             calibration=self.calibration,
         )
