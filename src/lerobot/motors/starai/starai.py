@@ -87,7 +87,7 @@ class StaraiMotorsBus(MotorsBus):
         for motor in self.motors:
             if not self.port_handler.ping(self.motors[motor].id):
                 raise Exception(f"motor not found id:{self.motors[motor].id}")
-        self.disable_torque()
+        self.disable_torque(mode="unlocked")
         self.port_handler.ResetLoop(0xFF)
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
@@ -261,9 +261,9 @@ class StaraiMotorsBus(MotorsBus):
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         return
 
-    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0,mode:str="damping") -> None:
         for motor in self._get_motors_list(motors):
-            self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id, "unlocked", 0)
+            self.port_handler.write["Stop_On_Control_Mode"](self.motors[motor].id, mode, 900)
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
         return
