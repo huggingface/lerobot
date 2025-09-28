@@ -198,9 +198,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         if config_file is None:
             raise FileNotFoundError(f"{CONFIG_NAME} not found in {model_id}")
 
-        if config_file is None:
-            raise FileNotFoundError(f"{CONFIG_NAME} not found in {model_id}")
-
         with open(config_file) as f:
             config = json.load(f)
 
