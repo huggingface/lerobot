@@ -35,7 +35,7 @@ class EvalPipelineConfig:
     job_name: str | None = None
     seed: int | None = 1000
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
         if policy_path:

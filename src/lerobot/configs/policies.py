@@ -19,7 +19,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -37,7 +37,7 @@ T = TypeVar("T", bound="PreTrainedConfig")
 
 
 @dataclass
-class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
+class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: ignore[misc,name-defined] #TODO: draccus issue
     """
     Base configuration class for policy models.
 
@@ -72,7 +72,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # Add tags to your policy on the hub.
     license: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.pretrained_path: Path | None = None
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
@@ -88,21 +88,24 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def type(self) -> str:
-        return self.get_choice_name(self.__class__)
+        choice_name = self.get_choice_name(self.__class__)
+        if not isinstance(choice_name, str):
+            raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
+        return choice_name
 
     @property
     @abc.abstractmethod
-    def observation_delta_indices(self) -> list | None:
+    def observation_delta_indices(self) -> list | None:  # type: ignore[type-arg] #TODO: No implementation
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def action_delta_indices(self) -> list | None:
+    def action_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def reward_delta_indices(self) -> list | None:
+    def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -153,12 +156,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         *,
         force_download: bool = False,
         resume_download: bool | None = None,
-        proxies: dict | None = None,
+        proxies: dict[Any, Any] | None = None,
         token: str | bool | None = None,
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        **policy_kwargs,
+        **policy_kwargs: Any,
     ) -> T:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None

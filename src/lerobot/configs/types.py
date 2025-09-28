@@ -45,4 +45,4 @@ class DictLike(Protocol):
 @dataclass
 class PolicyFeature:
     type: FeatureType
-    shape: tuple
+    shape: tuple[int, ...]

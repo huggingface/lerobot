@@ -16,13 +16,18 @@ import inspect
 import pkgutil
 import sys
 from argparse import ArgumentError
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
 from pathlib import Path
+from pkgutil import ModuleInfo
+from types import ModuleType
+from typing import Any, TypeVar, cast
 
 import draccus
 
 from lerobot.utils.utils import has_method
+
+F = TypeVar("F", bound=Callable[..., object])
 
 PATH_KEY = "path"
 PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
@@ -127,7 +132,7 @@ def load_plugin(plugin_path: str) -> None:
             f"Failed to load plugin '{plugin_path}'. Verify the path and installation: {str(e)}"
         ) from e
 
-    def iter_namespace(ns_pkg):
+    def iter_namespace(ns_pkg: ModuleType) -> Iterable[ModuleInfo]:
         return pkgutil.iter_modules(ns_pkg.__path__, ns_pkg.__name__ + ".")
 
     try:
@@ -190,7 +195,7 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
     return filtered_args
 
 
-def wrap(config_path: Path | None = None):
+def wrap(config_path: Path | None = None) -> Callable[[F], F]:
     """
     HACK: Similar to draccus.wrap but does three additional things:
         - Will remove '.path' arguments from CLI in order to process them later on.
@@ -201,9 +206,9 @@ def wrap(config_path: Path | None = None):
             from the CLI '.type' arguments
     """
 
-    def wrapper_outer(fn):
+    def wrapper_outer(fn: F) -> F:
         @wraps(fn)
-        def wrapper_inner(*args, **kwargs):
+        def wrapper_inner(*args: Any, **kwargs: Any) -> Any:
             argspec = inspect.getfullargspec(fn)
             argtype = argspec.annotations[argspec.args[0]]
             if len(args) > 0 and type(args[0]) is argtype:
@@ -231,6 +236,6 @@ def wrap(config_path: Path | None = None):
             response = fn(cfg, *args, **kwargs)
             return response
 
-        return wrapper_inner
+        return cast(F, wrapper_inner)
 
-    return wrapper_outer
+    return cast(Callable[[F], F], wrapper_outer)

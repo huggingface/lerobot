@@ -16,6 +16,7 @@ import datetime as dt
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -132,7 +133,7 @@ class TrainPipelineConfig(HubMixin):
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["policy"]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
 
     def _save_pretrained(self, save_directory: Path) -> None:
@@ -146,12 +147,12 @@ class TrainPipelineConfig(HubMixin):
         *,
         force_download: bool = False,
         resume_download: bool | None = None,
-        proxies: dict | None = None,
+        proxies: dict[Any, Any] | None = None,
         token: str | bool | None = None,
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> "TrainPipelineConfig":
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
