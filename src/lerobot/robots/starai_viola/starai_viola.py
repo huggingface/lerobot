@@ -86,13 +86,15 @@ class StaraiViola(Robot):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
-        logger.info(f"{self} slow start in progress, please wait for 3 seconds.")
-        self.move_to_initial_position()
         if not self.is_calibrated and calibrate:
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
             )
             self.calibrate()
+
+        if self.is_calibrated:
+            logger.info(f"{self} slow start in progress, please wait for 3 seconds.")
+            self.move_to_initial_position()
 
         for cam in self.cameras.values():
             cam.connect()
@@ -104,6 +106,7 @@ class StaraiViola(Robot):
         return self.calibration
 
     def calibrate(self) -> None:
+        self.bus.disable_torque(mode="unlocked")
         if self.calibration:
             # self.calibration is not empty here
             user_input = input(
@@ -231,8 +234,8 @@ class StaraiViola(Robot):
         postion = self.get_action()
 
 
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+        # if not self.is_connected:
+        #     raise DeviceNotConnectedError(f"{self} is not connected.")
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in postion.items() if key.endswith(".pos")}
         goal_pos["Motor_0"] = 0
