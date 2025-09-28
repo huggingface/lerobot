@@ -20,8 +20,10 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras import CameraConfig, make_cameras_from_configs
+from lerobot.motors.motors_bus import Motor, MotorNormMode
 from lerobot.robots import Robot, RobotConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from tests.mocks.mock_motors_bus import MockMotorsBus
 
 
 @RobotConfig.register_subclass("mock_robot")
@@ -58,8 +60,21 @@ class MockRobot(Robot):
         self.config = config
         self._is_connected = False
         self._is_calibrated = config.calibrated
-        self.motors = [f"motor_{i + 1}" for i in range(config.n_motors)]
         self.cameras = make_cameras_from_configs(config.cameras)
+
+        mock_motors = {}
+        for i in range(config.n_motors):
+            motor_name = f"motor_{i + 1}"
+            mock_motors[motor_name] = Motor(
+                id=i + 1,
+                model="model_1",  # Use model_1 which exists in MockMotorsBus tables
+                norm_mode=MotorNormMode.RANGE_M100_100,
+            )
+
+        self.bus = MockMotorsBus("/dev/dummy-port", mock_motors)
+
+        # NOTE(fracapuano): The .motors attribute was used from the previous interface
+        self.motors = [f"motor_{i + 1}" for i in range(config.n_motors)]
 
     @property
     def _motors_ft(self) -> dict[str, type]:
