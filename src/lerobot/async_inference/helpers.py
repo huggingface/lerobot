@@ -34,7 +34,7 @@ from lerobot.policies import (  # noqa: F401
     VQBeTConfig,
 )
 from lerobot.robots.robot import Robot
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import init_logging
 
 Action = torch.Tensor
@@ -73,7 +73,7 @@ def validate_robot_cameras_for_policy(
 
 
 def map_robot_keys_to_lerobot_features(robot: Robot) -> dict[str, dict]:
-    return hw_to_dataset_features(robot.observation_features, "observation", use_video=False)
+    return hw_to_dataset_features(robot.observation_features, OBS_STR, use_video=False)
 
 
 def is_image_key(k: str) -> bool:
@@ -148,7 +148,7 @@ def make_lerobot_observation(
     lerobot_features: dict[str, dict],
 ) -> LeRobotObservation:
     """Make a lerobot observation from a raw observation."""
-    return build_dataset_frame(lerobot_features, robot_obs, prefix="observation")
+    return build_dataset_frame(lerobot_features, robot_obs, prefix=OBS_STR)
 
 
 def prepare_raw_observation(

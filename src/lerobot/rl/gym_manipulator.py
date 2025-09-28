@@ -73,6 +73,7 @@ from lerobot.teleoperators import (
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
@@ -180,7 +181,7 @@ class RobotEnv(gym.Env):
 
         # Define observation spaces for images and other states.
         if current_observation is not None and "pixels" in current_observation:
-            prefix = "observation.images"
+            prefix = OBS_IMAGES
             observation_spaces = {
                 f"{prefix}.{key}": gym.spaces.Box(
                     low=0, high=255, shape=current_observation["pixels"][key].shape, dtype=np.uint8
@@ -190,7 +191,7 @@ class RobotEnv(gym.Env):
 
         if current_observation is not None:
             agent_pos = current_observation["agent_pos"]
-            observation_spaces["observation.state"] = gym.spaces.Box(
+            observation_spaces[OBS_STATE] = gym.spaces.Box(
                 low=0,
                 high=10,
                 shape=agent_pos.shape,
@@ -600,7 +601,7 @@ def control_loop(
     if cfg.mode == "record":
         action_features = teleop_device.action_features
         features = {
-            "action": action_features,
+            ACTION: action_features,
             "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
             "next.done": {"dtype": "bool", "shape": (1,), "names": None},
         }
@@ -612,7 +613,7 @@ def control_loop(
             }
 
         for key, value in transition[TransitionKey.OBSERVATION].items():
-            if key == "observation.state":
+            if key == OBS_STATE:
                 features[key] = {
                     "dtype": "float32",
                     "shape": value.squeeze(0).shape,
@@ -671,7 +672,7 @@ def control_loop(
             )
             frame = {
                 **observations,
-                "action": action_to_record.cpu(),
+                ACTION: action_to_record.cpu(),
                 "next.reward": np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
                 "next.done": np.array([terminated or truncated], dtype=bool),
             }
@@ -732,7 +733,7 @@ def replay_trajectory(
         download_videos=False,
     )
     episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.replay_episode)
-    actions = episode_frames.select_columns("action")
+    actions = episode_frames.select_columns(ACTION)
 
     _, info = env.reset()
 
@@ -740,7 +741,7 @@ def replay_trajectory(
         start_time = time.perf_counter()
         transition = create_transition(
             observation=env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {},
-            action=action_data["action"],
+            action=action_data[ACTION],
         )
         transition = action_processor(transition)
         env.step(transition[TransitionKey.ACTION])
