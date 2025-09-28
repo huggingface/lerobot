@@ -86,6 +86,11 @@ class StaraiViola(Robot):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
+        self.bus.disable_torque()
+        logger.info(f"{self} slow start in progress, please wait for 3 seconds.")
+   
+        time.sleep(3)
+        self.bus.disable_torque(mode="unlocked")
         if not self.is_calibrated and calibrate:
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
@@ -99,7 +104,7 @@ class StaraiViola(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.bus.is_calibrated
+        return self.calibration
 
     def calibrate(self) -> None:
         if self.calibration:

@@ -80,7 +80,7 @@ class StaraiViolin(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.bus.is_calibrated
+        return self.calibration
 
     def calibrate(self) -> None:
         if self.calibration:
