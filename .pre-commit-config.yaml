@@ -90,8 +90,7 @@ repos:
     rev: v1.16.0
     hooks:
       - id: mypy
-        args: [--python-version=3.10, --follow-imports=silent]
-        files: ^src/lerobot/configs/
+        args: [--python-version=3.10]
         additional_dependencies:
           ["numpy", "torch", "huggingface_hub", "draccus"]
 
