@@ -118,7 +118,7 @@ echo ${HF_USER}/aloha_test
 If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with [Rerun](https://github.com/rerun-io/rerun):
 
 ```bash
-python -m lerobot.scripts.visualize_dataset \
+lerobot-dataset-viz \
   --repo-id ${HF_USER}/aloha_test --episode 0
 ```
 
@@ -192,7 +192,5 @@ As you can see, it's almost the same command as previously used to record your t
 3. We use `--control.num_image_writer_processes=1` instead of the default value (`0`). On our computer, using a dedicated process to write images from the 4 cameras on disk allows to reach constant 30 fps during inference. Feel free to explore different values for `--control.num_image_writer_processes`.
 
 ## More
-
-Follow this [previous tutorial](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#4-train-a-policy-on-your-data) for a more in-depth explanation.
 
 If you have any question or need help, please reach out on Discord in the channel `#aloha-arm`.

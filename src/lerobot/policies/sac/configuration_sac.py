@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
-from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.optim.optimizers import MultiAdamConfig
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 
 def is_image_feature(key: str) -> bool:
@@ -225,7 +225,7 @@ class SACConfig(PreTrainedConfig):
                 "You must provide either 'observation.state' or an image observation (key starting with 'observation.image') in the input features"
             )
 
-        if "action" not in self.output_features:
+        if ACTION not in self.output_features:
             raise ValueError("You must provide 'action' in the output features")
 
     @property
