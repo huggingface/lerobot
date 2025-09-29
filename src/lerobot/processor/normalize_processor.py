@@ -108,16 +108,18 @@ class _NormalizationMixin:
         """
         # Track if stats were explicitly provided (not None and not empty)
         self._stats_explicitly_provided = self.stats is not None and bool(self.stats)
+        # Check if self.features is not empty
+        if not self.features:
+            raise ValueError("Normalization features cannot be empty")
         # Robust JSON deserialization handling (guard empty maps).
-        if self.features:
-            first_val = next(iter(self.features.values()))
-            if isinstance(first_val, dict):
-                reconstructed = {}
-                for key, ft_dict in self.features.items():
-                    reconstructed[key] = PolicyFeature(
-                        type=FeatureType(ft_dict["type"]), shape=tuple(ft_dict["shape"])
-                    )
-                self.features = reconstructed
+        first_val = next(iter(self.features.values()))
+        if isinstance(first_val, dict):
+            reconstructed = {}
+            for key, ft_dict in self.features.items():
+                reconstructed[key] = PolicyFeature(
+                    type=FeatureType(ft_dict["type"]), shape=tuple(ft_dict["shape"])
+                )
+            self.features = reconstructed
 
         # if keys are strings (JSON), rebuild enum map
         if self.norm_map and all(isinstance(k, str) for k in self.norm_map):
