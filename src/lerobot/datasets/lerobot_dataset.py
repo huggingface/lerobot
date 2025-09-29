@@ -1421,7 +1421,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         """Keys to access image and video stream from cameras."""
         keys = []
         for key, feats in self.features.items():
-            if isinstance(feats, (datasets.Image, VideoFrame)):
+            if isinstance(feats, (datasets.Image | VideoFrame)):
                 keys.append(key)
         return keys
 
