@@ -54,40 +54,103 @@ from lerobot.utils.utils import (
 )
 
 
-def compute_data_ranges(batch: dict[str, Any], prefix: str = "") -> dict[str, float]:
+class DataRangeTracker:
     """
-    Compute min/max ranges for state and action tensors in a batch.
-    
-    Args:
-        batch: Dictionary containing tensors (typically observation.state and action keys)
-        prefix: String prefix to add to logged keys (e.g., "unnormalized_" or "normalized_")
-    
-    Returns:
-        Dictionary with min/max values for each tensor field
+    Tracks both per-batch and cumulative data ranges across training steps.
     """
-    ranges = {}
+    def __init__(self):
+        self.reset()
     
-    # Track state data (observations)
-    for key, tensor in batch.items():
-        if isinstance(tensor, torch.Tensor) and key.startswith("observation.state"):
+    def reset(self):
+        """Reset all tracked statistics."""
+        self.cumulative_ranges = {}
+    
+    def update_and_get_ranges(self, batch: dict[str, Any], prefix: str = "") -> dict[str, float]:
+        """
+        Update cumulative statistics and return both per-batch and cumulative ranges.
+        
+        Args:
+            batch: Dictionary containing tensors (typically observation.state and action keys)
+            prefix: String prefix to add to logged keys (e.g., "unnormalized_" or "normalized_")
+        
+        Returns:
+            Dictionary with per-batch and cumulative min/max/range values for each tensor field
+        """
+        ranges = {}
+        
+        # Track state data (observations)
+        for key, tensor in batch.items():
+            if isinstance(tensor, torch.Tensor) and key.startswith("observation.state"):
+                # Remove batch dimension for range calculation if present
+                data = tensor.view(-1) if tensor.numel() > 0 else tensor
+                if data.numel() > 0:
+                    current_min = float(data.min().item())
+                    current_max = float(data.max().item())
+                    
+                    # Per-batch ranges
+                    ranges[f"{prefix}{key}_batch_min"] = current_min
+                    ranges[f"{prefix}{key}_batch_max"] = current_max
+                    ranges[f"{prefix}{key}_batch_range"] = current_max - current_min
+                    
+                    # Update cumulative ranges
+                    cumulative_key = f"{prefix}{key}"
+                    if cumulative_key not in self.cumulative_ranges:
+                        self.cumulative_ranges[cumulative_key] = {
+                            "min": current_min,
+                            "max": current_max
+                        }
+                    else:
+                        self.cumulative_ranges[cumulative_key]["min"] = min(
+                            self.cumulative_ranges[cumulative_key]["min"], current_min
+                        )
+                        self.cumulative_ranges[cumulative_key]["max"] = max(
+                            self.cumulative_ranges[cumulative_key]["max"], current_max
+                        )
+                    
+                    # Cumulative ranges
+                    ranges[f"{prefix}{key}_cumulative_min"] = self.cumulative_ranges[cumulative_key]["min"]
+                    ranges[f"{prefix}{key}_cumulative_max"] = self.cumulative_ranges[cumulative_key]["max"]
+                    ranges[f"{prefix}{key}_cumulative_range"] = (
+                        self.cumulative_ranges[cumulative_key]["max"] - self.cumulative_ranges[cumulative_key]["min"]
+                    )
+        
+        # Track action data
+        if "action" in batch and isinstance(batch["action"], torch.Tensor):
+            action_tensor = batch["action"]
             # Remove batch dimension for range calculation if present
-            data = tensor.view(-1) if tensor.numel() > 0 else tensor
+            data = action_tensor.view(-1) if action_tensor.numel() > 0 else action_tensor
             if data.numel() > 0:
-                ranges[f"{prefix}{key}_min"] = float(data.min().item())
-                ranges[f"{prefix}{key}_max"] = float(data.max().item())
-                ranges[f"{prefix}{key}_range"] = float(data.max().item() - data.min().item())
-    
-    # Track action data
-    if "action" in batch and isinstance(batch["action"], torch.Tensor):
-        action_tensor = batch["action"]
-        # Remove batch dimension for range calculation if present
-        data = action_tensor.view(-1) if action_tensor.numel() > 0 else action_tensor
-        if data.numel() > 0:
-            ranges[f"{prefix}action_min"] = float(data.min().item())
-            ranges[f"{prefix}action_max"] = float(data.max().item())
-            ranges[f"{prefix}action_range"] = float(data.max().item() - data.min().item())
-    
-    return ranges
+                current_min = float(data.min().item())
+                current_max = float(data.max().item())
+                
+                # Per-batch ranges
+                ranges[f"{prefix}action_batch_min"] = current_min
+                ranges[f"{prefix}action_batch_max"] = current_max
+                ranges[f"{prefix}action_batch_range"] = current_max - current_min
+                
+                # Update cumulative ranges
+                cumulative_key = f"{prefix}action"
+                if cumulative_key not in self.cumulative_ranges:
+                    self.cumulative_ranges[cumulative_key] = {
+                        "min": current_min,
+                        "max": current_max
+                    }
+                else:
+                    self.cumulative_ranges[cumulative_key]["min"] = min(
+                        self.cumulative_ranges[cumulative_key]["min"], current_min
+                    )
+                    self.cumulative_ranges[cumulative_key]["max"] = max(
+                        self.cumulative_ranges[cumulative_key]["max"], current_max
+                    )
+                
+                # Cumulative ranges
+                ranges[f"{prefix}action_cumulative_min"] = self.cumulative_ranges[cumulative_key]["min"]
+                ranges[f"{prefix}action_cumulative_max"] = self.cumulative_ranges[cumulative_key]["max"]
+                ranges[f"{prefix}action_cumulative_range"] = (
+                    self.cumulative_ranges[cumulative_key]["max"] - self.cumulative_ranges[cumulative_key]["min"]
+                )
+        
+        return ranges
 
 
 def update_policy(
@@ -378,19 +441,23 @@ def train(cfg: TrainPipelineConfig):
         effective_batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
     )
 
+    # Initialize data range trackers
+    unnormalized_tracker = DataRangeTracker()
+    normalized_tracker = DataRangeTracker()
+
     if accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         
-        # Compute data ranges before normalization
-        unnormalized_ranges = compute_data_ranges(batch, prefix="unnormalized_")
+        # Compute data ranges before normalization (both per-batch and cumulative)
+        unnormalized_ranges = unnormalized_tracker.update_and_get_ranges(batch, prefix="unnormalized_")
         
         batch = preprocessor(batch)
         
-        # Compute data ranges after normalization
-        normalized_ranges = compute_data_ranges(batch, prefix="normalized_")
+        # Compute data ranges after normalization (both per-batch and cumulative)
+        normalized_ranges = normalized_tracker.update_and_get_ranges(batch, prefix="normalized_")
         
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
@@ -462,15 +529,16 @@ def train(cfg: TrainPipelineConfig):
                     torch.no_grad(),
                     accelerator.autocast(),
                 ):
-                    eval_info = eval_policy(
-                        eval_env,
-                        unwrapped_policy,
-                        cfg.eval.n_episodes,
+                    eval_info = eval_policy_all(
+                        envs=eval_env,
+                        policy=unwrapped_policy,
+                        preprocessor=preprocessor,
+                        postprocessor=postprocessor,
+                        n_episodes=cfg.eval.n_episodes,
                         videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                         max_episodes_rendered=4,
                         start_seed=cfg.seed,
-                        preprocessor=preprocessor,
-                        postprocessor=postprocessor,
+                        max_parallel_tasks=cfg.env.max_parallel_tasks if hasattr(cfg.env, 'max_parallel_tasks') else None,
                     )
 
                 eval_metrics = {
@@ -481,14 +549,16 @@ def train(cfg: TrainPipelineConfig):
                 eval_tracker = MetricsTracker(
                     cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
                 )
-                eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
-                eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
-                eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
+                # Extract overall aggregated metrics
+                aggregated = eval_info["overall"]
+                eval_tracker.eval_s = aggregated.pop("eval_s")
+                eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
+                eval_tracker.pc_success = aggregated.pop("pc_success")
                 logging.info(eval_tracker)
                 if wandb_logger:
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                    wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+                    wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
 
             # Wait for evaluation to complete before continuing training
             accelerator.wait_for_everyone()
