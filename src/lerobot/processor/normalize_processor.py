@@ -112,15 +112,14 @@ class _NormalizationMixin:
         if not self.features:
             raise ValueError("Normalization features cannot be empty")
         # Robust JSON deserialization handling (guard empty maps).
-        if self.features:
-            first_val = next(iter(self.features.values()))
-            if isinstance(first_val, dict):
-                reconstructed = {}
-                for key, ft_dict in self.features.items():
-                    reconstructed[key] = PolicyFeature(
-                        type=FeatureType(ft_dict["type"]), shape=tuple(ft_dict["shape"])
-                    )
-                self.features = reconstructed
+        first_val = next(iter(self.features.values()))
+        if isinstance(first_val, dict):
+            reconstructed = {}
+            for key, ft_dict in self.features.items():
+                reconstructed[key] = PolicyFeature(
+                    type=FeatureType(ft_dict["type"]), shape=tuple(ft_dict["shape"])
+                )
+            self.features = reconstructed
 
         if self.norm_map:
             # if keys are strings (JSON), rebuild enum map
