@@ -949,7 +949,7 @@ def test_statistics_metadata_validation(tmp_path, empty_lerobot_dataset_factory)
     # Check that statistics exist for all features
     assert loaded_dataset.meta.stats is not None, "No statistics found"
 
-    for feature_name in features.keys():
+    for feature_name in features:
         assert feature_name in loaded_dataset.meta.stats, f"No statistics for feature '{feature_name}'"
 
         feature_stats = loaded_dataset.meta.stats[feature_name]

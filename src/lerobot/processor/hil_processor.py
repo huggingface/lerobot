@@ -340,7 +340,7 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
         """
         action = self.transition.get(TransitionKey.ACTION)
 
-        raw_joint_positions = complementary_data.get("raw_joint_positions", None)
+        raw_joint_positions = complementary_data.get("raw_joint_positions")
         if raw_joint_positions is None:
             return complementary_data
 
