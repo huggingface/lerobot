@@ -54,27 +54,26 @@ from lerobot.utils.utils import (
 )
 
 
-class DataRangeTracker:
+class NormalizationRangeTracker:
     """
-    Tracks both per-batch and cumulative data ranges across training steps.
+    Tracks the maximum range encountered for normalized data to verify normalization stays within [-1, 1].
     """
     def __init__(self):
         self.reset()
     
     def reset(self):
         """Reset all tracked statistics."""
-        self.cumulative_ranges = {}
+        self.max_ranges = {}
     
-    def update_and_get_ranges(self, batch: dict[str, Any], prefix: str = "") -> dict[str, float]:
+    def update_and_get_ranges(self, batch: dict[str, Any]) -> dict[str, float]:
         """
-        Update cumulative statistics and return both per-batch and cumulative ranges.
+        Update and return the maximum ranges encountered for normalized data.
         
         Args:
-            batch: Dictionary containing tensors (typically observation.state and action keys)
-            prefix: String prefix to add to logged keys (e.g., "unnormalized_" or "normalized_")
+            batch: Dictionary containing normalized tensors
         
         Returns:
-            Dictionary with per-batch and cumulative min/max/range values for each tensor field
+            Dictionary with maximum range values for each feature to verify normalization
         """
         ranges = {}
         
@@ -86,33 +85,30 @@ class DataRangeTracker:
                 if data.numel() > 0:
                     current_min = float(data.min().item())
                     current_max = float(data.max().item())
+                    current_range = current_max - current_min
                     
-                    # Per-batch ranges
-                    ranges[f"{prefix}{key}_batch_min"] = current_min
-                    ranges[f"{prefix}{key}_batch_max"] = current_max
-                    ranges[f"{prefix}{key}_batch_range"] = current_max - current_min
-                    
-                    # Update cumulative ranges
-                    cumulative_key = f"{prefix}{key}"
-                    if cumulative_key not in self.cumulative_ranges:
-                        self.cumulative_ranges[cumulative_key] = {
+                    # Update maximum range encountered
+                    feature_key = key.replace("observation.", "")  # Clean up key name
+                    if feature_key not in self.max_ranges:
+                        self.max_ranges[feature_key] = {
                             "min": current_min,
-                            "max": current_max
+                            "max": current_max,
+                            "range": current_range
                         }
                     else:
-                        self.cumulative_ranges[cumulative_key]["min"] = min(
-                            self.cumulative_ranges[cumulative_key]["min"], current_min
-                        )
-                        self.cumulative_ranges[cumulative_key]["max"] = max(
-                            self.cumulative_ranges[cumulative_key]["max"], current_max
-                        )
+                        # Expand the overall range if we see new extremes
+                        old_min = self.max_ranges[feature_key]["min"]
+                        old_max = self.max_ranges[feature_key]["max"]
+                        new_min = min(old_min, current_min)
+                        new_max = max(old_max, current_max)
+                        self.max_ranges[feature_key] = {
+                            "min": new_min,
+                            "max": new_max,
+                            "range": new_max - new_min
+                        }
                     
-                    # Cumulative ranges
-                    ranges[f"{prefix}{key}_cumulative_min"] = self.cumulative_ranges[cumulative_key]["min"]
-                    ranges[f"{prefix}{key}_cumulative_max"] = self.cumulative_ranges[cumulative_key]["max"]
-                    ranges[f"{prefix}{key}_cumulative_range"] = (
-                        self.cumulative_ranges[cumulative_key]["max"] - self.cumulative_ranges[cumulative_key]["min"]
-                    )
+                    # Log the maximum range encountered so far
+                    ranges[f"normalized_{feature_key}_max_range"] = self.max_ranges[feature_key]["range"]
         
         # Track action data
         if "action" in batch and isinstance(batch["action"], torch.Tensor):
@@ -122,33 +118,29 @@ class DataRangeTracker:
             if data.numel() > 0:
                 current_min = float(data.min().item())
                 current_max = float(data.max().item())
+                current_range = current_max - current_min
                 
-                # Per-batch ranges
-                ranges[f"{prefix}action_batch_min"] = current_min
-                ranges[f"{prefix}action_batch_max"] = current_max
-                ranges[f"{prefix}action_batch_range"] = current_max - current_min
-                
-                # Update cumulative ranges
-                cumulative_key = f"{prefix}action"
-                if cumulative_key not in self.cumulative_ranges:
-                    self.cumulative_ranges[cumulative_key] = {
+                # Update maximum range encountered
+                if "action" not in self.max_ranges:
+                    self.max_ranges["action"] = {
                         "min": current_min,
-                        "max": current_max
+                        "max": current_max,
+                        "range": current_range
                     }
                 else:
-                    self.cumulative_ranges[cumulative_key]["min"] = min(
-                        self.cumulative_ranges[cumulative_key]["min"], current_min
-                    )
-                    self.cumulative_ranges[cumulative_key]["max"] = max(
-                        self.cumulative_ranges[cumulative_key]["max"], current_max
-                    )
+                    # Expand the overall range if we see new extremes
+                    old_min = self.max_ranges["action"]["min"]
+                    old_max = self.max_ranges["action"]["max"]
+                    new_min = min(old_min, current_min)
+                    new_max = max(old_max, current_max)
+                    self.max_ranges["action"] = {
+                        "min": new_min,
+                        "max": new_max,
+                        "range": new_max - new_min
+                    }
                 
-                # Cumulative ranges
-                ranges[f"{prefix}action_cumulative_min"] = self.cumulative_ranges[cumulative_key]["min"]
-                ranges[f"{prefix}action_cumulative_max"] = self.cumulative_ranges[cumulative_key]["max"]
-                ranges[f"{prefix}action_cumulative_range"] = (
-                    self.cumulative_ranges[cumulative_key]["max"] - self.cumulative_ranges[cumulative_key]["min"]
-                )
+                # Log the maximum range encountered so far
+                ranges["normalized_action_max_range"] = self.max_ranges["action"]["range"]
         
         return ranges
 
@@ -441,23 +433,18 @@ def train(cfg: TrainPipelineConfig):
         effective_batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
     )
 
-    # Initialize data range trackers
-    unnormalized_tracker = DataRangeTracker()
-    normalized_tracker = DataRangeTracker()
+    # Initialize normalization range tracker
+    normalization_tracker = NormalizationRangeTracker()
 
     if accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
-        
-        # Compute data ranges before normalization (both per-batch and cumulative)
-        unnormalized_ranges = unnormalized_tracker.update_and_get_ranges(batch, prefix="unnormalized_")
-        
         batch = preprocessor(batch)
         
-        # Compute data ranges after normalization (both per-batch and cumulative)
-        normalized_ranges = normalized_tracker.update_and_get_ranges(batch, prefix="normalized_")
+        # Track maximum ranges for normalized data to verify normalization is working
+        normalization_ranges = normalization_tracker.update_and_get_ranges(batch)
         
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
@@ -486,9 +473,8 @@ def train(cfg: TrainPipelineConfig):
                 if output_dict:
                     wandb_log_dict.update(output_dict)
                 
-                # Add data range logging
-                wandb_log_dict.update(unnormalized_ranges)
-                wandb_log_dict.update(normalized_ranges)
+                # Add normalization range logging to verify normalization is working
+                wandb_log_dict.update(normalization_ranges)
                 
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
