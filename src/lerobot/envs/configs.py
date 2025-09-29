@@ -294,3 +294,42 @@ class LiberoEnv(EnvConfig):
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
+
+@EnvConfig.register_subclass("metaworld")
+@dataclass
+class MetaworldEnv(EnvConfig):
+    task: str = "metaworld-push-v2"  # FIXME(mshukor): includes all  tasks?
+    fps: int = 80  #  env.metadata
+    episode_length: int = 400
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    multitask_eval: bool = True
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "agent_pos": OBS_STATE,
+            "top": f"{OBS_IMAGE}",
+            "pixels/top": f"{OBS_IMAGE}",
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            self.features["top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 480, 3))
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(4,))
+            self.features["pixels/top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 480, 3))
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            # "task": self.task,
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            # "max_episode_steps": self.episode_length,
+        }

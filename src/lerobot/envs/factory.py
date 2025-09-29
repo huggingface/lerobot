@@ -17,7 +17,7 @@ import importlib
 
 import gymnasium as gym
 
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, XarmEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, MetaworldEnv, PushtEnv, XarmEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -71,7 +71,10 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
-
+    elif "metaworld" in cfg.type:
+        from lerobot.envs.metaworld import create_metaworld_envs
+        
+        return create_metaworld_envs(task=cfg.task, n_envs=n_envs, gym_kwargs=cfg.gym_kwargs, env_cls=env_cls, multitask_eval=cfg.multitask_eval)
     package_name = f"gym_{cfg.type}"
     try:
         importlib.import_module(package_name)
