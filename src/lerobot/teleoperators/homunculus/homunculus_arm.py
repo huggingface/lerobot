@@ -18,7 +18,6 @@ import logging
 import threading
 from collections import deque
 from pprint import pformat
-from typing import Deque
 
 import serial
 
@@ -60,7 +59,7 @@ class HomunculusArm(Teleoperator):
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
         # one deque *per joint* so we can inspect raw history if needed
-        self._buffers: dict[str, Deque[int]] = {
+        self._buffers: dict[str, deque[int]] = {
             joint: deque(maxlen=n)
             for joint in (
                 "shoulder_pitch",

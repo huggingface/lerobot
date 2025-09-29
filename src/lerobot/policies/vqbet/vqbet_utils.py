@@ -260,13 +260,11 @@ class GPT(nn.Module):
         param_dict = dict(self.named_parameters())
         inter_params = decay & no_decay
         union_params = decay | no_decay
-        assert len(inter_params) == 0, "parameters {} made it into both decay/no_decay sets!".format(
-            str(inter_params)
+        assert len(inter_params) == 0, (
+            f"parameters {str(inter_params)} made it into both decay/no_decay sets!"
         )
         assert len(param_dict.keys() - union_params) == 0, (
-            "parameters {} were not separated into either decay/no_decay set!".format(
-                str(param_dict.keys() - union_params),
-            )
+            f"parameters {str(param_dict.keys() - union_params)} were not separated into either decay/no_decay set!"
         )
 
         decay = [param_dict[pn] for pn in sorted(decay)]
