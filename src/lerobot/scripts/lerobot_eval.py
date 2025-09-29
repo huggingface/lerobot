@@ -81,7 +81,7 @@ from lerobot.envs.utils import (
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
-from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.constants import ACTION, DONE, OBS_STR, REWARD
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -451,9 +451,9 @@ def _compile_episode_data(
             "episode_index": torch.tensor([start_episode_index + ep_ix] * (num_frames - 1)),
             "frame_index": torch.arange(0, num_frames - 1, 1),
             "timestamp": torch.arange(0, num_frames - 1, 1) / fps,
-            "next.done": rollout_data["done"][ep_ix, : num_frames - 1],
+            DONE: rollout_data["done"][ep_ix, : num_frames - 1],
             "next.success": rollout_data["success"][ep_ix, : num_frames - 1],
-            "next.reward": rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
+            REWARD: rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
         }
 
         # For the last observation frame, all other keys will just be copy padded.

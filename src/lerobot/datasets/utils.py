@@ -21,7 +21,7 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Deque, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 import datasets
 import numpy as np
@@ -67,18 +67,6 @@ DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{fram
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 LEGACY_TASKS_PATH = "meta/tasks.jsonl"
-LEGACY_DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-LEGACY_DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
-
-DATASET_CARD_TEMPLATE = """
----
-# Metadata will go there
----
-This dataset was created using [LeRobot](https://github.com/huggingface/lerobot).
-
-## {}
-
-"""
 
 DEFAULT_FEATURES = {
     "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
@@ -219,13 +207,13 @@ def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
     """
     serialized_dict = {}
     for key, value in flatten_dict(stats).items():
-        if isinstance(value, (torch.Tensor, np.ndarray)):
+        if isinstance(value, (torch.Tensor | np.ndarray)):
             serialized_dict[key] = value.tolist()
-        elif isinstance(value, list) and isinstance(value[0], (int, float, list)):
+        elif isinstance(value, list) and isinstance(value[0], (int | float | list)):
             serialized_dict[key] = value
         elif isinstance(value, np.generic):
             serialized_dict[key] = value.item()
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, (int | float)):
             serialized_dict[key] = value
         else:
             raise NotImplementedError(f"The value '{value}' of type '{type(value)}' is not supported.")
@@ -381,12 +369,6 @@ def load_episodes(local_dir: Path) -> datasets.Dataset:
     # This is to speedup access to these data, instead of having to load episode stats.
     episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
     return episodes
-
-
-def backward_compatible_episodes_stats(
-    stats: dict[str, dict[str, np.ndarray]], episodes: list[int]
-) -> dict[int, dict[str, dict[str, np.ndarray]]]:
-    return dict.fromkeys(episodes, stats)
 
 
 def load_image_as_numpy(
@@ -1197,7 +1179,7 @@ def item_to_torch(item: dict) -> dict:
         dict: Dictionary with all tensor-like items converted to torch.Tensor.
     """
     for key, val in item.items():
-        if isinstance(val, (np.ndarray, list)) and key not in ["task"]:
+        if isinstance(val, (np.ndarray | list)) and key not in ["task"]:
             # Convert numpy arrays and lists to torch tensors
             item[key] = torch.tensor(val)
     return item
@@ -1271,8 +1253,8 @@ class Backtrackable(Generic[T]):
             raise ValueError("lookahead must be > 0")
 
         self._source: Iterator[T] = iter(iterable)
-        self._back_buf: Deque[T] = deque(maxlen=history)
-        self._ahead_buf: Deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
+        self._back_buf: deque[T] = deque(maxlen=history)
+        self._ahead_buf: deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
         self._cursor: int = 0
         self._history = history
         self._lookahead = lookahead
@@ -1346,12 +1328,6 @@ class Backtrackable(Generic[T]):
         # When cursor<0, slice so the order remains chronological
         return list(self._back_buf)[: self._cursor or None]
 
-    def lookahead_buffer(self) -> list[T]:
-        """
-        Return a copy of the current lookahead buffer.
-        """
-        return list(self._ahead_buf)
-
     def can_peek_back(self, steps: int = 1) -> bool:
         """
         Check if we can go back `steps` items without raising an IndexError.
@@ -1376,31 +1352,6 @@ class Backtrackable(Generic[T]):
             return True
         except StopIteration:
             return False
-
-    def reset_cursor(self) -> None:
-        """
-        Reset cursor to the most recent position (equivalent to calling next()
-        until you're back to the latest item).
-        """
-        self._cursor = 0
-
-    def clear_ahead_buffer(self) -> None:
-        """
-        Clear the ahead buffer, discarding any pre-fetched items.
-        """
-        self._ahead_buf.clear()
-
-    def switch_source_iterable(self, new_source: Iterable[T]) -> None:
-        """
-        Switch the source of the backtrackable to a new iterable, keeping the history.
-
-        This is useful when iterating over a sequence of datasets. The history from the
-        previous source is kept, but the lookahead buffer is cleared. The cursor is reset
-        to the present.
-        """
-        self._source = iter(new_source)
-        self.clear_ahead_buffer()
-        self.reset_cursor()
 
 
 def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:

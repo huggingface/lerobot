@@ -315,9 +315,8 @@ def _reshape_for_global_stats(
     if keepdims:
         target_shape = tuple(1 for _ in original_shape)
         return value.reshape(target_shape)
-    elif not keepdims and value.ndim > 0 and value.size == 1:
-        return value.item()
-    return value
+    # Keep at least 1-D arrays to satisfy validator
+    return np.atleast_1d(value)
 
 
 def _reshape_single_stat(
@@ -410,12 +409,6 @@ def _compute_basic_stats(
         "count": np.array([sample_count]),
     }
 
-    # For single-element arrays with shape (1,1), convert to scalar arrays
-    if array.shape == (1, 1):
-        for key in stats:
-            if key != "count" and stats[key].size == 1:
-                stats[key] = np.array(stats[key].item())
-
     for q in quantile_list_keys:
         stats[q] = stats["mean"].copy()
 
@@ -469,12 +462,6 @@ def get_feature_stats(
         running_stats.update(reshaped)
         stats = running_stats.get_statistics()
         stats["count"] = np.array([sample_count])
-
-    # For axis=None, the stats are computed as 1D arrays but should be 0-dimensional arrays
-    if axis is None and reshaped.shape[1] == 1:
-        for key in stats:
-            if key != "count" and stats[key].size == 1:
-                stats[key] = np.array(stats[key].item())
 
     stats = _reshape_stats_by_axis(stats, axis, keepdims, original_shape)
     return stats

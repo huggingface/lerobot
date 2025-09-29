@@ -136,13 +136,12 @@ Additionally you can customize mapping or safety limits by editing the processor
   ),
   ```
 
-- The `EEBoundsAndSafety` step clamps EE motion to a workspace and checks for large ee step jumps to ensure safety. The `end_effector_bounds` are the bounds for the EE pose and can be modified to change the workspace. The `max_ee_step_m` and `max_ee_twist_step_rad` are the step limits for the EE pose and can be modified to change the safety limits.
+- The `EEBoundsAndSafety` step clamps EE motion to a workspace and checks for large ee step jumps to ensure safety. The `end_effector_bounds` are the bounds for the EE pose and can be modified to change the workspace. The `max_ee_step_m` are the step limits for the EE pose and can be modified to change the safety limits.
 
   ```examples/phone_to_so100/teleoperate.py
   EEBoundsAndSafety(
       end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
       max_ee_step_m=0.10,
-      max_ee_twist_step_rad=0.50,
   )
   ```
 

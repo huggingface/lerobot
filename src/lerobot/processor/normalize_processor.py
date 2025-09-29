@@ -119,13 +119,12 @@ class _NormalizationMixin:
                     )
                 self.features = reconstructed
 
-        if self.norm_map:
-            # if keys are strings (JSON), rebuild enum map
-            if all(isinstance(k, str) for k in self.norm_map.keys()):
-                reconstructed = {}
-                for ft_type_str, norm_mode_str in self.norm_map.items():
-                    reconstructed[FeatureType(ft_type_str)] = NormalizationMode(norm_mode_str)
-                self.norm_map = reconstructed
+        # if keys are strings (JSON), rebuild enum map
+        if self.norm_map and all(isinstance(k, str) for k in self.norm_map):
+            reconstructed = {}
+            for ft_type_str, norm_mode_str in self.norm_map.items():
+                reconstructed[FeatureType(ft_type_str)] = NormalizationMode(norm_mode_str)
+            self.norm_map = reconstructed
 
         # Convert stats to tensors and move to the target device once during initialization.
         self.stats = self.stats or {}
@@ -288,8 +287,8 @@ class _NormalizationMixin:
         Normalization Modes:
           - MEAN_STD: Centers data around zero with unit variance.
           - MIN_MAX: Scales data to [-1, 1] range using actual min/max values.
-          - QUANTILES: Scales data to [0, 1] range using 1st and 99th percentiles (q01/q99).
-          - QUANTILE10: Scales data to [0, 1] range using 10th and 90th percentiles (q10/q90).
+          - QUANTILES: Scales data to [-1, 1] range using 1st and 99th percentiles (q01/q99).
+          - QUANTILE10: Scales data to [-1, 1] range using 10th and 90th percentiles (q10/q90).
 
         Args:
             tensor: The input tensor to transform.
@@ -375,7 +374,7 @@ class _NormalizationMixin:
             )
             if inverse:
                 return tensor * denom + q01
-            return (tensor - q01) / denom
+            return 2.0 * (tensor - q01) / denom - 1.0
 
         if norm_mode == NormalizationMode.QUANTILE10:
             q10 = stats.get("q10", None)
@@ -392,7 +391,7 @@ class _NormalizationMixin:
             )
             if inverse:
                 return tensor * denom + q10
-            return (tensor - q10) / denom
+            return 2.0 * (tensor - q10) / denom - 1.0
 
         # If necessary stats are missing, return input unchanged.
         return tensor

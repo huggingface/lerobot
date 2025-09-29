@@ -9,7 +9,7 @@ from lerobot.processor.converters import (
     to_tensor,
     transition_to_batch,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
+from lerobot.utils.constants import ACTION, DONE, OBS_STATE, OBS_STR, REWARD
 
 
 # Tests for the unified to_tensor function
@@ -201,8 +201,8 @@ def test_batch_to_transition_with_index_fields():
     batch = {
         OBS_STATE: torch.randn(1, 7),
         ACTION: torch.randn(1, 4),
-        "next.reward": 1.5,
-        "next.done": False,
+        REWARD: 1.5,
+        DONE: False,
         "task": ["pick_cube"],
         "index": torch.tensor([42], dtype=torch.int64),
         "task_index": torch.tensor([3], dtype=torch.int64),
