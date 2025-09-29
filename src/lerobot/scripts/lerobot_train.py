@@ -54,6 +54,42 @@ from lerobot.utils.utils import (
 )
 
 
+def compute_data_ranges(batch: dict[str, Any], prefix: str = "") -> dict[str, float]:
+    """
+    Compute min/max ranges for state and action tensors in a batch.
+    
+    Args:
+        batch: Dictionary containing tensors (typically observation.state and action keys)
+        prefix: String prefix to add to logged keys (e.g., "unnormalized_" or "normalized_")
+    
+    Returns:
+        Dictionary with min/max values for each tensor field
+    """
+    ranges = {}
+    
+    # Track state data (observations)
+    for key, tensor in batch.items():
+        if isinstance(tensor, torch.Tensor) and key.startswith("observation.state"):
+            # Remove batch dimension for range calculation if present
+            data = tensor.view(-1) if tensor.numel() > 0 else tensor
+            if data.numel() > 0:
+                ranges[f"{prefix}{key}_min"] = float(data.min().item())
+                ranges[f"{prefix}{key}_max"] = float(data.max().item())
+                ranges[f"{prefix}{key}_range"] = float(data.max().item() - data.min().item())
+    
+    # Track action data
+    if "action" in batch and isinstance(batch["action"], torch.Tensor):
+        action_tensor = batch["action"]
+        # Remove batch dimension for range calculation if present
+        data = action_tensor.view(-1) if action_tensor.numel() > 0 else action_tensor
+        if data.numel() > 0:
+            ranges[f"{prefix}action_min"] = float(data.min().item())
+            ranges[f"{prefix}action_max"] = float(data.max().item())
+            ranges[f"{prefix}action_range"] = float(data.max().item() - data.min().item())
+    
+    return ranges
+
+
 def update_policy(
     train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
@@ -347,7 +383,15 @@ def train(cfg: TrainPipelineConfig):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        
+        # Compute data ranges before normalization
+        unnormalized_ranges = compute_data_ranges(batch, prefix="unnormalized_")
+        
         batch = preprocessor(batch)
+        
+        # Compute data ranges after normalization
+        normalized_ranges = compute_data_ranges(batch, prefix="normalized_")
+        
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
         train_tracker, output_dict = update_policy(
@@ -374,6 +418,11 @@ def train(cfg: TrainPipelineConfig):
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
                     wandb_log_dict.update(output_dict)
+                
+                # Add data range logging
+                wandb_log_dict.update(unnormalized_ranges)
+                wandb_log_dict.update(normalized_ranges)
+                
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
