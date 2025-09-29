@@ -190,8 +190,8 @@ def train(cfg: TrainPipelineConfig):
             "device_processor": {"device": device.type},
             "normalizer_processor": {"stats": dataset.meta.stats},
         }
-        postprocessor_kwargs["postprocessor_overrides"] = {
-            "unnormalizer_processor": {"stats": dataset.meta.stats}
+        processor_kwargs["postprocessor_overrides"] = {
+            "unnormalizer_processor": {"stats": dataset.meta.stats},
         }
 
     preprocessor, postprocessor = make_pre_post_processors(

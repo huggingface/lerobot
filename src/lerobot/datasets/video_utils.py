@@ -428,7 +428,7 @@ def concatenate_video_files(
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
         tmp_concatenate_file.write("ffconcat version 1.0\n")
         for input_path in input_video_paths:
-            tmp_concatenate_file.write(f"file '{str(input_path)}'\n")
+            tmp_concatenate_file.write(f"file '{str(input_path.resolve())}'\n")
         tmp_concatenate_file.flush()
         tmp_concatenate_path = tmp_concatenate_file.name
 
@@ -581,19 +581,6 @@ def get_video_pixel_channels(pix_fmt: str) -> int:
         return 4
     elif "rgb" in pix_fmt or "yuv" in pix_fmt:
         return 3
-    else:
-        raise ValueError("Unknown format")
-
-
-def get_image_pixel_channels(image: Image):
-    if image.mode == "L":
-        return 1  # Grayscale
-    elif image.mode == "LA":
-        return 2  # Grayscale + Alpha
-    elif image.mode == "RGB":
-        return 3  # RGB
-    elif image.mode == "RGBA":
-        return 4  # RGBA
     else:
         raise ValueError("Unknown format")
 

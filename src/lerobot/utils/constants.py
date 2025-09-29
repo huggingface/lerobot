@@ -33,7 +33,6 @@ TRUNCATED = "next.truncated"
 DONE = "next.done"
 
 ROBOTS = "robots"
-ROBOT_TYPE = "robot_type"
 TELEOPERATORS = "teleoperators"
 
 # files & directories

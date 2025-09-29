@@ -139,8 +139,6 @@ class SACConfig(PreTrainedConfig):
     # Training parameter
     # Number of steps for online training
     online_steps: int = 1000000
-    # Seed for the online environment
-    online_env_seed: int = 10000
     # Capacity of the online replay buffer
     online_buffer_capacity: int = 100000
     # Capacity of the offline replay buffer
