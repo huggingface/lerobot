@@ -1083,7 +1083,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Reset episode buffer and clean up temporary images (if not already deleted during video encoding)
             self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
 
-    def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None):
+    def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """
         Batch save videos for multiple episodes.
 
@@ -1156,7 +1156,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_num_frames = len(ep_dataset)
         df = pd.DataFrame(ep_dataset)
 
-        has_images = any(key in self.meta.image_keys for key in ep_dict.keys())
+        has_images = any(key in self.meta.image_keys for key in ep_dict)
 
         if self.latest_episode is None:
             # Initialize indices and frame count for a new dataset made of the first episode data
@@ -1226,7 +1226,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         return metadata
 
-    def _save_episode_video(self, video_key: str, episode_index: int):
+    def _save_episode_video(self, video_key: str, episode_index: int) -> dict:
         # Encode episode frames into a temporary video
         ep_path = self._encode_temporary_episode_video(video_key, episode_index)
         ep_size_in_mb = get_video_size_in_mb(ep_path)
@@ -1332,7 +1332,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
 
-    def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> dict:
+    def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
@@ -1506,7 +1506,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         """Keys to access image and video stream from cameras."""
         keys = []
         for key, feats in self.features.items():
-            if isinstance(feats, (datasets.Image, VideoFrame)):
+            if isinstance(feats, (datasets.Image | VideoFrame)):
                 keys.append(key)
         return keys
 
