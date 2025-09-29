@@ -48,8 +48,8 @@ class MetaworldEnv(gym.Env):
         self.task = task.replace("metaworld-", "")
         self.obs_type = obs_type
         self.render_mode = render_mode
-        self.observation_width = 480
-        self.observation_height = 480
+        self.observation_width = observation_width
+        self.observation_height = observation_height
         self.visualization_width = visualization_width
         self.visualization_height = visualization_height
         self.camera_name = camera_name
