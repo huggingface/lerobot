@@ -102,8 +102,6 @@ from lerobot.utils.utils import (
 
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
 
-LOG_PREFIX = "[LEARNER]"
-
 
 @parser.wrap()
 def train_cli(cfg: TrainRLServerPipelineConfig):

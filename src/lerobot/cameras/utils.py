@@ -15,13 +15,9 @@
 # limitations under the License.
 
 import platform
-from pathlib import Path
-from typing import TypeAlias
 
 from .camera import Camera
 from .configs import CameraConfig, Cv2Rotation
-
-IndexOrPath: TypeAlias = int | Path
 
 
 def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[str, Camera]:

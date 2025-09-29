@@ -183,10 +183,10 @@ def _(env: Mapping) -> None:
 
 @close_envs.register
 def _(envs: Sequence) -> None:
-    if isinstance(envs, (str, bytes)):
+    if isinstance(envs, (str | bytes)):
         return
     for v in envs:
-        if isinstance(v, Mapping) or isinstance(v, Sequence) and not isinstance(v, (str, bytes)):
+        if isinstance(v, Mapping) or isinstance(v, Sequence) and not isinstance(v, (str | bytes)):
             close_envs(v)
         elif hasattr(v, "close"):
             _close_single_env(v)

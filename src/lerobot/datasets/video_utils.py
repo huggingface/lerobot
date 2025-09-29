@@ -437,7 +437,9 @@ def concatenate_video_files(
         tmp_concatenate_path, mode="r", format="concat", options={"safe": "0"}
     )  # safe = 0 allows absolute paths as well as relative paths
 
-    tmp_output_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
+        tmp_output_video_path = tmp_named_file.name
+
     output_container = av.open(
         tmp_output_video_path, mode="w", options={"movflags": "faststart"}
     )  # faststart is to move the metadata to the beginning of the file to speed up loading
@@ -581,19 +583,6 @@ def get_video_pixel_channels(pix_fmt: str) -> int:
         return 4
     elif "rgb" in pix_fmt or "yuv" in pix_fmt:
         return 3
-    else:
-        raise ValueError("Unknown format")
-
-
-def get_image_pixel_channels(image: Image):
-    if image.mode == "L":
-        return 1  # Grayscale
-    elif image.mode == "LA":
-        return 2  # Grayscale + Alpha
-    elif image.mode == "RGB":
-        return 3  # RGB
-    elif image.mode == "RGBA":
-        return 4  # RGBA
     else:
         raise ValueError("Unknown format")
 

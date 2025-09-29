@@ -203,7 +203,6 @@ class ObservationConfig:
 
     add_joint_velocity_to_observation: bool = False
     add_current_to_observation: bool = False
-    add_ee_pose_to_observation: bool = False
     display_cameras: bool = False
 
 
@@ -213,7 +212,6 @@ class GripperConfig:
 
     use_gripper: bool = True
     gripper_penalty: float = 0.0
-    gripper_penalty_in_reward: bool = False
 
 
 @dataclass
