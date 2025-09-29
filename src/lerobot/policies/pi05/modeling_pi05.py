@@ -878,7 +878,7 @@ class PI05Policy(PreTrainedPolicy):
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,s
+                force_download=force_download,
                 resume_download=resume_download,
                 proxies=proxies,
                 token=token,
