@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Callable, Union
+from typing import Any, Callable, Sequence
 from itertools import chain
 import gymnasium as gym
 import metaworld
@@ -28,37 +28,6 @@ DIFFICULTY_TO_TASKS = data["DIFFICULTY_TO_TASKS"]
 TASK_POLICY_MAPPING = {
     k: getattr(policies, v) for k, v in data["TASK_POLICY_MAPPING"].items()
 }
-
-def create_metaworld_envs(task: str, n_envs: int, gym_kwargs: dict[str, Any] = None, env_cls: Callable = None, multitask_eval: bool = True)  -> Union[gym.vector.VectorEnv, dict[str, dict[str, gym.vector.VectorEnv]]]:
-    if gym_kwargs is None:
-        gym_kwargs = {}
-    if not multitask_eval:
-        tasks = task.split(",")
-        if len(tasks) == 1:
-            tasks = [tasks[0] for _ in range(n_envs)]
-        elif len(tasks) < n_envs and n_envs % len(tasks) == 0:
-            n_repeat = n_envs // len(tasks)
-            tasks = list(chain.from_iterable([[item] * n_repeat for item in tasks]))
-        elif n_envs < len(tasks):
-            tasks = tasks[:n_envs]
-        assert n_envs == len(tasks), "n_envs and len(tasks) must be the same!"
-        print(f"Creating Meta-World envs with tasks {tasks}")
-        return env_cls([lambda i=i: MetaworldEnv(task=tasks[i], **gym_kwargs) for i in range(n_envs)])
-    else:
-        envs = defaultdict(dict)
-        tasks = task.split(",")
-        if tasks[0] not in DIFFICULTY_TO_TASKS: # evaluation on individual tasks
-            task_groups = ["all"]
-        else:
-            task_groups = tasks
-        for task_group in task_groups:
-            _tasks = DIFFICULTY_TO_TASKS.get(task_group, task_groups)
-            for _task in _tasks:
-                print(f"Creating Meta-World envs with task {_task} from task group {task_group}")
-                envs_list = [lambda i=i: MetaworldEnv(task=_task, **gym_kwargs) for i in range(n_envs)]
-                envs[task_group][_task] = env_cls(envs_list)
-        return envs
-
 
 class MetaworldEnv(gym.Env):
     # TODO(aliberts): add "human" render_mode
@@ -185,3 +154,53 @@ class MetaworldEnv(gym.Env):
 
     def close(self):
         self._env.close()
+
+# ---- Main API ----------------------------------------------------------------
+
+def create_metaworld_envs(
+    task: str,
+    n_envs: int,
+    gym_kwargs: dict[str, Any] | None = None,
+    env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
+) -> dict[str, dict[int, Any]]:
+    """
+    Create vectorized Meta-World environments with a consistent return shape.
+
+    Returns:
+        dict[task_group][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)
+    Notes:
+        - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
+        - `task` can be a single difficulty group (e.g., "easy", "medium", "hard") or a comma-separated list.
+        - If a task name is not in DIFFICULTY_TO_TASKS, we treat it as a single custom task.
+    """
+    if env_cls is None or not callable(env_cls):
+        raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
+    if not isinstance(n_envs, int) or n_envs <= 0:
+        raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
+
+    gym_kwargs = dict(gym_kwargs or {})
+    task_groups = [t.strip() for t in task.split(",") if t.strip()]
+    if not task_groups:
+        raise ValueError("`task` must contain at least one Meta-World task or difficulty group.")
+
+    print(f"Creating Meta-World envs | task_groups={task_groups} | n_envs(per task)={n_envs}")
+
+    out: dict[str, dict[int, Any]] = defaultdict(dict)
+
+    for group in task_groups:
+        # if not in difficulty presets, treat it as a single custom task
+        tasks = DIFFICULTY_TO_TASKS.get(group, [group])
+
+        for tid, task_name in enumerate(tasks):
+            print(f"Building vec env | group={group} | task_id={tid} | task={task_name}")
+
+            # build n_envs factories
+            fns = [
+                (lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs))
+                for _ in range(n_envs)
+            ]
+
+            out[group][tid] = env_cls(fns)
+
+    # return a plain dict for consistency
+    return {group: dict(task_map) for group, task_map in out.items()}
