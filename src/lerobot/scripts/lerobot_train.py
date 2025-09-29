@@ -407,36 +407,7 @@ def train(cfg: TrainPipelineConfig):
         prefetch_factor=2,
     )
 
-    # Ensure all processes are synchronized before preparing with accelerator
-    accelerator.wait_for_everyone()
-
-    # Prepare model, optimizer, scheduler, and dataloader with accelerator
-    policy, optimizer, dataloader = accelerator.prepare(policy, optimizer, dataloader)
-    if lr_scheduler is not None:
-        lr_scheduler = accelerator.prepare(lr_scheduler)
-
-    dl_iter = cycle(dataloader)
-
-    policy.train()
-
-    train_metrics = {
-        "loss": AverageMeter("loss", ":.3f"),
-        "grad_norm": AverageMeter("grdn", ":.3f"),
-        "lr": AverageMeter("lr", ":0.1e"),
-        "update_s": AverageMeter("updt_s", ":.3f"),
-        "dataloading_s": AverageMeter("data_s", ":.3f"),
-    }
-
-    # Use effective batch size for proper epoch calculation in distributed training
-    effective_batch_size = cfg.batch_size * accelerator.num_processes
-    train_tracker = MetricsTracker(
-        effective_batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
-    )
-
-    # Initialize normalization range tracker
-    normalization_tracker = NormalizationRangeTracker()
-
-    # Check for normalization issues and warn about missing features
+    # Check for normalization issues and warn about missing features (BEFORE accelerator wrapping)
     if accelerator.is_main_process:
         logging.info("=== NORMALIZATION VALIDATION ===")
         
@@ -487,6 +458,35 @@ def train(cfg: TrainPipelineConfig):
             logging.warning("🚨 No normalizer step found in preprocessor! Data will not be normalized!")
         
         logging.info("=== END NORMALIZATION VALIDATION ===")
+
+    # Ensure all processes are synchronized before preparing with accelerator
+    accelerator.wait_for_everyone()
+
+    # Prepare model, optimizer, scheduler, and dataloader with accelerator
+    policy, optimizer, dataloader = accelerator.prepare(policy, optimizer, dataloader)
+    if lr_scheduler is not None:
+        lr_scheduler = accelerator.prepare(lr_scheduler)
+
+    dl_iter = cycle(dataloader)
+
+    policy.train()
+
+    train_metrics = {
+        "loss": AverageMeter("loss", ":.3f"),
+        "grad_norm": AverageMeter("grdn", ":.3f"),
+        "lr": AverageMeter("lr", ":0.1e"),
+        "update_s": AverageMeter("updt_s", ":.3f"),
+        "dataloading_s": AverageMeter("data_s", ":.3f"),
+    }
+
+    # Use effective batch size for proper epoch calculation in distributed training
+    effective_batch_size = cfg.batch_size * accelerator.num_processes
+    train_tracker = MetricsTracker(
+        effective_batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
+    )
+
+    # Initialize normalization range tracker
+    normalization_tracker = NormalizationRangeTracker()
 
     if accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
