@@ -534,6 +534,18 @@ def test_empty_observation():
     assert result == transition
 
 
+def test_empty_features_raises_error():
+    """Test that empty features dict raises ValueError."""
+    norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
+    stats = {OBS_IMAGE: {"mean": [0.5], "std": [0.2]}}
+
+    with pytest.raises(ValueError, match="Normalization features cannot be empty"):
+        NormalizerProcessorStep(features={}, norm_map=norm_map, stats=stats)
+
+    with pytest.raises(ValueError, match="Normalization features cannot be empty"):
+        UnnormalizerProcessorStep(features={}, norm_map=norm_map, stats=stats)
+
+
 def test_empty_stats():
     features = {OBS_IMAGE: PolicyFeature(FeatureType.VISUAL, (3, 96, 96))}
     norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
