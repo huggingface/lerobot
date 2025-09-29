@@ -436,6 +436,58 @@ def train(cfg: TrainPipelineConfig):
     # Initialize normalization range tracker
     normalization_tracker = NormalizationRangeTracker()
 
+    # Check for normalization issues and warn about missing features
+    if accelerator.is_main_process:
+        logging.info("=== NORMALIZATION VALIDATION ===")
+        
+        # Get all expected features from policy config
+        all_policy_features = {**policy.config.input_features, **policy.config.output_features}
+        logging.info(f"Policy expects {len(all_policy_features)} features: {list(all_policy_features.keys())}")
+        
+        # Get normalizer step info
+        normalizer_step = None
+        for step_obj in preprocessor.steps:
+            if hasattr(step_obj, 'norm_map') and hasattr(step_obj, 'features'):
+                normalizer_step = step_obj
+                break
+        
+        if normalizer_step is not None:
+            normalizer_features = set(normalizer_step.features.keys())
+            available_stats = set(normalizer_step.stats.keys()) if normalizer_step.stats else set()
+            
+            # Check for policy features not in normalizer
+            missing_from_normalizer = set(all_policy_features.keys()) - normalizer_features
+            if missing_from_normalizer:
+                logging.warning(f"⚠️  {len(missing_from_normalizer)} policy features NOT in normalizer: {sorted(missing_from_normalizer)}")
+            
+            # Check for normalizer features without stats
+            missing_stats = normalizer_features - available_stats
+            if missing_stats:
+                logging.warning(f"⚠️  {len(missing_stats)} normalizer features MISSING stats: {sorted(missing_stats)}")
+            
+            # Check for features requiring QUANTILES but missing q01/q99
+            for feature_name in normalizer_features & available_stats:
+                feature_type = normalizer_step.features[feature_name].type
+                if feature_type in normalizer_step.norm_map:
+                    norm_mode = normalizer_step.norm_map[feature_type]
+                    if norm_mode.name == "QUANTILES":
+                        stats = normalizer_step.stats[feature_name]
+                        if 'q01' not in stats or 'q99' not in stats:
+                            logging.warning(f"⚠️  Feature '{feature_name}' uses QUANTILES but missing q01/q99 stats!")
+            
+            # Summary of what will actually be normalized
+            will_be_normalized = normalizer_features & available_stats
+            logging.info(f"✅ {len(will_be_normalized)} features WILL be normalized: {sorted(will_be_normalized)}")
+            
+            if missing_from_normalizer or missing_stats:
+                total_issues = len(missing_from_normalizer) + len(missing_stats)
+                logging.warning(f"🚨 {total_issues} features will NOT be normalized due to config/stats mismatches!")
+                logging.warning("   This will cause data to remain in original ranges instead of [-1, 1]")
+        else:
+            logging.warning("🚨 No normalizer step found in preprocessor! Data will not be normalized!")
+        
+        logging.info("=== END NORMALIZATION VALIDATION ===")
+
     if accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
     for _ in range(step, cfg.steps):
