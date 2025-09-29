@@ -307,11 +307,11 @@ class LeRobotDatasetMetadata:
                 else self.writer.where
             )
             latest_size_in_mb = os.path.getsize(latest_path.as_posix()) / (1024 * 1024)
-            latest_num_frames = self.latest_episode["episode_index"][0] + 1
+            latest_num_frames = self.latest_episode["episode_index"][0]
 
-            av_size_per_frame = latest_size_in_mb / latest_num_frames
+            av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
 
-            if latest_size_in_mb + av_size_per_frame * 1 >= self.data_files_size_in_mb:
+            if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
                 # Size limit is reached, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
                 self._close_writer()
@@ -1209,7 +1209,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
             self.writer.write_table(table, row_group_size=ep_num_frames)
 
-        # self.writer.write_table(table, row_group_size=ep_num_frames)
         self.latest_episode = ep_dict
 
         metadata = {
