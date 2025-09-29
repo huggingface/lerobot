@@ -301,7 +301,11 @@ class LeRobotDatasetMetadata:
             chunk_idx = self.latest_episode["meta/episodes/chunk_index"][0]
             file_idx = self.latest_episode["meta/episodes/file_index"][0]
 
-            latest_path = self.writer.where
+            latest_path = (
+                self.root / self.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
+                if self.writer is None
+                else self.writer.where
+            )
             latest_size_in_mb = os.path.getsize(latest_path.as_posix()) / (1024 * 1024)
             latest_num_frames = self.latest_episode["episode_index"][0] + 1
 
@@ -613,17 +617,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.writer = None
         self.latest_episode = None
 
-        # Track dataset state for efficient incremental writing
-        self._lazy_loading = False
-        self._recorded_frames = 0
-        self._writer_closed_for_reading = False
-
         self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
+
+        # Track dataset state for efficient incremental writing
+        self._lazy_loading = False
+        self._recorded_frames = self.meta.total_frames
+        self._writer_closed_for_reading = False
 
         # Load actual data
         try:
@@ -797,13 +801,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
-        # During recording, use tracked frames for efficiency
-        if self._recorded_frames > 0 and not self._lazy_loading:
-            return self._recorded_frames
-        # For reading existing datasets, load lazily if needed
-        if self.hf_dataset is not None or not self._lazy_loading:
-            self._ensure_hf_dataset_loaded()
-            return len(self.hf_dataset)
         return self.meta.total_frames
 
     @property
@@ -898,10 +895,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self._lazy_loading = False
 
     def __len__(self):
-        # During recording, use tracked frames for efficiency
-        if self._recorded_frames > 0 and not self._lazy_loading:
-            return self._recorded_frames
-        # Otherwise use the standard approach
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
@@ -1177,7 +1170,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
             latest_path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
             latest_size_in_mb = os.path.getsize(latest_path.as_posix()) / (1024 * 1024)
-            latest_num_frames = latest_ep["index"][-1]
+            latest_num_frames = latest_ep["index"][-1] + 1  # Next available index
 
             av_size_per_frame = latest_size_in_mb / latest_num_frames
 
@@ -1200,7 +1193,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if has_images:
-            # For images, use the special HF images parquet writer
+            # For images, we need to handle appending manually
+            if path.exists() and self.latest_episode is not None:
+                # Read existing data and append new data
+                existing_df = pd.read_parquet(path)
+                df = pd.concat([existing_df, df], ignore_index=True)
+
             to_parquet_with_hf_images(df, path)
         else:
             # For non-image data, use standard PyArrow parquet writer
