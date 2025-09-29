@@ -132,12 +132,8 @@ def update_meta_data(
     for key, video_idx in videos_idx.items():
         df[f"videos/{key}/chunk_index"] = df[f"videos/{key}/chunk_index"] + video_idx["chunk"]
         df[f"videos/{key}/file_index"] = df[f"videos/{key}/file_index"] + video_idx["file"]
-        df[f"videos/{key}/from_timestamp"] = (
-            df[f"videos/{key}/from_timestamp"] + video_idx["latest_duration"]
-        )
-        df[f"videos/{key}/to_timestamp"] = (
-            df[f"videos/{key}/to_timestamp"] + video_idx["latest_duration"]
-        )
+        df[f"videos/{key}/from_timestamp"] = df[f"videos/{key}/from_timestamp"] + video_idx["latest_duration"]
+        df[f"videos/{key}/to_timestamp"] = df[f"videos/{key}/to_timestamp"] + video_idx["latest_duration"]
 
     df["dataset_from_index"] = df["dataset_from_index"] + dst_meta.info["total_frames"]
     df["dataset_to_index"] = df["dataset_to_index"] + dst_meta.info["total_frames"]
