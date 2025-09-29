@@ -848,11 +848,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         return item
 
-    def _add_padding_keys(self, item: dict, padding: dict[str, list[bool]]) -> dict:
-        for key, val in padding.items():
-            item[key] = torch.BoolTensor(val)
-        return item
-
     def __len__(self):
         return self.num_frames
 
@@ -1395,11 +1390,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         This index is incorporated as a data key in the dictionary returned by `__getitem__`.
         """
         return {repo_id: i for i, repo_id in enumerate(self.repo_ids)}
-
-    @property
-    def repo_index_to_id(self):
-        """Return the inverse mapping if repo_id_to_index."""
-        return {v: k for k, v in self.repo_id_to_index}
 
     @property
     def fps(self) -> int:

@@ -164,10 +164,6 @@ class Stretch3Robot(Robot):
         # TODO(aliberts): return action_sent when motion is limited
         return action
 
-    def print_logs(self) -> None:
-        pass
-        # TODO(aliberts): move robot-specific logs logic here
-
     def teleop_safety_stop(self) -> None:
         if self.teleop is not None:
             self.teleop._safety_stop(robot=self)
