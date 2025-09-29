@@ -118,13 +118,16 @@ class SMOLANDFAST(nn.Module):
         self.vlm = AutoModelForImageTextToText.from_pretrained(self.config.vlm_checkpoint,
                                                                torch_dtype=self.torch_precision)
         self.processor = AutoProcessor.from_pretrained(self.config.vlm_checkpoint)
-        if config.scale_factor is not None:
-            scale_factor = config.scale_factor
-            self.processor.image_seq_len = int(1024/(scale_factor**2))
-            self.vlm.scale_factor = scale_factor
-            self.vlm.model.connector.scale_factor = scale_factor
-            self.vlm.model.connector.modality_projection = nn.Linear(768*(scale_factor**2),
-                                                                    576,
+
+        
+        if config.scale_factor != 4:
+            self.processor.image_seq_len = int(1024/(config.scale_factor**2))
+            self.vlm.scale_factor = config.scale_factor
+            self.vlm.model.connector.scale_factor = config.scale_factor
+            input_size = self.vlm.config.vision_config.hidden_size * (config.scale_factor**2)
+            output_size = self.vlm.config.text_config.hidden_size
+            self.vlm.model.connector.modality_projection = nn.Linear(input_size,
+                                                                    output_size,
                                                                     bias=False,
                                                                     dtype=self.torch_precision)
 
@@ -135,10 +138,14 @@ class SMOLANDFAST(nn.Module):
         self.action_horizon = self.config.chunk_size
         self.action_dim = self.config.action_feature.shape[0] 
 
-        if config.train_only_text_model:
+        if config.freeze_vision_encoder:
             for param in self.vlm.model.vision_model.parameters():
                 param.requires_grad = False
 
+        if config.freeze_connector and config.scale_factor != 4:
+            raise ValueError("If scale factor is equal 4(default value) connector should be unfeezed")
+
+        if config.freeze_connector:
             for param in self.vlm.model.connector.parameters():
                 param.requires_grad = False
         
@@ -206,9 +213,6 @@ class SMOLANDFAST(nn.Module):
                                                           dtype=torch.long,
                                                           device=device)
         obs_ids = prefix_out["input_ids"]
-        # print(f"tokens len:{len(obs_ids[0])}")
-        # print(f"tokens: {obs_ids[0]}")
-        # print(da)
 
         if actions is not None:
             fast_action_tokens = self.fast_tokenizer(actions.detach().cpu())

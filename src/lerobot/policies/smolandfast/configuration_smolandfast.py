@@ -39,7 +39,7 @@ class SMOLANDFASTConfig(PreTrainedConfig):
     optimizer_lr: float = 2e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
-    optimizer_weight_decay: float = 0.1
+    optimizer_weight_decay: float = 0.01
 
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
@@ -52,8 +52,9 @@ class SMOLANDFASTConfig(PreTrainedConfig):
     # llm_checkpoint = "google/gemma-3-270m"
 
     precision: str = "float32"
-    train_only_text_model: bool = False
-    scale_factor = 1
+    freeze_vision_encoder: bool = True
+    freeze_connector: bool = False
+    scale_factor: int = 1
 
     grad_clip_norm: float = 1
 
