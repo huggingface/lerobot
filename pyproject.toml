@@ -136,7 +136,7 @@ aloha = ["gym-aloha>=0.1.1"]
 pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 xarm = ["gym-xarm>=0.1.1"]
 libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
-metaworld = ["metaworld==3.0.0"]
+metaworld = ["metaworld>=3.0.0"]
 
 # All
 all = [
