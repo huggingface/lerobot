@@ -1,0 +1,19 @@
+lerobot-record \
+    --robot.type=bi_koch_follower \
+    --robot.left_arm_port=$FOLLOWER_LEFT_PORT \
+    --robot.right_arm_port=$FOLLOWER_RIGHT_PORT \
+    --robot.id=bimanual_follower \
+    --teleop.type=bi_koch_leader \
+    --teleop.left_arm_port=$LEADER_LEFT_PORT \
+    --teleop.right_arm_port=$LEADER_RIGHT_PORT \
+    --teleop.id=bimanual_leader \
+    --robot.cameras="{ top: {type: opencv, index_or_path: $TOP_CAMERA_INDEX_OR_PATH, width: 640, height: 480, fps: 30}, left_wrist: {type: opencv, index_or_path: $LEFT_WRIST_CAMERA_INDEX_OR_PATH, width: 640, height: 480, fps: 30}, right_wrist: {type: opencv, index_or_path: $RIGHT_WRIST_CAMERA_INDEX_OR_PATH, width: 640, height: 480, fps: 30} }" \
+      --display_data=True \
+      --dataset.repo_id=${HF_USER}/koch-tshirt-pickplace \
+      --dataset.num_episodes=20 \
+      --dataset.reset_time_s=7 \
+      --dataset.episode_time_s=30 \
+      --dataset.single_task="Pick up the t-shirt and put it in the bin" \
+      --dataset.video_encoding_batch_size=20 \
+      --dataset.num_image_writer_processes=16 \
+      --resume=true

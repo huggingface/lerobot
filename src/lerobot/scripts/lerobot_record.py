@@ -126,6 +126,8 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.teleoperators.bi_koch_leader.config_bi_koch_leader import make_bimanual_koch_teleop_processors
+from lerobot.robots.bi_koch_follower.config_bi_koch_follower import make_bimanual_koch_robot_processors
 
 
 @dataclass
@@ -390,6 +392,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+
+    teleop_action_processor = make_bimanual_koch_teleop_processors(teleop, cfg.display_data)
+    robot_action_processor = make_bimanual_koch_robot_processors(robot, cfg.display_data)
 
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(

@@ -17,6 +17,19 @@
 from dataclasses import dataclass
 
 from ..config import TeleoperatorConfig
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.processor import RobotProcessorPipeline
+from lerobot.processor.converters import (
+    robot_action_observation_to_transition,
+    transition_to_robot_action,
+)
+from lerobot.robots.so100_follower.robot_kinematic_processor import (
+    ForwardKinematicsJointsToEE,
+)
+from lerobot.processor import (
+    RobotAction,
+    RobotProcessorPipeline,
+)
 
 
 @TeleoperatorConfig.register_subclass("bi_koch_leader")
@@ -24,3 +37,44 @@ from ..config import TeleoperatorConfig
 class BiKochLeaderConfig(TeleoperatorConfig):
     left_arm_port: str
     right_arm_port: str
+
+
+def make_bimanual_koch_teleop_processors(teleop, display_data: bool) -> RobotProcessorPipeline[RobotAction, RobotAction]:
+    left_teleop_kinematics_solver = RobotKinematics(
+        urdf_path="assets/koch_follower.urdf",
+        target_frame_name="link_6",
+        entity_path_prefix="leader_left",
+        display_data=display_data,
+        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
+        offset=0.4,
+    )
+    right_teleop_kinematics_solver = RobotKinematics(
+        urdf_path="assets/koch_follower.urdf",
+        target_frame_name="link_6",
+        entity_path_prefix="leader_right",
+        display_data=display_data,
+        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
+        offset=0.6,
+    )
+
+    teleop_motor_names = list(teleop.left_arm.bus.motors.keys())
+    left_teleop_motor_names = ["left_" + motor for motor in teleop_motor_names]
+    right_teleop_motor_names = ["right_" + motor for motor in teleop_motor_names]
+
+    teleop_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
+        steps=[
+            ForwardKinematicsJointsToEE(
+                kinematics=left_teleop_kinematics_solver,
+                motor_names=left_teleop_motor_names,
+                gripper_name="left_gripper",
+            ),
+            ForwardKinematicsJointsToEE(
+                kinematics=right_teleop_kinematics_solver,
+                motor_names=right_teleop_motor_names,
+                gripper_name="right_gripper",
+            ),
+        ],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
+    return teleop_to_ee

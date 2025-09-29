@@ -50,6 +50,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor import (
     make_default_robot_action_processor,
 )
+from lerobot.robots.bi_koch_follower.config_bi_koch_follower import make_bimanual_koch_robot_processors
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -93,10 +94,12 @@ def replay(cfg: ReplayConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
-    robot_action_processor = make_default_robot_action_processor()
+    # robot_action_processor = make_default_robot_action_processor()
 
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
+
+    robot_action_processor=make_bimanual_koch_robot_processors(robot, True)
 
     # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
     episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.episode)

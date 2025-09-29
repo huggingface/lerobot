@@ -331,7 +331,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         for feat in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
-            features[PipelineFeatureType.ACTION].pop(f"ee.{feat}", None)
+            features[PipelineFeatureType.ACTION].pop(f"{self.prefix}ee.{feat}", None)
 
         for name in self.motor_names:
             features[PipelineFeatureType.ACTION][f"{name}.pos"] = PolicyFeature(
@@ -462,9 +462,16 @@ class ForwardKinematicsJointsToEEObservation(ObservationProcessorStep):
         # We only use the ee pose in the dataset, so we don't need the joint positions
         for n in self.motor_names:
             features[PipelineFeatureType.OBSERVATION].pop(f"{n}.pos", None)
+        # Preserve the prefix
+        if "left_" in self.motor_names[0]:
+            prefix = "left_"
+        elif "right_" in self.motor_names[0]:
+            prefix = "right_"
+        else:
+            prefix = ""
         # We specify the dataset features of this step that we want to be stored in the dataset
         for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
-            features[PipelineFeatureType.OBSERVATION][f"ee.{k}"] = PolicyFeature(
+            features[PipelineFeatureType.OBSERVATION][f"{prefix}ee.{k}"] = PolicyFeature(
                 type=FeatureType.STATE, shape=(1,)
             )
         return features
@@ -522,24 +529,24 @@ class ForwardKinematicsJointsToEE(ProcessorStep):
         self.joints_to_ee_action_processor = ForwardKinematicsJointsToEEAction(
             kinematics=self.kinematics, motor_names=self.motor_names, gripper_name=self.gripper_name
         )
-        self.joints_to_ee_observation_processor = ForwardKinematicsJointsToEEObservation(
-            kinematics=self.kinematics, motor_names=self.motor_names, gripper_name=self.gripper_name
-        )
+        # self.joints_to_ee_observation_processor = ForwardKinematicsJointsToEEObservation(
+        #     kinematics=self.kinematics, motor_names=self.motor_names, gripper_name=self.gripper_name
+        # )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        if transition.get(TransitionKey.ACTION) is not None:
-            transition = self.joints_to_ee_action_processor(transition)
-        if transition.get(TransitionKey.OBSERVATION) is not None:
-            transition = self.joints_to_ee_observation_processor(transition)
+        # if transition.get(TransitionKey.ACTION) is not None and len(transition.get(TransitionKey.ACTION)) > 0:
+        transition = self.joints_to_ee_action_processor(transition)
+        # if transition.get(TransitionKey.OBSERVATION) is not None and len(transition.get(TransitionKey.OBSERVATION)) > 0:
+        #     transition = self.joints_to_ee_observation_processor(transition)
         return transition
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        if features[PipelineFeatureType.ACTION] is not None:
-            features = self.joints_to_ee_action_processor.transform_features(features)
-        if features[PipelineFeatureType.OBSERVATION] is not None:
-            features = self.joints_to_ee_observation_processor.transform_features(features)
+        # if features[PipelineFeatureType.ACTION] is not None and len(features[PipelineFeatureType.ACTION]) > 0:
+        features = self.joints_to_ee_action_processor.transform_features(features)
+        # if features[PipelineFeatureType.OBSERVATION] is not None and len(features[PipelineFeatureType.OBSERVATION]) > 0:
+        #     features = self.joints_to_ee_observation_processor.transform_features(features)
         return features
 
 

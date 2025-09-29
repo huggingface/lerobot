@@ -94,19 +94,8 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
-# FK and IK stuff
-from lerobot.model.kinematics import RobotKinematics
-from lerobot.processor.converters import (
-    robot_action_observation_to_transition,
-    robot_action_to_transition,
-    transition_to_robot_action,
-)
-
-from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    EEBoundsAndSafety,
-    ForwardKinematicsJointsToEE,
-    InverseKinematicsEEToJoints,
-)
+from lerobot.teleoperators.bi_koch_leader.config_bi_koch_leader import make_bimanual_koch_teleop_processors
+from lerobot.robots.bi_koch_follower.config_bi_koch_follower import make_bimanual_koch_robot_processors
 
 
 @dataclass
@@ -150,9 +139,7 @@ def teleop_loop(
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
     for _ in range(10):
-        print('\n')
-
-
+        print("\n")
 
     while True:
         loop_start = time.perf_counter()
@@ -177,8 +164,8 @@ def teleop_loop(
             log_rerun_data(obs, raw_action)
 
         # Process teleop action through pipeline
-        # teleop_action = teleop_action_processor((raw_action, obs))
-        teleop_action = teleop_action_processor(raw_action)
+        teleop_action = teleop_action_processor((raw_action, obs))
+        # teleop_action = teleop_action_processor(raw_action)
         # Process action for robot through pipeline
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
@@ -262,101 +249,10 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
-
-    # Build pipeline to convert teleop joints to EE action
-    left_robot_kinematics_solver = RobotKinematics(
-        urdf_path="assets/koch_follower.urdf",
-        target_frame_name="link_6",
-        entity_path_prefix="follower_left",
-        display_data=cfg.display_data,
-        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
-        offset=0.0,
-    )
-    right_robot_kinematics_solver = RobotKinematics(
-        urdf_path="assets/koch_follower.urdf",
-        target_frame_name="link_6",
-        entity_path_prefix="follower_right",
-        display_data=cfg.display_data,
-        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
-        offset=0.2,
-    )
-
-    left_teleop_kinematics_solver = RobotKinematics(
-        urdf_path="assets/koch_follower.urdf",
-        target_frame_name="link_6",
-        entity_path_prefix="leader_left",
-        display_data=cfg.display_data,
-        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
-        offset=0.4,
-    )
-    right_teleop_kinematics_solver = RobotKinematics(
-        urdf_path="assets/koch_follower.urdf",
-        target_frame_name="link_6",
-        entity_path_prefix="leader_right",
-        display_data=cfg.display_data,
-        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
-        offset=0.6,
-    )
-
-    teleop_motor_names = list(teleop.left_arm.bus.motors.keys())
-    robot_motor_names = list(robot.left_arm.bus.motors.keys())
-    left_teleop_motor_names = ["left_" + motor for motor in teleop_motor_names]
-    right_teleop_motor_names = ["right_" + motor for motor in teleop_motor_names]
-    left_robot_motor_names = ["left_" + motor for motor in robot_motor_names]
-    right_robot_motor_names = ["right_" + motor for motor in robot_motor_names]
-
-    teleop_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
-        steps=[
-            ForwardKinematicsJointsToEE(
-                kinematics=left_teleop_kinematics_solver, motor_names=left_teleop_motor_names, gripper_name="left_gripper"
-            ),
-            ForwardKinematicsJointsToEE(
-                kinematics=right_teleop_kinematics_solver, motor_names=right_teleop_motor_names, gripper_name="right_gripper"
-            ),
-        ],
-        to_transition=robot_action_to_transition,
-        to_output=transition_to_robot_action,
-    )
-
-    # build pipeline to convert EE action to robot joints
-    ee_to_robot_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        [
-            EEBoundsAndSafety(
-                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
-                max_ee_step_m=0.10,
-                max_ee_twist_step_rad=0.50,
-                prefix="left_",
-            ),
-            EEBoundsAndSafety(
-                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
-                max_ee_step_m=0.10,
-                max_ee_twist_step_rad=0.50,
-                prefix="right_",
-            ),
-            InverseKinematicsEEToJoints(
-                kinematics=left_robot_kinematics_solver,
-                motor_names=left_robot_motor_names,
-                initial_guess_current_joints=False,
-                prefix="left_",
-            ),
-            InverseKinematicsEEToJoints(
-                kinematics=right_robot_kinematics_solver,
-                motor_names=right_robot_motor_names,
-                initial_guess_current_joints=False,
-                prefix="right_",
-            ),
-        ],
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
-    )
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
-    # Use the IK version
-    teleop_action_processor = teleop_to_ee
-    robot_action_processor = ee_to_robot_joints
-
     teleop.connect()
     robot.connect()
 
+    _, _, robot_observation_processor = make_default_processors()
     try:
         teleop_loop(
             teleop=teleop,
@@ -364,8 +260,8 @@ def teleoperate(cfg: TeleoperateConfig):
             fps=cfg.fps,
             display_data=cfg.display_data,
             duration=cfg.teleop_time_s,
-            teleop_action_processor=teleop_action_processor,
-            robot_action_processor=robot_action_processor,
+            teleop_action_processor=make_bimanual_koch_teleop_processors(teleop, cfg.display_data),
+            robot_action_processor=make_bimanual_koch_robot_processors(robot, cfg.display_data),
             robot_observation_processor=robot_observation_processor,
         )
     except KeyboardInterrupt:

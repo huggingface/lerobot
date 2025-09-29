@@ -18,6 +18,18 @@ from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
 
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.processor import RobotProcessorPipeline
+from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
+from lerobot.robots.so100_follower.robot_kinematic_processor import (
+    EEBoundsAndSafety,
+    InverseKinematicsEEToJoints,
+)
+from lerobot.processor import (
+    RobotAction,
+    RobotObservation,
+    RobotProcessorPipeline,
+)
 from ..config import RobotConfig
 
 
@@ -37,3 +49,60 @@ class BiKochFollowerConfig(RobotConfig):
 
     # cameras (shared between both arms)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+
+def make_bimanual_koch_robot_processors(robot, display_data: bool) -> RobotProcessorPipeline:
+    # Build pipeline to convert teleop joints to EE action
+    left_robot_kinematics_solver = RobotKinematics(
+        urdf_path="assets/koch_follower.urdf",
+        target_frame_name="link_6",
+        entity_path_prefix="follower_left",
+        display_data=display_data,
+        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
+        offset=0.0,
+    )
+    right_robot_kinematics_solver = RobotKinematics(
+        urdf_path="assets/koch_follower.urdf",
+        target_frame_name="link_6",
+        entity_path_prefix="follower_right",
+        display_data=display_data,
+        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
+        offset=0.2,
+    )
+
+    robot_motor_names = list(robot.left_arm.bus.motors.keys())
+    left_robot_motor_names = ["left_" + motor for motor in robot_motor_names]
+    right_robot_motor_names = ["right_" + motor for motor in robot_motor_names]
+
+    # build pipeline to convert EE action to robot joints
+    ee_to_robot_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
+        [
+            EEBoundsAndSafety(
+                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+                max_ee_step_m=0.10,
+                max_ee_twist_step_rad=0.50,
+                prefix="left_",
+            ),
+            EEBoundsAndSafety(
+                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+                max_ee_step_m=0.10,
+                max_ee_twist_step_rad=0.50,
+                prefix="right_",
+            ),
+            InverseKinematicsEEToJoints(
+                kinematics=left_robot_kinematics_solver,
+                motor_names=left_robot_motor_names,
+                initial_guess_current_joints=False,
+                prefix="left_",
+            ),
+            InverseKinematicsEEToJoints(
+                kinematics=right_robot_kinematics_solver,
+                motor_names=right_robot_motor_names,
+                initial_guess_current_joints=False,
+                prefix="right_",
+            ),
+        ],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
+    return ee_to_robot_joints
