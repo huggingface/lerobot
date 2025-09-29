@@ -35,7 +35,7 @@ def _is_scalar(x):
     return (
         isinstance(x, float)
         or isinstance(x, numbers.Real)
-        or isinstance(x, (np.integer, np.floating))
+        or isinstance(x, (np.integer | np.floating))
         or (isinstance(x, np.ndarray) and x.ndim == 0)
     )
 

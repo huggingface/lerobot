@@ -770,7 +770,7 @@ class MockStepWithNonSerializableParam(ProcessorStep):
         # Add type validation for multiplier
         if isinstance(multiplier, str):
             raise ValueError(f"multiplier must be a number, got string '{multiplier}'")
-        if not isinstance(multiplier, (int, float)):
+        if not isinstance(multiplier, (int | float)):
             raise TypeError(f"multiplier must be a number, got {type(multiplier).__name__}")
         self.multiplier = float(multiplier)
         self.env = env  # Non-serializable parameter (like gym.Env)
@@ -1623,7 +1623,7 @@ def test_override_with_callables():
 
             # Define a transform function
             def double_values(x):
-                if isinstance(x, (int, float)):
+                if isinstance(x, (int | float)):
                     return x * 2
                 elif isinstance(x, torch.Tensor):
                     return x * 2
