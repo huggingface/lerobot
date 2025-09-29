@@ -32,10 +32,7 @@ class MockTokenizer:
         **kwargs,
     ) -> dict[str, torch.Tensor]:
         """Mock tokenization that returns deterministic tokens based on text."""
-        if isinstance(text, str):
-            texts = [text]
-        else:
-            texts = text
+        texts = [text] if isinstance(text, str) else text
 
         batch_size = len(texts)
 

@@ -437,7 +437,9 @@ def concatenate_video_files(
         tmp_concatenate_path, mode="r", format="concat", options={"safe": "0"}
     )  # safe = 0 allows absolute paths as well as relative paths
 
-    tmp_output_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
+        tmp_output_video_path = tmp_named_file.name
+
     output_container = av.open(
         tmp_output_video_path, mode="w", options={"movflags": "faststart"}
     )  # faststart is to move the metadata to the beginning of the file to speed up loading

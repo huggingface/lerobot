@@ -152,7 +152,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         """
         # Build a new features mapping keyed by the same FeatureType buckets
         # We assume callers already placed features in the correct FeatureType.
-        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {ft: {} for ft in features.keys()}
+        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {ft: {} for ft in features}
 
         exact_pairs = {
             "pixels": OBS_IMAGE,
