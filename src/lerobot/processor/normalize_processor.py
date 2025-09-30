@@ -373,11 +373,8 @@ class _NormalizationMixin:
                 denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
             )
             if inverse:
-                tensor = torch.clamp(tensor, -1.0, 1.0)
                 return tensor * denom + q01
-            result = 2.0 * (tensor - q01) / denom - 1.0
-            result = torch.clamp(result, -1.0, 1.0)
-            return result
+            return 2.0 * (tensor - q01) / denom - 1.0
 
         if norm_mode == NormalizationMode.QUANTILE10:
             q10 = stats.get("q10", None)
@@ -393,11 +390,8 @@ class _NormalizationMixin:
                 denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
             )
             if inverse:
-                tensor = torch.clamp(tensor, -1.0, 1.0)
                 return tensor * denom + q10
-            result = 2.0 * (tensor - q10) / denom - 1.0
-            result = torch.clamp(result, -1.0, 1.0)
-            return result
+            return 2.0 * (tensor - q10) / denom - 1.0
 
         # If necessary stats are missing, return input unchanged.
         return tensor
