@@ -305,7 +305,14 @@ class _NormalizationMixin:
             ValueError: If an unsupported normalization mode is encountered.
         """
         norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
+        if norm_mode == NormalizationMode.IDENTITY:
+            import logging
+            logging.debug(f"🔍 Normalization SKIPPED for '{key}': norm_mode is IDENTITY")
+            return tensor
+        
+        if key not in self._tensor_stats:
+            import logging
+            logging.warning(f"⚠️  Normalization SKIPPED for '{key}': No stats found! Available stats keys: {list(self._tensor_stats.keys())}")
             return tensor
 
         if norm_mode not in (
@@ -376,7 +383,12 @@ class _NormalizationMixin:
             )
             if inverse:
                 return tensor * denom + q01
-            return 2.0 * (tensor - q01) / denom - 1.0
+            
+            # Apply normalization and log for debugging
+            import logging
+            result = 2.0 * (tensor - q01) / denom - 1.0
+            logging.debug(f"✅ QUANTILES normalization applied to '{key}': input range [{tensor.min().item():.3f}, {tensor.max().item():.3f}] → output range [{result.min().item():.3f}, {result.max().item():.3f}]")
+            return result
 
         if norm_mode == NormalizationMode.QUANTILE10:
             q10 = stats.get("q10", None)
