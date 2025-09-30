@@ -44,7 +44,7 @@ import draccus
 import grpc
 import torch
 
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, log_rerun_action_chunk
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs.policies import PreTrainedConfig
@@ -131,6 +131,10 @@ class RobotOpenpiClient:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.action_features)}
         return action
 
+    def _action_dict_to_action_tensor(self, action_dict: dict[str, float]) -> torch.Tensor:
+        action_tensor = torch.tensor([action_dict[key] for key in self.action_features])
+        return action_tensor
+
     def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
@@ -174,19 +178,32 @@ class RobotOpenpiClient:
                 self.logger.warning(
                     f"Actions per chunk is greater than the number of actions in the chunk: {self.config.actions_per_chunk} > {action_chunk.shape[0]}"
                 )
-            action_chunk = action_chunk[: self.config.actions_per_chunk]
 
-            base_action_xyz = self.teleop_action_processor(
+            assert action_chunk.ndim == 2, (
+                "Unexpected action chunk shape, should be (num_timesteps, action_dim)"
+            )
+            base_action_world_dict = self.teleop_action_processor(
                 (raw_observation, raw_observation)
             )  # we need to run FK and use this as our zero.
+            base_action_world_tensor = self._action_dict_to_action_tensor(base_action_world_dict)
 
-            for action in action_chunk:
-                action_tensor = self._action_tensor_to_action_dict(action)
-                action_tensor_world = action_tensor.copy()
-                for key in action_tensor:
-                    if "gripper" not in key:
-                        assert key in base_action_xyz, f"Key {key} not in base_action_xyz"
-                        action_tensor_world[key] = action_tensor[key] + base_action_xyz[key]
+            action_chunk_tensor = torch.tensor(
+                action_chunk[: self.config.actions_per_chunk, : base_action_world_tensor.shape[-1]]
+            )  # Trim to the same number of actions as the base action
+            # indices to exclude for gripper
+            exclude = [6, 13]
+
+            # create a mask (True = add, False = keep original)
+            mask = torch.ones_like(base_action_world_tensor, dtype=torch.bool)
+            mask[exclude] = False
+
+            # apply addition only where mask == True
+            action_chunk_world = action_chunk_tensor + mask * base_action_world_tensor
+
+            # Convert action chunk to world frame
+            log_rerun_action_chunk(action_chunk_world)
+            for action in action_chunk_world:
+                action_tensor_world = self._action_tensor_to_action_dict(action)
                 processed_action = self.robot_action_processor((action_tensor_world, raw_observation))
                 _performed_action = self.robot.send_action(processed_action)
                 log_rerun_data(raw_observation, _performed_action)

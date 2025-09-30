@@ -18,6 +18,7 @@ from typing import Any
 
 import numpy as np
 import rerun as rr
+import torch
 
 from .constants import OBS_PREFIX, OBS_STR
 import xml.etree.ElementTree as ET
@@ -98,6 +99,29 @@ def log_rerun_data(
                     flat = v.flatten()
                     for i, vi in enumerate(flat):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+
+
+def transform_from_pose(p):
+    t = p[:3]
+    w = p[3:6]
+
+    ang = float(np.linalg.norm(w))
+    if ang < 1e-12:  # no rotation
+        axis = np.array([1.0, 0.0, 0.0])  # arbitrary
+    else:
+        axis = (w / ang).astype(float)
+
+    return rr.Transform3D(
+        translation=t,
+        rotation=rr.RotationAxisAngle(axis=axis, angle=rr.Angle(rad=ang)),
+    )
+
+
+def log_rerun_action_chunk(action_chunk: torch.Tensor):
+    action_chunk = action_chunk.cpu().numpy()
+    for i, action in enumerate(action_chunk):
+        T = transform_from_pose(action)
+        rr.log(f"action_chunk_{i}", T)
 
 
 def parse_urdf_graph(urdf_path: str):
@@ -232,6 +256,7 @@ def drive_urdf_with_world_poses(
             continue
         Tpc = _rel_from_world(T_world[parent], T_world[child])
         _log_transform(joint_entity_path(j, G, prefix), Tpc[:3, 3], Tpc[:3, :3])
+
 
 def visualize_robot(
     robot,
