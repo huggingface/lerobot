@@ -39,7 +39,7 @@ from tqdm import tqdm
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.video_utils import (
-    decode_video_frames_torchvision,
+    decode_video_frames,
     encode_video_frames,
 )
 from lerobot.utils.constants import OBS_IMAGE
@@ -149,18 +149,6 @@ def sample_timestamps(timestamps_mode: str, ep_num_images: int, fps: int) -> lis
             raise ValueError(timestamps_mode)
 
     return [idx / fps for idx in frame_indexes]
-
-
-def decode_video_frames(
-    video_path: str,
-    timestamps: list[float],
-    tolerance_s: float,
-    backend: str,
-) -> torch.Tensor:
-    if backend in ["pyav", "video_reader"]:
-        return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
-    else:
-        raise NotImplementedError(backend)
 
 
 def benchmark_decoding(
@@ -416,9 +404,9 @@ if __name__ == "__main__":
         nargs="*",
         default=[
             "lerobot/pusht_image",
-            "aliberts/aloha_mobile_shrimp_image",
-            "aliberts/paris_street",
-            "aliberts/kitchen",
+            "CarolinePascal/aloha_mobile_shrimp_image",
+            "CarolinePascal/paris_street",
+            "CarolinePascal/kitchen",
         ],
         help="Datasets repo-ids to test against. First episodes only are used. Must be images.",
     )
@@ -426,7 +414,7 @@ if __name__ == "__main__":
         "--vcodec",
         type=str,
         nargs="*",
-        default=["libx264", "hevc", "libsvtav1"],
+        default=["h264", "hevc", "libsvtav1"],
         help="Video codecs to be tested",
     )
     parser.add_argument(
@@ -475,7 +463,7 @@ if __name__ == "__main__":
         "--backends",
         type=str,
         nargs="*",
-        default=["pyav", "video_reader"],
+        default=["torchcodec", "pyav"],
         help="Torchvision decoding backend to be tested.",
     )
     parser.add_argument(
