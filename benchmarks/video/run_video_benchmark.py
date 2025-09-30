@@ -35,13 +35,13 @@ import torch
 from skimage.metrics import mean_squared_error, peak_signal_noise_ratio, structural_similarity
 from tqdm import tqdm
 
-from benchmarks.video.benchmark import TimeBenchmark
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.video_utils import (
     decode_video_frames_torchvision,
     encode_video_frames,
 )
 from lerobot.utils.constants import OBS_IMAGE
+from lerobot.utils.utils import TimerManager
 
 BASE_ENCODING = OrderedDict(
     [
@@ -173,7 +173,7 @@ def benchmark_decoding(
     save_frames: bool = False,
 ) -> dict:
     def process_sample(sample: int):
-        time_benchmark = TimeBenchmark()
+        time_benchmark = TimerManager(log=False)
         timestamps = sample_timestamps(timestamps_mode, ep_num_images, fps)
         num_frames = len(timestamps)
         result = {
@@ -182,13 +182,13 @@ def benchmark_decoding(
             "mse_values": [],
         }
 
-        with time_benchmark:
+        with time_benchmark, lock:
             frames = decode_video_frames(video_path, timestamps=timestamps, tolerance_s=5e-1, backend=backend)
-        result["load_time_video_ms"] = time_benchmark.result_ms / num_frames
+        result["load_time_video_ms"] = (time_benchmark.last * 1000) / num_frames
 
         with time_benchmark:
             original_frames = load_original_frames(imgs_dir, timestamps, fps)
-        result["load_time_images_ms"] = time_benchmark.result_ms / num_frames
+        result["load_time_images_ms"] = (time_benchmark.last * 1000) / num_frames
 
         frames_np, original_frames_np = frames.numpy(), original_frames.numpy()
         for i in range(num_frames):
