@@ -26,7 +26,6 @@ class SMOLANDFASTConfig(PreTrainedConfig):
 
     n_state_bins = 256
 
-
     # Decoding
     max_decoding_steps: int = 512
     fast_skip_tokens: int = 280  # Skip last 280 tokens
@@ -48,8 +47,6 @@ class SMOLANDFASTConfig(PreTrainedConfig):
     checkpoint_path: str = None
 
     vlm_checkpoint = "HuggingFaceTB/SmolVLM2-256M-Video-Instruct"
-    # llm_checkpoint = "gpt2"
-    # llm_checkpoint = "google/gemma-3-270m"
 
     precision: str = "float32"
     freeze_vision_encoder: bool = True
@@ -103,7 +100,6 @@ class SMOLANDFASTConfig(PreTrainedConfig):
     @property
     def action_delta_indices(self) -> list:
         return list(range(0, self.chunk_size))
-
 
     @property
     def reward_delta_indices(self) -> None:
