@@ -21,7 +21,14 @@ DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
 
 class RunningQuantileStats:
-    """Compute running statistics including quantiles for a batch of vectors."""
+    """
+    Maintains running statistics for batches of vectors, including mean,
+    standard deviation, min, max, and approximate quantiles.
+
+    Statistics are computed per feature dimension and updated incrementally
+    as new batches are observed. Quantiles are estimated using histograms,
+    which adapt dynamically if the observed data range expands.
+    """
 
     def __init__(self, quantile_list: list[float] | None = None, num_quantile_bins: int = 5000):
         self._count = 0
