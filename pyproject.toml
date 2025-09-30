@@ -240,7 +240,9 @@ select = [
     "B",
     "C4",
     "T20",
-    "N",   # "SIM", "A", "S", "D", "RUF", "UP"
+    "N",
+    "UP",
+    "SIM", #, "A", "S", "D", "RUF"
 ]
 ignore = [
     "E501", # Line too long

@@ -21,7 +21,7 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Deque, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 import datasets
 import numpy as np
@@ -207,13 +207,13 @@ def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
     """
     serialized_dict = {}
     for key, value in flatten_dict(stats).items():
-        if isinstance(value, (torch.Tensor, np.ndarray)):
+        if isinstance(value, (torch.Tensor | np.ndarray)):
             serialized_dict[key] = value.tolist()
-        elif isinstance(value, list) and isinstance(value[0], (int, float, list)):
+        elif isinstance(value, list) and isinstance(value[0], (int | float | list)):
             serialized_dict[key] = value
         elif isinstance(value, np.generic):
             serialized_dict[key] = value.item()
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, (int | float)):
             serialized_dict[key] = value
         else:
             raise NotImplementedError(f"The value '{value}' of type '{type(value)}' is not supported.")
@@ -1179,7 +1179,7 @@ def item_to_torch(item: dict) -> dict:
         dict: Dictionary with all tensor-like items converted to torch.Tensor.
     """
     for key, val in item.items():
-        if isinstance(val, (np.ndarray, list)) and key not in ["task"]:
+        if isinstance(val, (np.ndarray | list)) and key not in ["task"]:
             # Convert numpy arrays and lists to torch tensors
             item[key] = torch.tensor(val)
     return item
@@ -1253,8 +1253,8 @@ class Backtrackable(Generic[T]):
             raise ValueError("lookahead must be > 0")
 
         self._source: Iterator[T] = iter(iterable)
-        self._back_buf: Deque[T] = deque(maxlen=history)
-        self._ahead_buf: Deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
+        self._back_buf: deque[T] = deque(maxlen=history)
+        self._ahead_buf: deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
         self._cursor: int = 0
         self._history = history
         self._lookahead = lookahead

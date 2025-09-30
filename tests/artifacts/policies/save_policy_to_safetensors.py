@@ -66,15 +66,13 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
     for key, param in policy.named_parameters():
         if param.requires_grad:
             grad_stats[f"{key}_mean"] = param.grad.mean()
-            grad_stats[f"{key}_std"] = (
-                param.grad.std() if param.grad.numel() > 1 else torch.tensor(float(0.0))
-            )
+            grad_stats[f"{key}_std"] = param.grad.std() if param.grad.numel() > 1 else torch.tensor(0.0)
 
     optimizer.step()
     param_stats = {}
     for key, param in policy.named_parameters():
         param_stats[f"{key}_mean"] = param.mean()
-        param_stats[f"{key}_std"] = param.std() if param.numel() > 1 else torch.tensor(float(0.0))
+        param_stats[f"{key}_std"] = param.std() if param.numel() > 1 else torch.tensor(0.0)
 
     optimizer.zero_grad()
     policy.reset()
