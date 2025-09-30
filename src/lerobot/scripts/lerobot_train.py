@@ -194,15 +194,14 @@ def save_normalized_images(batch: dict[str, Any], step: int, output_dir: Path, w
     # Push to wandb as artifact if logger is available
     if wandb_logger and saved_paths:
         try:
-            import wandb
-            artifact = wandb.Artifact(
+            artifact = wandb_logger._wandb.Artifact(
                 name=f"normalized_images_step_{step}",
                 type="images",
                 description=f"Normalized input images at training step {step}"
             )
             for img_path in saved_paths:
                 artifact.add_file(str(img_path))
-            wandb_logger.wandb_run.log_artifact(artifact)
+            wandb_logger._wandb.log_artifact(artifact)
             logging.info(f"Pushed {len(saved_paths)} normalized images to wandb for step {step}")
         except Exception as e:
             logging.warning(f"Failed to push images to wandb: {e}")
@@ -271,14 +270,13 @@ def save_normalized_state_action_data(batch: dict[str, Any], step: int, output_d
     # Push to wandb as artifact if logger is available
     if wandb_logger:
         try:
-            import wandb
-            artifact = wandb.Artifact(
+            artifact = wandb_logger._wandb.Artifact(
                 name=f"normalized_state_action_step_{step}",
                 type="data",
                 description=f"Normalized observation.state and action data at training step {step}"
             )
             artifact.add_file(str(data_file))
-            wandb_logger.wandb_run.log_artifact(artifact)
+            wandb_logger._wandb.log_artifact(artifact)
             logging.info(f"Pushed normalized state/action data to wandb for step {step}")
         except Exception as e:
             logging.warning(f"Failed to push state/action data to wandb: {e}")
