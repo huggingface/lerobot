@@ -197,10 +197,9 @@ class RobotOpenpiClient:
             mask = torch.ones_like(base_action_world_tensor, dtype=torch.bool)
             mask[exclude] = False
 
-            # apply addition only where mask == True
+            # Convert action chunk to world frame, apply to non-gripper positions
             action_chunk_world = action_chunk_tensor + mask * base_action_world_tensor
 
-            # Convert action chunk to world frame
             log_rerun_action_chunk(action_chunk_world)
             for action in action_chunk_world:
                 action_tensor_world = self._action_tensor_to_action_dict(action)

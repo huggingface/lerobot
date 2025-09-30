@@ -282,7 +282,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True
     prefix: str = ""
-    threshold_deg: float = 90.0
+    threshold_deg: float = 120.0
     _first_solve: bool = True
 
     def action(self, action: RobotAction) -> RobotAction:
@@ -293,6 +293,8 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         wy = action.pop(f"{self.prefix}ee.wy")
         wz = action.pop(f"{self.prefix}ee.wz")
         gripper_pos = action.pop(f"{self.prefix}ee.gripper_pos")
+        
+        print(f"x: {x}, y: {y}, z: {z}, wx: {wx}, wy: {wy}, wz: {wz}, gripper_pos: {gripper_pos}")
 
         if None in (x, y, z, wx, wy, wz, gripper_pos):
             raise ValueError(
@@ -347,7 +349,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         return action
 
     def verify_solution_within_joint_limits(self, action: RobotAction, observation: RobotObservation) -> bool:
-        for motor_name in self.motor_names[:-1]: # exclude gripper
+        for motor_name in self.motor_names[:-3]: # exclude gripper and wrist roll and wrist flex
             full_motor_name = f"{motor_name}.pos"
             target_pos = action[full_motor_name]
             current_pos = observation[full_motor_name]

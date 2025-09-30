@@ -35,8 +35,8 @@ from ..config import RobotConfig
 
 MAX_RELATIVE_TARGET_DEFAULT = {
     "shoulder_pan": 10.0,
-    "shoulder_lift": 10.0,
-    "elbow_flex": 10.0,
+    "shoulder_lift": 15.0,
+    "elbow_flex": 15.0,
     "wrist_flex": 15.0,
     "wrist_roll": 20.0,
     "gripper": 30.0,
@@ -92,13 +92,13 @@ def make_bimanual_koch_robot_processors(robot, display_data: bool) -> RobotProce
     ee_to_robot_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         [
             EEBoundsAndSafety(
-                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+                end_effector_bounds={"min": [-0.2, -0.2, 0.04], "max": [0.2, 0.2, 0.2]},
                 max_ee_step_m=0.10,
                 max_ee_twist_step_rad=0.50,
                 prefix="left_",
             ),
             EEBoundsAndSafety(
-                end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+                end_effector_bounds={"min": [-0.2, -0.2, 0.04], "max": [0.2, 0.2, 0.2]},
                 max_ee_step_m=0.10,
                 max_ee_twist_step_rad=0.50,
                 prefix="right_",
