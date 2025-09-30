@@ -21,6 +21,7 @@ See the provided README.md or run `python benchmark/video/run_video_benchmark.py
 
 import argparse
 import datetime as dt
+import itertools
 import random
 import shutil
 from collections import OrderedDict
@@ -358,24 +359,27 @@ def main(
                 imgs_dir = output_dir / "images" / dataset.repo_id.replace("/", "_")
                 # We only use the first episode
                 save_first_episode(imgs_dir, dataset)
-                for key, values in tqdm(encoding_benchmarks.items(), desc="encodings (g, crf)", leave=False):
-                    for value in tqdm(values, desc=f"encodings ({key})", leave=False):
-                        encoding_cfg = BASE_ENCODING.copy()
-                        encoding_cfg["vcodec"] = video_codec
-                        encoding_cfg["pix_fmt"] = pixel_format
+                for duet in [
+                    dict(zip(encoding_benchmarks.keys(), unique_combination, strict=False))
+                    for unique_combination in itertools.product(*encoding_benchmarks.values())
+                ]:
+                    encoding_cfg = BASE_ENCODING.copy()
+                    encoding_cfg["vcodec"] = video_codec
+                    encoding_cfg["pix_fmt"] = pixel_format
+                    for key, value in duet.items():
                         encoding_cfg[key] = value
-                        args_path = Path("_".join(str(value) for value in encoding_cfg.values()))
-                        video_path = output_dir / "videos" / args_path / f"{repo_id.replace('/', '_')}.mp4"
-                        benchmark_table += benchmark_encoding_decoding(
-                            dataset,
-                            video_path,
-                            imgs_dir,
-                            encoding_cfg,
-                            decoding_benchmarks,
-                            num_samples,
-                            num_workers,
-                            save_frames,
-                        )
+                    args_path = Path("_".join(str(value) for value in encoding_cfg.values()))
+                    video_path = output_dir / "videos" / args_path / f"{repo_id.replace('/', '_')}.mp4"
+                    benchmark_table += benchmark_encoding_decoding(
+                        dataset,
+                        video_path,
+                        imgs_dir,
+                        encoding_cfg,
+                        decoding_benchmarks,
+                        num_samples,
+                        num_workers,
+                        save_frames,
+                    )
 
             # Save intermediate results
             benchmark_df = pd.DataFrame(benchmark_table, columns=headers)
