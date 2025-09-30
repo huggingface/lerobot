@@ -413,7 +413,7 @@ def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
     info["data_files_size_in_mb"] = data_file_size_in_mb
     info["video_files_size_in_mb"] = video_file_size_in_mb
     info["data_path"] = DEFAULT_DATA_PATH
-    info["video_path"] = DEFAULT_VIDEO_PATH
+    info["video_path"] = DEFAULT_VIDEO_PATH if info["video_path"] is not None else None
     info["fps"] = int(info["fps"])
     logging.info(f"Converting info from {root} to {new_root}")
     for key in info["features"]:
