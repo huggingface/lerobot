@@ -205,7 +205,7 @@ class SMOLANDFAST(nn.Module):
         prefix_out = self.processor(
             images=images,
             text=prompts,
-            do_resize=False,
+            do_resize=self.config.do_image_spliting,
             do_rescale=False,
         )
         prefix_out["pixel_values"] = torch.tensor(

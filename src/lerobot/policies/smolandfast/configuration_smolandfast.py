@@ -52,6 +52,7 @@ class SMOLANDFASTConfig(PreTrainedConfig):
     freeze_vision_encoder: bool = True
     freeze_connector: bool = False
     scale_factor: int = 1
+    do_image_spliting: bool = False
 
     grad_clip_norm: float = 1
 
