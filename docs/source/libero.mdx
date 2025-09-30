@@ -132,8 +132,8 @@ We reproduce the results of π₀ and π₀.₅ on the LIBERO benchmark using th
 
 The finetuned models can be found here:
 
-- **π₀ LIBERO**: [pepijn223/pi0_libero_fp32](https://huggingface.co/pepijn223/pi0_libero_fp32)
-- **π₀.₅ LIBERO**: [pepijn223/pi05_libero_fp32](https://huggingface.co/pepijn223/pi05_libero_fp32)
+- **π₀ LIBERO**: [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero)
+- **π₀.₅ LIBERO**: [lerobot/pi05_libero](https://huggingface.co/lerobot/pi05_libero)
 
 We then evaluate the finetuned models using the LeRobot LIBERO implementation, by running the following command:
 
@@ -144,7 +144,7 @@ python src/lerobot/scripts/eval.py \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
   --eval.batch_size=1 \
   --eval.n_episodes=5 \
-  --policy.path=pepijn223/pi0_libero_fp32 \
+  --policy.path=lerobot/pi0_libero \
   --output_dir=./eval_logs/ \
   --policy.compile_model=false \
   --policy.gradient_checkpointing=false \
