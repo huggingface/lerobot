@@ -16,8 +16,10 @@
 import logging
 import time
 from contextlib import nullcontext
+from pathlib import Path
 from pprint import pformat
 from typing import Any
+import json
 
 import torch
 from accelerate import Accelerator
@@ -25,6 +27,9 @@ from accelerate.utils import DistributedDataParallelKwargs
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
+import torchvision.transforms as transforms
+from PIL import Image
+import numpy as np
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
@@ -143,6 +148,142 @@ class NormalizationRangeTracker:
                 ranges["normalized_action_max_range"] = self.max_ranges["action"]["range"]
         
         return ranges
+
+
+def save_normalized_images(batch: dict[str, Any], step: int, output_dir: Path, wandb_logger=None) -> list[Path]:
+    """
+    Save normalized images from batch and optionally push to wandb as artifacts.
+    
+    Args:
+        batch: Dictionary containing normalized tensors including images
+        step: Current training step
+        output_dir: Directory to save images
+        wandb_logger: Optional wandb logger for artifact pushing
+        
+    Returns:
+        List of saved image paths
+    """
+    saved_paths = []
+    images_dir = output_dir / "normalized_images" / f"step_{step}"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Look for image keys in the batch
+    for key, tensor in batch.items():
+        if isinstance(tensor, torch.Tensor) and "image" in key.lower():
+            # Assume images are in format [batch_size, channels, height, width]
+            if len(tensor.shape) == 4 and tensor.shape[1] in [1, 3]:  # grayscale or RGB
+                for batch_idx in range(tensor.shape[0]):
+                    img_tensor = tensor[batch_idx]
+                    
+                    # Convert from normalized [-1, 1] to [0, 1] range
+                    img_tensor = (img_tensor + 1.0) / 2.0
+                    img_tensor = torch.clamp(img_tensor, 0.0, 1.0)
+                    
+                    # Convert to PIL Image
+                    to_pil = transforms.ToPILImage()
+                    img = to_pil(img_tensor)
+                    
+                    # Save image
+                    clean_key = key.replace(".", "_").replace("/", "_")
+                    img_path = images_dir / f"{clean_key}_batch_{batch_idx}.png"
+                    img.save(img_path)
+                    saved_paths.append(img_path)
+                    
+                logging.info(f"Saved {len(tensor)} images for key '{key}' at step {step}")
+    
+    # Push to wandb as artifact if logger is available
+    if wandb_logger and saved_paths:
+        try:
+            import wandb
+            artifact = wandb.Artifact(
+                name=f"normalized_images_step_{step}",
+                type="images",
+                description=f"Normalized input images at training step {step}"
+            )
+            for img_path in saved_paths:
+                artifact.add_file(str(img_path))
+            wandb_logger.wandb_run.log_artifact(artifact)
+            logging.info(f"Pushed {len(saved_paths)} normalized images to wandb for step {step}")
+        except Exception as e:
+            logging.warning(f"Failed to push images to wandb: {e}")
+    
+    return saved_paths
+
+
+def save_normalized_state_action_data(batch: dict[str, Any], step: int, output_dir: Path, wandb_logger=None) -> Path:
+    """
+    Save normalized observation.state and action data to a JSON file and optionally push to wandb.
+    
+    Args:
+        batch: Dictionary containing normalized tensors
+        step: Current training step
+        output_dir: Directory to save data
+        wandb_logger: Optional wandb logger for artifact pushing
+        
+    Returns:
+        Path to saved data file
+    """
+    data_dir = output_dir / "normalized_data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
+    data_file = data_dir / f"step_{step}_state_action.json"
+    
+    # Collect state and action data
+    step_data = {
+        "step": step,
+        "observation_state": {},
+        "action": None
+    }
+    
+    # Extract observation.state data
+    for key, tensor in batch.items():
+        if isinstance(tensor, torch.Tensor) and key.startswith("observation.state"):
+            # Convert tensor to numpy and then to list for JSON serialization
+            numpy_data = tensor.detach().cpu().numpy()
+            step_data["observation_state"][key] = {
+                "shape": list(numpy_data.shape),
+                "data": numpy_data.tolist(),
+                "min": float(numpy_data.min()),
+                "max": float(numpy_data.max()),
+                "mean": float(numpy_data.mean()),
+                "std": float(numpy_data.std())
+            }
+    
+    # Extract action data
+    if "action" in batch and isinstance(batch["action"], torch.Tensor):
+        action_tensor = batch["action"]
+        numpy_data = action_tensor.detach().cpu().numpy()
+        step_data["action"] = {
+            "shape": list(numpy_data.shape),
+            "data": numpy_data.tolist(),
+            "min": float(numpy_data.min()),
+            "max": float(numpy_data.max()),
+            "mean": float(numpy_data.mean()),
+            "std": float(numpy_data.std())
+        }
+    
+    # Save to JSON file
+    with open(data_file, 'w') as f:
+        json.dump(step_data, f, indent=2)
+    
+    logging.info(f"Saved normalized state/action data for step {step} to {data_file}")
+    
+    # Push to wandb as artifact if logger is available
+    if wandb_logger:
+        try:
+            import wandb
+            artifact = wandb.Artifact(
+                name=f"normalized_state_action_step_{step}",
+                type="data",
+                description=f"Normalized observation.state and action data at training step {step}"
+            )
+            artifact.add_file(str(data_file))
+            wandb_logger.wandb_run.log_artifact(artifact)
+            logging.info(f"Pushed normalized state/action data to wandb for step {step}")
+        except Exception as e:
+            logging.warning(f"Failed to push state/action data to wandb: {e}")
+    
+    return data_file
 
 
 def update_policy(
@@ -497,6 +638,18 @@ def train(cfg: TrainPipelineConfig):
         
         # Track maximum ranges for normalized data to verify normalization is working
         normalization_ranges = normalization_tracker.update_and_get_ranges(batch)
+        
+        # Save normalized data for first 10 steps (only on main process to avoid duplicates)
+        if step < 10 and accelerator.is_main_process:
+            try:
+                # Save normalized images
+                save_normalized_images(batch, step, cfg.output_dir, wandb_logger)
+                
+                # Save normalized state/action data  
+                save_normalized_state_action_data(batch, step, cfg.output_dir, wandb_logger)
+                
+            except Exception as e:
+                logging.warning(f"Failed to save normalized data for step {step}: {e}")
         
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
