@@ -86,7 +86,7 @@ def load_original_frames(imgs_dir: Path, timestamps: list[float], fps: int) -> t
     frames = []
     for ts in timestamps:
         idx = int(ts * fps)
-        frame = PIL.Image.open(imgs_dir / f"frame_{idx:06d}.png")
+        frame = PIL.Image.open(imgs_dir / f"frame-{idx:06d}.png")
         frame = torch.from_numpy(np.array(frame))
         frame = frame.type(torch.float32) / 255
         frame = einops.rearrange(frame, "h w c -> c h w")
@@ -97,21 +97,21 @@ def load_original_frames(imgs_dir: Path, timestamps: list[float], fps: int) -> t
 def save_decoded_frames(
     imgs_dir: Path, save_dir: Path, frames: torch.Tensor, timestamps: list[float], fps: int
 ) -> None:
-    if save_dir.exists() and len(list(save_dir.glob("frame_*.png"))) == len(timestamps):
+    if save_dir.exists() and len(list(save_dir.glob("frame-*.png"))) == len(timestamps):
         return
 
     save_dir.mkdir(parents=True, exist_ok=True)
     for i, ts in enumerate(timestamps):
         idx = int(ts * fps)
         frame_hwc = (frames[i].permute((1, 2, 0)) * 255).type(torch.uint8).cpu().numpy()
-        PIL.Image.fromarray(frame_hwc).save(save_dir / f"frame_{idx:06d}_decoded.png")
-        shutil.copyfile(imgs_dir / f"frame_{idx:06d}.png", save_dir / f"frame_{idx:06d}_original.png")
+        PIL.Image.fromarray(frame_hwc).save(save_dir / f"frame-{idx:06d}_decoded.png")
+        shutil.copyfile(imgs_dir / f"frame-{idx:06d}.png", save_dir / f"frame-{idx:06d}_original.png")
 
 
 def save_first_episode(imgs_dir: Path, dataset: LeRobotDataset) -> None:
     episode_index = 0
     ep_num_images = dataset.meta.episodes["length"][episode_index]
-    if imgs_dir.exists() and len(list(imgs_dir.glob("frame_*.png"))) == ep_num_images:
+    if imgs_dir.exists() and len(list(imgs_dir.glob("frame-*.png"))) == ep_num_images:
         return
 
     imgs_dir.mkdir(parents=True, exist_ok=True)
@@ -125,7 +125,7 @@ def save_first_episode(imgs_dir: Path, dataset: LeRobotDataset) -> None:
         tqdm(imgs_dataset, desc=f"saving {dataset.repo_id} first episode images", leave=False)
     ):
         img = item[img_keys[0]]
-        img.save(str(imgs_dir / f"frame_{i:06d}.png"), quality=100)
+        img.save(str(imgs_dir / f"frame-{i:06d}.png"), quality=100)
 
         if i >= ep_num_images - 1:
             break
