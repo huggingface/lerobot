@@ -42,7 +42,7 @@ else:
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE, OPENPI_ATTENTION_MASK_VALUE
 
 
 # Helper functions
@@ -116,18 +116,15 @@ def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (
     return att_2d_masks & pad_2d_masks
 
 
-def pad_vector(vector, new_dim):  # see lerobot pi0 `pad_vector` (exact copy)
-    """Can be (batch_size x sequence_length x features_dimension)
+def pad_vector(vector, new_dim):
+    """Pad the last dimension of a vector to new_dim with zeros.
+    
+    Can be (batch_size x sequence_length x features_dimension)
     or (batch_size x features_dimension)
     """
-    if vector.shape[-1] == new_dim:
+    if vector.shape[-1] >= new_dim:
         return vector
-    shape = list(vector.shape)
-    current_dim = shape[-1]
-    shape[-1] = new_dim
-    new_vector = torch.zeros(*shape, dtype=vector.dtype, device=vector.device)
-    new_vector[..., :current_dim] = vector
-    return new_vector
+    return F.pad(vector, (0, new_dim - vector.shape[-1]))
 
 
 def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
@@ -568,7 +565,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     def _prepare_attention_masks_4d(self, att_2d_masks):
         """Helper method to prepare 4D attention masks for transformer."""
         att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        return torch.where(att_2d_masks_4d, 0.0, -2.3819763e38)
+        return torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
 
     def sample_noise(self, shape, device):
         return torch.normal(
@@ -852,7 +849,7 @@ class PI0Policy(PreTrainedPolicy):
     config_class = PI0Config
     name = "pi0"
 
-    def __init__(  # see lerobot pi0 `__init__`
+    def __init__(
         self,
         config: PI0Config,
     ):
@@ -1046,10 +1043,10 @@ class PI0Policy(PreTrainedPolicy):
 
         return fixed_state_dict
 
-    def get_optim_params(self) -> dict:  # see lerobot pi0 `get_optim_params`
+    def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def reset(self):  # see lerobot pi0 `reset`
+    def reset(self):
         """Reset internal state - called when environment resets."""
         self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._queues = {
@@ -1058,7 +1055,7 @@ class PI0Policy(PreTrainedPolicy):
 
     def _preprocess_images(
         self, batch: dict[str, Tensor]
-    ) -> tuple[list[Tensor], list[Tensor]]:  # see lerobot pi0 `prepare_images`
+    ) -> tuple[list[Tensor], list[Tensor]]:
         """Preprocess images for the model.
 
         Images from LeRobot are typically in [B, C, H, W] format and normalized to [0, 1].
@@ -1070,18 +1067,15 @@ class PI0Policy(PreTrainedPolicy):
         # Get device from model parameters
         device = next(self.parameters()).device
 
-        # from lerobot pi0: Use dynamic image configuration
         present_img_keys = [key for key in self.config.image_features if key in batch]
         missing_img_keys = [key for key in self.config.image_features if key not in batch]
 
-        # from lerobot pi0: Validation: Require at least one image to be present
         if len(present_img_keys) == 0:
             raise ValueError(
                 f"All image features are missing from the batch. At least one expected. "
                 f"(batch: {batch.keys()}) (image_features: {self.config.image_features})"
             )
 
-        # from lerobot pi0: Preprocess image features present in the batch
         for key in present_img_keys:
             img = batch[key]
 
@@ -1104,7 +1098,7 @@ class PI0Policy(PreTrainedPolicy):
             if img.shape[1:3] != self.config.image_resolution:
                 img = resize_with_pad_torch(img, *self.config.image_resolution)
 
-            # from lerobot pi0: Normalize from [0,1] to [-1,1] as expected by siglip
+            # Normalize from [0,1] to [-1,1] as expected by siglip
             img = img * 2.0 - 1.0
 
             # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
@@ -1112,32 +1106,32 @@ class PI0Policy(PreTrainedPolicy):
                 img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
 
             images.append(img)
-            # from lerobot pi0: Create mask (all ones for real images)
+            # Create mask (all ones for real images)
             bsize = img.shape[0]
             mask = torch.ones(bsize, dtype=torch.bool, device=device)
             img_masks.append(mask)
 
-        # from lerobot pi0: Create image features not present in the batch as fully 0 padded images
+        # Create image features not present in the batch as fully 0 padded images
         for _num_empty_cameras in range(len(missing_img_keys)):
-            img = torch.ones_like(img) * -1  # from lerobot pi0: padded with -1 for SigLIP
-            mask = torch.zeros_like(mask)  # from lerobot pi0: mask is zero for empty cameras
+            img = torch.ones_like(img) * -1  # padded with -1 for SigLIP
+            mask = torch.zeros_like(mask)  # mask is zero for empty cameras
             images.append(img)
             img_masks.append(mask)
 
         return images, img_masks
 
-    def prepare_state(self, batch):  # see lerobot pi0 `prepare_state` (exact copy)
+    def prepare_state(self, batch):
         """Pad state"""
         state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
         return state
 
-    def prepare_action(self, batch):  # see lerobot pi0 `prepare_action` (exact copy)
+    def prepare_action(self, batch):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:  # see lerobot pi0 `select_action`
+    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
         self.eval()
 
@@ -1150,7 +1144,7 @@ class PI0Policy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:  # see lerobot pi0 `select_action`
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor: 
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
@@ -1162,13 +1156,13 @@ class PI0Policy(PreTrainedPolicy):
         # Sample actions using the model
         actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state)
 
-        # Unpad actions to actual action dimension, works similar to lerobot pi0 `prepare_action`
+        # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
         return actions
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:  # see lerobot pi0 `forward`
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training."""
 
         # Prepare inputs

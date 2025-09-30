@@ -26,32 +26,27 @@ from lerobot.utils.constants import OBS_IMAGES
 @PreTrainedConfig.register_subclass("pi0")
 @dataclass
 class PI0Config(PreTrainedConfig):
-    # Model architecture
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     dtype: str = "float32"  # Options: "bfloat16", "float32"
 
-    # Input / output structure
     n_obs_steps: int = 1
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
 
     # Shorter state and action vectors will be padded to these dimensions
-    max_state_dim: int = 32  # State dimension (will be padded to 32)
-    max_action_dim: int = 32  # Action dimension (will be padded to 32)
+    max_state_dim: int = 32 
+    max_action_dim: int = 32 
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10  # Number of denoising steps during inference
-    time_sampling_beta_alpha: float = 1.5  # Beta distribution alpha parameter for time sampling
-    time_sampling_beta_beta: float = 1.0  # Beta distribution beta parameter for time sampling
-    time_sampling_scale: float = 0.999  # Scale factor for time sampling
-    time_sampling_offset: float = 0.001  # Offset for time sampling
-    min_period: float = 4e-3  # Min period for sinusoidal positional encoding
-    max_period: float = 4.0  # Max period for sinusoidal positional encoding
+    time_sampling_beta_alpha: float = 1.5
+    time_sampling_beta_beta: float = 1.0
+    time_sampling_scale: float = 0.999
+    time_sampling_offset: float = 0.001
+    min_period: float = 4e-3 
+    max_period: float = 4.0
 
-    attention_mask_value: float = -2.3819763e38
-
-    # Image preprocessing
     image_resolution: tuple[int, int] = (224, 224)  # see openpi `preprocessing_pytorch.py`
 
     # Add empty images. Used to add empty cameras when no image features are present.
@@ -60,7 +55,7 @@ class PI0Config(PreTrainedConfig):
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": NormalizationMode.IDENTITY,  # Images are normalized to [-1, 1] in preprocessing
+            "VISUAL": NormalizationMode.IDENTITY, 
             "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MEAN_STD,
         }
@@ -84,7 +79,7 @@ class PI0Config(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 48  # pi0=48, see openpi `__post_init__`
+    tokenizer_max_length: int = 48  # see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()
@@ -117,14 +112,14 @@ class PI0Config(PreTrainedConfig):
         if "observation.state" not in self.input_features:
             state_feature = PolicyFeature(
                 type=FeatureType.STATE,
-                shape=(self.max_state_dim,),  # Will be padded to max_state_dim
+                shape=(self.max_state_dim,),  # Padded to max_state_dim
             )
             self.input_features["observation.state"] = state_feature
 
         if "action" not in self.output_features:
             action_feature = PolicyFeature(
                 type=FeatureType.ACTION,
-                shape=(self.max_action_dim,),  # Will be padded to max_action_dim
+                shape=(self.max_action_dim,),  # Padded to max_action_dim
             )
             self.output_features["action"] = action_feature
 

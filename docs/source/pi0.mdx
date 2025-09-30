@@ -4,7 +4,7 @@
 
 ## Model Overview
 
-π₀ represents a breakthrough in robotics as the first general-purpose robot foundation model developed by [Physical Intelligence](https://www.physicalintelligence.company/blog/pi0). Unlike traditional robots that are narrow specialists programmed for repetitive motions, π₀ is designed to be a generalist policy that can understand visual inputs, interpret natural language instructions, and control a variety of different robots across diverse tasks.
+π₀ represents a breakthrough in robotics as the first general-purpose robot foundation model developed by [Physical Intelligence](https://www.physicalintelligence.company/blog/pi0). Unlike traditional robot programs that are narrow specialists programmed for repetitive motions, π₀ is designed to be a generalist policy that can understand visual inputs, interpret natural language instructions, and control a variety of different robots across diverse tasks.
 
 ### The Vision for Physical Intelligence
 
@@ -54,7 +54,7 @@ python src/lerobot/scripts/train.py \
     --policy.type=pi0 \
     --output_dir=./outputs/pi0_training \
     --job_name=pi0_training \
-    --policy.pretrained_path=pepijn223/pi0_base_fp32 \
+    --policy.pretrained_path=lerobot/pi0_base \
     --policy.repo_id=your_repo_id \
     --policy.compile_model=true \
     --policy.gradient_checkpointing=true \
@@ -71,10 +71,9 @@ python src/lerobot/scripts/train.py \
 - **`--policy.gradient_checkpointing=true`**: Reduces memory usage significantly during training
 - **`--policy.dtype=bfloat16`**: Use mixed precision training for efficiency
 - **`--batch_size=32`**: Batch size for training, adapt this based on your GPU memory
-- **`--policy.pretrained_path=pepijn223/pi0_base_fp32`**: The base π₀ model you want to finetune, options are:
-  - [pepijn223/pi0_base_fp32](https://huggingface.co/pepijn223/pi0_base_fp32)
-  - [pepijn223/pi0_libero_fp32](https://huggingface.co/pepijn223/pi0_libero_fp32) (specifically trained on the Libero dataset)
-  - [pepijn223/pi0_droid_fp32](https://huggingface.co/pepijn223/pi0_droid_fp32) (specifically trained on the Droid dataset)
+- **`--policy.pretrained_path=lerobot/pi0_base`**: The base π₀ model you want to finetune, options are:
+  - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
+  - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero) (specifically trained on the Libero dataset)
 
 ## License
 

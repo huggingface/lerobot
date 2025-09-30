@@ -89,7 +89,7 @@ def instantiate_lerobot_pi0(
 ]:
     if from_pretrained:
         # Load the policy first
-        policy = PI0Policy.from_pretrained(pretrained_name_or_path="pepijn223/pi0_base", strict=True)
+        policy = PI0Policy.from_pretrained(pretrained_name_or_path="lerobot/pi0_base", strict=True)
     else:
         config = PI0Config(max_action_dim=DUMMY_ACTION_DIM, max_state_dim=DUMMY_STATE_DIM, dtype="float32")
         policy = PI0Policy(config)
@@ -108,7 +108,7 @@ def instantiate_original_pi0(from_pretrained: bool = False, model_path: str = No
 
     if from_pretrained:
         try:
-            print("Loading converted PyTorch weights from HuggingFace Hub (pepijn223/pi0_base)...")
+            print("Loading converted PyTorch weights from HuggingFace Hub (lerobot/pi0_base)...")
 
             # Download the model from HuggingFace Hub
             import safetensors.torch
@@ -119,7 +119,7 @@ def instantiate_original_pi0(from_pretrained: bool = False, model_path: str = No
                 cache_dir = model_path
                 print(f"Using cached model from: {cache_dir}")
             else:
-                cache_dir = snapshot_download(repo_id="pepijn223/pi0_base", repo_type="model")
+                cache_dir = snapshot_download(repo_id="lerobot/pi0_base", repo_type="model")
                 print(f"Downloaded model to: {cache_dir}")
 
             # Try to load safetensors format first

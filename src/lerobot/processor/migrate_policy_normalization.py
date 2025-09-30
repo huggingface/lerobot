@@ -339,25 +339,25 @@ def load_state_dict_with_missing_key_handling(
 
     if missing_keys:
         if problematic_missing_keys:
-            print(f"⚠️  WARNING: Found {len(problematic_missing_keys)} unexpected missing keys:")
+            print(f"WARNING: Found {len(problematic_missing_keys)} unexpected missing keys:")
             for key in problematic_missing_keys:
                 print(f"   - {key}")
 
         if len(missing_keys) > len(problematic_missing_keys):
             whitelisted_missing = [key for key in missing_keys if key in whitelisted_keys]
-            print(f"ℹ️  INFO: Found {len(whitelisted_missing)} expected missing keys (whitelisted):")
+            print(f"INFO: Found {len(whitelisted_missing)} expected missing keys (whitelisted):")
             for key in whitelisted_missing:
                 print(f"   - {key}")
 
     if unexpected_keys:
-        print(f"⚠️  WARNING: Found {len(unexpected_keys)} unexpected keys:")
+        print(f"WARNING: Found {len(unexpected_keys)} unexpected keys:")
         for key in unexpected_keys:
             print(f"   - {key}")
 
     if not missing_keys and not unexpected_keys:
-        print("✅ Successfully loaded cleaned state dict into policy model (all keys matched)")
+        print("Successfully loaded cleaned state dict into policy model (all keys matched)")
     else:
-        print("⚠️  State dict loaded with some missing/unexpected keys (see details above)")
+        print("State dict loaded with some missing/unexpected keys (see details above)")
 
     return problematic_missing_keys
 
@@ -406,14 +406,14 @@ def display_migration_summary_with_warnings(problematic_missing_keys: list[str])
         return
 
     print("\n" + "=" * 60)
-    print("🚨 IMPORTANT: MIGRATION COMPLETED WITH WARNINGS")
+    print("IMPORTANT: MIGRATION COMPLETED WITH WARNINGS")
     print("=" * 60)
     print(
         f"The migration was successful, but {len(problematic_missing_keys)} unexpected missing keys were found:"
     )
     print()
     for key in problematic_missing_keys:
-        print(f"   ❌ {key}")
+        print(f"   - {key}")
     print()
     print("These missing keys may indicate:")
     print("  • The model architecture has changed")
@@ -671,25 +671,25 @@ def main():
 
         if create_pr:
             # Separate commit description for PR body
-            commit_description = """🤖 **Automated Policy Migration to PolicyProcessorPipeline**
+            commit_description = """**Automated Policy Migration to PolicyProcessorPipeline**
 
 This PR migrates your model to the new LeRobot policy format using the modern PolicyProcessorPipeline architecture.
 
 ## What Changed
 
-### ✨ **New Architecture - PolicyProcessorPipeline**
+### **New Architecture - PolicyProcessorPipeline**
 Your model now uses external PolicyProcessorPipeline components for data processing instead of built-in normalization layers. This provides:
 - **Modularity**: Separate preprocessing and postprocessing pipelines
 - **Flexibility**: Easy to swap, configure, and debug processing steps
 - **Compatibility**: Works with the latest LeRobot ecosystem
 
-### 🔧 **Normalization Extraction**
+### **Normalization Extraction**
 We've extracted normalization statistics from your model's state_dict and removed the built-in normalization layers:
 - **Extracted patterns**: `normalize_inputs.*`, `unnormalize_outputs.*`, `normalize.*`, `unnormalize.*`, `input_normalizer.*`, `output_normalizer.*`
 - **Statistics preserved**: Mean, std, min, max values for all features
 - **Clean model**: State dict now contains only core model weights
 
-### 📦 **Files Added**
+### **Files Added**
 - **preprocessor_config.json**: Configuration for input preprocessing pipeline
 - **postprocessor_config.json**: Configuration for output postprocessing pipeline
 - **model.safetensors**: Clean model weights without normalization layers
@@ -697,13 +697,13 @@ We've extracted normalization statistics from your model's state_dict and remove
 - **train_config.json**: Training configuration
 - **README.md**: Updated model card with migration information
 
-### 🚀 **Benefits**
+### **Benefits**
 - **Backward Compatible**: Your model behavior remains identical
 - **Future Ready**: Compatible with latest LeRobot features and updates
 - **Debuggable**: Easy to inspect and modify processing steps
 - **Portable**: Processors can be shared and reused across models
 
-### 💻 **Usage**
+### **Usage**
 ```python
 # Load your migrated model
 from lerobot.policies import get_policy_class
