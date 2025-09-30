@@ -103,9 +103,12 @@ def process_single_episode(dataset: LeRobotDataset, episode_idx: int) -> dict:
         )
 
         if dataset.features[key]["dtype"] in ["image", "video"]:
-            ep_stats[key] = {
-                k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in ep_stats[key].items()
-            }
+            for k, v in ep_stats[key].items():
+                if dataset.features[key]["dtype"] == "video":
+                    v = v / 255.0
+                if k != "count":
+                    v = np.squeeze(v, axis=0)
+                ep_stats[key][k] = v
 
     return ep_stats
 
@@ -122,7 +125,7 @@ def compute_quantile_stats_for_dataset(dataset: LeRobotDataset) -> dict[str, dic
     logging.info(f"Computing quantile statistics for dataset with {dataset.num_episodes} episodes")
 
     episode_stats_list = []
-    max_workers = min(dataset.num_episodes, 8)
+    max_workers = min(dataset.num_episodes, 16)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_episode = {
