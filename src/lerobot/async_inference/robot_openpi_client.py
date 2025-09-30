@@ -26,7 +26,7 @@ python src/lerobot/scripts/server/robot_openpi_client.py \
 ```
 """
 
-from lerobot.scripts.server.configs import RobotOpenpiClientConfig
+from lerobot.async_inference.configs import RobotOpenpiClientConfig
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy
 import numpy as np
@@ -44,7 +44,7 @@ import draccus
 import grpc
 import torch
 
-from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs.policies import PreTrainedConfig
@@ -57,8 +57,8 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
-from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
-from lerobot.scripts.server.helpers import (
+from lerobot.async_inference.constants import SUPPORTED_ROBOTS
+from lerobot.async_inference.helpers import (
     Action,
     FPSTracker,
     Observation,
@@ -67,17 +67,13 @@ from lerobot.scripts.server.helpers import (
     TimedObservation,
     get_logger,
     map_robot_keys_to_lerobot_features,
-    validate_robot_cameras_for_policy,
-    visualize_action_queue_size,
     raw_observation_to_observation,
 )
-from lerobot.transport import (
-    services_pb2,  # type: ignore
-    services_pb2_grpc,  # type: ignore
-)
-from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
-from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.configs.types import PolicyFeature, FeatureType
+from lerobot.robots.bi_koch_follower.config_bi_koch_follower import make_bimanual_koch_robot_processors
+from lerobot.teleoperators.bi_koch_leader.config_bi_koch_leader import make_bimanual_koch_teleop_processors
+
+from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 
 
 class RobotOpenpiClient:
@@ -94,13 +90,14 @@ class RobotOpenpiClient:
         self.config = config
         self.robot = make_robot_from_config(config.robot)
         self.robot.connect()
-        _init_rerun(session_name="openpi_client")
+        init_rerun(session_name="openpi_client")
 
         self.lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
         # TODO: this needs to be consistent with the policy config
         self.policy_image_features = {
             "observation.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
-            "observation.images.front": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+            "observation.images.left_wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+            "observation.images.right_wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
         }
 
         self.server_address = config.server_address
@@ -110,6 +107,16 @@ class RobotOpenpiClient:
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
         self.client = websocket_client_policy.WebsocketClientPolicy(host=self.host, port=self.port)
+        self.robot_action_processor = make_bimanual_koch_robot_processors(self.robot, True)
+        self.teleop_action_processor = make_bimanual_koch_teleop_processors(self.robot, True)
+
+        self.action_features = aggregate_pipeline_dataset_features(
+            pipeline=self.teleop_action_processor,
+            initial_features=create_initial_features(
+                action=self.robot.action_features
+            ),  # TODO(steven, pepijn): in future this should be come from teleop or policy
+            use_videos=True,
+        )["action"]["names"]
 
     @property
     def running(self):
@@ -121,7 +128,7 @@ class RobotOpenpiClient:
         self.logger.debug("Robot disconnected")
 
     def _action_tensor_to_action_dict(self, action_tensor: torch.Tensor) -> dict[str, float]:
-        action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
+        action = {key: action_tensor[i].item() for i, key in enumerate(self.action_features)}
         return action
 
     def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
@@ -147,7 +154,9 @@ class RobotOpenpiClient:
                 self.config.device,
             )
             # Convert to numpy. This prompt hack is annoying.
-            observation = {k: v.numpy().squeeze(0) for k, v in observation.items()} # Remove the batch dimension for openpi policies
+            observation = {
+                k: v.numpy().squeeze(0) for k, v in observation.items()
+            }  # Remove the batch dimension for openpi policies
             observation["prompt"] = task
 
             timed_observation = TimedObservation(
@@ -162,11 +171,24 @@ class RobotOpenpiClient:
             self.logger.info(f"Inference time (ms): {(time.perf_counter() - obs_capture_time) * 1000:.2f}")
 
             if self.config.actions_per_chunk > action_chunk.shape[0]:
-                self.logger.warning(f"Actions per chunk is greater than the number of actions in the chunk: {self.config.actions_per_chunk} > {action_chunk.shape[0]}")
-            action_chunk = action_chunk[:self.config.actions_per_chunk]
+                self.logger.warning(
+                    f"Actions per chunk is greater than the number of actions in the chunk: {self.config.actions_per_chunk} > {action_chunk.shape[0]}"
+                )
+            action_chunk = action_chunk[: self.config.actions_per_chunk]
+
+            base_action_xyz = self.teleop_action_processor(
+                (raw_observation, raw_observation)
+            )  # we need to run FK and use this as our zero.
 
             for action in action_chunk:
-                _performed_action = self.robot.send_action(self._action_tensor_to_action_dict(action))
+                action_tensor = self._action_tensor_to_action_dict(action)
+                action_tensor_world = action_tensor.copy()
+                for key in action_tensor:
+                    if "gripper" not in key:
+                        assert key in base_action_xyz, f"Key {key} not in base_action_xyz"
+                        action_tensor_world[key] = action_tensor[key] + base_action_xyz[key]
+                processed_action = self.robot_action_processor((action_tensor_world, raw_observation))
+                _performed_action = self.robot.send_action(processed_action)
                 log_rerun_data(raw_observation, _performed_action)
                 time.sleep(self.config.environment_dt)
 

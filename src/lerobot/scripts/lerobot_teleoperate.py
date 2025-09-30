@@ -165,7 +165,6 @@ def teleop_loop(
 
         # Process teleop action through pipeline
         teleop_action = teleop_action_processor((raw_action, obs))
-        # teleop_action = teleop_action_processor(raw_action)
         # Process action for robot through pipeline
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
@@ -196,38 +195,39 @@ def teleop_loop(
         busy_wait(1 / fps - dt_s)
         loop_s = time.perf_counter() - loop_start
 
-        output_lines.append("-" * (display_len + 20))
-        # Actions block
-        output_lines.append("ACTIONS")
-        if unnormalized_action is not None:
-            output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7} | {'RAW':>7}")
-            for motor, value in raw_action.items():
-                raw_val = unnormalized_action.get(motor) if isinstance(unnormalized_action, dict) else None
-                raw_display = f"{int(raw_val):>7}" if isinstance(raw_val, (int, float)) else f"{'N/A':>7}"
-                output_lines.append(f"{motor:<{display_len}} | {value:>7.2f} | {raw_display}")
-        else:
-            output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7}")
-            for motor, value in raw_action.items():
-                output_lines.append(f"{motor:<{display_len}} | {value:>7.2f}")
+        # Uncomment this to debug the raw encoder reading values
+        # output_lines.append("-" * (display_len + 20))
+        # # Actions block
+        # output_lines.append("ACTIONS")
+        # if unnormalized_action is not None:
+        #     output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7} | {'RAW':>7}")
+        #     for motor, value in raw_action.items():
+        #         raw_val = unnormalized_action.get(motor) if isinstance(unnormalized_action, dict) else None
+        #         raw_display = f"{int(raw_val):>7}" if isinstance(raw_val, (int, float)) else f"{'N/A':>7}"
+        #         output_lines.append(f"{motor:<{display_len}} | {value:>7.2f} | {raw_display}")
+        # else:
+        #     output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        #     for motor, value in raw_action.items():
+        #         output_lines.append(f"{motor:<{display_len}} | {value:>7.2f}")
 
-        # Observations block
-        output_lines.append("OBSERVATIONS")
-        if raw_observation is not None:
-            output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7} | {'RAW':>7}")
-            for key, value in obs.items():
-                if not key.endswith(".pos"):
-                    continue
-                raw_val = raw_observation.get(key) if isinstance(raw_observation, dict) else None
-                raw_display = f"{int(raw_val):>7}" if isinstance(raw_val, (int, float)) else f"{'N/A':>7}"
-                output_lines.append(f"{key:<{display_len}} | {value:>7.2f} | {raw_display}")
-        else:
-            output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7}")
-            for key, value in obs.items():
-                if not key.endswith(".pos"):
-                    continue
-                output_lines.append(f"{key:<{display_len}} | {value:>7.2f}")
+        # # Observations block
+        # output_lines.append("OBSERVATIONS")
+        # if raw_observation is not None:
+        #     output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7} | {'RAW':>7}")
+        #     for key, value in obs.items():
+        #         if not key.endswith(".pos"):
+        #             continue
+        #         raw_val = raw_observation.get(key) if isinstance(raw_observation, dict) else None
+        #         raw_display = f"{int(raw_val):>7}" if isinstance(raw_val, (int, float)) else f"{'N/A':>7}"
+        #         output_lines.append(f"{key:<{display_len}} | {value:>7.2f} | {raw_display}")
+        # else:
+        #     output_lines.append(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        #     for key, value in obs.items():
+        #         if not key.endswith(".pos"):
+        #             continue
+        #         output_lines.append(f"{key:<{display_len}} | {value:>7.2f}")
 
-        # Timing line (keep a blank line before time for readability)
+        # # Timing line (keep a blank line before time for readability)
         output_lines.append("")
         output_lines.append(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 

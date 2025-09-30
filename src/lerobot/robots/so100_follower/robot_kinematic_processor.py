@@ -27,6 +27,7 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     RobotAction,
+    RobotObservation,
     RobotActionProcessorStep,
     TransitionKey,
 )
@@ -255,6 +256,10 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
         return features
 
 
+def angular_diff(a, b):
+    diff = (a - b + 180) % 360 - 180
+    return abs(diff)
+
 @ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
 @dataclass
 class InverseKinematicsEEToJoints(RobotActionProcessorStep):
@@ -277,6 +282,8 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True
     prefix: str = ""
+    threshold_deg: float = 90.0
+    _first_solve: bool = True
 
     def action(self, action: RobotAction) -> RobotAction:
         x = action.pop(f"{self.prefix}ee.x")
@@ -300,7 +307,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
-        if q_raw is None:
+        if q_raw is None or len(q_raw) == 0:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
@@ -315,17 +322,40 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         t_des[:3, 3] = [x, y, z]
 
         # Compute inverse kinematics
-        q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
-        self.q_curr = q_target
+        num_tries = 5 if self._first_solve else 1
+        for _ in range(num_tries): # Multiple first attempts to get a solutionc
+            if self._first_solve:
+                self.q_curr = q_raw
+            # Try more for the first time
+            for _ in range(num_tries):
+                q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+                self.q_curr = q_target
 
-        # TODO: This is sentitive to order of motor_names = q_target mapping
-        for i, name in enumerate(self.motor_names):
-            if "gripper" not in name:
-                action[f"{name}.pos"] = float(q_target[i])
-            else:
-                action[f"{name}.pos"] = float(gripper_pos)
+                # TODO: This is sentitive to order of motor_names = q_target mapping
+                for i, name in enumerate(self.motor_names):
+                    if "gripper" not in name:
+                        action[f"{name}.pos"] = float(q_target[i])
+                    else:
+                        action[f"{name}.pos"] = float(gripper_pos)
 
+            if self.verify_solution_within_joint_limits(action, observation):
+                break
+
+        self._first_solve = False
+        if not self.verify_solution_within_joint_limits(action, observation):
+            raise ValueError("Inverse kinematics failed to find a valid solution within joint safety limits.")
         return action
+
+    def verify_solution_within_joint_limits(self, action: RobotAction, observation: RobotObservation) -> bool:
+        for motor_name in self.motor_names[:-1]: # exclude gripper
+            full_motor_name = f"{motor_name}.pos"
+            target_pos = action[full_motor_name]
+            current_pos = observation[full_motor_name]
+            if angular_diff(target_pos, current_pos) > self.threshold_deg:
+                print(f"JointSafety: commanded {full_motor_name} is too large, likely issue with your IK solution: target:{target_pos}, current:{current_pos}, threshold: {self.threshold_deg}")
+                return False
+        return True
+
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

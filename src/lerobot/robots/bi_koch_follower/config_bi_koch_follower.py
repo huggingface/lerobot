@@ -33,6 +33,16 @@ from lerobot.processor import (
 from ..config import RobotConfig
 
 
+MAX_RELATIVE_TARGET_DEFAULT = {
+    "shoulder_pan": 10.0,
+    "shoulder_lift": 10.0,
+    "elbow_flex": 10.0,
+    "wrist_flex": 15.0,
+    "wrist_roll": 20.0,
+    "gripper": 30.0,
+}
+
+
 @RobotConfig.register_subclass("bi_koch_follower")
 @dataclass
 class BiKochFollowerConfig(RobotConfig):
@@ -41,11 +51,15 @@ class BiKochFollowerConfig(RobotConfig):
 
     # Optional
     left_arm_disable_torque_on_disconnect: bool = True
-    left_arm_max_relative_target: float | dict[str, float] | None = None
-    left_arm_use_degrees: bool = False
+    left_arm_max_relative_target: float | dict[str, float] | None = field(
+        default_factory=lambda: MAX_RELATIVE_TARGET_DEFAULT.copy()
+    )
+    left_arm_use_degrees: bool = True
     right_arm_disable_torque_on_disconnect: bool = True
-    right_arm_max_relative_target: float | dict[str, float] | None = None
-    right_arm_use_degrees: bool = False
+    right_arm_max_relative_target: float | dict[str, float] | None = field(
+        default_factory=lambda: MAX_RELATIVE_TARGET_DEFAULT.copy()
+    )
+    right_arm_use_degrees: bool = True
 
     # cameras (shared between both arms)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)

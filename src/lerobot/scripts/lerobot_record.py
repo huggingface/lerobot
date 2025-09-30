@@ -376,7 +376,7 @@ def record_loop(
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
-        # busy_wait(1 / fps - dt_s)
+        busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
 
