@@ -27,6 +27,7 @@ import shutil
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 
 import einops
 import numpy as np
@@ -173,7 +174,7 @@ def benchmark_decoding(
     num_workers: int = 4,
     save_frames: bool = False,
 ) -> dict:
-    def process_sample(sample: int):
+    def process_sample(sample: int, lock: Lock):
         time_benchmark = TimerManager(log=False)
         timestamps = sample_timestamps(timestamps_mode, ep_num_images, fps)
         num_frames = len(timestamps)
@@ -216,8 +217,10 @@ def benchmark_decoding(
     # A sample is a single set of decoded frames specified by timestamps_mode (e.g. a single frame, 2 frames, etc.).
     # For each sample, we record metrics (loading time and quality metrics) which are then averaged over all samples.
     # As these samples are independent, we run them in parallel threads to speed up the benchmark.
+    # Use a single shared lock for all worker threads
+    shared_lock = Lock()
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(process_sample, i) for i in range(num_samples)]
+        futures = [executor.submit(process_sample, i, shared_lock) for i in range(num_samples)]
         for future in tqdm(as_completed(futures), total=num_samples, desc="samples", leave=False):
             result = future.result()
             load_times_video_ms.append(result["load_time_video_ms"])
