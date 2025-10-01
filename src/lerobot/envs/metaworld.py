@@ -1,6 +1,5 @@
 from collections import defaultdict
 from typing import Any, Callable, Sequence
-from itertools import chain
 import gymnasium as gym
 import metaworld
 import numpy as np
@@ -28,6 +27,9 @@ DIFFICULTY_TO_TASKS = data["DIFFICULTY_TO_TASKS"]
 TASK_POLICY_MAPPING = {
     k: getattr(policies, v) for k, v in data["TASK_POLICY_MAPPING"].items()
 }
+
+ACTION_DIM = 4
+OBS_DIM = 4
 
 class MetaworldEnv(gym.Env):
     # TODO(aliberts): add "human" render_mode
@@ -85,18 +87,19 @@ class MetaworldEnv(gym.Env):
                     "agent_pos": spaces.Box(
                         low=-1000.0,
                         high=1000.0,
-                        shape=(4,),
+                        shape=(OBS_DIM,),
                         dtype=np.float64,
                     ),
                 }
             )
 
-        self.action_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1, high=1, shape=(ACTION_DIM,), dtype=np.float32)
 
     def render(self):
         image = self._env.render()
         if self.camera_name == "corner2":
-            image = np.flip(image, (0, 1))  # images for some reason are flipped
+            # images for some reason are flipped
+            image = np.flip(image, (0, 1))
         return image
 
     def _make_envs_task(self, env_name: str):
@@ -142,12 +145,19 @@ class MetaworldEnv(gym.Env):
         return observation, info
 
     def step(self, action):
-        assert action.ndim == 1
-        raw_obs, reward, done, truncated, info = self._env.step(action)
+        if action.ndim != 1:
+            raise ValueError(
+                f"Expected action to be 1-D (shape (action_dim,)), "
+                f"but got shape {action.shape} with ndim={action.ndim}"
+            )
+        raw_obs, reward, _done, truncated, info = self._env.step(action)
 
-        terminated = is_success = int(info["success"]) == 1
+        # Determine whether the task was successful
+        is_success = bool(info.get("success", 0))
+        terminated = is_success
         info["is_success"] = is_success
 
+        # Format the raw observation into the expected structure
         observation = self._format_raw_obs(raw_obs, env=self._env)
 
         return observation, reward, terminated, truncated, info
