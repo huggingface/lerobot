@@ -90,7 +90,8 @@ repos:
   #   rev: v1.16.0
   #   hooks:
   #     - id: mypy
-  #       args: [--python-version=3.10]
+  #       args: [--config-file=pyproject.toml]
+  #       exclude: ^(examples|benchmarks|tests)/
 
   ##### Docstring Checks #####
   # - repo: https://github.com/akaihola/darglint2
