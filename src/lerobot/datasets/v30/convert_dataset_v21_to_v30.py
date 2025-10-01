@@ -37,6 +37,7 @@ Convert a local dataset (works in place):
 python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht \
     --root=/path/to/local/dataset/directory
+    --push-to-hub=false
 ```
 
 """
@@ -470,6 +471,7 @@ def convert_dataset(
     data_file_size_in_mb: int | None = None,
     video_file_size_in_mb: int | None = None,
     root: str | Path | None = None,
+    push_to_hub: bool = True,
 ):
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
@@ -514,21 +516,22 @@ def convert_dataset(
     shutil.move(str(root), str(old_root))
     shutil.move(str(new_root), str(root))
 
-    hub_api = HfApi()
-    try:
-        hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
-    except HTTPError as e:
-        print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
-        pass
-    hub_api.delete_files(
-        delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
-        repo_id=repo_id,
-        revision=branch,
-        repo_type="dataset",
-    )
-    hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
+    if push_to_hub:
+        hub_api = HfApi()
+        try:
+            hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+        except HTTPError as e:
+            print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
+            pass
+        hub_api.delete_files(
+            delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
+            repo_id=repo_id,
+            revision=branch,
+            repo_type="dataset",
+        )
+        hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
-    LeRobotDataset(repo_id).push_to_hub()
+        LeRobotDataset(repo_id).push_to_hub()
 
 
 if __name__ == "__main__":
@@ -563,6 +566,11 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Local directory to use for downloading/writing the dataset.",
+    )
+    parser.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help="Push the converted dataset to the hub.",
     )
 
     args = parser.parse_args()
