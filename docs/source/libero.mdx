@@ -144,14 +144,13 @@ python src/lerobot/scripts/eval.py \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
   --eval.batch_size=1 \
   --eval.n_episodes=5 \
-  --policy.path=lerobot/pi0_libero \
+  --policy.path=lerobot/pi05_libero \
+  --policy.n_action_steps=10 \
   --output_dir=./eval_logs/ \
-  --policy.compile_model=false \
-  --policy.gradient_checkpointing=false \
   --env.max_parallel_tasks=1
 ```
 
-**Note:** We set `n_action_steps=10` which normally has a default value of 50.
+**Note:** We set `n_action_steps=10`, similar to the original OpenPI implementation.
 
 ### Results
 
@@ -160,7 +159,7 @@ We obtain the following results on the LIBERO benchmark:
 | Model    | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average |
 | -------- | -------------- | ------------- | ----------- | --------- | ------- |
 | **π₀**   | x              | x             | x           | x         | **x**   |
-| **π₀.₅** | 98.0           | 99.0          | 97.0        | 93.0      | **x**   |
+| **π₀.₅** | 97.0           | 99.0          | 98.0        | 96.0      | **x**   |
 
 These results are consistent with the original results reported by Physical Intelligence:
 
