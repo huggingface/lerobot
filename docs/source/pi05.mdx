@@ -36,26 +36,6 @@ This diverse training mixture creates a "curriculum" that enables generalization
    pip install -e ".[pi]"
    ```
 
-### What the patches do:
-
-- Support the **AdaRMS optimizer**
-- Correctly control the precision of activations
-- Allow the KV cache to be used without updates
-
-**Important Notes:**
-
-- This permanently modifies your `transformers` installation
-- The changes survive reinstalls unless you explicitly remove the patched files or recreate the environment
-
-### Restoring Clean State
-
-To undo the patches and restore a clean state:
-
-```bash
-pip uninstall transformers
-pip install transformers==4.53.2
-```
-
 ## Usage
 
 To use π₀.₅ in your LeRobot configuration, specify the policy type as:
@@ -106,13 +86,13 @@ python src/lerobot/scripts/train.py \
 
 | Benchmark          | LeRobot Implementation | OpenPI Reference |
 | ------------------ | ---------------------- | ---------------- |
-| **Libero Spatial** | 98.0%                  | 98.8%            |
+| **Libero Spatial** | 97.0%                  | 98.8%            |
 | **Libero Object**  | 99.0%                  | 98.2%            |
-| **Libero Goal**    | 97.0%                  | 98.0%            |
-| **Libero 10**      | 93.0%                  | 92.4%            |
-| **Average**        | 96.75%                 | 96.85%           |
+| **Libero Goal**    | 98.0%                  | 98.0%            |
+| **Libero 10**      | 96.0%                  | 92.4%            |
+| **Average**        | 97.5%                  | 96.85%           |
 
-These results demonstrate π₀.₅'s strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, you can follow the instructions in the [Libero](#libero) section.
+These results demonstrate π₀.₅'s strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, you can follow the instructions in the [Libero](https://huggingface.co/docs/lerobot/libero) section.
 
 ## License
 
