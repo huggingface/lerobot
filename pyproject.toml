@@ -270,10 +270,10 @@ default.extend-ignore-identifiers-re = [
 # TODO: Enable mypy gradually module by module across multiple PRs
 # Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
 
-# [tool.mypy]
-# python_version = "3.10"
-# ignore_missing_imports = true
-# follow_imports = "skip"
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "skip"
 # warn_return_any = true
 # warn_unused_configs = true
 # strict = true
@@ -281,14 +281,14 @@ default.extend-ignore-identifiers-re = [
 # disallow_incomplete_defs = true
 # check_untyped_defs = true
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.*"
-# ignore_errors = true
+[[tool.mypy.overrides]]
+module = "lerobot.*"
+ignore_errors = true
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.envs.*"
-# # Enable type checking only for the envs module
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.envs.*"
+# Enable type checking only for the envs module
+ignore_errors = false
 
 
 # [[tool.mypy.overrides]]
@@ -299,7 +299,6 @@ default.extend-ignore-identifiers-re = [
 # module = "lerobot.configs.*"
 # ignore_errors = false
 
-# PHASE 2: Core modules
 # [[tool.mypy.overrides]]
 # module = "lerobot.optim.*"
 # ignore_errors = false
@@ -339,6 +338,7 @@ default.extend-ignore-identifiers-re = [
 # [[tool.mypy.overrides]]
 # module = "lerobot.rl.*"
 # ignore_errors = false
+
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.async_inference.*"
