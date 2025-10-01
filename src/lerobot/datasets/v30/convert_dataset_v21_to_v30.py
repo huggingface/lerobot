@@ -481,19 +481,15 @@ def convert_dataset(
     # First check if the dataset already has a v3.0 version
     if root is None:
         try:
-            snapshot_download(
-                repo_id,
-                repo_type="dataset",
-                revision=V30,
-                local_dir=HF_LEROBOT_HOME / repo_id
-            )
+            print("Trying to download v3.0 version of the dataset from the hub...")
+            snapshot_download(repo_id, repo_type="dataset", revision=V30, local_dir=HF_LEROBOT_HOME / repo_id)
             return
-        except Exception as e:
-            print(f"Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
+        except Exception:
+            print("Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
 
     # Set root based on whether local dataset path is provided
     if root is not None:
-        root = Path(root)
+        root = Path(root) / repo_id
         validate_local_dataset_structure(root)
         use_local_dataset = True
     else:
@@ -582,7 +578,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--push-to-hub",
-        action="store_true",
+        type=lambda input: input.lower() == "true",
+        default=True,
         help="Push the converted dataset to the hub.",
     )
 
