@@ -69,4 +69,4 @@ LOOKBACK_BACKTRACKTABLE = 100
 LOOKAHEAD_BACKTRACKTABLE = 100
 
 # openpi
-OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38 # TODO(pepijn): Modify this when extending support to fp8 models
+OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38  # TODO(pepijn): Modify this when extending support to fp8 models
