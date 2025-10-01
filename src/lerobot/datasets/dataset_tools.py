@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Dataset tools utilities for LeRobotDataset.
 
 This module provides utilities for:
@@ -32,7 +33,6 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from lerobot.constants import HF_LEROBOT_HOME
 from lerobot.datasets.aggregate import aggregate_datasets
 from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
@@ -50,6 +50,7 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
+from lerobot.utils.constants import HF_LEROBOT_HOME
 
 
 def delete_episodes(
@@ -80,15 +81,10 @@ def delete_episodes(
 
     logging.info(f"Deleting {len(episode_indices)} episodes from dataset")
 
-    # Create new dataset metadata
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_filtered"
-    if output_dir is None:
-        output_dir = HF_LEROBOT_HOME / repo_id
-    else:
-        output_dir = Path(output_dir)
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
-    # Get episodes to keep
     episodes_to_keep = [i for i in range(dataset.meta.total_episodes) if i not in episode_indices]
     if not episodes_to_keep:
         raise ValueError("Cannot delete all episodes from dataset")
@@ -105,11 +101,9 @@ def delete_episodes(
 
     # Process episodes
     episode_mapping = {}  # old_idx -> new_idx
-    new_episode_idx = 0
 
-    for old_idx in tqdm(episodes_to_keep, desc="Processing episodes"):
-        episode_mapping[old_idx] = new_episode_idx
-        new_episode_idx += 1
+    for new_idx, old_idx in tqdm(enumerate(episodes_to_keep), desc="Processing episodes"):
+        episode_mapping[old_idx] = new_idx
 
     # Copy data files and update indices
     _copy_and_reindex_data(dataset, new_meta, episode_mapping)
@@ -179,10 +173,7 @@ def split_dataset(
     if invalid:
         raise ValueError(f"Invalid episode indices: {invalid}")
 
-    if output_dir is None:
-        output_dir = HF_LEROBOT_HOME
-    else:
-        output_dir = Path(output_dir)
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / dataset.repo_id
 
     result_datasets = {}
 
@@ -245,10 +236,7 @@ def merge_datasets(
     if not datasets:
         raise ValueError("No datasets to merge")
 
-    if output_dir is None:
-        output_dir = HF_LEROBOT_HOME / output_repo_id
-    else:
-        output_dir = Path(output_dir)
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / output_repo_id
 
     # Extract repo_ids and roots
     repo_ids = [ds.repo_id for ds in datasets]
@@ -302,10 +290,7 @@ def add_feature(
 
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_modified"
-    if output_dir is None:
-        output_dir = HF_LEROBOT_HOME / repo_id
-    else:
-        output_dir = Path(output_dir)
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
     # Validate feature_info
     required_keys = {"dtype", "shape"}
@@ -381,10 +366,7 @@ def remove_feature(
 
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_modified"
-    if output_dir is None:
-        output_dir = HF_LEROBOT_HOME / repo_id
-    else:
-        output_dir = Path(output_dir)
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
     # Create new features dict
     new_features = {k: v for k, v in dataset.meta.features.items() if k not in feature_names}
@@ -562,10 +544,9 @@ def _copy_and_reindex_episodes_metadata(
             "length": src_episode["length"],
         }
 
-        # Copy other metadata
         episode_metadata = {
-            "data/chunk_index": 0,  # Will be recalculated when saving
-            "data/file_index": 0,  # Will be recalculated when saving
+            "data/chunk_index": 0,
+            "data/file_index": 0,
             "dataset_from_index": frame_offset,
             "dataset_to_index": frame_offset + src_episode["length"],
         }
@@ -574,7 +555,7 @@ def _copy_and_reindex_episodes_metadata(
         frame_offset += src_episode["length"]
 
         # Copy stats metadata
-        for key in src_episode.keys():
+        for key in src_episode:
             if key.startswith("stats/"):
                 episode_dict[key] = src_episode[key]
 
