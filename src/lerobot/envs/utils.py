@@ -48,25 +48,25 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
         for imgkey, img in imgs.items():
             # TODO(aliberts, rcadene): use transforms.ToTensor()?
-            img = torch.from_numpy(img)
+            img_tensor = torch.from_numpy(img)
 
             # When preprocessing observations in a non-vectorized environment, we need to add a batch dimension.
             # This is the case for human-in-the-loop RL where there is only one environment.
-            if img.ndim == 3:
-                img = img.unsqueeze(0)
+            if img_tensor.ndim == 3:
+                img_tensor = img_tensor.unsqueeze(0)
             # sanity check that images are channel last
-            _, h, w, c = img.shape
-            assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
+            _, h, w, c = img_tensor.shape
+            assert c < h and c < w, f"expect channel last images, but instead got {img_tensor.shape=}"
 
             # sanity check that images are uint8
-            assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
+            assert img_tensor.dtype == torch.uint8, f"expect torch.uint8, but instead {img_tensor.dtype=}"
 
             # convert to channel first of type float32 in range [0,1]
-            img = einops.rearrange(img, "b h w c -> b c h w").contiguous()
-            img = img.type(torch.float32)
-            img /= 255
+            img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous()
+            img_tensor = img_tensor.type(torch.float32)
+            img_tensor /= 255
 
-            return_observations[imgkey] = img
+            return_observations[imgkey] = img_tensor
 
     if "environment_state" in observations:
         env_state = torch.from_numpy(observations["environment_state"]).float()

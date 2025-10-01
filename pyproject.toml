@@ -270,80 +270,84 @@ default.extend-ignore-identifiers-re = [
 # TODO: Enable mypy gradually module by module across multiple PRs
 # Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
 
-# [tool.mypy]
-# python_version = "3.10"
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "skip"
 # warn_return_any = true
 # warn_unused_configs = true
-# ignore_missing_imports = false
 # strict = true
 # disallow_untyped_defs = true
 # disallow_incomplete_defs = true
 # check_untyped_defs = true
 
+[[tool.mypy.overrides]]
+module = "lerobot.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.envs.*"
+# Enable type checking only for the envs module
+ignore_errors = false
+
+
 # [[tool.mypy.overrides]]
 # module = "lerobot.utils.*"
-# # include = "src/lerobot/utils/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.configs.*"
-# # include = "src/lerobot/configs/**/*.py"
+# ignore_errors = false
 
-# # Data processing modules
-# [[tool.mypy.overrides]]
-# module = "lerobot.processor.*"
-# # include = "src/lerobot/processor/**/*.py"
-
-# [[tool.mypy.overrides]]
-# module = "lerobot.datasets.*"
-# # include = "src/lerobot/datasets/**/*.py"
-
-# # Core machine learning modules
 # [[tool.mypy.overrides]]
 # module = "lerobot.optim.*"
-# # include = "src/lerobot/optim/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.model.*"
-# # include = "src/lerobot/model/**/*.py"
+# ignore_errors = false
 
-# # Hardware interfaces
+# [[tool.mypy.overrides]]
+# module = "lerobot.processor.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.datasets.*"
+# ignore_errors = false
+
 # [[tool.mypy.overrides]]
 # module = "lerobot.cameras.*"
-# # include = "src/lerobot/cameras/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.motors.*"
-# # include = "src/lerobot/motors/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.robots.*"
-# # include = "src/lerobot/robots/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.teleoperators.*"
-# # include = "src/lerobot/teleoperators/**/*.py"
+# ignore_errors = false
 
-# # Complex modules (enable these last)
 # [[tool.mypy.overrides]]
 # module = "lerobot.policies.*"
-# # include = "src/lerobot/policies/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.rl.*"
-# # include = "src/lerobot/rl/**/*.py"
+# ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.envs.*"
-# # include = "src/lerobot/envs/**/*.py"
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.async_inference.*"
-# # include = "src/lerobot/async_inference/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.transport.*"
-# # include = "src/lerobot/transport/**/*.py"
+# ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.scripts.*"
-# # include = "src/lerobot/scripts/**/*.py"
+# ignore_errors = false
