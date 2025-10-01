@@ -339,6 +339,13 @@ class LeRobotDatasetMetadata:
         if not self.writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
             path.parent.mkdir(parents=True, exist_ok=True)
+
+            # When resuming, append to existing episode metadata file
+            if path.exists():
+                existing_df = pd.read_parquet(path)
+                df = pd.concat([existing_df, df], ignore_index=True)
+                table = pa.Table.from_pandas(df, preserve_index=False)
+
             self.writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
@@ -1207,8 +1214,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if has_images:
             # For images, we need to handle appending manually
-            if path.exists() and self.latest_episode is not None:
-                # Read existing data and append new data
+            if path.exists() and self.writer is None:
+                # Read existing data and append new data (happens when resuming or after writer was closed)
                 existing_df = pd.read_parquet(path)
                 df = pd.concat([existing_df, df], ignore_index=True)
 
@@ -1217,6 +1224,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # For non-image data, use standard PyArrow parquet writer
             table = pa.Table.from_pandas(df, preserve_index=False)
             if not self.writer:
+                # When resuming or after writer was closed, append to existing file
+                if path.exists():
+                    existing_df = pd.read_parquet(path)
+                    df = pd.concat([existing_df, df], ignore_index=True)
+                    table = pa.Table.from_pandas(df, preserve_index=False)
+
                 self.writer = pq.ParquetWriter(
                     path, schema=table.schema, compression="snappy", use_dictionary=True
                 )
