@@ -176,7 +176,7 @@ class ReplayBuffer:
                     self.complementary_info[key] = torch.empty(
                         (self.capacity, *value_shape), device=self.storage_device
                     )
-                elif isinstance(value, (int, float)):
+                elif isinstance(value, (int | float)):
                     # Handle scalar values similar to reward
                     self.complementary_info[key] = torch.empty((self.capacity,), device=self.storage_device)
                 else:
@@ -223,7 +223,7 @@ class ReplayBuffer:
                     value = complementary_info[key]
                     if isinstance(value, torch.Tensor):
                         self.complementary_info[key][self.position].copy_(value.squeeze(dim=0))
-                    elif isinstance(value, (int, float)):
+                    elif isinstance(value, (int | float)):
                         self.complementary_info[key][self.position] = value
 
         self.position = (self.position + 1) % self.capacity

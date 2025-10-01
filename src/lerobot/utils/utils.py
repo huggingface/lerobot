@@ -331,10 +331,6 @@ class TimerManager:
         return deepcopy(self._history)
 
     @property
-    def fps_history(self) -> list[float]:
-        return [1.0 / t for t in self._history]
-
-    @property
     def fps_last(self) -> float:
         return 0.0 if self.last == 0 else 1.0 / self.last
 

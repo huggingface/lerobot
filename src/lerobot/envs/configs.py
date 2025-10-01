@@ -193,7 +193,6 @@ class ObservationConfig:
 
     add_joint_velocity_to_observation: bool = False
     add_current_to_observation: bool = False
-    add_ee_pose_to_observation: bool = False
     display_cameras: bool = False
 
 
@@ -203,7 +202,6 @@ class GripperConfig:
 
     use_gripper: bool = True
     gripper_penalty: float = 0.0
-    gripper_penalty_in_reward: bool = False
 
 
 @dataclass
@@ -256,7 +254,7 @@ class LiberoEnv(EnvConfig):
     render_mode: str = "rgb_array"
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
-    camera_name_mapping: dict[str, str] | None = (None,)
+    camera_name_mapping: dict[str, str] | None = None
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
