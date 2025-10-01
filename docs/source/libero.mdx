@@ -132,8 +132,8 @@ We reproduce the results of π₀ and π₀.₅ on the LIBERO benchmark using th
 
 The finetuned models can be found here:
 
-- **π₀ LIBERO**: [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero)
-- **π₀.₅ LIBERO**: [lerobot/pi05_libero](https://huggingface.co/lerobot/pi05_libero)
+- **π₀ LIBERO**: [lerobot/pi0_libero_finetuned](https://huggingface.co/lerobot/pi0_libero_finetuned)
+- **π₀.₅ LIBERO**: [lerobot/pi05_libero_finetuned](https://huggingface.co/lerobot/pi05_libero_finetuned)
 
 We then evaluate the finetuned models using the LeRobot LIBERO implementation, by running the following command:
 
@@ -144,7 +144,7 @@ python src/lerobot/scripts/eval.py \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
   --eval.batch_size=1 \
   --eval.n_episodes=5 \
-  --policy.path=lerobot/pi05_libero \
+  --policy.path=pi05_libero_finetuned \
   --policy.n_action_steps=10 \
   --output_dir=./eval_logs/ \
   --env.max_parallel_tasks=1
@@ -158,10 +158,11 @@ We obtain the following results on the LIBERO benchmark:
 
 | Model    | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average |
 | -------- | -------------- | ------------- | ----------- | --------- | ------- |
-| **π₀**   | x              | x             | x           | x         | **x**   |
-| **π₀.₅** | 97.0           | 99.0          | 98.0        | 96.0      | **x**   |
+| **π₀**   | 60.0           | 58.0          | 57.0        | 17.0      | **48.0**   |
+| **π₀.₅** | 97.0           | 99.0          | 98.0        | 96.0      | **97.5**   |
 
-These results are consistent with the original results reported by Physical Intelligence:
+
+These results are consistent with the original [results](https://github.com/Physical-Intelligence/openpi/tree/main/examples/libero#results) reported by Physical Intelligence:
 
 | Model    | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average   |
 | -------- | -------------- | ------------- | ----------- | --------- | --------- |
