@@ -270,18 +270,18 @@ default.extend-ignore-identifiers-re = [
 # TODO: Enable mypy gradually module by module across multiple PRs
 # Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
 
-[tool.mypy]
-python_version = "3.10"
+# [tool.mypy]
+# python_version = "3.10"
 # Exclude examples, benchmarks, and tests from type checking
-exclude = [
-    "examples/",
-    "benchmarks/",
-    "tests/",
-]
+# exclude = [
+#     "examples/",
+#     "benchmarks/",
+#     "tests/",
+# ]
 # Ignore missing imports for third-party libraries without stubs
-ignore_missing_imports = true
+# ignore_missing_imports = true
 # Don't follow imports - only check files explicitly passed to mypy
-follow_imports = "skip"
+# follow_imports = "skip"
 # Gradual typing - start lenient, enable these as code improves:
 # warn_return_any = true
 # warn_unused_configs = true
@@ -343,10 +343,9 @@ follow_imports = "skip"
 # follow_imports = "normal"
 
 # Currently checking only the envs module
-[[tool.mypy.overrides]]
-module = "lerobot.envs.*"
-# Re-enable import following for envs module only
-follow_imports = "normal"
+# [[tool.mypy.overrides]]
+# module = "lerobot.envs.*"
+# follow_imports = "normal"
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.async_inference.*"

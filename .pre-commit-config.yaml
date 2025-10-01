@@ -91,7 +91,6 @@ repos:
   #   hooks:
   #     - id: mypy
   #       args: [--config-file=pyproject.toml]
-  #       files: ^src/lerobot/envs/
   #       exclude: ^(examples|benchmarks|tests)/
 
   ##### Docstring Checks #####
