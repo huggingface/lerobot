@@ -35,8 +35,8 @@ class PI0Config(PreTrainedConfig):
     n_action_steps: int = 50  # Number of action steps to execute
 
     # Shorter state and action vectors will be padded to these dimensions
-    max_state_dim: int = 32 
-    max_action_dim: int = 32 
+    max_state_dim: int = 32
+    max_action_dim: int = 32
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10  # Number of denoising steps during inference
@@ -44,7 +44,7 @@ class PI0Config(PreTrainedConfig):
     time_sampling_beta_beta: float = 1.0
     time_sampling_scale: float = 0.999
     time_sampling_offset: float = 0.001
-    min_period: float = 4e-3 
+    min_period: float = 4e-3
     max_period: float = 4.0
 
     image_resolution: tuple[int, int] = (224, 224)  # see openpi `preprocessing_pytorch.py`
@@ -55,7 +55,7 @@ class PI0Config(PreTrainedConfig):
     # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": NormalizationMode.IDENTITY, 
+            "VISUAL": NormalizationMode.IDENTITY,
             "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MEAN_STD,
         }
