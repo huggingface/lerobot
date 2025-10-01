@@ -40,10 +40,8 @@ from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
-    DEFAULT_VIDEO_FILE_SIZE_IN_MB,
-    DEFAULT_VIDEO_PATH,
+    DEFAULT_EPISODES_PATH,
     get_parquet_file_size_in_mb,
-    get_video_size_in_mb,
     to_parquet_with_hf_images,
     update_chunk_file_indices,
     write_info,
@@ -51,6 +49,28 @@ from lerobot.datasets.utils import (
     write_tasks,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
+
+
+def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
+    """Load a single episode's metadata including stats from parquet file.
+
+    Args:
+        src_dataset: Source dataset
+        episode_idx: Episode index to load
+
+    Returns:
+        dict containing episode metadata and stats
+    """
+    ep_meta = src_dataset.meta.episodes[episode_idx]
+    chunk_idx = ep_meta["meta/episodes/chunk_index"]
+    file_idx = ep_meta["meta/episodes/file_index"]
+
+    parquet_path = src_dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+    df = pd.read_parquet(parquet_path)
+
+    episode_row = df[df["episode_index"] == episode_idx].iloc[0]
+
+    return episode_row.to_dict()
 
 
 def delete_episodes(
@@ -94,15 +114,15 @@ def delete_episodes(
         use_videos=len(dataset.meta.video_keys) > 0,
     )
 
-    episode_mapping = {}
+    episode_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(episodes_to_keep)}
 
-    for new_idx, old_idx in tqdm(enumerate(episodes_to_keep), desc="Processing episodes"):
-        episode_mapping[old_idx] = new_idx
-
-    _copy_and_reindex_data(dataset, new_meta, episode_mapping)
-
+    video_metadata = None
     if dataset.meta.video_keys:
-        _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
+        video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
+
+    data_metadata = _copy_and_reindex_data(dataset, new_meta, episode_mapping)
+
+    _copy_and_reindex_episodes_metadata(dataset, new_meta, episode_mapping, data_metadata, video_metadata)
 
     new_dataset = LeRobotDataset(
         repo_id=repo_id,
@@ -183,9 +203,13 @@ def split_dataset(
             use_videos=len(dataset.meta.video_keys) > 0,
         )
 
-        _copy_and_reindex_data(dataset, new_meta, episode_mapping)
+        video_metadata = None
         if dataset.meta.video_keys:
-            _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
+            video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
+
+        data_metadata = _copy_and_reindex_data(dataset, new_meta, episode_mapping)
+
+        _copy_and_reindex_episodes_metadata(dataset, new_meta, episode_mapping, data_metadata, video_metadata)
 
         new_dataset = LeRobotDataset(
             repo_id=split_repo_id,
@@ -395,132 +419,323 @@ def _copy_and_reindex_data(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     episode_mapping: dict[int, int],
-) -> None:
-    """Copy data files and reindex episodes."""
-    file_paths = set()
+) -> dict[int, dict]:
+    """Copy and filter data files, only modifying files with deleted episodes.
+
+    Args:
+        src_dataset: Source dataset to copy from
+        dst_meta: Destination metadata object
+        episode_mapping: Mapping from old episode indices to new indices
+
+    Returns:
+        dict mapping episode index to its data file metadata (chunk_index, file_index, etc.)
+    """
+    file_to_episodes: dict[Path, set[int]] = {}
     for old_idx in episode_mapping:
-        file_paths.add(src_dataset.meta.get_data_file_path(old_idx))
+        file_path = src_dataset.meta.get_data_file_path(old_idx)
+        if file_path not in file_to_episodes:
+            file_to_episodes[file_path] = set()
+        file_to_episodes[file_path].add(old_idx)
 
     global_index = 0
-    chunk_idx, file_idx = 0, 0
+    episode_data_metadata: dict[int, dict] = {}
 
-    for src_path in tqdm(sorted(file_paths), desc="Processing data files"):
+    if dst_meta.tasks is None:
+        all_task_indices = set()
+        for src_path in file_to_episodes:
+            df = pd.read_parquet(src_dataset.root / src_path)
+            mask = df["episode_index"].isin(list(episode_mapping.keys()))
+            task_series: pd.Series = df[mask]["task_index"]
+            all_task_indices.update(task_series.unique().tolist())
+        tasks = [src_dataset.meta.tasks.iloc[idx].name for idx in all_task_indices]
+        dst_meta.save_episode_tasks(list(set(tasks)))
+
+    task_mapping = {}
+    for old_task_idx in range(len(src_dataset.meta.tasks)):
+        task_name = src_dataset.meta.tasks.iloc[old_task_idx].name
+        new_task_idx = dst_meta.get_task_index(task_name)
+        if new_task_idx is not None:
+            task_mapping[old_task_idx] = new_task_idx
+
+    for src_path in tqdm(sorted(file_to_episodes.keys()), desc="Processing data files"):
         df = pd.read_parquet(src_dataset.root / src_path)
 
-        mask = df["episode_index"].isin(episode_mapping.keys())
-        df = df[mask].copy().reset_index(drop=True)
+        all_episodes_in_file = set(df["episode_index"].unique())
+        episodes_to_keep = file_to_episodes[src_path]
 
-        if len(df) == 0:
-            continue
+        if all_episodes_in_file == episodes_to_keep:
+            df["episode_index"] = df["episode_index"].replace(episode_mapping)
+            df["index"] = range(global_index, global_index + len(df))
+            df["task_index"] = df["task_index"].replace(task_mapping)
 
-        df["episode_index"] = df["episode_index"].map(episode_mapping)
+            first_ep_old_idx = min(episodes_to_keep)
+            src_ep = src_dataset.meta.episodes[first_ep_old_idx]
+            chunk_idx = src_ep["data/chunk_index"]
+            file_idx = src_ep["data/file_index"]
+        else:
+            mask = df["episode_index"].isin(list(episode_mapping.keys()))
+            df = df[mask].copy().reset_index(drop=True)
 
-        df["index"] = range(global_index, global_index + len(df))
+            if len(df) == 0:
+                continue
+
+            df["episode_index"] = df["episode_index"].replace(episode_mapping)
+            df["index"] = range(global_index, global_index + len(df))
+            df["task_index"] = df["task_index"].replace(task_mapping)
+
+            first_ep_old_idx = min(episodes_to_keep)
+            src_ep = src_dataset.meta.episodes[first_ep_old_idx]
+            chunk_idx = src_ep["data/chunk_index"]
+            file_idx = src_ep["data/file_index"]
+
+        from lerobot.datasets.utils import DEFAULT_DATA_PATH
+
+        dst_path = dst_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if len(dst_meta.image_keys) > 0:
+            to_parquet_with_hf_images(df, dst_path)
+        else:
+            df.to_parquet(dst_path, index=False)
+
+        for ep_old_idx in episodes_to_keep:
+            ep_new_idx = episode_mapping[ep_old_idx]
+            ep_df = df[df["episode_index"] == ep_new_idx]
+            episode_data_metadata[ep_new_idx] = {
+                "data/chunk_index": chunk_idx,
+                "data/file_index": file_idx,
+                "dataset_from_index": int(ep_df["index"].min()),
+                "dataset_to_index": int(ep_df["index"].max() + 1),
+            }
+
         global_index += len(df)
 
-        if dst_meta.tasks is None:
-            task_indices = df["task_index"].unique()
-            tasks = [src_dataset.meta.tasks.iloc[idx].name for idx in task_indices]
-            dst_meta.save_episode_tasks(list(set(tasks)))
-
-        task_mapping = {}
-        for old_task_idx in df["task_index"].unique():
-            task_name = src_dataset.meta.tasks.iloc[old_task_idx].name
-            new_task_idx = dst_meta.get_task_index(task_name)
-            task_mapping[old_task_idx] = new_task_idx
-        df["task_index"] = df["task_index"].map(task_mapping)
-
-        chunk_idx, file_idx = _save_data_chunk(df, dst_meta, chunk_idx, file_idx)
-
-    _copy_and_reindex_episodes_metadata(src_dataset, dst_meta, episode_mapping)
+    return episode_data_metadata
 
 
 def _copy_and_reindex_videos(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     episode_mapping: dict[int, int],
-) -> None:
-    """Copy video files and update metadata."""
+) -> dict[int, dict]:
+    """Copy and filter video files, only re-encoding files with deleted episodes.
+
+    For video files that only contain kept episodes, we copy them directly.
+    For files with mixed kept/deleted episodes, we decode kept episodes and re-encode.
+
+    Args:
+        src_dataset: Source dataset to copy from
+        dst_meta: Destination metadata object
+        episode_mapping: Mapping from old episode indices to new indices
+
+    Returns:
+        dict mapping episode index to its video metadata (chunk_index, file_index, timestamps)
+    """
+    import tempfile
+
+    from lerobot.datasets.image_writer import write_image
+    from lerobot.datasets.video_utils import decode_video_frames, encode_video_frames
+
+    episodes_video_metadata: dict[int, dict] = {new_idx: {} for new_idx in episode_mapping.values()}
+
     for video_key in src_dataset.meta.video_keys:
-        video_files = set()
+        logging.info(f"Processing videos for {video_key}")
+
+        if dst_meta.video_path is None:
+            raise ValueError("Destination metadata has no video_path defined")
+
+        file_to_episodes: dict[tuple[int, int], list[int]] = {}
         for old_idx in episode_mapping:
-            video_files.add(src_dataset.meta.get_video_file_path(old_idx, video_key))
+            src_ep = src_dataset.meta.episodes[old_idx]
+            chunk_idx = src_ep[f"videos/{video_key}/chunk_index"]
+            file_idx = src_ep[f"videos/{video_key}/file_index"]
+            file_key = (chunk_idx, file_idx)
+            if file_key not in file_to_episodes:
+                file_to_episodes[file_key] = []
+            file_to_episodes[file_key].append(old_idx)
 
-        chunk_idx, file_idx = 0, 0
+        for (src_chunk_idx, src_file_idx), episodes_in_file in tqdm(
+            sorted(file_to_episodes.items()), desc=f"Processing {video_key} video files"
+        ):
+            all_episodes_in_file = [
+                ep_idx
+                for ep_idx in range(src_dataset.meta.total_episodes)
+                if src_dataset.meta.episodes[ep_idx].get(f"videos/{video_key}/chunk_index") == src_chunk_idx
+                and src_dataset.meta.episodes[ep_idx].get(f"videos/{video_key}/file_index") == src_file_idx
+            ]
 
-        for src_path in tqdm(sorted(video_files), desc=f"Processing {video_key} videos"):
-            dst_path = dst_meta.root / DEFAULT_VIDEO_PATH.format(
-                video_key=video_key,
-                chunk_index=chunk_idx,
-                file_index=file_idx,
-            )
-            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            episodes_to_keep_set = set(episodes_in_file)
+            all_in_file_set = set(all_episodes_in_file)
 
-            shutil.copy(src_dataset.root / src_path, dst_path)
+            if all_in_file_set == episodes_to_keep_set:
+                assert src_dataset.meta.video_path is not None
+                src_video_path = src_dataset.root / src_dataset.meta.video_path.format(
+                    video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_video_path = dst_meta.root / dst_meta.video_path.format(
+                    video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_video_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(src_video_path, dst_video_path)
 
-            file_size = get_video_size_in_mb(dst_path)
-            if file_size >= DEFAULT_VIDEO_FILE_SIZE_IN_MB * 0.9:
-                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
+                for old_idx in episodes_in_file:
+                    new_idx = episode_mapping[old_idx]
+                    src_ep = src_dataset.meta.episodes[old_idx]
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/chunk_index"] = src_chunk_idx
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/file_index"] = src_file_idx
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/from_timestamp"] = src_ep[
+                        f"videos/{video_key}/from_timestamp"
+                    ]
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/to_timestamp"] = src_ep[
+                        f"videos/{video_key}/to_timestamp"
+                    ]
+            else:
+                with tempfile.TemporaryDirectory(prefix=f"video_{video_key}_") as temp_dir_str:
+                    temp_dir = Path(temp_dir_str)
+                    frame_count = 0
+                    current_file_duration = 0.0
+
+                    sorted_keep_episodes = sorted(episodes_in_file, key=lambda x: episode_mapping[x])
+
+                    for old_idx in tqdm(
+                        sorted_keep_episodes,
+                        desc=f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx})",
+                        leave=False,
+                    ):
+                        src_ep = src_dataset.meta.episodes[old_idx]
+                        from_ts = src_ep[f"videos/{video_key}/from_timestamp"]
+                        ep_length = src_ep["length"]
+
+                        video_path = src_dataset.root / src_dataset.meta.get_video_file_path(
+                            old_idx, video_key
+                        )
+                        timestamps = [from_ts + (i / src_dataset.meta.fps) for i in range(ep_length)]
+                        frames = decode_video_frames(
+                            video_path, timestamps, src_dataset.tolerance_s, src_dataset.video_backend
+                        )
+
+                        for frame in frames:
+                            frame_path = temp_dir / f"frame-{frame_count:06d}.png"
+                            if isinstance(frame, torch.Tensor):
+                                frame_np = frame.cpu().numpy().transpose(1, 2, 0)
+                            else:
+                                frame_np = frame
+                            write_image(frame_np, frame_path)
+                            frame_count += 1
+
+                        ep_duration = ep_length / src_dataset.meta.fps
+                        current_file_duration += ep_duration
+
+                    dst_video_path = dst_meta.root / dst_meta.video_path.format(
+                        video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                    )
+                    dst_video_path.parent.mkdir(parents=True, exist_ok=True)
+                    encode_video_frames(temp_dir, dst_video_path, src_dataset.meta.fps, overwrite=True)
+
+                    cumulative_ts = 0.0
+                    for old_idx in sorted_keep_episodes:
+                        new_idx = episode_mapping[old_idx]
+                        src_ep = src_dataset.meta.episodes[old_idx]
+                        ep_length = src_ep["length"]
+                        ep_duration = ep_length / src_dataset.meta.fps
+
+                        episodes_video_metadata[new_idx][f"videos/{video_key}/chunk_index"] = src_chunk_idx
+                        episodes_video_metadata[new_idx][f"videos/{video_key}/file_index"] = src_file_idx
+                        episodes_video_metadata[new_idx][f"videos/{video_key}/from_timestamp"] = cumulative_ts
+                        episodes_video_metadata[new_idx][f"videos/{video_key}/to_timestamp"] = (
+                            cumulative_ts + ep_duration
+                        )
+
+                        cumulative_ts += ep_duration
+
+    return episodes_video_metadata
 
 
 def _copy_and_reindex_episodes_metadata(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     episode_mapping: dict[int, int],
+    data_metadata: dict[int, dict],
+    video_metadata: dict[int, dict] | None = None,
 ) -> None:
-    """Copy and reindex episodes metadata."""
+    """Copy and reindex episodes metadata using provided data and video metadata.
+
+    Args:
+        src_dataset: Source dataset to copy from
+        dst_meta: Destination metadata object
+        episode_mapping: Mapping from old episode indices to new indices
+        data_metadata: Dict mapping new episode index to its data file metadata
+        video_metadata: Optional dict mapping new episode index to its video metadata
+    """
+    from lerobot.datasets.utils import flatten_dict
+
     all_stats = []
-    frame_offset = 0
+    total_frames = 0
 
     for old_idx, new_idx in tqdm(
         sorted(episode_mapping.items(), key=lambda x: x[1]), desc="Processing episodes metadata"
     ):
+        src_episode_full = _load_episode_with_stats(src_dataset, old_idx)
+
         src_episode = src_dataset.meta.episodes[old_idx]
+
+        episode_meta = data_metadata[new_idx].copy()
+
+        if video_metadata and new_idx in video_metadata:
+            episode_meta.update(video_metadata[new_idx])
+
+        episode_stats = {}
+        for key in src_episode_full:
+            if key.startswith("stats/"):
+                stat_key = key.replace("stats/", "")
+                parts = stat_key.split("/")
+                if len(parts) == 2:
+                    feature_name, stat_name = parts
+                    if feature_name not in episode_stats:
+                        episode_stats[feature_name] = {}
+                    value = np.asarray(src_episode_full[key], dtype=np.float64)
+
+                    if feature_name in src_dataset.meta.features:
+                        feature_dtype = src_dataset.meta.features[feature_name]["dtype"]
+                        if (
+                            feature_dtype in ["image", "video"]
+                            and stat_name != "count"
+                            and value.shape == (3,)
+                        ):
+                            value = value.reshape(3, 1, 1)
+
+                    episode_stats[feature_name][stat_name] = value
+
+        all_stats.append(episode_stats)
 
         episode_dict = {
             "episode_index": new_idx,
             "tasks": src_episode["tasks"],
             "length": src_episode["length"],
         }
+        episode_dict.update(episode_meta)
+        episode_dict.update(flatten_dict({"stats": episode_stats}))
+        dst_meta._save_episode_metadata(episode_dict)
 
-        episode_metadata = {
-            "data/chunk_index": 0,
-            "data/file_index": 0,
-            "dataset_from_index": frame_offset,
-            "dataset_to_index": frame_offset + src_episode["length"],
+        total_frames += src_episode["length"]
+
+    dst_meta.info.update(
+        {
+            "total_episodes": len(episode_mapping),
+            "total_frames": total_frames,
+            "total_tasks": len(dst_meta.tasks) if dst_meta.tasks is not None else 0,
+            "splits": {"train": f"0:{len(episode_mapping)}"},
         }
-
-        for video_key in src_dataset.meta.video_keys:
-            for suffix in ["chunk_index", "file_index", "from_timestamp", "to_timestamp"]:
-                metadata_key = f"videos/{video_key}/{suffix}"
-                if metadata_key in src_episode:
-                    episode_metadata[metadata_key] = src_episode[metadata_key]
-
-        frame_offset += src_episode["length"]
-
-        for key in src_episode:
-            if key.startswith("stats/"):
-                episode_dict[key] = src_episode[key]
-
-        stats_dict = {
-            key.replace("stats/", ""): value
-            for key, value in episode_dict.items()
-            if key.startswith("stats/")
-        }
-        all_stats.append(stats_dict)
-
-        episode_stats = {}
-        for key in dst_meta.features:
-            if key in stats_dict:
-                episode_stats[key] = stats_dict[key]
-
-        dst_meta.save_episode(
-            new_idx, episode_dict["length"], episode_dict["tasks"], episode_stats, episode_metadata
-        )
+    )
+    write_info(dst_meta.info, dst_meta.root)
 
     if all_stats:
+        logging.info(f"Aggregating statistics for {len(all_stats)} episodes")
         aggregated_stats = aggregate_stats(all_stats)
-        write_stats(aggregated_stats, dst_meta.root)
+        filtered_stats = {k: v for k, v in aggregated_stats.items() if k in dst_meta.features}
+        write_stats(filtered_stats, dst_meta.root)
+    else:
+        logging.warning("No statistics found to aggregate")
 
 
 def _save_data_chunk(
@@ -528,8 +743,13 @@ def _save_data_chunk(
     meta: LeRobotDatasetMetadata,
     chunk_idx: int = 0,
     file_idx: int = 0,
-) -> tuple[int, int]:
-    """Save a data chunk and return updated indices."""
+) -> tuple[int, int, dict[int, dict]]:
+    """Save a data chunk and return updated indices and episode metadata.
+
+    Returns:
+        tuple: (next_chunk_idx, next_file_idx, episode_metadata_dict)
+            where episode_metadata_dict maps episode_index to its data file metadata
+    """
     path = meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -538,11 +758,21 @@ def _save_data_chunk(
     else:
         df.to_parquet(path, index=False)
 
+    episode_metadata = {}
+    for ep_idx in df["episode_index"].unique():
+        ep_df = df[df["episode_index"] == ep_idx]
+        episode_metadata[ep_idx] = {
+            "data/chunk_index": chunk_idx,
+            "data/file_index": file_idx,
+            "dataset_from_index": int(ep_df["index"].min()),
+            "dataset_to_index": int(ep_df["index"].max() + 1),
+        }
+
     file_size = get_parquet_file_size_in_mb(path)
     if file_size >= DEFAULT_DATA_FILE_SIZE_IN_MB * 0.9:
         chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
 
-    return chunk_idx, file_idx
+    return chunk_idx, file_idx, episode_metadata
 
 
 def _copy_data_with_feature_changes(
