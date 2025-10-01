@@ -693,7 +693,12 @@ def _copy_and_reindex_episodes_metadata(
                     feature_name, stat_name = parts
                     if feature_name not in episode_stats:
                         episode_stats[feature_name] = {}
-                    value = np.asarray(src_episode_full[key], dtype=np.float64)
+
+                    raw_value = src_episode_full[key]
+                    if isinstance(raw_value, (int | float)):
+                        value = np.array(raw_value, dtype=np.float64)
+                    else:
+                        value = np.asarray(raw_value, dtype=np.float64)
 
                     if feature_name in src_dataset.meta.features:
                         feature_dtype = src_dataset.meta.features[feature_name]["dtype"]

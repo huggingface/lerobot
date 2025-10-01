@@ -533,10 +533,359 @@ def test_complex_workflow_integration(sample_dataset, tmp_path):
             output_dir=tmp_path / "step4",
         )
 
-    assert merged.meta.total_episodes == 4  # Started with 5, deleted 1
+    assert merged.meta.total_episodes == 4
     assert merged.meta.total_frames == 40
-    assert "reward" in merged.meta.features  # Feature preserved
+    assert "reward" in merged.meta.features
 
     assert len(merged) == 40
     sample_item = merged[0]
     assert "reward" in sample_item
+
+
+def test_delete_episodes_preserves_stats(sample_dataset, tmp_path):
+    """Test that deleting episodes preserves statistics correctly."""
+    output_dir = tmp_path / "filtered"
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        new_dataset = delete_episodes(
+            sample_dataset,
+            episode_indices=[2],
+            output_dir=output_dir,
+        )
+
+    assert new_dataset.meta.stats is not None
+    for feature in ["action", "observation.state"]:
+        assert feature in new_dataset.meta.stats
+        assert "mean" in new_dataset.meta.stats[feature]
+        assert "std" in new_dataset.meta.stats[feature]
+
+
+def test_delete_episodes_preserves_tasks(sample_dataset, tmp_path):
+    """Test that tasks are preserved correctly after deletion."""
+    output_dir = tmp_path / "filtered"
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        new_dataset = delete_episodes(
+            sample_dataset,
+            episode_indices=[0],
+            output_dir=output_dir,
+        )
+
+    assert new_dataset.meta.tasks is not None
+    assert len(new_dataset.meta.tasks) == 2
+
+    tasks_in_dataset = {str(item["task"]) for item in new_dataset}
+    assert len(tasks_in_dataset) > 0
+
+
+def test_split_three_ways(sample_dataset, tmp_path):
+    """Test splitting dataset into three splits."""
+    splits = {
+        "train": 0.6,
+        "val": 0.2,
+        "test": 0.2,
+    }
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+
+        def mock_snapshot(repo_id, **kwargs):
+            for split_name in splits:
+                if split_name in repo_id:
+                    return str(tmp_path / f"{sample_dataset.repo_id}_{split_name}")
+            return str(kwargs.get("local_dir", tmp_path))
+
+        mock_snapshot_download.side_effect = mock_snapshot
+
+        result = split_dataset(
+            sample_dataset,
+            splits=splits,
+            output_dir=tmp_path,
+        )
+
+    assert set(result.keys()) == {"train", "val", "test"}
+    assert result["train"].meta.total_episodes == 3
+    assert result["val"].meta.total_episodes == 1
+    assert result["test"].meta.total_episodes == 1
+
+    total_frames = sum(ds.meta.total_frames for ds in result.values())
+    assert total_frames == sample_dataset.meta.total_frames
+
+
+def test_split_preserves_stats(sample_dataset, tmp_path):
+    """Test that statistics are preserved when splitting."""
+    splits = {"train": [0, 1, 2], "val": [3, 4]}
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+
+        def mock_snapshot(repo_id, **kwargs):
+            for split_name in splits:
+                if split_name in repo_id:
+                    return str(tmp_path / f"{sample_dataset.repo_id}_{split_name}")
+            return str(kwargs.get("local_dir", tmp_path))
+
+        mock_snapshot_download.side_effect = mock_snapshot
+
+        result = split_dataset(
+            sample_dataset,
+            splits=splits,
+            output_dir=tmp_path,
+        )
+
+    for split_ds in result.values():
+        assert split_ds.meta.stats is not None
+        for feature in ["action", "observation.state"]:
+            assert feature in split_ds.meta.stats
+            assert "mean" in split_ds.meta.stats[feature]
+            assert "std" in split_ds.meta.stats[feature]
+
+
+def test_merge_three_datasets(sample_dataset, tmp_path, empty_lerobot_dataset_factory):
+    """Test merging three datasets."""
+    features = {
+        "action": {"dtype": "float32", "shape": (6,), "names": None},
+        "observation.state": {"dtype": "float32", "shape": (4,), "names": None},
+        "observation.images.top": {"dtype": "image", "shape": (224, 224, 3), "names": None},
+    }
+
+    datasets = [sample_dataset]
+
+    for i in range(2):
+        dataset = empty_lerobot_dataset_factory(
+            root=tmp_path / f"test_dataset{i + 2}",
+            features=features,
+        )
+
+        for ep_idx in range(2):
+            for _ in range(10):
+                frame = {
+                    "action": np.random.randn(6).astype(np.float32),
+                    "observation.state": np.random.randn(4).astype(np.float32),
+                    "observation.images.top": np.random.randint(0, 255, size=(224, 224, 3), dtype=np.uint8),
+                    "task": f"task_{ep_idx}",
+                }
+                dataset.add_frame(frame)
+            dataset.save_episode()
+
+        datasets.append(dataset)
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "merged_dataset")
+
+        merged = merge_datasets(
+            datasets,
+            output_repo_id="merged_dataset",
+            output_dir=tmp_path / "merged_dataset",
+        )
+
+    assert merged.meta.total_episodes == 9
+    assert merged.meta.total_frames == 90
+
+
+def test_merge_preserves_stats(sample_dataset, tmp_path, empty_lerobot_dataset_factory):
+    """Test that statistics are computed for merged datasets."""
+    features = {
+        "action": {"dtype": "float32", "shape": (6,), "names": None},
+        "observation.state": {"dtype": "float32", "shape": (4,), "names": None},
+        "observation.images.top": {"dtype": "image", "shape": (224, 224, 3), "names": None},
+    }
+
+    dataset2 = empty_lerobot_dataset_factory(
+        root=tmp_path / "test_dataset2",
+        features=features,
+    )
+
+    for ep_idx in range(3):
+        for _ in range(10):
+            frame = {
+                "action": np.random.randn(6).astype(np.float32),
+                "observation.state": np.random.randn(4).astype(np.float32),
+                "observation.images.top": np.random.randint(0, 255, size=(224, 224, 3), dtype=np.uint8),
+                "task": f"task_{ep_idx % 2}",
+            }
+            dataset2.add_frame(frame)
+        dataset2.save_episode()
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "merged_dataset")
+
+        merged = merge_datasets(
+            [sample_dataset, dataset2],
+            output_repo_id="merged_dataset",
+            output_dir=tmp_path / "merged_dataset",
+        )
+
+    assert merged.meta.stats is not None
+    for feature in ["action", "observation.state"]:
+        assert feature in merged.meta.stats
+        assert "mean" in merged.meta.stats[feature]
+        assert "std" in merged.meta.stats[feature]
+
+
+def test_add_feature_preserves_existing_stats(sample_dataset, tmp_path):
+    """Test that adding a feature preserves existing stats."""
+    num_frames = sample_dataset.meta.total_frames
+    reward_values = np.random.randn(num_frames, 1).astype(np.float32)
+
+    feature_info = {
+        "dtype": "float32",
+        "shape": (1,),
+        "names": None,
+    }
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_reward")
+
+        new_dataset = add_feature(
+            sample_dataset,
+            feature_name="reward",
+            feature_values=reward_values,
+            feature_info=feature_info,
+            output_dir=tmp_path / "with_reward",
+        )
+
+    assert new_dataset.meta.stats is not None
+    for feature in ["action", "observation.state"]:
+        assert feature in new_dataset.meta.stats
+        assert "mean" in new_dataset.meta.stats[feature]
+        assert "std" in new_dataset.meta.stats[feature]
+
+
+def test_remove_feature_updates_stats(sample_dataset, tmp_path):
+    """Test that removing a feature removes it from stats."""
+    feature_info = {"dtype": "float32", "shape": (1,), "names": None}
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
+
+        dataset_with_reward = add_feature(
+            sample_dataset,
+            feature_name="reward",
+            feature_values=np.random.randn(50, 1).astype(np.float32),
+            feature_info=feature_info,
+            output_dir=tmp_path / "with_reward",
+        )
+
+        dataset_without_reward = remove_feature(
+            dataset_with_reward,
+            feature_names="reward",
+            output_dir=tmp_path / "without_reward",
+        )
+
+    if dataset_without_reward.meta.stats:
+        assert "reward" not in dataset_without_reward.meta.stats
+
+
+def test_delete_consecutive_episodes(sample_dataset, tmp_path):
+    """Test deleting consecutive episodes."""
+    output_dir = tmp_path / "filtered"
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        new_dataset = delete_episodes(
+            sample_dataset,
+            episode_indices=[1, 2, 3],
+            output_dir=output_dir,
+        )
+
+    assert new_dataset.meta.total_episodes == 2
+    assert new_dataset.meta.total_frames == 20
+
+    episode_indices = sorted({int(idx.item()) for idx in new_dataset.hf_dataset["episode_index"]})
+    assert episode_indices == [0, 1]
+
+
+def test_delete_first_and_last_episodes(sample_dataset, tmp_path):
+    """Test deleting first and last episodes."""
+    output_dir = tmp_path / "filtered"
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        new_dataset = delete_episodes(
+            sample_dataset,
+            episode_indices=[0, 4],
+            output_dir=output_dir,
+        )
+
+    assert new_dataset.meta.total_episodes == 3
+    assert new_dataset.meta.total_frames == 30
+
+    episode_indices = sorted({int(idx.item()) for idx in new_dataset.hf_dataset["episode_index"]})
+    assert episode_indices == [0, 1, 2]
+
+
+def test_split_all_episodes_assigned(sample_dataset, tmp_path):
+    """Test that all episodes can be explicitly assigned to splits."""
+    splits = {
+        "split1": [0, 1],
+        "split2": [2, 3],
+        "split3": [4],
+    }
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+
+        def mock_snapshot(repo_id, **kwargs):
+            for split_name in splits:
+                if split_name in repo_id:
+                    return str(tmp_path / f"{sample_dataset.repo_id}_{split_name}")
+            return str(kwargs.get("local_dir", tmp_path))
+
+        mock_snapshot_download.side_effect = mock_snapshot
+
+        result = split_dataset(
+            sample_dataset,
+            splits=splits,
+            output_dir=tmp_path,
+        )
+
+    total_episodes = sum(ds.meta.total_episodes for ds in result.values())
+    assert total_episodes == sample_dataset.meta.total_episodes
