@@ -82,7 +82,7 @@ from lerobot.datasets.utils import (
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 
 V21 = "v2.1"
-
+V30 = "v3.0"
 
 """
 -------------------------
@@ -449,7 +449,7 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
 
 def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
     info = load_info(root)
-    info["codebase_version"] = "v3.0"
+    info["codebase_version"] = V30
     del info["total_chunks"]
     del info["total_videos"]
     info["data_files_size_in_mb"] = data_file_size_in_mb
@@ -477,6 +477,19 @@ def convert_dataset(
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_file_size_in_mb is None:
         video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
+
+    # First check if the dataset already has a v3.0 version
+    if root is None:
+        try:
+            snapshot_download(
+                repo_id,
+                repo_type="dataset",
+                revision=V30,
+                local_dir=HF_LEROBOT_HOME / repo_id
+            )
+            return
+        except Exception as e:
+            print(f"Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
 
     # Set root based on whether local dataset path is provided
     if root is not None:
