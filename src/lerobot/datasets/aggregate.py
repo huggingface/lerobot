@@ -31,8 +31,8 @@ from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
+    get_file_size_in_mb,
     get_parquet_file_size_in_mb,
-    get_video_size_in_mb,
     to_parquet_with_hf_images,
     update_chunk_file_indices,
     write_info,
@@ -273,8 +273,8 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 continue  # not accumulating further, already copied the file in place
 
             # Check file sizes before appending
-            src_size = get_video_size_in_mb(src_path)
-            dst_size = get_video_size_in_mb(dst_path)
+            src_size = get_file_size_in_mb(src_path)
+            dst_size = get_file_size_in_mb(dst_path)
 
             if dst_size + src_size >= video_files_size_in_mb:
                 # Rotate to a new chunk/file

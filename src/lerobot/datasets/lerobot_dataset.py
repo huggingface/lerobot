@@ -15,7 +15,6 @@
 # limitations under the License.
 import contextlib
 import logging
-import os
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -49,9 +48,9 @@ from lerobot.datasets.utils import (
     embed_images,
     flatten_dict,
     get_delta_indices,
+    get_file_size_in_mb,
     get_hf_features_from_features,
     get_safe_version,
-    get_video_size_in_mb,
     hf_transform_to_torch,
     is_valid_version,
     load_episodes,
@@ -316,7 +315,7 @@ class LeRobotDatasetMetadata:
                 if self.writer is None
                 else self.writer.where
             )
-            latest_size_in_mb = os.path.getsize(latest_path.as_posix()) / (1024 * 1024)
+            latest_size_in_mb = get_file_size_in_mb(Path(latest_path))
             latest_num_frames = self.latest_episode["episode_index"][0]
 
             av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
@@ -1189,7 +1188,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             file_idx = latest_ep["data/file_index"]
 
             latest_path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
-            latest_size_in_mb = os.path.getsize(latest_path.as_posix()) / (1024 * 1024)
+            latest_size_in_mb = get_file_size_in_mb(latest_path)
             latest_num_frames = latest_ep["index"][-1] + 1  # Next available index
 
             av_size_per_frame = latest_size_in_mb / latest_num_frames
@@ -1255,7 +1254,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _save_episode_video(self, video_key: str, episode_index: int) -> dict:
         # Encode episode frames into a temporary video
         ep_path = self._encode_temporary_episode_video(video_key, episode_index)
-        ep_size_in_mb = get_video_size_in_mb(ep_path)
+        ep_size_in_mb = get_file_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
         if (
@@ -1288,7 +1287,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
-            latest_size_in_mb = get_video_size_in_mb(latest_path)
+            latest_size_in_mb = get_file_size_in_mb(latest_path)
             latest_duration_in_s = latest_ep[f"videos/{video_key}/to_timestamp"][0]
 
             if latest_size_in_mb + ep_size_in_mb >= self.meta.video_files_size_in_mb:
