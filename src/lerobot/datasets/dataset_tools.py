@@ -66,14 +66,10 @@ def delete_episodes(
         episode_indices: List of episode indices to delete.
         output_dir: Directory to save the new dataset. If None, uses default location.
         repo_id: Repository ID for the new dataset. If None, appends "_filtered" to original.
-
-    Returns:
-        LeRobotDataset: New dataset with episodes removed.
     """
     if not episode_indices:
         raise ValueError("No episodes to delete")
 
-    # Validate episode indices
     valid_indices = set(range(dataset.meta.total_episodes))
     invalid = set(episode_indices) - valid_indices
     if invalid:
@@ -89,7 +85,6 @@ def delete_episodes(
     if not episodes_to_keep:
         raise ValueError("Cannot delete all episodes from dataset")
 
-    # Create new dataset
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
         fps=dataset.meta.fps,
@@ -99,20 +94,16 @@ def delete_episodes(
         use_videos=len(dataset.meta.video_keys) > 0,
     )
 
-    # Process episodes
-    episode_mapping = {}  # old_idx -> new_idx
+    episode_mapping = {}
 
     for new_idx, old_idx in tqdm(enumerate(episodes_to_keep), desc="Processing episodes"):
         episode_mapping[old_idx] = new_idx
 
-    # Copy data files and update indices
     _copy_and_reindex_data(dataset, new_meta, episode_mapping)
 
-    # Copy video files if present
     if dataset.meta.video_keys:
         _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
 
-    # Create new dataset instance
     new_dataset = LeRobotDataset(
         repo_id=repo_id,
         root=output_dir,
@@ -138,26 +129,21 @@ def split_dataset(
                 split names to fractions (must sum to <= 1.0).
         output_dir: Base directory for output datasets. If None, uses default location.
 
-    Returns:
-        dict[str, LeRobotDataset]: Dictionary mapping split names to new datasets.
-
     Examples:
-        # Split by specific episodes
+      Split by specific episodes
         splits = {"train": [0, 1, 2], "val": [3, 4]}
         datasets = split_dataset(dataset, splits)
 
-        # Split by fractions
+      Split by fractions
         splits = {"train": 0.8, "val": 0.2}
         datasets = split_dataset(dataset, splits)
     """
     if not splits:
         raise ValueError("No splits provided")
 
-    # Convert fractions to episode indices if needed
     if all(isinstance(v, float) for v in splits.values()):
         splits = _fractions_to_episode_indices(dataset.meta.total_episodes, splits)
 
-    # Validate episodes
     all_episodes = set()
     for split_name, episodes in splits.items():
         if not episodes:
@@ -167,7 +153,6 @@ def split_dataset(
             raise ValueError("Episodes cannot appear in multiple splits")
         all_episodes.update(episode_set)
 
-    # Validate all episodes are valid
     valid_indices = set(range(dataset.meta.total_episodes))
     invalid = all_episodes - valid_indices
     if invalid:
@@ -181,18 +166,14 @@ def split_dataset(
     for split_name, episodes in splits.items():
         logging.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
 
-        # Create repo_id for split
         split_repo_id = f"{dataset.repo_id}_{split_name}"
 
-        # Use HF_LEROBOT_HOME directly for split directories to avoid path duplication
         split_output_dir = (
             output_dir / split_name if output_dir is not None else HF_LEROBOT_HOME / split_repo_id
         )
 
-        # Create episode mapping
         episode_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(sorted(episodes))}
 
-        # Create new dataset metadata
         new_meta = LeRobotDatasetMetadata.create(
             repo_id=split_repo_id,
             fps=dataset.meta.fps,
@@ -202,12 +183,10 @@ def split_dataset(
             use_videos=len(dataset.meta.video_keys) > 0,
         )
 
-        # Copy data and videos
         _copy_and_reindex_data(dataset, new_meta, episode_mapping)
         if dataset.meta.video_keys:
             _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
 
-        # Create new dataset instance
         new_dataset = LeRobotDataset(
             repo_id=split_repo_id,
             root=split_output_dir,
@@ -234,20 +213,15 @@ def merge_datasets(
         datasets: List of LeRobotDatasets to merge.
         output_repo_id: Repository ID for the merged dataset.
         output_dir: Directory to save the merged dataset. If None, uses default location.
-
-    Returns:
-        LeRobotDataset: The merged dataset.
     """
     if not datasets:
         raise ValueError("No datasets to merge")
 
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / output_repo_id
 
-    # Extract repo_ids and roots
     repo_ids = [ds.repo_id for ds in datasets]
     roots = [ds.root for ds in datasets]
 
-    # Call aggregate_datasets
     aggregate_datasets(
         repo_ids=repo_ids,
         aggr_repo_id=output_repo_id,
@@ -255,7 +229,6 @@ def merge_datasets(
         aggr_root=output_dir,
     )
 
-    # Create and return the merged dataset
     merged_dataset = LeRobotDataset(
         repo_id=output_repo_id,
         root=output_dir,
@@ -286,9 +259,6 @@ def add_feature(
         feature_info: Dictionary with feature metadata (dtype, shape, names).
         output_dir: Directory to save the new dataset. If None, uses default location.
         repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
-
-    Returns:
-        LeRobotDataset: New dataset with the added feature.
     """
     if feature_name in dataset.meta.features:
         raise ValueError(f"Feature '{feature_name}' already exists in dataset")
@@ -297,16 +267,13 @@ def add_feature(
         repo_id = f"{dataset.repo_id}_modified"
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
-    # Validate feature_info
     required_keys = {"dtype", "shape"}
     if not required_keys.issubset(feature_info.keys()):
         raise ValueError(f"feature_info must contain keys: {required_keys}")
 
-    # Create new features dict
     new_features = dataset.meta.features.copy()
     new_features[feature_name] = feature_info
 
-    # Create new dataset metadata
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
         fps=dataset.meta.fps,
@@ -316,18 +283,15 @@ def add_feature(
         use_videos=len(dataset.meta.video_keys) > 0,
     )
 
-    # Process data with new feature
     _copy_data_with_feature_changes(
         dataset=dataset,
         new_meta=new_meta,
         add_features={feature_name: (feature_values, feature_info)},
     )
 
-    # Copy videos if present
     if dataset.meta.video_keys:
         _copy_videos(dataset, new_meta)
 
-    # Create new dataset instance
     new_dataset = LeRobotDataset(
         repo_id=repo_id,
         root=output_dir,
@@ -353,18 +317,14 @@ def remove_feature(
         output_dir: Directory to save the new dataset. If None, uses default location.
         repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
 
-    Returns:
-        LeRobotDataset: New dataset with features removed.
     """
     if isinstance(feature_names, str):
         feature_names = [feature_names]
 
-    # Validate features exist
     for name in feature_names:
         if name not in dataset.meta.features:
             raise ValueError(f"Feature '{name}' not found in dataset")
 
-    # Check if trying to remove required features
     required_features = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
     if any(name in required_features for name in feature_names):
         raise ValueError(f"Cannot remove required features: {required_features}")
@@ -373,16 +333,12 @@ def remove_feature(
         repo_id = f"{dataset.repo_id}_modified"
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
-    # Create new features dict
     new_features = {k: v for k, v in dataset.meta.features.items() if k not in feature_names}
 
-    # Check if removing video features
     video_keys_to_remove = [name for name in feature_names if name in dataset.meta.video_keys]
 
-    # Check if videos will remain after removal
     remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
 
-    # Create new dataset metadata
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
         fps=dataset.meta.fps,
@@ -392,18 +348,15 @@ def remove_feature(
         use_videos=len(remaining_video_keys) > 0,
     )
 
-    # Process data with removed features
     _copy_data_with_feature_changes(
         dataset=dataset,
         new_meta=new_meta,
         remove_features=feature_names,
     )
 
-    # Copy videos (excluding removed ones)
     if new_meta.video_keys:
         _copy_videos(dataset, new_meta, exclude_keys=video_keys_to_remove)
 
-    # Create new dataset instance
     new_dataset = LeRobotDataset(
         repo_id=repo_id,
         root=output_dir,
@@ -413,9 +366,6 @@ def remove_feature(
     )
 
     return new_dataset
-
-
-# Helper functions
 
 
 def _fractions_to_episode_indices(
@@ -433,7 +383,7 @@ def _fractions_to_episode_indices(
     for split_name, fraction in splits.items():
         num_episodes = int(total_episodes * fraction)
         end_idx = start_idx + num_episodes
-        if split_name == list(splits.keys())[-1]:  # Last split gets remaining episodes
+        if split_name == list(splits.keys())[-1]:
             end_idx = total_episodes
         result[split_name] = indices[start_idx:end_idx]
         start_idx = end_idx
@@ -552,7 +502,6 @@ def _copy_and_reindex_episodes_metadata(
             if key.startswith("stats/"):
                 episode_dict[key] = src_episode[key]
 
-        # Add episode metadata
         stats_dict = {
             key.replace("stats/", ""): value
             for key, value in episode_dict.items()
