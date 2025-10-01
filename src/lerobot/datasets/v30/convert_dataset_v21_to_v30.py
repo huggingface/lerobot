@@ -36,7 +36,7 @@ Convert a local dataset (works in place):
 ```bash
 python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht \
-    --local-dataset-path=/path/to/local/dataset
+    --root=/path/to/local/dataset/directory
 ```
 
 """
@@ -469,7 +469,7 @@ def convert_dataset(
     branch: str | None = None,
     data_file_size_in_mb: int | None = None,
     video_file_size_in_mb: int | None = None,
-    local_dataset_path: str | Path | None = None,
+    root: str | Path | None = None,
 ):
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
@@ -477,13 +477,14 @@ def convert_dataset(
         video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
 
     # Set root based on whether local dataset path is provided
-    if local_dataset_path is not None:
-        local_dataset_path = Path(local_dataset_path)
-        validate_local_dataset_structure(local_dataset_path)
-        root = local_dataset_path
+    if root is not None:
+        root = Path(root)
+        validate_local_dataset_structure(root)
+        use_local_dataset = True
     else:
         # Use default HF cache location
         root = HF_LEROBOT_HOME / repo_id
+        use_local_dataset = False
 
     old_root = root.parent / f"{root.name}_old"
     new_root = root.parent / f"{root.name}_v30"
@@ -496,7 +497,7 @@ def convert_dataset(
     if new_root.is_dir():
         shutil.rmtree(new_root)
 
-    if local_dataset_path is None:
+    if not use_local_dataset:
         snapshot_download(
             repo_id,
             repo_type="dataset",
@@ -558,10 +559,10 @@ if __name__ == "__main__":
         help="File size in MB. Defaults to 100 for data and 500 for videos.",
     )
     parser.add_argument(
-        "--local-dataset-path",
+        "--root",
         type=str,
         default=None,
-        help="Path to a local dataset directory to convert in place instead of downloading from the hub.",
+        help="Local directory to use for downloading/writing the dataset.",
     )
 
     args = parser.parse_args()
