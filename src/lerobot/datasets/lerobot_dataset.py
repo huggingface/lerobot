@@ -334,6 +334,7 @@ class LeRobotDatasetMetadata:
         df = pd.DataFrame(ep_dataset)
         num_frames = len(df)
         table = pa.Table.from_pandas(df, preserve_index=False)
+        row_group_size = num_frames
 
         if not self.writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
@@ -344,12 +345,13 @@ class LeRobotDatasetMetadata:
                 existing_df = pd.read_parquet(path)
                 df = pd.concat([existing_df, df], ignore_index=True)
                 table = pa.Table.from_pandas(df, preserve_index=False)
+                row_group_size = len(table)
 
             self.writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
 
-        self.writer.write_table(table, row_group_size=num_frames)
+        self.writer.write_table(table, row_group_size=row_group_size)
         self.latest_episode = episode_dict
 
     def save_episode(
@@ -1222,17 +1224,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             # For non-image data, use standard PyArrow parquet writer
             table = pa.Table.from_pandas(df, preserve_index=False)
+            row_group_size = ep_num_frames
             if not self.writer:
                 # When resuming or after writer was closed, append to existing file
                 if path.exists():
                     existing_df = pd.read_parquet(path)
                     df = pd.concat([existing_df, df], ignore_index=True)
                     table = pa.Table.from_pandas(df, preserve_index=False)
+                    row_group_size = len(table)
 
                 self.writer = pq.ParquetWriter(
                     path, schema=table.schema, compression="snappy", use_dictionary=True
                 )
-            self.writer.write_table(table, row_group_size=ep_num_frames)
+            self.writer.write_table(table, row_group_size=row_group_size)
 
         self.latest_episode = ep_dict
 
