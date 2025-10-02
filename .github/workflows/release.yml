@@ -103,7 +103,7 @@ jobs:
       - name: Publish to TestPyPI for pre-releases
         # True for tags like 'v0.2.0-rc1'
         if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-')
-        uses: pypa/gh-action-pypi-publish@v1.12.4 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
+        uses: pypa/gh-action-pypi-publish@v1.13.0 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
         with:
           repository-url: https://test.pypi.org/legacy/
           verbose: true
@@ -111,7 +111,7 @@ jobs:
 
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
-        uses: pypa/gh-action-pypi-publish@v1.12.4 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
+        uses: pypa/gh-action-pypi-publish@v1.13.0 # zizmor: ignore[unpinned-uses, use-trusted-publishing]
         with:
           verbose: true
           print-hash: true
