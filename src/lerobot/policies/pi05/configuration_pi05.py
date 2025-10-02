@@ -20,12 +20,11 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
-from lerobot.utils.constants import OBS_IMAGES
 
 
-@PreTrainedConfig.register_subclass("pi0")
+@PreTrainedConfig.register_subclass("pi05")
 @dataclass
-class PI0Config(PreTrainedConfig):
+class PI05Config(PreTrainedConfig):
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     dtype: str = "float32"  # Options: "bfloat16", "float32"
@@ -39,7 +38,7 @@ class PI0Config(PreTrainedConfig):
     max_action_dim: int = 32
 
     # Flow matching parameters: see openpi `PI0Pytorch`
-    num_inference_steps: int = 10  # Number of denoising steps during inference
+    num_inference_steps: int = 10
     time_sampling_beta_alpha: float = 1.5
     time_sampling_beta_beta: float = 1.0
     time_sampling_scale: float = 0.999
@@ -52,12 +51,13 @@ class PI0Config(PreTrainedConfig):
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
 
-    # Normalization
+    tokenizer_max_length: int = 200  # see openpi `__post_init__`
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.MEAN_STD,
-            "ACTION": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
+            "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
         }
     )
 
@@ -67,7 +67,7 @@ class PI0Config(PreTrainedConfig):
     compile_mode: str = "max-autotune"  # Torch compile mode
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
-    # Optimizer settings: see openpi `AdamW``
+    # Optimizer settings: see openpi `AdamW`
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
@@ -79,7 +79,7 @@ class PI0Config(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 48  # see openpi `__post_init__`
+    tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()
@@ -102,7 +102,7 @@ class PI0Config(PreTrainedConfig):
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
         for i in range(self.empty_cameras):
-            key = f"{OBS_IMAGES}.empty_camera_{i}"
+            key = f"observation.images.empty_camera_{i}"
             empty_camera = PolicyFeature(
                 type=FeatureType.VISUAL,
                 shape=(3, *self.image_resolution),  # Use configured image resolution
