@@ -46,7 +46,7 @@ def main():
     print(f"Features: {list(dataset.meta.features.keys())}")
 
     print("\n1. Deleting episodes 0 and 2...")
-    filtered_dataset = delete_episodes(dataset, episode_indices=[0, 2])
+    filtered_dataset = delete_episodes(dataset, episode_indices=[0, 2], repo_id="lerobot/pusht_filtered")
     print(f"Filtered dataset: {filtered_dataset.meta.total_episodes} episodes")
 
     print("\n2. Splitting dataset into train/val...")
@@ -59,7 +59,7 @@ def main():
 
     print("\n3. Adding a reward feature...")
 
-    reward_values = np.random.randn(dataset.meta.total_frames, 1).astype(np.float32)
+    reward_values = np.random.randn(dataset.meta.total_frames).astype(np.float32)
     dataset_with_reward = add_feature(
         dataset,
         feature_name="reward",
@@ -69,6 +69,7 @@ def main():
             "shape": (1,),
             "names": None,
         },
+        repo_id="lerobot/pusht_with_reward",
     )
 
     def compute_success(row_dict, episode_index, frame_index):
@@ -84,12 +85,15 @@ def main():
             "shape": (1,),
             "names": None,
         },
+        repo_id="lerobot/pusht_with_reward_and_success",
     )
 
     print(f"New features: {list(dataset_with_success.meta.features.keys())}")
 
     print("\n4. Removing the success feature...")
-    dataset_cleaned = remove_feature(dataset_with_success, feature_names="success")
+    dataset_cleaned = remove_feature(
+        dataset_with_success, feature_names="success", repo_id="lerobot/pusht_cleaned"
+    )
     print(f"Features after removal: {list(dataset_cleaned.meta.features.keys())}")
 
     print("\n5. Merging train and val splits back together...")
@@ -101,7 +105,9 @@ def main():
     if len(dataset.meta.camera_keys) > 1:
         camera_to_remove = dataset.meta.camera_keys[0]
         print(f"Removing camera: {camera_to_remove}")
-        dataset_no_cam = remove_feature(dataset, feature_names=camera_to_remove)
+        dataset_no_cam = remove_feature(
+            dataset, feature_names=camera_to_remove, repo_id="pusht_no_first_camera"
+        )
         print(f"Remaining cameras: {dataset_no_cam.meta.camera_keys}")
 
     print("\nDone! Check ~/.cache/huggingface/lerobot/ for the created datasets.")

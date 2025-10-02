@@ -40,15 +40,19 @@ Split dataset by fractions:
     python -m lerobot.scripts.lerobot_edit_dataset \\
         --repo-id lerobot/pusht \\
         --operation.type split \\
-        --operation.train 0.8 \\
-        --operation.val 0.2
+        --operation.splits '{"train": 0.8, "val": 0.2}'
 
-Split dataset by episode indices:
+Split dataset by episode indices (custom split names):
     python -m lerobot.scripts.lerobot_edit_dataset \\
         --repo-id lerobot/pusht \\
         --operation.type split \\
-        --operation.train_episodes "[0, 1, 2, 3]" \\
-        --operation.val_episodes "[4, 5]"
+        --operation.splits '{"train": [0, 1, 2, 3], "val": [4, 5]}'
+
+Split into more than two splits:
+    python -m lerobot.scripts.lerobot_edit_dataset \\
+        --repo-id lerobot/pusht \\
+        --operation.type split \\
+        --operation.splits '{"train": 0.6, "val": 0.2, "test": 0.2}'
 
 Merge multiple datasets:
     python -m lerobot.scripts.lerobot_edit_dataset \\
@@ -93,12 +97,7 @@ class DeleteEpisodesConfig:
 @dataclass
 class SplitConfig:
     type: str = "split"
-    train: float | None = None
-    val: float | None = None
-    test: float | None = None
-    train_episodes: list[int] | None = None
-    val_episodes: list[int] | None = None
-    test_episodes: list[int] | None = None
+    splits: dict[str, float | list[int]] | None = None
 
 
 @dataclass
@@ -172,27 +171,16 @@ def handle_split(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, SplitConfig):
         raise ValueError("Operation config must be SplitConfig")
 
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
-
-    splits = {}
-    for split_name in ["train", "val", "test"]:
-        split_value = getattr(cfg.operation, split_name, None)
-        split_episodes = getattr(cfg.operation, f"{split_name}_episodes", None)
-
-        if split_value is not None:
-            splits[split_name] = split_value
-        elif split_episodes is not None:
-            splits[split_name] = split_episodes
-
-    if not splits:
+    if not cfg.operation.splits:
         raise ValueError(
-            "No splits specified. Use train/val/test or train_episodes/val_episodes/test_episodes"
+            "splits dict must be specified with split names as keys and fractions/episode lists as values"
         )
 
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
     output_dir = Path(cfg.root) if cfg.root else HF_LEROBOT_HOME
 
-    logging.info(f"Splitting dataset {cfg.repo_id} with splits: {splits}")
-    split_datasets = split_dataset(dataset, splits=splits, output_dir=output_dir)
+    logging.info(f"Splitting dataset {cfg.repo_id} with splits: {cfg.operation.splits}")
+    split_datasets = split_dataset(dataset, splits=cfg.operation.splits, output_dir=output_dir)
 
     for split_name, split_ds in split_datasets.items():
         split_repo_id = f"{cfg.repo_id}_{split_name}"

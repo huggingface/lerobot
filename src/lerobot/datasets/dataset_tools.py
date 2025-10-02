@@ -138,7 +138,7 @@ def delete_episodes(
 
 def split_dataset(
     dataset: LeRobotDataset,
-    splits: dict[str, list[int]] | dict[str, float],
+    splits: dict[str, float | list[int]],
     output_dir: str | Path | None = None,
 ) -> dict[str, LeRobotDataset]:
     """Split a LeRobotDataset into multiple smaller datasets.
