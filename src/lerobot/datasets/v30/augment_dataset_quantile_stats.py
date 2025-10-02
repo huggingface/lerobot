@@ -217,7 +217,7 @@ def augment_dataset_with_quantile_stats(
     try:
         hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
     except HTTPError as e:
-        print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
+        logging.info(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
         pass
     hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=None, repo_type="dataset")
 
