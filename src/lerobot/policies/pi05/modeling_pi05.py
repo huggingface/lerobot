@@ -50,8 +50,7 @@ from lerobot.utils.constants import (
 )
 
 
-# Helper functions
-def get_safe_dtype(target_dtype, device_type):  # see openpi `get_safe_dtype` (exact copy)
+def get_safe_dtype(target_dtype, device_type):
     """Get a safe dtype for the given device type."""
     if device_type == "mps" and target_dtype == torch.float64:
         return torch.float32
