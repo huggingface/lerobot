@@ -152,46 +152,14 @@ def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
     return tasks, task_to_task_index
 
 
-def validate_local_dataset_structure(local_path: Path) -> None:
-    """Validate that the local dataset has the expected v2.1 structure."""
-    required_files = [
-        "meta/info.json",
-        LEGACY_EPISODES_PATH,
-        LEGACY_EPISODES_STATS_PATH,
-        LEGACY_TASKS_PATH,
-    ]
-
-    missing_files = []
-    for file_path in required_files:
-        full_path = local_path / file_path
-        if not full_path.exists():
-            missing_files.append(file_path)
-
-    if missing_files:
-        raise FileNotFoundError(
-            f"Local dataset is missing required files: {missing_files}. Expected v2.1 dataset structure."
-        )
-
-    try:
-        info = load_info(local_path)
-        dataset_version = info.get("codebase_version", "unknown")
-        if dataset_version != V21:
-            raise ValueError(
-                f"Local dataset has codebase version '{dataset_version}', expected '{V21}'. "
-                f"This script is specifically for converting v2.1 datasets to v3.0."
-            )
-    except Exception as e:
-        raise ValueError(f"Failed to read or parse info.json in local dataset: {e}") from e
-
-    data_dir = local_path / "data"
-    if not data_dir.exists():
-        raise FileNotFoundError(f"Local dataset is missing 'data' directory at {data_dir}")
-
-    episode_files = list(data_dir.glob("*/episode_*.parquet"))
-    if not episode_files:
-        raise FileNotFoundError(
-            "Local dataset does not contain v2.1 episode files (data/chunk-*/episode_*.parquet). "
-            "Found data directory but no episode files with expected naming pattern."
+def validate_local_dataset_version(local_path: Path) -> None:
+    """Validate that the local dataset has the expected v2.1 version."""
+    info = load_info(local_path)
+    dataset_version = info.get("codebase_version", "unknown")
+    if dataset_version != V21:
+        raise ValueError(
+            f"Local dataset has codebase version '{dataset_version}', expected '{V21}'. "
+            f"This script is specifically for converting v2.1 datasets to v3.0."
         )
 
 
@@ -472,6 +440,7 @@ def convert_dataset(
     video_file_size_in_mb: int | None = None,
     root: str | Path | None = None,
     push_to_hub: bool = True,
+    force_conversion: bool = False,
 ):
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
@@ -479,7 +448,7 @@ def convert_dataset(
         video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
 
     # First check if the dataset already has a v3.0 version
-    if root is None:
+    if root is None and not force_conversion:
         try:
             print("Trying to download v3.0 version of the dataset from the hub...")
             snapshot_download(repo_id, repo_type="dataset", revision=V30, local_dir=HF_LEROBOT_HOME / repo_id)
@@ -488,14 +457,12 @@ def convert_dataset(
             print("Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
 
     # Set root based on whether local dataset path is provided
-    if root is not None:
-        root = Path(root) / repo_id
-        validate_local_dataset_structure(root)
+    use_local_dataset = False
+    root = HF_LEROBOT_HOME / repo_id if root is None else Path(root) / repo_id
+    if root.exists():
+        validate_local_dataset_version(root)
         use_local_dataset = True
-    else:
-        # Use default HF cache location
-        root = HF_LEROBOT_HOME / repo_id
-        use_local_dataset = False
+        print(f"Using local dataset at {root}")
 
     old_root = root.parent / f"{root.name}_old"
     new_root = root.parent / f"{root.name}_v30"
@@ -581,6 +548,11 @@ if __name__ == "__main__":
         type=lambda input: input.lower() == "true",
         default=True,
         help="Push the converted dataset to the hub.",
+    )
+    parser.add_argument(
+        "--force-conversion",
+        action="store_true",
+        help="Force conversion even if the dataset already has a v3.0 version.",
     )
 
     args = parser.parse_args()
