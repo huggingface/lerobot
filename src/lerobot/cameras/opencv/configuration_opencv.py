@@ -38,8 +38,8 @@ class OpenCVCameraConfig(CameraConfig):
     ```
 
     Attributes:
-        index_or_path: Either an integer representing the camera device index,
-                      or a Path object pointing to a video file.
+        index_or_path: Either an integer (camera index), a string path like
+                '/dev/video2' or 'C:\\video.mp4', or a Path (device or file).
         fps: Requested frames per second for the color stream.
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
@@ -51,7 +51,7 @@ class OpenCVCameraConfig(CameraConfig):
         - Only 3-channel color output (RGB/BGR) is currently supported.
     """
 
-    index_or_path: int | Path
+    index_or_path: int | str | Path
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
