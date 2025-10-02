@@ -126,7 +126,7 @@ LeRobot uses MuJoCo for simulation. You need to set the rendering backend before
 
 - `export MUJOCO_GL=egl` → for headless servers (e.g. HPC, cloud)
 
-## Reproducing π₀ and π₀.₅ results
+## Reproducing π₀.₅ results
 
 We reproduce the results of π₀.₅ on the LIBERO benchmark using the LeRobot implementation. We take the Physical Intelligence LIBERO base model (`pi05_libero`) and finetune for an additional 6k steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).
 
