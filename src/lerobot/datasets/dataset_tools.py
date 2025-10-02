@@ -684,6 +684,12 @@ def _copy_and_reindex_episodes_metadata(
         if video_metadata and new_idx in video_metadata:
             episode_meta.update(video_metadata[new_idx])
 
+        # Extract episode statistics from parquet metadata.
+        # Note (maractingi): When pandas/pyarrow serializes numpy arrays with shape (3, 1, 1) to parquet,
+        # they are being deserialized as nested object arrays like:
+        #   array([array([array([0.])]), array([array([0.])]), array([array([0.])])])
+        # This happens particularly with image/video statistics. We need to detect and flatten
+        # these nested structures back to proper (3, 1, 1) arrays so aggregate_stats can process them.
         episode_stats = {}
         for key in src_episode_full:
             if key.startswith("stats/"):
@@ -694,20 +700,20 @@ def _copy_and_reindex_episodes_metadata(
                     if feature_name not in episode_stats:
                         episode_stats[feature_name] = {}
 
-                    raw_value = src_episode_full[key]
-                    if isinstance(raw_value, (int | float)):
-                        value = np.array(raw_value, dtype=np.float64)
-                    else:
-                        value = np.asarray(raw_value, dtype=np.float64)
+                    value = src_episode_full[key]
 
                     if feature_name in src_dataset.meta.features:
                         feature_dtype = src_dataset.meta.features[feature_name]["dtype"]
-                        if (
-                            feature_dtype in ["image", "video"]
-                            and stat_name != "count"
-                            and value.shape == (3,)
-                        ):
-                            value = value.reshape(3, 1, 1)
+                        if feature_dtype in ["image", "video"] and stat_name != "count":
+                            if isinstance(value, np.ndarray) and value.dtype == object:
+                                flat_values = []
+                                for item in value:
+                                    while isinstance(item, np.ndarray):
+                                        item = item.flatten()[0]
+                                    flat_values.append(item)
+                                value = np.array(flat_values, dtype=np.float64).reshape(3, 1, 1)
+                            elif isinstance(value, np.ndarray) and value.shape == (3,):
+                                value = value.reshape(3, 1, 1)
 
                     episode_stats[feature_name][stat_name] = value
 
@@ -734,13 +740,14 @@ def _copy_and_reindex_episodes_metadata(
     )
     write_info(dst_meta.info, dst_meta.root)
 
-    if all_stats:
-        logging.info(f"Aggregating statistics for {len(all_stats)} episodes")
-        aggregated_stats = aggregate_stats(all_stats)
-        filtered_stats = {k: v for k, v in aggregated_stats.items() if k in dst_meta.features}
-        write_stats(filtered_stats, dst_meta.root)
-    else:
+    if not all_stats:
         logging.warning("No statistics found to aggregate")
+        return
+
+    logging.info(f"Aggregating statistics for {len(all_stats)} episodes")
+    aggregated_stats = aggregate_stats(all_stats)
+    filtered_stats = {k: v for k, v in aggregated_stats.items() if k in dst_meta.features}
+    write_stats(filtered_stats, dst_meta.root)
 
 
 def _save_data_chunk(
