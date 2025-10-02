@@ -31,7 +31,7 @@ import numpy as np
 from reachy2_sdk.media.camera import CameraView
 from reachy2_sdk.media.camera_manager import CameraManager
 
-from lerobot.errors import DeviceNotConnectedError
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..camera import Camera
 from .configuration_reachy2_camera import ColorMode, Reachy2CameraConfig

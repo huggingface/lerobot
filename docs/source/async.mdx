@@ -31,7 +31,7 @@ Then, spin up a policy server (in one terminal, or in a separate machine) specif
 You can spin up a policy server running:
 
 ```shell
-python src/lerobot/scripts/server/policy_server.py \
+python src/lerobot/async_inference/policy_server.py \
     --host=127.0.0.1 \
     --port=8080 \
 ```
@@ -39,7 +39,7 @@ python src/lerobot/scripts/server/policy_server.py \
 This will start a policy server listening on `127.0.0.1:8080` (`localhost`, port 8080). At this stage, the policy server is empty, as all information related to which policy to run and with which parameters are specified during the first handshake with the client. Spin up a client with:
 
 ```shell
-python src/lerobot/scripts/server/robot_client.py \
+python src/lerobot/async_inference/robot_client.py \
     --server_address=127.0.0.1:8080 \ # SERVER: the host address and port of the policy server
     --robot.type=so100_follower \ # ROBOT: your robot type
     --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: your robot port
@@ -122,8 +122,8 @@ python -m lerobot.scripts.server.policy_server \
 
 <!-- prettier-ignore-start -->
 ```python
-from lerobot.scripts.server.configs import PolicyServerConfig
-from lerobot.scripts.server.policy_server import serve
+from lerobot.async_inference.configs import PolicyServerConfig
+from lerobot.async_inference.policy_server import serve
 
 config = PolicyServerConfig(
     host="localhost",
@@ -148,7 +148,7 @@ The `RobotClient` streams observations to the `PolicyServer`, and receives actio
 <hfoptions id="start_robot_client">
 <hfoption id="Command">
 ```bash
-python src/lerobot/scripts/server/robot_client.py \
+python src/lerobot/async_inference/robot_client.py \
     --server_address=127.0.0.1:8080 \ # SERVER: the host address and port of the policy server
     --robot.type=so100_follower \ # ROBOT: your robot type
     --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: your robot port
@@ -171,9 +171,9 @@ python src/lerobot/scripts/server/robot_client.py \
 import threading
 from lerobot.robots.so100_follower import SO100FollowerConfig
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.robot_client import RobotClient
-from lerobot.scripts.server.helpers import visualize_action_queue_size
+from lerobot.async_inference.configs import RobotClientConfig
+from lerobot.async_inference.robot_client import RobotClient
+from lerobot.async_inference.helpers import visualize_action_queue_size
 
 # 1. Create the robot instance
 """Check out the cameras available in your setup by running `python lerobot/find_cameras.py`"""
