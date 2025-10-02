@@ -65,7 +65,13 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     def get_optim_params(self) -> dict:
-        return self.parameters()
+        vision_model_params = self.model.vlm.vision_model.parameters()
+        connector_params = self.model.vlm.connector.parameters()
+        text_model_params = self.model.vlm.text_model.parameters()
+        optim_groups = [{"params": vision_model_params, "lr": self.vision_model_optimizer_lr},
+                        {"params": connector_params, "lr": self.connector_optimizer_lr},
+                        {"params": text_model_params, "lr": self.text_model_optimizer_lr}]
+        return optim_groups
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
