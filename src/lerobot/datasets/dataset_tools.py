@@ -488,7 +488,6 @@ def _copy_and_reindex_data(
             chunk_idx = src_ep["data/chunk_index"]
             file_idx = src_ep["data/file_index"]
 
-        from lerobot.datasets.utils import DEFAULT_DATA_PATH
 
         dst_path = dst_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         dst_path.parent.mkdir(parents=True, exist_ok=True)
