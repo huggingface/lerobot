@@ -24,51 +24,51 @@ When only repo_id is specified, the original is backed up with '_old' suffix.
 Usage Examples:
 
 Delete episodes 0, 2, and 5 from a dataset:
-    python -m lerobot.scripts.lerobot_edit_dataset \\
-        --repo-id lerobot/pusht \\
-        --operation.type delete_episodes \\
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
 Delete episodes and save to a new dataset:
-    python -m lerobot.scripts.lerobot_edit_dataset \\
-        --repo-id lerobot/pusht \\
-        --new-repo-id lerobot/pusht_filtered \\
-        --operation.type delete_episodes \\
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --new_repo_id lerobot/pusht_filtered \
+        --operation.type delete_episodes \
         --operation.episode_indices "[0, 2, 5]"
 
 Split dataset by fractions:
-    python -m lerobot.scripts.lerobot_edit_dataset \\
-        --repo-id lerobot/pusht \\
-        --operation.type split \\
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type split \
         --operation.splits '{"train": 0.8, "val": 0.2}'
 
 Split dataset by episode indices:
-    python -m lerobot.scripts.lerobot_edit_dataset \\
-        --repo-id lerobot/pusht \\
-        --operation.type split \\
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type split \
         --operation.splits '{"train": [0, 1, 2, 3], "val": [4, 5]}'
 
 Split into more than two splits:
-    python -m lerobot.scripts.lerobot_edit_dataset \\
-        --repo-id lerobot/pusht \\
-        --operation.type split \\
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type split \
         --operation.splits '{"train": 0.6, "val": 0.2, "test": 0.2}'
 
 Merge multiple datasets:
-    python -m lerobot.scripts.lerobot_edit_dataset \\
-        --repo-id lerobot/pusht_merged \\
-        --operation.type merge \\
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht_merged \
+        --operation.type merge \
         --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 
 Remove camera feature:
-    python -m lerobot.scripts.lerobot_edit_dataset \\
-        --repo-id lerobot/pusht \\
-        --operation.type remove_feature \\
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht \
+        --operation.type remove_feature \
         --operation.feature_names "['observation.images.top']"
 
 Using JSON config file:
-    python -m lerobot.scripts.lerobot_edit_dataset \\
-        --config-path path/to/edit_config.json
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --config_path path/to/edit_config.json
 """
 
 import logging
