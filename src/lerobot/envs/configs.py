@@ -38,6 +38,16 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         return self.get_choice_name(self.__class__)
 
     @property
+    def package_name(self) -> str:
+        """Package name to import if environment not found in gym registry"""
+        return f"gym_{self.type}"
+
+    @property
+    def gym_id(self) -> str:
+        """ID string used in gym.make() to instantiate the environment"""
+        return f"{self.package_name}/{self.task}"
+
+    @property
     @abc.abstractmethod
     def gym_kwargs(self) -> dict:
         raise NotImplementedError()
