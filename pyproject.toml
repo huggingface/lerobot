@@ -125,6 +125,7 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11", "lerobot[grpcio-dep]"
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
+accelerate = ["accelerate>=1.10.0"]
 
 # Development
 dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
