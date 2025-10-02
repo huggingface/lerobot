@@ -42,7 +42,7 @@ Split dataset by fractions:
         --operation.type split \\
         --operation.splits '{"train": 0.8, "val": 0.2}'
 
-Split dataset by episode indices (custom split names):
+Split dataset by episode indices:
     python -m lerobot.scripts.lerobot_edit_dataset \\
         --repo-id lerobot/pusht \\
         --operation.type split \\
