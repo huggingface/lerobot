@@ -263,7 +263,7 @@ policy_cfg = SACConfig(
 policy_actor = SACPolicy(policy_cfg)
 policy_learner = SACPolicy(policy_cfg)
 
-demonstrations_repo_id = "lerobot/example_reward_classifier"
+demonstrations_repo_id = "lerobot/example_hil_serl_dataset"
 offline_dataset = LeRobotDataset(repo_id=demonstrations_repo_id)
 
 # Online buffer: initialized from scratch

@@ -8,7 +8,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 device = "mps"  # or "cuda", or "cpu"
 
 # Load the dataset used for training
-repo_id = "lerobot/example_reward_classifier"
+repo_id = "lerobot/example_hil_serl_dataset"
 dataset = LeRobotDataset(repo_id)
 
 # Configure the policy to extract features from the image frames
