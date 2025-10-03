@@ -13,31 +13,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 from pathlib import Path
 
-from termcolor import colored
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.constants import (
+from lerobot.datasets.utils import load_json, write_json
+from lerobot.optim.optimizers import load_optimizer_state, save_optimizer_state
+from lerobot.optim.schedulers import load_scheduler_state, save_scheduler_state
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
-from lerobot.datasets.utils import load_json, write_json
-from lerobot.optim.optimizers import load_optimizer_state, save_optimizer_state
-from lerobot.optim.schedulers import load_scheduler_state, save_scheduler_state
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
-
-
-def log_output_dir(out_dir):
-    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
 
 
 def get_step_identifier(step: int, total_steps: int) -> str:

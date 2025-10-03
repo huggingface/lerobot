@@ -19,9 +19,9 @@ from typing import Any
 import draccus
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
 
 @dataclass
@@ -53,12 +53,12 @@ class AlohaEnv(EnvConfig):
     render_mode: str = "rgb_array"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
         }
     )
     features_map: dict[str, str] = field(
         default_factory=lambda: {
-            "action": ACTION,
+            ACTION: ACTION,
             "agent_pos": OBS_STATE,
             "top": f"{OBS_IMAGE}.top",
             "pixels/top": f"{OBS_IMAGES}.top",
@@ -93,13 +93,13 @@ class PushtEnv(EnvConfig):
     visualization_height: int = 384
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
             "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(2,)),
         }
     )
     features_map: dict[str, str] = field(
         default_factory=lambda: {
-            "action": ACTION,
+            ACTION: ACTION,
             "agent_pos": OBS_STATE,
             "environment_state": OBS_ENV_STATE,
             "pixels": OBS_IMAGE,
@@ -135,13 +135,13 @@ class XarmEnv(EnvConfig):
     visualization_height: int = 384
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
             "pixels": PolicyFeature(type=FeatureType.VISUAL, shape=(84, 84, 3)),
         }
     )
     features_map: dict[str, str] = field(
         default_factory=lambda: {
-            "action": ACTION,
+            ACTION: ACTION,
             "agent_pos": OBS_STATE,
             "pixels": OBS_IMAGE,
         }
@@ -193,7 +193,6 @@ class ObservationConfig:
 
     add_joint_velocity_to_observation: bool = False
     add_current_to_observation: bool = False
-    add_ee_pose_to_observation: bool = False
     display_cameras: bool = False
 
 
@@ -203,7 +202,6 @@ class GripperConfig:
 
     use_gripper: bool = True
     gripper_penalty: float = 0.0
-    gripper_penalty_in_reward: bool = False
 
 
 @dataclass
@@ -256,15 +254,15 @@ class LiberoEnv(EnvConfig):
     render_mode: str = "rgb_array"
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
-    camera_name_mapping: dict[str, str] | None = (None,)
+    camera_name_mapping: dict[str, str] | None = None
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
         }
     )
     features_map: dict[str, str] = field(
         default_factory=lambda: {
-            "action": ACTION,
+            ACTION: ACTION,
             "agent_pos": OBS_STATE,
             "pixels/agentview_image": f"{OBS_IMAGES}.image",
             "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGES}.image2",

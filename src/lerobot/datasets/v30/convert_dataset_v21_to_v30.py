@@ -26,14 +26,24 @@ This script will help you convert any LeRobot dataset already pushed to the hub 
 
 Usage:
 
+Convert a dataset from the hub:
 ```bash
 python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht
 ```
 
+Convert a local dataset (works in place):
+```bash
+python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+    --repo-id=lerobot/pusht \
+    --root=/path/to/local/dataset/directory
+    --push-to-hub=false
+```
+
 """
 
 import argparse
+import logging
 import shutil
 from pathlib import Path
 from typing import Any
@@ -46,7 +56,6 @@ from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
 from requests import HTTPError
 
-from lerobot.constants import HF_LEROBOT_HOME
 from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.datasets.utils import (
@@ -71,9 +80,11 @@ from lerobot.datasets.utils import (
     write_tasks,
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
+from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.utils import init_logging
 
 V21 = "v2.1"
-
+V30 = "v3.0"
 
 """
 -------------------------
@@ -143,7 +154,19 @@ def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
     return tasks, task_to_task_index
 
 
+def validate_local_dataset_version(local_path: Path) -> None:
+    """Validate that the local dataset has the expected v2.1 version."""
+    info = load_info(local_path)
+    dataset_version = info.get("codebase_version", "unknown")
+    if dataset_version != V21:
+        raise ValueError(
+            f"Local dataset has codebase version '{dataset_version}', expected '{V21}'. "
+            f"This script is specifically for converting v2.1 datasets to v3.0."
+        )
+
+
 def convert_tasks(root, new_root):
+    logging.info(f"Converting tasks from {root} to {new_root}")
     tasks, _ = legacy_load_tasks(root)
     task_indices = tasks.keys()
     task_strings = tasks.values()
@@ -185,7 +208,10 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
     num_frames = 0
     paths_to_cat = []
     episodes_metadata = []
-    for ep_path in ep_paths:
+
+    logging.info(f"Converting data files from {len(ep_paths)} episodes")
+
+    for ep_path in tqdm.tqdm(ep_paths, desc="convert data files"):
         ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
         ep_num_frames = get_parquet_num_frames(ep_path)
         ep_metadata = {
@@ -209,7 +235,6 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
         # Reset for the next file
         size_in_mb = ep_size_in_mb
-        num_frames = ep_num_frames
         paths_to_cat = [ep_path]
 
         chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
@@ -236,6 +261,8 @@ def get_image_keys(root):
 
 
 def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
+    logging.info(f"Converting videos from {root} to {new_root}")
+
     video_keys = get_video_keys(root)
     if len(video_keys) == 0:
         return None
@@ -254,7 +281,7 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
     episods_metadata = []
     num_cameras = len(video_keys)
     num_episodes = num_eps_per_cam[0]
-    for ep_idx in range(num_episodes):
+    for ep_idx in tqdm.tqdm(range(num_episodes), desc="convert videos"):
         # Sanity check
         ep_ids = [eps_metadata_per_cam[cam_idx][ep_idx]["episode_index"] for cam_idx in range(num_cameras)]
         ep_ids += [ep_idx]
@@ -281,6 +308,7 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
     duration_in_s = 0.0
     paths_to_cat = []
     episodes_metadata = []
+
     for ep_path in tqdm.tqdm(ep_paths, desc=f"convert videos of {video_key}"):
         ep_size_in_mb = get_video_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
@@ -374,6 +402,8 @@ def generate_episode_metadata_dict(
 
 
 def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_metadata=None):
+    logging.info(f"Converting episodes metadata from {root} to {new_root}")
+
     episodes_legacy_metadata = legacy_load_episodes(root)
     episodes_stats = legacy_load_episodes_stats(root)
 
@@ -397,14 +427,15 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
 
 def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
     info = load_info(root)
-    info["codebase_version"] = "v3.0"
+    info["codebase_version"] = V30
     del info["total_chunks"]
     del info["total_videos"]
     info["data_files_size_in_mb"] = data_file_size_in_mb
     info["video_files_size_in_mb"] = video_file_size_in_mb
     info["data_path"] = DEFAULT_DATA_PATH
-    info["video_path"] = DEFAULT_VIDEO_PATH
-    info["fps"] = float(info["fps"])
+    info["video_path"] = DEFAULT_VIDEO_PATH if info["video_path"] is not None else None
+    info["fps"] = int(info["fps"])
+    logging.info(f"Converting info from {root} to {new_root}")
     for key in info["features"]:
         if info["features"][key]["dtype"] == "video":
             # already has fps in video_info
@@ -418,16 +449,36 @@ def convert_dataset(
     branch: str | None = None,
     data_file_size_in_mb: int | None = None,
     video_file_size_in_mb: int | None = None,
+    root: str | Path | None = None,
+    push_to_hub: bool = True,
+    force_conversion: bool = False,
 ):
-    root = HF_LEROBOT_HOME / repo_id
-    old_root = HF_LEROBOT_HOME / f"{repo_id}_old"
-    new_root = HF_LEROBOT_HOME / f"{repo_id}_v30"
-
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_file_size_in_mb is None:
         video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
 
+    # First check if the dataset already has a v3.0 version
+    if root is None and not force_conversion:
+        try:
+            print("Trying to download v3.0 version of the dataset from the hub...")
+            snapshot_download(repo_id, repo_type="dataset", revision=V30, local_dir=HF_LEROBOT_HOME / repo_id)
+            return
+        except Exception:
+            print("Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
+
+    # Set root based on whether local dataset path is provided
+    use_local_dataset = False
+    root = HF_LEROBOT_HOME / repo_id if root is None else Path(root) / repo_id
+    if root.exists():
+        validate_local_dataset_version(root)
+        use_local_dataset = True
+        print(f"Using local dataset at {root}")
+
+    old_root = root.parent / f"{root.name}_old"
+    new_root = root.parent / f"{root.name}_v30"
+
+    # Handle old_root cleanup if both old_root and root exist
     if old_root.is_dir() and root.is_dir():
         shutil.rmtree(str(root))
         shutil.move(str(old_root), str(root))
@@ -435,12 +486,13 @@ def convert_dataset(
     if new_root.is_dir():
         shutil.rmtree(new_root)
 
-    snapshot_download(
-        repo_id,
-        repo_type="dataset",
-        revision=V21,
-        local_dir=root,
-    )
+    if not use_local_dataset:
+        snapshot_download(
+            repo_id,
+            repo_type="dataset",
+            revision=V21,
+            local_dir=root,
+        )
 
     convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb)
     convert_tasks(root, new_root)
@@ -451,24 +503,26 @@ def convert_dataset(
     shutil.move(str(root), str(old_root))
     shutil.move(str(new_root), str(root))
 
-    hub_api = HfApi()
-    try:
-        hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
-    except HTTPError as e:
-        print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
-        pass
-    hub_api.delete_files(
-        delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
-        repo_id=repo_id,
-        revision=branch,
-        repo_type="dataset",
-    )
-    hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
+    if push_to_hub:
+        hub_api = HfApi()
+        try:
+            hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+        except HTTPError as e:
+            print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
+            pass
+        hub_api.delete_files(
+            delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
+            repo_id=repo_id,
+            revision=branch,
+            repo_type="dataset",
+        )
+        hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
-    LeRobotDataset(repo_id).push_to_hub()
+        LeRobotDataset(repo_id).push_to_hub()
 
 
 if __name__ == "__main__":
+    init_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--repo-id",
@@ -494,6 +548,23 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="File size in MB. Defaults to 100 for data and 500 for videos.",
+    )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Local directory to use for downloading/writing the dataset.",
+    )
+    parser.add_argument(
+        "--push-to-hub",
+        type=lambda input: input.lower() == "true",
+        default=True,
+        help="Push the converted dataset to the hub.",
+    )
+    parser.add_argument(
+        "--force-conversion",
+        action="store_true",
+        help="Force conversion even if the dataset already has a v3.0 version.",
     )
 
     args = parser.parse_args()

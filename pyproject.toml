@@ -94,7 +94,7 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1"]
 placo-dep = ["placo>=0.9.6"]
-transformers-dep = ["transformers>=4.52.0"]
+transformers-dep = ["transformers>=4.53.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
 
 # Motors
@@ -119,7 +119,7 @@ phone = ["hebi-py>=2.8.0", "teleop>=0.1.0"]
 # ] # TODO: Currently not supported
 
 # Policies
-pi0 = ["lerobot[transformers-dep]"]
+pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
@@ -147,7 +147,7 @@ all = [
     "lerobot[reachy2]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
-    "lerobot[pi0]",
+    "lerobot[pi]",
     "lerobot[smolvla]",
     "lerobot[hilserl]",
     "lerobot[async]",
@@ -162,15 +162,19 @@ all = [
 ]
 
 [project.scripts]
-lerobot-calibrate="lerobot.calibrate:main"
-lerobot-find-cameras="lerobot.find_cameras:main"
-lerobot-find-port="lerobot.find_port:main"
-lerobot-record="lerobot.record:main"
-lerobot-replay="lerobot.replay:main"
-lerobot-setup-motors="lerobot.setup_motors:main"
-lerobot-teleoperate="lerobot.teleoperate:main"
-lerobot-eval="lerobot.scripts.eval:main"
-lerobot-train="lerobot.scripts.train:main"
+lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
+lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
+lerobot-find-port="lerobot.scripts.lerobot_find_port:main"
+lerobot-record="lerobot.scripts.lerobot_record:main"
+lerobot-replay="lerobot.scripts.lerobot_replay:main"
+lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
+lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
+lerobot-eval="lerobot.scripts.lerobot_eval:main"
+lerobot-train="lerobot.scripts.lerobot_train:main"
+lerobot-dataset-viz="lerobot.scripts.lerobot_dataset_viz:main"
+lerobot-info="lerobot.scripts.lerobot_info:main"
+lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
+lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
@@ -197,7 +201,7 @@ exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
 # N: pep8-naming
 # TODO: Uncomment rules when ready to use
 select = [
-    "E", "W", "F", "I", "B", "C4", "T20", "N" # "SIM", "A", "S", "D", "RUF", "UP"
+    "E", "W", "F", "I", "B", "C4", "T20", "N", "UP", "SIM" #, "A", "S", "D", "RUF"
 ]
 ignore = [
     "E501", # Line too long
@@ -263,8 +267,87 @@ default.extend-ignore-identifiers-re = [
 # color = true
 # paths = ["src/lerobot"]
 
+# TODO: Enable mypy gradually module by module across multiple PRs
+# Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
+
 [tool.mypy]
 python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-ignore_missing_imports = false
+ignore_missing_imports = true
+follow_imports = "skip"
+# warn_return_any = true
+# warn_unused_configs = true
+# strict = true
+# disallow_untyped_defs = true
+# disallow_incomplete_defs = true
+# check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.envs.*"
+# Enable type checking only for the envs module
+ignore_errors = false
+
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.utils.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.configs.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.optim.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.model.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.processor.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.datasets.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.cameras.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.motors.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.robots.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.teleoperators.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.policies.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.rl.*"
+# ignore_errors = false
+
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.async_inference.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.transport.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.scripts.*"
+# ignore_errors = false

@@ -14,7 +14,7 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from lerobot.constants import (
+from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     OPTIMIZER_PARAM_GROUPS,

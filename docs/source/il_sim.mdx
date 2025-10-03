@@ -61,14 +61,14 @@ Then we can run this command to start:
 <hfoption id="Linux">
 
 ```bash
-python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
+python -m lerobot.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
 ```
 
 </hfoption>
 <hfoption id="MacOS">
 
 ```bash
-mjpython -m lerobot.scripts.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
+mjpython -m lerobot.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
 ```
 
 </hfoption>
@@ -198,14 +198,14 @@ Then you can run this command to visualize your trained policy
 <hfoption id="Linux">
 
 ```bash
-python -m lerobot.scripts.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
+python -m lerobot.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
 ```
 
 </hfoption>
 <hfoption id="MacOS">
 
 ```bash
-mjpython -m lerobot.scripts.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
+mjpython -m lerobot.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
 ```
 
 </hfoption>

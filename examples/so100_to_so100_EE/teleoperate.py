@@ -33,7 +33,7 @@ from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
 from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
 from lerobot.utils.robot_utils import busy_wait
-from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 FPS = 30
 
@@ -78,7 +78,6 @@ ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservati
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.10,
-            max_ee_twist_step_rad=0.50,
         ),
         InverseKinematicsEEToJoints(
             kinematics=follower_kinematics_solver,
@@ -95,7 +94,7 @@ follower.connect()
 leader.connect()
 
 # Init rerun viewer
-_init_rerun(session_name="so100_so100_EE_teleop")
+init_rerun(session_name="so100_so100_EE_teleop")
 
 print("Starting teleop loop...")
 while True:
