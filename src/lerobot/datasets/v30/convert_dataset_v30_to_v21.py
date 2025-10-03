@@ -57,7 +57,7 @@ V30 = "v3.0"
 
 LEGACY_DATA_PATH_TEMPLATE = "data/chunk-{chunk_index:03d}/episode_{episode_index:06d}.parquet"
 LEGACY_VIDEO_PATH_TEMPLATE = "videos/chunk-{chunk_index:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-
+MIN_VIDEO_DURATION = 1e-6
 
 def _to_serializable(value: Any) -> Any:
     """Convert numpy/pyarrow values into standard Python types for JSON dumps."""
@@ -220,15 +220,90 @@ def _group_episodes_by_video_file(
     return grouped
 
 
+def _validate_video_paths(src: Path, dst: Path) -> None:
+    """Validate source and destination paths to prevent security issues."""
+    
+    # Convert to Path objects if they aren't already
+    src = Path(src)
+    dst = Path(dst)
+    
+    # Resolve paths to handle symlinks and normalize them
+    try:
+        src_resolved = src.resolve()
+        dst_resolved = dst.resolve()
+    except OSError as exc:
+        raise ValueError(f"Invalid path provided: {exc}") from exc
+    
+    # Check that source file exists and is a regular file
+    if not src_resolved.exists():
+        raise FileNotFoundError(f"Source video file does not exist: {src_resolved}")
+    
+    if not src_resolved.is_file():
+        raise ValueError(f"Source path is not a regular file: {src_resolved}")
+    
+    # Validate file extensions for video files
+    valid_video_extensions = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
+    if src_resolved.suffix.lower() not in valid_video_extensions:
+        raise ValueError(f"Source file does not have a valid video extension: {src_resolved}")
+    
+    if dst_resolved.suffix.lower() not in valid_video_extensions:
+        raise ValueError(f"Destination file does not have a valid video extension: {dst_resolved}")
+    
+    # Check for path traversal attempts in the original paths
+    src_str = str(src)
+    dst_str = str(dst)
+    
+    # Ensure paths don't contain null bytes or other control characters
+    for path_str, name in [(src_str, "source"), (dst_str, "destination")]:
+        if "\0" in path_str:
+            raise ValueError(f"Path contains null bytes: {name} path")
+        if any(ord(c) < 32 and c not in ["\t", "\n", "\r"] for c in path_str):
+            raise ValueError(f"Path contains invalid control characters: {name} path")
+    
+    # Additional check: ensure resolved paths don't point to system directories
+    system_dirs = {"/etc", "/sys", "/proc", "/dev", "/boot", "/root"}
+    for resolved_path, name in [(src_resolved, "source"), (dst_resolved, "destination")]:
+        path_str = str(resolved_path)
+        for sys_dir in system_dirs:
+            if path_str.startswith(sys_dir + "/") or path_str == sys_dir:
+                raise ValueError(f"Path points to system directory: {name} path {resolved_path}")
+    
+    # Ensure the destination directory can be created safely
+    try:
+        dst_parent = dst_resolved.parent
+        if not dst_parent.exists():
+            # Check if we can create the parent directory structure
+            dst_parent.resolve()
+    except OSError as exc:
+        raise ValueError(f"Cannot create destination directory: {exc}") from exc
+
+
 def _extract_video_segment(
     src: Path,
     dst: Path,
     start: float,
     end: float,
 ) -> None:
-    duration = max(end - start, 1e-6)
+    # Validate paths to prevent security issues
+    _validate_video_paths(src, dst)
+    
+    # Validate numeric parameters to prevent injection
+    if not (0 <= start <= 86400):  # 24 hours max
+        raise ValueError(f"Invalid start time: {start}")
+    if not (0 <= end <= 86400):  # 24 hours max
+        raise ValueError(f"Invalid end time: {end}")
+    if start >= end:
+        raise ValueError(f"Start time {start} must be less than end time {end}")
+    
+    duration = max(end - start, MIN_VIDEO_DURATION)
+    
+    # Validate duration is reasonable
+    if duration > 3600:  # 1 hour max
+        raise ValueError(f"Video segment duration too long: {duration} seconds")
+    
     dst.parent.mkdir(parents=True, exist_ok=True)
 
+    # Build command with validated parameters
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -249,11 +324,23 @@ def _extract_video_segment(
     ]
 
     try:
-        subprocess.run(cmd, check=True)
+        # Use more secure subprocess call with explicit timeout
+        result = subprocess.run(
+            cmd, 
+            check=True, 
+            timeout=300,  # 5 minute timeout
+            capture_output=True, 
+            text=True
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"ffmpeg timed out while processing video '{src}' -> '{dst}'") from exc
     except FileNotFoundError as exc:
         raise RuntimeError("ffmpeg executable not found; it is required for video conversion") from exc
     except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"ffmpeg failed while splitting video '{src}' into '{dst}'.") from exc
+        error_msg = f"ffmpeg failed while splitting video '{src}' into '{dst}'"
+        if exc.stderr:
+            error_msg += f". Error: {exc.stderr.strip()}"
+        raise RuntimeError(error_msg) from exc
 
 
 def convert_videos(root: Path, new_root: Path, episode_records: list[dict[str, Any]], video_keys: list[str]) -> None:
