@@ -19,7 +19,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -37,7 +37,7 @@ T = TypeVar("T", bound="PreTrainedConfig")
 
 
 @dataclass
-class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
+class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: ignore[misc,name-defined] #TODO: draccus issue
     """
     Base configuration class for policy models.
 
@@ -62,7 +62,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # automatic gradient scaling is used.
     use_amp: bool = False
 
-    push_to_hub: bool = True
+    push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
 
     # Upload on private repository on the Hugging Face hub.
@@ -75,7 +75,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.
     pretrained_path: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        self.pretrained_path: Path | None = None
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
@@ -90,21 +91,24 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def type(self) -> str:
-        return self.get_choice_name(self.__class__)
+        choice_name = self.get_choice_name(self.__class__)
+        if not isinstance(choice_name, str):
+            raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
+        return choice_name
 
     @property
     @abc.abstractmethod
-    def observation_delta_indices(self) -> list | None:
+    def observation_delta_indices(self) -> list | None:  # type: ignore[type-arg] #TODO: No implementation
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def action_delta_indices(self) -> list | None:
+    def action_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def reward_delta_indices(self) -> list | None:
+    def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -154,13 +158,13 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
-        resume_download: bool = None,
-        proxies: dict | None = None,
+        resume_download: bool | None = None,
+        proxies: dict[Any, Any] | None = None,
         token: str | bool | None = None,
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        **policy_kwargs,
+        **policy_kwargs: Any,
     ) -> T:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
@@ -168,7 +172,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             if CONFIG_NAME in os.listdir(model_id):
                 config_file = os.path.join(model_id, CONFIG_NAME)
             else:
-                print(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
+                logging.error(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
         else:
             try:
                 config_file = hf_hub_download(
@@ -193,6 +197,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         # something like --policy.path (in addition to --policy.type)
         with draccus.config_type("json"):
             orig_config = draccus.parse(cls, config_file, args=[])
+
+        if config_file is None:
+            raise FileNotFoundError(f"{CONFIG_NAME} not found in {model_id}")
 
         with open(config_file) as f:
             config = json.load(f)
