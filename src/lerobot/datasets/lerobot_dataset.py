@@ -1214,6 +1214,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if has_images:
+            # For images, to_parquet_with_hf_images always overwrites the file
+            # So we need to manually handle concatenation if writing multiple episodes to same file
+            if path.exists():
+                existing_df = pd.read_parquet(path)
+                df = pd.concat([existing_df, df], ignore_index=True)
             to_parquet_with_hf_images(df, path)
         else:
             # For non-image data, use standard PyArrow parquet writer
