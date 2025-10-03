@@ -1,5 +1,6 @@
 import multiprocessing as mp
 import signal
+from pathlib import Path
 from queue import Empty, Full
 
 import torch
@@ -114,6 +115,7 @@ def run_actor(
     reward_classifier: Classifier,
     env_cfg: HILSerlRobotEnvConfig,
     device: torch.device = "mps",
+    output_directory: Path | None = None,
 ):
     """The actor process - interacts with environment and collects data.
     The policy is frozen and only the parameters are updated, popping the most recent ones from a queue."""
@@ -205,6 +207,10 @@ def run_actor(
             env.robot.disconnect()
         if teleop_device and hasattr(teleop_device, "disconnect"):
             teleop_device.disconnect()
+        if output_directory is not None:
+            policy_actor.save_pretrained(output_directory)
+            print(f"[ACTOR] Latest actor policy saved at: {output_directory}")
+
         print("[ACTOR] Actor process finished")
 
 
@@ -221,6 +227,8 @@ def make_policy_obs(obs, device: torch.device = "cpu"):
 """Main function - coordinates actor and learner processes."""
 
 device = "mps"  # or "cuda" or "cpu"
+output_directory = Path("outputs/robot_learning_tutorial/hil_serl")
+output_directory.mkdir(parents=True, exist_ok=True)
 
 # find ports using lerobot-find-port
 follower_port = ...
@@ -311,6 +319,7 @@ actor_process = mp.Process(
         policy_actor,
         reward_classifier,
         env_cfg,
+        output_directory,
     ),
     kwargs={"device": "cpu"},  # actor is frozen, can run on CPU or accelerate for inference
 )
