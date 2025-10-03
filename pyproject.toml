@@ -159,6 +159,7 @@ all = [
     "lerobot[xarm]",
     "lerobot[phone]",
     "lerobot[libero]",
+    "lerobot[metaworld]",
 ]
 
 [project.scripts]

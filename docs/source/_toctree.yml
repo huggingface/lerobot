@@ -31,6 +31,8 @@
     title: Finetune SmolVLA
   - local: libero
     title: Using Libero
+  - local: metaworld
+    title: Using MetaWorld
   title: "Policies"
 
 - sections:
