@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="grid_cube_scene">
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+
+  <visual>
+    <global offwidth="1920" offheight="1080"/>
+  </visual>
+
+  <asset>
+    <!-- Grid texture: High-resolution 16x16 checkerboard pattern -->
+    <texture name="grid_texture" type="2d" builtin="checker"
+             rgb1="0.8 0.8 0.8" rgb2="0.2 0.2 0.2" width="256" height="256"/>
+    <material name="grid_material" texture="grid_texture" texrepeat="4 4"/>
+    <material name="cube_material" rgba="1.0 0.3 0.3 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- Ground plane with 8x8 grid -->
+    <!-- Size is 4x4 to cover -4 to 4 range, giving 8 units total -->
+    <geom name="ground" type="plane" size="4 4 0.1" pos="0 0 0" material="grid_material"/>
+
+    <!-- Cube that spawns randomly in grid -->
+    <!-- Position will be randomized in code: x,y between -3.5 to 3.5 in 1-unit steps -->
+    <!-- Size is 0.4 to fit well within a grid cell -->
+    <body name="cube" pos="0 0 0.5">
+      <joint name="cube_joint" type="free"/>
+      <geom name="cube_geom" type="box" size="0.4 0.4 0.4" material="cube_material" mass="0.1"/>
+    </body>
+
+    <!-- Lighting -->
+    <light name="overhead_light" pos="0 0 10" mode="fixed"/>
+    <light name="side_light" pos="5 5 8" mode="fixed"/>
+
+    <!-- Camera looking down at the 8x8 grid -->
+    <camera name="grid_camera" pos="0 0 15" xyaxes="1 0 0 0 1 0" mode="fixed"/>
+  </worldbody>
+</mujoco>
