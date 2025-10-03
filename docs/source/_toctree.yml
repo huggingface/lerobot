@@ -35,6 +35,8 @@
     title: π₀.₅ (Pi05)
   - local: libero
     title: Using Libero
+  - local: metaworld
+    title: Using MetaWorld
   title: "Policies"
 - sections:
   - local: introduction_processors

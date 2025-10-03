@@ -74,7 +74,15 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
+    elif "metaworld" in cfg.type:
+        from lerobot.envs.metaworld import create_metaworld_envs
 
+        return create_metaworld_envs(
+            task=cfg.task,
+            n_envs=n_envs,
+            gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+        )
     package_name = f"gym_{cfg.type}"
     try:
         importlib.import_module(package_name)
