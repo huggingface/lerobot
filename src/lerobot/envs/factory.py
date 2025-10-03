@@ -17,7 +17,7 @@ import importlib
 
 import gymnasium as gym
 
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, MetaworldEnv, PushtEnv, XarmEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, XarmEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -73,12 +73,10 @@ def make_env(
         )
     elif "metaworld" in cfg.type:
         from lerobot.envs.metaworld import create_metaworld_envs
-        
+
         return create_metaworld_envs(
             task=cfg.task,
             n_envs=n_envs,
-            camera_name=cfg.camera_name,
-            init_states=cfg.init_states,
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )

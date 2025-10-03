@@ -1,21 +1,20 @@
+import json
 from collections import defaultdict
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
+
 import gymnasium as gym
 import metaworld
+import metaworld.policies as policies
 import numpy as np
 from gymnasium import spaces
-import json
 from huggingface_hub import hf_hub_download
-import metaworld.policies as policies
 
 # download the JSON
-path = hf_hub_download(
-    repo_id="jadechoghari/smolvla-metaworld-keys",
-    filename="tasks_metaworld.json"
-)
+path = hf_hub_download(repo_id="jadechoghari/smolvla-metaworld-keys", filename="tasks_metaworld.json")
 
 # load JSON
-with open(path, "r") as f:
+with open(path) as f:
     data = json.load(f)
 
 # extract dicts
@@ -24,15 +23,13 @@ TASK_NAME_TO_ID = data["TASK_NAME_TO_ID"]
 DIFFICULTY_TO_TASKS = data["DIFFICULTY_TO_TASKS"]
 
 # this convert policy strings to real classes
-TASK_POLICY_MAPPING = {
-    k: getattr(policies, v) for k, v in data["TASK_POLICY_MAPPING"].items()
-}
+TASK_POLICY_MAPPING = {k: getattr(policies, v) for k, v in data["TASK_POLICY_MAPPING"].items()}
 
 ACTION_DIM = 4
 OBS_DIM = 4
 
+
 class MetaworldEnv(gym.Env):
-    # TODO(aliberts): add "human" render_mode
     metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
 
     def __init__(
@@ -165,7 +162,9 @@ class MetaworldEnv(gym.Env):
     def close(self):
         self._env.close()
 
+
 # ---- Main API ----------------------------------------------------------------
+
 
 def create_metaworld_envs(
     task: str,
@@ -205,10 +204,7 @@ def create_metaworld_envs(
             print(f"Building vec env | group={group} | task_id={tid} | task={task_name}")
 
             # build n_envs factories
-            fns = [
-                (lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs))
-                for _ in range(n_envs)
-            ]
+            fns = [(lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]
 
             out[group][tid] = env_cls(fns)
 

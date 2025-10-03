@@ -295,10 +295,11 @@ class LiberoEnv(EnvConfig):
             "render_mode": self.render_mode,
         }
 
+
 @EnvConfig.register_subclass("metaworld")
 @dataclass
 class MetaworldEnv(EnvConfig):
-    task: str = "metaworld-push-v2" #add all tasks
+    task: str = "metaworld-push-v2"  # add all tasks
     fps: int = 80
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
@@ -321,13 +322,14 @@ class MetaworldEnv(EnvConfig):
     def __post_init__(self):
         if self.obs_type == "pixels":
             self.features["top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 480, 3))
-        
+
         elif self.obs_type == "pixels_agent_pos":
             self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(4,))
             self.features["pixels/top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 480, 3))
-        
+
         else:
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
     @property
     def gym_kwargs(self) -> dict:
         return {
