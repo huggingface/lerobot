@@ -125,3 +125,42 @@ lerobot-train \
 LeRobot uses MuJoCo for simulation. You need to set the rendering backend before training or evaluation:
 
 - `export MUJOCO_GL=egl` → for headless servers (e.g. HPC, cloud)
+
+## Reproducing π₀.₅ results
+
+We reproduce the results of π₀.₅ on the LIBERO benchmark using the LeRobot implementation. We take the Physical Intelligence LIBERO base model (`pi05_libero`) and finetune for an additional 6k steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).
+
+The finetuned model can be found here:
+
+- **π₀.₅ LIBERO**: [lerobot/pi05_libero_finetuned](https://huggingface.co/lerobot/pi05_libero_finetuned)
+
+We then evaluate the finetuned model using the LeRobot LIBERO implementation, by running the following command:
+
+```bash
+python src/lerobot/scripts/eval.py \
+  --output_dir=/logs/ \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --policy.path=pi05_libero_finetuned \
+  --policy.n_action_steps=10 \
+  --output_dir=./eval_logs/ \
+  --env.max_parallel_tasks=1
+```
+
+**Note:** We set `n_action_steps=10`, similar to the original OpenPI implementation.
+
+### Results
+
+We obtain the following results on the LIBERO benchmark:
+
+| Model    | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average  |
+| -------- | -------------- | ------------- | ----------- | --------- | -------- |
+| **π₀.₅** | 97.0           | 99.0          | 98.0        | 96.0      | **97.5** |
+
+These results are consistent with the original [results](https://github.com/Physical-Intelligence/openpi/tree/main/examples/libero#results) reported by Physical Intelligence:
+
+| Model    | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average   |
+| -------- | -------------- | ------------- | ----------- | --------- | --------- |
+| **π₀.₅** | 98.8           | 98.2          | 98.0        | 92.4      | **96.85** |
