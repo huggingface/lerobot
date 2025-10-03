@@ -98,7 +98,7 @@ OLD
 videos/chunk-000/CAMERA/episode_000000.mp4
 
 NEW
-videos/chunk-000/file_000.mp4
+videos/CAMERA/chunk-000/file_000.mp4
 -------------------------
 OLD
 episodes.jsonl
