@@ -300,6 +300,9 @@ class LeRobotDatasetMetadata:
                 latest_num_frames = self.episodes[-1]["dataset_to_index"]
                 episode_dict["dataset_from_index"] = [latest_num_frames]
                 episode_dict["dataset_to_index"] = [latest_num_frames + num_frames]
+
+                # When resuming, move to the next file
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
             else:
                 episode_dict["dataset_from_index"] = [0]
                 episode_dict["dataset_to_index"] = [num_frames]
@@ -334,24 +337,16 @@ class LeRobotDatasetMetadata:
         df = pd.DataFrame(ep_dataset)
         num_frames = len(df)
         table = pa.Table.from_pandas(df, preserve_index=False)
-        row_group_size = num_frames
 
         if not self.writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
             path.parent.mkdir(parents=True, exist_ok=True)
 
-            # When resuming, append to existing episode metadata file
-            if path.exists():
-                existing_df = pd.read_parquet(path)
-                df = pd.concat([existing_df, df], ignore_index=True)
-                table = pa.Table.from_pandas(df, preserve_index=False)
-                row_group_size = len(table)
-
             self.writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
 
-        self.writer.write_table(table, row_group_size=row_group_size)
+        self.writer.write_table(table, row_group_size=num_frames)
         self.latest_episode = episode_dict
 
     def save_episode(
@@ -1174,26 +1169,32 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.latest_episode is None:
             # Initialize indices and frame count for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
-            latest_num_frames = 0
+            global_frame_index = 0
             # However, if the episodes already exists
             # It means we are resuming recording, so we need to load the latest episode
             # Update the indices to avoid overwriting the latest episode
             if self.meta.episodes is not None and len(self.meta.episodes) > 0:
                 latest_ep = self.meta.episodes[-1]
-                latest_num_frames = latest_ep["dataset_to_index"]
+                global_frame_index = latest_ep["dataset_to_index"]
                 chunk_idx = latest_ep["data/chunk_index"]
                 file_idx = latest_ep["data/file_index"]
+
+                # When resuming, move to the next file
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
         else:
             # Retrieve information from the latest parquet file
             latest_ep = self.latest_episode
             chunk_idx = latest_ep["data/chunk_index"]
             file_idx = latest_ep["data/file_index"]
+            global_frame_index = latest_ep["index"][-1] + 1
 
             latest_path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
             latest_size_in_mb = get_file_size_in_mb(latest_path)
-            latest_num_frames = latest_ep["index"][-1] + 1  # Next available index
 
-            av_size_per_frame = latest_size_in_mb / latest_num_frames
+            frames_in_current_file = global_frame_index - latest_ep["dataset_from_index"]
+            av_size_per_frame = (
+                latest_size_in_mb / frames_in_current_file if frames_in_current_file > 0 else 0
+            )
 
             # Determine if a new parquet file is needed
             if (
@@ -1202,7 +1203,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ):
                 # Size limit is reached or writer was closed for reading, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
-                latest_num_frames = 0
                 self._close_writer()
                 self._writer_closed_for_reading = False
 
@@ -1214,38 +1214,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if has_images:
-            # For images, we need to handle appending manually
-            if path.exists() and self.writer is None:
-                # Read existing data and append new data (happens when resuming or after writer was closed)
-                existing_df = pd.read_parquet(path)
-                df = pd.concat([existing_df, df], ignore_index=True)
-
             to_parquet_with_hf_images(df, path)
         else:
             # For non-image data, use standard PyArrow parquet writer
             table = pa.Table.from_pandas(df, preserve_index=False)
-            row_group_size = ep_num_frames
             if not self.writer:
-                # When resuming or after writer was closed, append to existing file
-                if path.exists():
-                    existing_df = pd.read_parquet(path)
-                    df = pd.concat([existing_df, df], ignore_index=True)
-                    table = pa.Table.from_pandas(df, preserve_index=False)
-                    row_group_size = len(table)
-
                 self.writer = pq.ParquetWriter(
                     path, schema=table.schema, compression="snappy", use_dictionary=True
                 )
-            self.writer.write_table(table, row_group_size=row_group_size)
-
-        self.latest_episode = ep_dict
+            self.writer.write_table(table, row_group_size=ep_num_frames)
 
         metadata = {
             "data/chunk_index": chunk_idx,
             "data/file_index": file_idx,
-            "dataset_from_index": latest_num_frames,
-            "dataset_to_index": latest_num_frames + ep_num_frames,
+            "dataset_from_index": global_frame_index,
+            "dataset_to_index": global_frame_index + ep_num_frames,
         }
+
+        # Store metadata with episode data for next episode
+        self.latest_episode = {**ep_dict, **metadata}
 
         # Mark that the HF dataset needs reloading (lazy loading approach)
         # This avoids expensive reloading during sequential recording
