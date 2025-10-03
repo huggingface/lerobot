@@ -439,6 +439,9 @@ if __name__ == "__main__":
         # We set step_scheduler_with_optimizer False to prevent accelerate from
         # adjusting the lr_scheduler steps based on the num_processes
         accelerator = accelerate.Accelerator(step_scheduler_with_optimizer=False)
+
+        init_logging(accelerator=accelerator)
         train(accelerator=accelerator)
     else:
+        init_logging()
         train()
