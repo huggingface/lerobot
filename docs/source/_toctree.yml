@@ -28,11 +28,14 @@
   title: "Datasets"
 - sections:
   - local: smolvla
-    title: Finetune SmolVLA
+    title: SmolVLA
+  - local: pi0
+    title: π₀ (Pi0)
+  - local: pi05
+    title: π₀.₅ (Pi05)
   - local: libero
     title: Using Libero
   title: "Policies"
-
 - sections:
   - local: introduction_processors
     title: Introduction to Robot Processors
