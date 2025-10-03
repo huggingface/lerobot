@@ -125,7 +125,7 @@ class SMOLANDFAST(nn.Module):
         self.vlm = AutoModelForImageTextToText.from_pretrained(
             self.config.vlm_checkpoint, torch_dtype=self.torch_precision
         )
-        self.processor = AutoProcessor.from_pretrained(self.config.vlm_checkpoint)
+        self.processor = AutoProcessor.from_pretrained(self.config.vlm_checkpoint, use_fast=True)
 
         if config.scale_factor != 4:
             # if config factor is not 4 we need to recreate a linear layer in connector

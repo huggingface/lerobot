@@ -51,10 +51,11 @@ class SMOLANDFASTConfig(PreTrainedConfig):
     vlm_checkpoint = "HuggingFaceTB/SmolVLM2-256M-Video-Instruct"
 
     precision: str = "float32"
-    freeze_vision_encoder: bool = False
-    freeze_connector: bool = False
+    freeze_vision_encoder: bool = True
+    freeze_connector: bool = True
     scale_factor: int = 1
     do_image_spliting: bool = False
+    drop_n_last_frames: bool = True
 
     grad_clip_norm: float = 1
 
