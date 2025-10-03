@@ -71,22 +71,27 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    bi_starai_follower,
     hope_jr,
     koch_follower,
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    starai_cello,
+    starai_viola,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_so100_leader,
+    bi_starai_leader,
     gamepad,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    starai_violin,
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up

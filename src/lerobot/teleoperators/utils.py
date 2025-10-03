@@ -45,6 +45,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .so101_leader import SO101Leader
 
         return SO101Leader(config)
+    elif config.type == "starai_violin":
+        from .starai_violin import StaraiViolin
+
+        return StaraiViolin(config)
     elif config.type == "stretch3":
         from .stretch3_gamepad import Stretch3GamePad
 
@@ -81,5 +85,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .reachy2_teleoperator import Reachy2Teleoperator
 
         return Reachy2Teleoperator(config)
+    elif config.type == "bi_starai_leader":
+        from .bi_starai_leader import BiStaraiLeader
+
+        return BiStaraiLeader(config)
     else:
         raise ValueError(config.type)
