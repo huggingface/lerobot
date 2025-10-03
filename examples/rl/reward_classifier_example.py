@@ -27,7 +27,7 @@ optimizer = config.get_optimizer_preset().build(policy.parameters())
 preprocessor, _ = make_pre_post_processors(policy_cfg=config, dataset_stats=dataset.meta.stats)
 
 
-classifier_id = ...  # your HF username and model repo id for the reward classifier
+classifier_id = "lerobot/reward_classifier_hil_serl_example"  # your HF username and model repo id for the reward classifier
 
 # Instantiate a dataloader
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=16, shuffle=True)
