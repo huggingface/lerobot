@@ -1,6 +1,6 @@
 """Utilities to convert a LeRobot dataset from codebase version v3.0 back to v2.1.
 
-The script mirrors :mod:`convert_dataset_v21_to_v30` but applies the reverse
+The script mirrors :mod:`lerobot.datasets.v21.convert_dataset_v21_to_v30` but applies the reverse
 transformations so an existing dataset created with the new consolidated file
 layout can be ported back to the legacy per-episode structure.
 
