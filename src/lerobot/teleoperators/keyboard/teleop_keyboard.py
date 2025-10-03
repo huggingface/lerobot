@@ -102,12 +102,21 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     def _on_press(self, key):
+        # Capture both character keys and special keys (arrows, shift, ctrl, etc.)
         if hasattr(key, "char"):
             self.event_queue.put((key.char, True))
+        else:
+            # Capture special keys directly (keyboard.Key enum values)
+            self.event_queue.put((key, True))
 
     def _on_release(self, key):
+        # Capture both character keys and special keys
         if hasattr(key, "char"):
             self.event_queue.put((key.char, False))
+        else:
+            # Capture special keys directly (keyboard.Key enum values)
+            self.event_queue.put((key, False))
+
         if key == keyboard.Key.esc:
             logging.info("ESC pressed, disconnecting.")
             self.disconnect()
@@ -214,8 +223,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 # this is useful for retrieving other events like interventions for RL, episode success, etc.
                 self.misc_keys_queue.put(key)
 
-        self.current_pressed.clear()
-
         action_dict = {
             "delta_x": delta_x,
             "delta_y": delta_y,
@@ -282,6 +289,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             elif key == "q":
                 terminate_episode = True
                 success = False
+
+        self.current_pressed.clear()
 
         return {
             TeleopEvents.IS_INTERVENTION: is_intervention,
