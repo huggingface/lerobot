@@ -11,8 +11,7 @@ from transformers import AutoProcessor
 from transformers import AutoModelForImageTextToText
 from transformers import LogitsProcessorList
 
-from lerobot.constants import ACTION, OBS_STATE, OBS_IMAGE
-from lerobot.policies.normalize import Normalize, Unnormalize
+from lerobot.utils.constants import ACTION, OBS_STATE, OBS_IMAGE
 from lerobot.policies.smolandfast.configuration_smolandfast import SMOLANDFASTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 
@@ -46,16 +45,6 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(
-            config.input_features, config.normalization_mapping, dataset_stats
-        )
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-
         self.model = SMOLANDFAST(config)
 
         self.reset()
@@ -65,12 +54,12 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     def get_optim_params(self) -> dict:
-        vision_model_params = self.model.vlm.vision_model.parameters()
-        connector_params = self.model.vlm.connector.parameters()
-        text_model_params = self.model.vlm.text_model.parameters()
-        optim_groups = [{"params": vision_model_params, "lr": self.vision_model_optimizer_lr},
-                        {"params": connector_params, "lr": self.connector_optimizer_lr},
-                        {"params": text_model_params, "lr": self.text_model_optimizer_lr}]
+        vision_model_params = self.model.vlm.model.vision_model.parameters()
+        connector_params = self.model.vlm.model.connector.parameters()
+        text_model_params = self.model.vlm.model.text_model.parameters()
+        optim_groups = [{"params": vision_model_params, "lr": self.config.vision_model_optimizer_lr},
+                        {"params": connector_params, "lr": self.config.connector_optimizer_lr},
+                        {"params": text_model_params, "lr": self.config.text_model_optimizer_lr}]
         return optim_groups
 
     @torch.no_grad()
@@ -88,8 +77,6 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
         """
         self.eval()
 
-        batch = self.normalize_inputs(batch)
-
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
@@ -101,17 +88,12 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
                 0
             ]  # self.config.max_action_dim  # self.config.action_feature.shape[0]
             actions = actions[:, :, :original_action_dim]
-
-            actions = self.unnormalize_outputs({"action": actions})["action"]
-
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
         loss_dict = self.model.forward(batch)
         return loss_dict["loss"], loss_dict
 
