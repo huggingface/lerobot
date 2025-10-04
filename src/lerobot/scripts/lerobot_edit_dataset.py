@@ -19,7 +19,6 @@ Edit LeRobot datasets using various transformation tools.
 
 This script allows you to delete episodes, split datasets, merge datasets,
 and remove features. When new_repo_id is specified, creates a new dataset.
-When only repo_id is specified, the original is backed up with '_old' suffix.
 
 Usage Examples:
 
@@ -152,6 +151,9 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
         cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
     )
 
+    if cfg.new_repo_id is None:
+        dataset.root = Path(str(dataset.root) + "_old")
+
     logging.info(f"Deleting episodes {cfg.operation.episode_indices} from {cfg.repo_id}")
     new_dataset = delete_episodes(
         dataset,
@@ -236,6 +238,9 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
     output_repo_id, output_dir = get_output_path(
         cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
     )
+
+    if cfg.new_repo_id is None:
+        dataset.root = Path(str(dataset.root) + "_old")
 
     logging.info(f"Removing features {cfg.operation.feature_names} from {cfg.repo_id}")
     new_dataset = remove_feature(
