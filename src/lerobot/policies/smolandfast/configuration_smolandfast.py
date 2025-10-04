@@ -49,7 +49,7 @@ class SMOLANDFASTConfig(PreTrainedConfig):
 
     checkpoint_path: str = None
 
-    vlm_checkpoint = "HuggingFaceTB/SmolVLM2-256M-Video-Instruct"
+    vlm_checkpoint: str = "HuggingFaceTB/SmolVLM2-256M-Video-Instruct"
 
     precision: str = "float32"
     freeze_vision_encoder: bool = True

@@ -1,0 +1,56 @@
+{
+    "dataset": {
+        "repo_id": "lerobot/pusht"
+    },
+    "env": {
+        "type": "pusht",
+        "task": "PushT-v0",
+        "obs_type": "pixels_agent_pos",
+        "render_mode": "rgb_array"
+    },
+    "policy": {
+        "type": "smolandfast",
+        "n_obs_steps": 1,
+        "device": "cuda",
+        "use_amp": false,
+        "push_to_hub": false,
+        "chunk_size": 10,
+        "n_action_steps": 5,
+        "vision_model_optimizer_lr": 0.0002,
+        "connector_optimizer_lr": 0.0002,
+        "text_model_optimizer_lr": 0.0002,
+        "optimizer_lr": 0.0002,
+        "optimizer_betas": [
+            0.9,
+            0.95
+        ],
+        "optimizer_eps": 1e-08,
+        "optimizer_weight_decay": 0.01,
+        "scheduler_warmup_steps": 1000,
+        "scheduler_decay_steps": 30000,
+        "scheduler_decay_lr": 2.5e-06,
+        "precision": "float32",
+        "freeze_vision_encoder": true,
+        "freeze_connector": true,
+        "scale_factor": 4,
+        "do_image_spliting": false,
+        "drop_n_last_frames": true,
+        "grad_clip_norm": 1,
+        "relaxed_action_decoding": true
+    },
+    "num_workers": 4,
+    "batch_size": 16,
+    "steps": 10000,
+    "eval_freq": 1000,
+    "log_freq": 100,
+    "save_checkpoint": true,
+    "save_freq": 10000,
+    "eval": {
+        "n_episodes": 32,
+        "batch_size": 16
+    },
+    "wandb": {
+        "enable": true,
+        "project": "lerobot"
+    }
+}
