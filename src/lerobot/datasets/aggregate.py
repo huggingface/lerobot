@@ -236,6 +236,9 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
     Returns:
         dict: Updated videos_idx with current chunk and file indices.
     """
+    for key in videos_idx:
+        videos_idx[key]["episode_duration"] = src_meta.total_frames / src_meta.fps
+
     for key, video_idx in videos_idx.items():
         unique_chunk_file_pairs = {
             (chunk, file)
@@ -250,6 +253,8 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
         chunk_idx = video_idx["chunk"]
         file_idx = video_idx["file"]
 
+        rotated_to_new_file = False
+
         for src_chunk_idx, src_file_idx in unique_chunk_file_pairs:
             src_path = src_meta.root / DEFAULT_VIDEO_PATH.format(
                 video_key=key,
@@ -263,21 +268,15 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 file_index=file_idx,
             )
 
-            # If a new file is created, we don't want to increment the latest_duration
-            update_latest_duration = False
-
             if not dst_path.exists():
-                # First write to this destination file
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(str(src_path), str(dst_path))
-                continue  # not accumulating further, already copied the file in place
+                continue
 
-            # Check file sizes before appending
             src_size = get_video_size_in_mb(src_path)
             dst_size = get_video_size_in_mb(dst_path)
 
             if dst_size + src_size >= video_files_size_in_mb:
-                # Rotate to a new chunk/file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
                 dst_path = dst_meta.root / DEFAULT_VIDEO_PATH.format(
                     video_key=key,
@@ -286,24 +285,19 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 )
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(str(src_path), str(dst_path))
+                rotated_to_new_file = True
             else:
-                # Get the timestamps shift for this video
-                timestamps_shift_s = dst_meta.info["total_frames"] / dst_meta.info["fps"]
-
                 # Append to existing video file
                 concatenate_video_files(
                     [dst_path, src_path],
                     dst_path,
                 )
-                # Update the latest_duration when appending (shifts timestamps!)
-                update_latest_duration = not update_latest_duration
 
-        # Update the videos_idx with the final chunk and file indices for this key
         videos_idx[key]["chunk"] = chunk_idx
         videos_idx[key]["file"] = file_idx
 
-        if update_latest_duration:
-            videos_idx[key]["latest_duration"] += timestamps_shift_s
+        if rotated_to_new_file:
+            videos_idx[key]["latest_duration"] = 0
 
     return videos_idx
 
