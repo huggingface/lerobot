@@ -108,20 +108,32 @@ def transform_from_pose(p):
     ang = float(np.linalg.norm(w))
     if ang < 1e-12:  # no rotation
         axis = np.array([1.0, 0.0, 0.0])  # arbitrary
+        R = np.eye(3)
     else:
         axis = (w / ang).astype(float)
+        # Rodrigues' rotation formula
+        K = np.array([
+            [0, -axis[2], axis[1]],
+            [axis[2], 0, -axis[0]],
+            [-axis[1], axis[0], 0]
+        ])
+        R = np.eye(3) + np.sin(ang) * K + (1 - np.cos(ang)) * (K @ K)
 
-    return rr.Transform3D(
-        translation=t,
-        rotation=rr.RotationAxisAngle(axis=axis, angle=rr.Angle(rad=ang)),
-    )
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = t
+    return T
 
 
 def log_rerun_action_chunk(action_chunk: torch.Tensor):
     action_chunk = action_chunk.cpu().numpy()
     for i, action in enumerate(action_chunk):
-        T = transform_from_pose(action)
-        rr.log(f"action_chunk_{i}", T)
+        left_action = action[:6]
+        right_action = action[7:]
+        T_left = transform_from_pose(left_action)
+        T_right = transform_from_pose(right_action)
+        rr.log(f"follower_left/robot/base_link/action_chunk_{i}", rr.Transform3D(translation=T_left[:3, 3], mat3x3=T_left[:3, :3], axis_length=0.1))
+        rr.log(f"follower_right/robot/base_link/action_chunk_{i}", rr.Transform3D(translation=T_right[:3, 3], mat3x3=T_right[:3, :3], axis_length=0.1))
 
 
 def parse_urdf_graph(urdf_path: str):
@@ -208,7 +220,7 @@ def _rel_from_world(Tw_parent, Tw_child):
     return _inv_SE3(Tw_parent) @ Tw_child
 
 
-def _log_transform(path: str, pos: np.ndarray, rot: np.ndarray, axis_len: float = 0.05):
+def _log_transform(path: str, pos: np.ndarray, rot: np.ndarray, axis_len: float = 0.02):
     # New Rerun API (mat3x3 / axis_length), with backward-compat fallback
     try:
         rr.log(path, rr.Transform3D(translation=pos, mat3x3=rot, axis_length=axis_len))

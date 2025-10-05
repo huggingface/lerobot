@@ -16,8 +16,8 @@ import numpy as np
 
 import rerun as rr
 from lerobot.utils.visualization_utils import visualize_robot, parse_urdf_graph
-import time
 
+import time
 
 class RobotKinematics:
     """Robot kinematics using placo library for forward and inverse kinematics."""
@@ -135,15 +135,6 @@ class RobotKinematics:
         self.solver.solve(True)
         self.robot.update_kinematics()
 
-        offset = np.eye(4)
-        offset[1, 3] = self.offset
-        visualize_robot(
-            self.robot,
-            step=int(time.time()),
-            urdf_prefix=f"{self.entity_path_prefix}/robot",
-            urdf_graph=self.urdf_graph,
-            offset=offset,
-        )
 
         # Extract joint positions
         joint_pos_rad = []

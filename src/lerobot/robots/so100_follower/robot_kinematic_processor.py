@@ -18,6 +18,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import time
+
+from lerobot.utils.visualization_utils import visualize_robot, parse_urdf_graph
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
@@ -282,7 +285,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True
     prefix: str = ""
-    threshold_deg: float = 120.0
+    threshold_deg: float = 90.0
     _first_solve: bool = True
 
     def action(self, action: RobotAction) -> RobotAction:
@@ -306,7 +309,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
             raise ValueError("Joints observation is require for computing robot kinematics")
 
         q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos") and k.startswith(f"{self.prefix}")],
             dtype=float,
         )
         if q_raw is None or len(q_raw) == 0:
@@ -324,24 +327,44 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         t_des[:3, 3] = [x, y, z]
 
         # Compute inverse kinematics
-        num_tries = 5 if self._first_solve else 1
-        for _ in range(num_tries): # Multiple first attempts to get a solutionc
-            if self._first_solve:
-                self.q_curr = q_raw
+        num_tries = 5 if self._first_solve else 3
+        if self._first_solve:
+            print("IK first solve, trying multiple times to get an optimal initial solution")
+            self.q_curr = q_raw
+        for attempt_no in range(num_tries): # Multiple first attempts to get a solution
+            if attempt_no > 0:
+                print(f"IK retry attempt {attempt_no} to get an optimal initial solution")
+                self.q_curr = q_raw # Reset to current joints for subsequent tries
             # Try more for the first time
-            for _ in range(num_tries):
+            if self._first_solve:
+                for _ in range(num_tries):
+                    q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+                    self.q_curr = q_target
+            else:
                 q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
                 self.q_curr = q_target
-
-                # TODO: This is sentitive to order of motor_names = q_target mapping
-                for i, name in enumerate(self.motor_names):
-                    if "gripper" not in name:
-                        action[f"{name}.pos"] = float(q_target[i])
-                    else:
-                        action[f"{name}.pos"] = float(gripper_pos)
+            # TODO: This is sentitive to order of motor_names = q_target mapping
+            for i, name in enumerate(self.motor_names):
+                if "gripper" not in name:
+                    action[f"{name}.pos"] = float(q_target[i])
+                else:
+                    action[f"{name}.pos"] = float(gripper_pos)
 
             if self.verify_solution_within_joint_limits(action, observation):
                 break
+
+
+        # Moving the function here, this is still really ugly
+        offset = np.eye(4)
+        offset[1, 3] = self.kinematics.offset
+        if self.kinematics.display_data:
+            visualize_robot(
+                self.kinematics.robot,
+                step=int(time.time()),
+                urdf_prefix=f"{self.kinematics.entity_path_prefix}/robot",
+                urdf_graph=self.kinematics.urdf_graph,
+                offset=offset,
+            )
 
         self._first_solve = False
         if not self.verify_solution_within_joint_limits(action, observation):

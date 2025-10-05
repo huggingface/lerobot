@@ -108,7 +108,7 @@ class RobotOpenpiClient:
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
         self.client = websocket_client_policy.WebsocketClientPolicy(host=self.host, port=self.port)
         self.robot_action_processor = make_bimanual_koch_robot_processors(self.robot, True)
-        self.teleop_action_processor = make_bimanual_koch_teleop_processors(self.robot, True)
+        self.teleop_action_processor = make_bimanual_koch_teleop_processors(self.robot, False)
 
         self.action_features = aggregate_pipeline_dataset_features(
             pipeline=self.teleop_action_processor,
@@ -135,6 +135,12 @@ class RobotOpenpiClient:
         action_tensor = torch.tensor([action_dict[key] for key in self.action_features])
         return action_tensor
 
+    def _compute_current_ee(self, raw_observation: RawObservation) -> dict[str, float]:
+            base_action_world_dict = self.teleop_action_processor(
+                (raw_observation, raw_observation)
+            )  # we need to run FK and use this as our zero.
+            return self._action_dict_to_action_tensor(base_action_world_dict)
+
     def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
@@ -144,6 +150,36 @@ class RobotOpenpiClient:
         _captured_observation = None
 
         timestep_count = 0
+        # hardcode this to some value
+        initial_EE = torch.tensor([
+            -1.0168e-01,
+            1.1525e-03,
+            9.4441e-02,
+            -7.4215e-01,
+            -1.2467e00,
+            -5.7231e-01,
+            4.9067e01,
+            -8.8268e-02,
+            4.3833e-03,
+            9.6670e-02,
+            -6.4383e-01,
+            -1.2725e00,
+            -5.1562e-01,
+            5.0397e01,
+        ])
+
+        # indices to exclude for gripper
+        gripper_exclude = [6, 13]
+        rotation_exclude = [3, 4, 5, 10, 11, 12]
+
+        # create a mask (True = add, False = keep original)
+        non_gripper_mask = torch.ones_like(initial_EE, dtype=torch.bool)
+        ee_pose_mask = torch.ones_like(initial_EE, dtype=torch.bool)
+        ee_pose_mask[gripper_exclude] = False
+        ee_pose_mask[rotation_exclude] = False
+        non_gripper_mask[gripper_exclude] = False
+        task_completed = False
+
         while self.running:
             control_loop_start = time.perf_counter()
             """Control loop: (1) Performing actions, when available"""
@@ -182,31 +218,85 @@ class RobotOpenpiClient:
             assert action_chunk.ndim == 2, (
                 "Unexpected action chunk shape, should be (num_timesteps, action_dim)"
             )
-            base_action_world_dict = self.teleop_action_processor(
-                (raw_observation, raw_observation)
-            )  # we need to run FK and use this as our zero.
-            base_action_world_tensor = self._action_dict_to_action_tensor(base_action_world_dict)
-
+            base_action_world_tensor = self._compute_current_ee(raw_observation)
             action_chunk_tensor = torch.tensor(
                 action_chunk[: self.config.actions_per_chunk, : base_action_world_tensor.shape[-1]]
             )  # Trim to the same number of actions as the base action
-            # indices to exclude for gripper
-            exclude = [6, 13]
+            action_chunk_world = action_chunk_tensor + non_gripper_mask * base_action_world_tensor
 
-            # create a mask (True = add, False = keep original)
-            mask = torch.ones_like(base_action_world_tensor, dtype=torch.bool)
-            mask[exclude] = False
+            # Check if we need to override the action chunk to initial EE
+            if task_completed:
+                task_completed = False
+                # Linearly interpolate non-gripper DOFs from base -> initial across the chunk
+                num_steps = action_chunk_tensor.shape[0]
+                num_dims = base_action_world_tensor.shape[0]
+                t_vals = (
+                    torch.linspace(
+                        0.0,
+                        1.0,
+                        steps=num_steps,
+                        dtype=base_action_world_tensor.dtype,
+                        device=base_action_world_tensor.device,
+                    )
+                    .unsqueeze(1)
+                )  # (num_steps, 1)
 
-            # Convert action chunk to world frame, apply to non-gripper positions
-            action_chunk_world = action_chunk_tensor + mask * base_action_world_tensor
+                base = base_action_world_tensor.unsqueeze(0).expand(num_steps, num_dims)  # (num_steps, num_dims)
+                target = (
+                    initial_EE.to(base_action_world_tensor.dtype)
+                    .to(base_action_world_tensor.device)
+                    .unsqueeze(0)
+                    .expand(num_steps, num_dims)
+                )  # (num_steps, num_dims)
 
-            log_rerun_action_chunk(action_chunk_world)
-            for action in action_chunk_world:
+                interpolated = (1.0 - t_vals) * base + t_vals * target  # (num_steps, num_dims)
+                # Keep grippers fixed at base; interpolate others
+                # mask_expand = mask.unsqueeze(0).expand(num_steps, num_dims)
+                # action_chunk_world = torch.where(mask_expand, interpolated, base)
+                action_chunk_world = interpolated
+
+            # log_rerun_action_chunk(action_chunk_world)
+            count = 0
+            action_chunk_velocities =  torch.zeros_like(action_chunk_world)
+            action_chunk_velocities[1:] = action_chunk_world[1:] - action_chunk_world[:-1]
+
+            for action_idx in range(action_chunk_world.shape[0]):
+                action = action_chunk_world[action_idx]
+                log_rerun_action_chunk(action.unsqueeze(0))
                 action_tensor_world = self._action_tensor_to_action_dict(action)
+                if action_tensor_world["left_ee.y"] < -0.09:
+                    count += 1
+
                 processed_action = self.robot_action_processor((action_tensor_world, raw_observation))
                 _performed_action = self.robot.send_action(processed_action)
                 log_rerun_data(raw_observation, _performed_action)
                 time.sleep(self.config.environment_dt)
+                largest_left_arm_delta = torch.abs(action_chunk_velocities[action_idx][:3]).max()
+                if largest_left_arm_delta > 0.05:
+                    breakpoint()
+                    self.logger.info(f"Large action of {largest_left_arm_delta}, sending twice to reach it")
+                    _performed_action = self.robot.send_action(processed_action)
+                    time.sleep(self.config.environment_dt)
+                # The code below slows things down a lot. We need a better way to compute this
+                # raw_observation = self.robot.get_observation()
+                # current_ee = self._compute_current_ee(raw_observation)
+                # thresh = 0.02
+                # if torch.any(torch.abs(current_ee - action)[ee_pose_mask] > thresh):
+                #     print("Sending action again reach it before trying to get to next action chunk")
+                #     _performed_action = self.robot.send_action(processed_action)
+                #     time.sleep(self.config.environment_dt / 10)
+                # raw_observation = self.robot.get_observation()
+                # current_ee = self._compute_current_ee(raw_observation)
+                # thresh = 0.05
+                # if torch.any(torch.abs(current_ee - action)[ee_pose_mask] > thresh):
+                #     print("Sending action again reach it before trying to get to next action chunk")
+                #     _performed_action = self.robot.send_action(processed_action)
+                #     time.sleep(self.config.environment_dt / 10)
+
+
+            if count == self.config.actions_per_chunk:
+                task_completed = True
+                self.logger.info("Task completed, going to initial EE")
 
             if verbose:
                 # Calculate comprehensive FPS metrics
