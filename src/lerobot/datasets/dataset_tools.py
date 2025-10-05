@@ -98,7 +98,7 @@ def delete_episodes(
     logging.info(f"Deleting {len(episode_indices)} episodes from dataset")
 
     if repo_id is None:
-        repo_id = f"{dataset.repo_id}_filtered"
+        repo_id = dataset.repo_id
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
     episodes_to_keep = [i for i in range(dataset.meta.total_episodes) if i not in episode_indices]

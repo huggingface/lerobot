@@ -159,6 +159,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
         dataset,
         episode_indices=cfg.operation.episode_indices,
         output_dir=output_dir,
+        repo_id=output_repo_id,
     )
 
     logging.info(f"Dataset saved to {output_dir}")
@@ -179,10 +180,9 @@ def handle_split(cfg: EditDatasetConfig) -> None:
         )
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
-    output_dir = Path(cfg.root) if cfg.root else HF_LEROBOT_HOME
 
     logging.info(f"Splitting dataset {cfg.repo_id} with splits: {cfg.operation.splits}")
-    split_datasets = split_dataset(dataset, splits=cfg.operation.splits, output_dir=output_dir)
+    split_datasets = split_dataset(dataset, splits=cfg.operation.splits)
 
     for split_name, split_ds in split_datasets.items():
         split_repo_id = f"{cfg.repo_id}_{split_name}"
@@ -247,6 +247,7 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         dataset,
         feature_names=cfg.operation.feature_names,
         output_dir=output_dir,
+        repo_id=output_repo_id,
     )
 
     logging.info(f"Dataset saved to {output_dir}")
@@ -270,7 +271,10 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
     else:
-        raise ValueError(f"Unknown operation type: {operation_type}")
+        raise ValueError(
+            f"Unknown operation type: {operation_type}\n"
+            f"Available operations: delete_episodes, split, merge, remove_feature"
+        )
 
 
 def main() -> None:
