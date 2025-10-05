@@ -60,6 +60,9 @@ class SMOLANDFASTConfig(PreTrainedConfig):
 
     grad_clip_norm: float = 1
 
+    # Image crop parameters
+    crop_shape: tuple[int, int] | None = None
+
     # Allows padding/truncation of generated action tokens during detokenization to ensure decoding.
     # In the original version, tensors of 0s were generated if shapes didn't match for stable decoding.
     relaxed_action_decoding: bool = True

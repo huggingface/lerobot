@@ -7,6 +7,7 @@ import torch
 from scipy.fft import idct
 from torch import Tensor, nn
 from torch.profiler import record_function
+from torchvision.transforms import CenterCrop, RandomCrop
 from transformers import AutoModelForImageTextToText, AutoProcessor, LogitsProcessorList
 from transformers.models.smolvlm.image_processing_smolvlm_fast import SmolVLMImageProcessorFast
 
@@ -156,6 +157,11 @@ class SMOLANDFAST(nn.Module):
         self.pad_token_id = self.processor.tokenizer.pad_token_id
         self.eos_token_id = self.processor.tokenizer.eos_token_id
 
+        self.do_crop = config.crop_shape is not None
+        if self.do_crop:
+            self.random_crop_fn = RandomCrop(config.crop_shape)
+            self.center_crop_fn = CenterCrop(config.crop_shape)
+
     def create_obs_prefix_tokens(self, states, images, lang_text):
         device = states.device
 
@@ -189,12 +195,18 @@ class SMOLANDFAST(nn.Module):
 
         prompts = [self.processor.apply_chat_template(m, add_generation_prompt=True) for m in prefix_texts]
         images = list(torch.unbind(images, dim=0))
-        images = [[img] for img in images]
+        if self.do_crop:
+            # Always use center crop for eval
+            crop_fn = self.random_crop_fn if self.training else self.center_crop_fn
+            images = [[crop_fn(img)] for img in images]
+        else:
+            images = [[img] for img in images]
 
         prefix_out = self.processor(
             images=images,
             text=prompts,
             do_resize=self.config.do_image_splitting,
+            do_rescale=False,
         )
 
         return prefix_out

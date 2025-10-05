@@ -33,11 +33,12 @@
         "precision": "float32",
         "freeze_vision_encoder": true,
         "freeze_connector": false,
-        "scale_factor": 1,
+        "scale_factor": 4,
         "do_image_splitting": false,
         "drop_n_last_frames": true,
         "grad_clip_norm": 1,
-        "relaxed_action_decoding": true
+        "relaxed_action_decoding": true,
+        "crop_shape": [84, 84]
     },
     "num_workers": 4,
     "batch_size": 16,
@@ -46,6 +47,7 @@
     "log_freq": 50,
     "save_checkpoint": true,
     "save_freq": 10000,
+    "profile_step_num": -1,
     "eval": {
         "n_episodes": 64,
         "batch_size": 16

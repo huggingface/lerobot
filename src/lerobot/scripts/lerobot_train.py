@@ -273,8 +273,6 @@ def train(cfg: TrainPipelineConfig):
 
     logging.info("Start offline training on a fixed dataset")
 
-    step_num_to_profile = -1
-
     profiler = profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
         record_shapes=True,
@@ -287,7 +285,7 @@ def train(cfg: TrainPipelineConfig):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        if step == step_num_to_profile:
+        if step == cfg.profile_step_num:
             profiler.start()
 
         train_tracker, output_dict = update_policy(
@@ -301,13 +299,12 @@ def train(cfg: TrainPipelineConfig):
             use_amp=cfg.policy.use_amp,
         )
 
-        if step == step_num_to_profile:
+        if step == cfg.profile_step_num:
             profiler.stop()
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             trace_name = f"trace_lerobot_train_{step}_{timestamp}.json"
             profiler.export_chrome_trace(trace_name)
             logging.info(f"Profiling trace is successfully written to: {trace_name}")
-            exit(0)
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
