@@ -68,9 +68,6 @@ class LearnerServiceServicer:
     """
 
     def StreamParameters(self, request, context):
-    def StreamParameters(
-        self, request: lerobot_dot_transport_dot_services__pb2.Empty, context: grpc.ServicerContext
-    ) -> Iterator[lerobot_dot_transport_dot_services__pb2.Parameters]:
         """Actor -> Learner to store transitions
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
