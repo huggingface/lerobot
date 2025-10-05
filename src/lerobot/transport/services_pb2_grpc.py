@@ -307,9 +307,6 @@ class AsyncInferenceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def SendPolicyInstructions(self, request, context):
-    def SendPolicyInstructions(
-        self, request: lerobot_dot_transport_dot_services__pb2.PolicySetup, context: grpc.ServicerContext
-    ) -> lerobot_dot_transport_dot_services__pb2.Empty:
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
