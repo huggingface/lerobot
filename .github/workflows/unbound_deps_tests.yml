@@ -119,7 +119,7 @@ jobs:
   # This job runs pytest with all unbound extras in a GPU enabled host
   # It runs everytime a test image is created
   gpu-tests:
-    name: GPU Tests
+    name: GPU Unbound Tests
     needs: [build-and-push-docker]
     runs-on:
       group: aws-g6-4xlarge-plus
@@ -146,8 +146,8 @@ jobs:
 
   # This job deletes the test image recently created
   # It runs everytime after the gpu-tests have finished
-  delete-pr-image:
-    name: Delete PR Image
+  delete-unbound-image:
+    name: Delete Unbound Image
     needs: [gpu-tests, build-and-push-docker]
     if: always() && needs.build-and-push-docker.result == 'success'
     runs-on: ubuntu-latest
