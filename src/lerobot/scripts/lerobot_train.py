@@ -16,6 +16,7 @@
 import logging
 import time
 from contextlib import nullcontext
+from datetime import datetime
 from pprint import pformat
 from typing import Any
 
@@ -23,6 +24,7 @@ import torch
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
+from torch.profiler import ProfilerActivity, profile
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
@@ -270,11 +272,23 @@ def train(cfg: TrainPipelineConfig):
     )
 
     logging.info("Start offline training on a fixed dataset")
+
+    step_num_to_profile = -1
+
+    profiler = profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        record_shapes=True,
+        with_stack=True,
+    )
+
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
+
+        if step == step_num_to_profile:
+            profiler.start()
 
         train_tracker, output_dict = update_policy(
             train_tracker,
@@ -286,6 +300,14 @@ def train(cfg: TrainPipelineConfig):
             lr_scheduler=lr_scheduler,
             use_amp=cfg.policy.use_amp,
         )
+
+        if step == step_num_to_profile:
+            profiler.stop()
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            trace_name = f"trace_lerobot_train_{step}_{timestamp}.json"
+            profiler.export_chrome_trace(trace_name)
+            logging.info(f"Profiling trace is successfully written to: {trace_name}")
+            exit(0)
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.

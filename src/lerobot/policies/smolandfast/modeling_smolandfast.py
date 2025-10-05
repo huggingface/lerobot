@@ -6,14 +6,14 @@ import numpy as np
 import torch
 from scipy.fft import idct
 from torch import Tensor, nn
+from torch.profiler import record_function
+from transformers import AutoModelForImageTextToText, AutoProcessor, LogitsProcessorList
+from transformers.models.smolvlm.image_processing_smolvlm_fast import SmolVLMImageProcessorFast
 
-from transformers import AutoProcessor
-from transformers import AutoModelForImageTextToText
-from transformers import LogitsProcessorList
-
-from lerobot.utils.constants import ACTION, OBS_STATE, OBS_IMAGE
-from lerobot.policies.smolandfast.configuration_smolandfast import SMOLANDFASTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.smolandfast.configuration_smolandfast import SMOLANDFASTConfig
+from lerobot.policies.smolandfast.monkey_patch import patch_SmolVLMProcessor
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 PRECISION = {
     "float16": torch.float16,
@@ -57,9 +57,11 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
         vision_model_params = self.model.vlm.model.vision_model.parameters()
         connector_params = self.model.vlm.model.connector.parameters()
         text_model_params = self.model.vlm.model.text_model.parameters()
-        optim_groups = [{"params": vision_model_params, "lr": self.config.vision_model_optimizer_lr},
-                        {"params": connector_params, "lr": self.config.connector_optimizer_lr},
-                        {"params": text_model_params, "lr": self.config.text_model_optimizer_lr}]
+        optim_groups = [
+            {"params": vision_model_params, "lr": self.config.vision_model_optimizer_lr},
+            {"params": connector_params, "lr": self.config.connector_optimizer_lr},
+            {"params": text_model_params, "lr": self.config.text_model_optimizer_lr},
+        ]
         return optim_groups
 
     @torch.no_grad()
@@ -107,30 +109,34 @@ class SMOLANDFAST(nn.Module):
         self.vlm = AutoModelForImageTextToText.from_pretrained(
             self.config.vlm_checkpoint, torch_dtype=self.torch_precision
         )
-        self.processor = AutoProcessor.from_pretrained(self.config.vlm_checkpoint, use_fast=True)
+
+        # Patch SmolVLMProcessor to enable using SmolVLMImageProcessorFast
+        patch_SmolVLMProcessor()
+
+        image_processor = SmolVLMImageProcessorFast.from_pretrained(
+            self.config.vlm_checkpoint,
+        )
+
+        self.processor = AutoProcessor.from_pretrained(
+            self.config.vlm_checkpoint,
+            image_processor=image_processor,
+            use_fast=True,
+        )
 
         if config.scale_factor != 4:
             # if config factor is not 4 we need to recreate a linear layer in connector
-            siglip_seq_len = (
-                1024  # for 512x512 image with patch size 16 sequence len is 1024
-            )
-            self.processor.image_seq_len = int(
-                siglip_seq_len / (config.scale_factor**2)
-            )
+            siglip_seq_len = 1024  # for 512x512 image with patch size 16 sequence len is 1024
+            self.processor.image_seq_len = int(siglip_seq_len / (config.scale_factor**2))
             self.vlm.scale_factor = config.scale_factor
             self.vlm.model.connector.scale_factor = config.scale_factor
-            input_size = self.vlm.config.vision_config.hidden_size * (
-                config.scale_factor**2
-            )
+            input_size = self.vlm.config.vision_config.hidden_size * (config.scale_factor**2)
             output_size = self.vlm.config.text_config.hidden_size
             self.vlm.model.connector.modality_projection = nn.Linear(
                 input_size, output_size, bias=False, dtype=self.torch_precision
             )
 
         fast_tokenizer_path = "physical-intelligence/fast"
-        self.fast_tokenizer = AutoProcessor.from_pretrained(
-            fast_tokenizer_path, trust_remote_code=True
-        )
+        self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
         self.fast_skip_tokens = self.config.fast_skip_tokens
         self.max_input_seq_len = self.config.max_input_seq_len
         self.action_horizon = self.config.chunk_size
@@ -141,9 +147,7 @@ class SMOLANDFAST(nn.Module):
                 param.requires_grad = False
 
         if config.freeze_connector and config.scale_factor != 4:
-            raise ValueError(
-                "If scale factor is equal 4(default value) connector should be unfeezed"
-            )
+            raise ValueError("If scale factor is equal 4(default value) connector should be unfeezed")
 
         if config.freeze_connector:
             for param in self.vlm.model.connector.parameters():
@@ -166,7 +170,7 @@ class SMOLANDFAST(nn.Module):
 
         # Build strings in batch
         prefix_texts = []
-        for txt, disc_st in zip(lang_text, disc_states_cpu):
+        for txt, disc_st in zip(lang_text, disc_states_cpu, strict=False):
             cleaned = txt.lower().strip().replace("_", " ")
             state_str = " ".join(map(str, disc_st.tolist()))
             message = [
@@ -183,47 +187,30 @@ class SMOLANDFAST(nn.Module):
             ]
             prefix_texts.append(message)
 
-        prompts = [
-            self.processor.apply_chat_template(m, add_generation_prompt=True)
-            for m in prefix_texts
-        ]
+        prompts = [self.processor.apply_chat_template(m, add_generation_prompt=True) for m in prefix_texts]
         images = list(torch.unbind(images, dim=0))
         images = [[img] for img in images]
 
         prefix_out = self.processor(
             images=images,
             text=prompts,
-            do_resize=self.config.do_image_spliting,
-            do_rescale=False,
+            do_resize=self.config.do_image_splitting,
         )
-        prefix_out["pixel_values"] = torch.tensor(
-            np.array(prefix_out["pixel_values"]), dtype=torch.float32, device=device
-        )
-        prefix_out["pixel_attention_mask"] = torch.tensor(
-            np.array(prefix_out["pixel_attention_mask"]),
-            dtype=torch.long,
-            device=device,
-        )
+
         return prefix_out
 
     def _act_tokens_to_llm_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        llm_tokens = (
-            self.processor.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
-        )
+        llm_tokens = self.processor.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
         return llm_tokens
 
     def _llm_tokens_to_act_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        fast_tokens = (
-            self.processor.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
-        )
+        fast_tokens = self.processor.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
         return fast_tokens
 
     def create_input_tokens(self, states, images, lang_text, actions=None):
         device = states.device
 
-        prefix_out = self.create_obs_prefix_tokens(
-            states=states, images=images, lang_text=lang_text
-        )
+        prefix_out = self.create_obs_prefix_tokens(states=states, images=images, lang_text=lang_text)
         obs_ids = prefix_out["input_ids"]
 
         if actions is not None:
@@ -238,7 +225,7 @@ class SMOLANDFAST(nn.Module):
 
             prefix_tokens = []
             loss_mask = []
-            for obs_seq, act_seq in zip(obs_ids, llm_action_tokens):
+            for obs_seq, act_seq in zip(obs_ids, llm_action_tokens, strict=False):
                 prefix_tokens.append(obs_seq + act_seq + [self.eos_token_id])
                 loss_mask.append([0] * len(obs_seq) + [1] * len(act_seq) + [1])
             prefix_mask = [[1] * len(tokens) for tokens in prefix_tokens]
@@ -250,7 +237,7 @@ class SMOLANDFAST(nn.Module):
             loss_mask_pad = []
 
             # right padding for training
-            for seq, seq_mask, seq_loss in zip(prefix_tokens, prefix_mask, loss_mask):
+            for seq, seq_mask, seq_loss in zip(prefix_tokens, prefix_mask, loss_mask, strict=False):
                 seq_len = len(seq)
                 prefix_pad.append(seq + [self.pad_token_id] * (max_len - seq_len))
                 prefix_mask_pad.append(seq_mask + [0] * (max_len - seq_len))
@@ -268,7 +255,6 @@ class SMOLANDFAST(nn.Module):
                 "loss_mask": loss_mask,
             }
         else:
-
             max_len = max([len(seq) for seq in obs_ids])
             prefix_tokens = []
             prefix_pad_mask = []
@@ -293,41 +279,44 @@ class SMOLANDFAST(nn.Module):
     def forward(self, batch: dict[str, Tensor]):
         device = batch[OBS_STATE].device
 
-        padded_outs = self.create_input_tokens(
-            states=batch[OBS_STATE],
-            images=batch[OBS_IMAGE],
-            lang_text=batch["task"] if "task" in batch else "",
-            actions=batch[ACTION],
-        )
+        with record_function("create_input_tokens"):
+            padded_outs = self.create_input_tokens(
+                states=batch[OBS_STATE],
+                images=batch[OBS_IMAGE],
+                lang_text=batch.get("task", ""),
+                actions=batch[ACTION],
+            )
 
-        outputs = self.vlm.forward(
-            input_ids=padded_outs["input_ids"],
-            attention_mask=padded_outs["pad_masks"],
-            pixel_values=padded_outs["pixel_values"],
-            pixel_attention_mask=padded_outs["pixel_attention_mask"],
-            use_cache=self.config.use_cache,
-        )
+        with record_function("forward"):
+            outputs = self.vlm.forward(
+                input_ids=padded_outs["input_ids"],
+                attention_mask=padded_outs["pad_masks"],
+                pixel_values=padded_outs["pixel_values"],
+                pixel_attention_mask=padded_outs["pixel_attention_mask"],
+                use_cache=self.config.use_cache,
+            )
 
-        logits = outputs.logits
+        with record_function("loss"):
+            logits = outputs.logits
 
-        loss_fct = nn.CrossEntropyLoss(reduction="none")
+            loss_fct = nn.CrossEntropyLoss(reduction="none")
 
-        # Shift left for next-step prediction
-        logits = logits[:, :-1, :]
-        targets = padded_outs["input_ids"][:, 1:].to(device)  # Shift targets
-        loss_mask = padded_outs["loss_mask"][:, 1:].to(device)  # Ensure correct shape
+            # Shift left for next-step prediction
+            logits = logits[:, :-1, :]
+            targets = padded_outs["input_ids"][:, 1:].to(device)  # Shift targets
+            loss_mask = padded_outs["loss_mask"][:, 1:].to(device)  # Ensure correct shape
 
-        # Compute per-token loss
-        token_loss = loss_fct(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
+            # Compute per-token loss
+            token_loss = loss_fct(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
 
-        # Apply loss mask
-        token_loss = token_loss * loss_mask.reshape(-1)
+            # Apply loss mask
+            token_loss = token_loss * loss_mask.reshape(-1)
 
-        # Compute final loss
-        loss = token_loss.sum() / torch.clamp(loss_mask.sum(), min=1)
+            # Compute final loss
+            loss = token_loss.sum() / torch.clamp(loss_mask.sum(), min=1)
 
-        # Return loss dictionary
-        loss_dict = {"ce_loss": loss.item(), "loss": loss}
+            # Return loss dictionary
+            loss_dict = {"ce_loss": loss.item(), "loss": loss}
         return loss_dict
 
     def decode_actions_with_fast(
@@ -342,32 +331,25 @@ class SMOLANDFAST(nn.Module):
         Adapt original decoding in FAST to always return actions instead of zeros.
         """
         self.time_horizon = (
-            time_horizon
-            or self.fast_tokenizer.time_horizon
-            or self.fast_tokenizer.called_time_horizon
+            time_horizon or self.fast_tokenizer.time_horizon or self.fast_tokenizer.called_time_horizon
         )
         self.action_dim = (
-            action_dim
-            or self.fast_tokenizer.action_dim
-            or self.fast_tokenizer.called_action_dim
+            action_dim or self.fast_tokenizer.action_dim or self.fast_tokenizer.called_action_dim
         )
 
         # Cache the time horizon and action dimension for the next call
         self.called_time_horizon = self.time_horizon
         self.called_action_dim = self.action_dim
 
-        assert (
-            self.time_horizon is not None and self.action_dim is not None
-        ), "Tokenizer not initialized, call encode() once or pass in time_horizon and action_dim."
+        assert self.time_horizon is not None and self.action_dim is not None, (
+            "Tokenizer not initialized, call encode() once or pass in time_horizon and action_dim."
+        )
 
         decoded_actions = []
         for token in tokens:
             try:
                 decoded_tokens = self.fast_tokenizer.bpe_tokenizer.decode(token)
-                decoded_dct_coeff = (
-                    np.array(list(map(ord, decoded_tokens)))
-                    + self.fast_tokenizer.min_token
-                )
+                decoded_dct_coeff = np.array(list(map(ord, decoded_tokens))) + self.fast_tokenizer.min_token
                 if relaxed_decoding:
                     # Expected sequence length
                     expected_seq_len = self.time_horizon * self.action_dim
@@ -389,16 +371,14 @@ class SMOLANDFAST(nn.Module):
                 assert decoded_dct_coeff.shape == (
                     self.time_horizon,
                     self.action_dim,
-                ), f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({self.time_horizon}, {self.action_dim})"
+                ), (
+                    f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({self.time_horizon}, {self.action_dim})"
+                )
             except Exception as e:
                 print(f"Error decoding tokens: {e}")
                 print(f"Tokens: {token}")
                 decoded_dct_coeff = np.zeros((self.time_horizon, self.action_dim))
-            decoded_actions.append(
-                idct(
-                    decoded_dct_coeff / self.fast_tokenizer.scale, axis=0, norm="ortho"
-                )
-            )
+            decoded_actions.append(idct(decoded_dct_coeff / self.fast_tokenizer.scale, axis=0, norm="ortho"))
         return np.stack(decoded_actions)
 
     def generate_actions(self, batch: dict[str, Tensor]):
@@ -407,7 +387,7 @@ class SMOLANDFAST(nn.Module):
         padded_outs = self.create_input_tokens(
             states=batch[OBS_STATE],
             images=batch[OBS_IMAGE],
-            lang_text=batch["task"] if "task" in batch else "",
+            lang_text=batch.get("task", ""),
             actions=None,
         )
 
@@ -431,11 +411,7 @@ class SMOLANDFAST(nn.Module):
         low = high - (fast_vocab_size - 1)
 
         processors = LogitsProcessorList(
-            [
-                make_fast_band_processor(
-                    low, high, [self.eos_token_id, self.pad_token_id]
-                )
-            ]
+            [make_fast_band_processor(low, high, [self.eos_token_id, self.pad_token_id])]
         )
 
         output_tokens = self.vlm.generate(
@@ -456,9 +432,7 @@ class SMOLANDFAST(nn.Module):
         fast_eos_token = self._llm_tokens_to_act_tokens(self.eos_token_id)
         fast_pad_token = self._llm_tokens_to_act_tokens(self.pad_token_id)
 
-        fast_action_tokens = self._llm_tokens_to_act_tokens(
-            gemma_action_tokens
-        ).tolist()
+        fast_action_tokens = self._llm_tokens_to_act_tokens(gemma_action_tokens).tolist()
 
         # remove fast pad tokens and eos token
         for seq in fast_action_tokens:

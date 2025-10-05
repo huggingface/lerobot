@@ -10,7 +10,7 @@
     },
     "policy": {
         "type": "smolandfast",
-        "vlm_checkpoint": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+        "vlm_checkpoint": "HuggingFaceTB/SmolVLM2-256M-Video-Instruct",
         "n_obs_steps": 1,
         "device": "cuda",
         "use_amp": false,
@@ -33,21 +33,21 @@
         "precision": "float32",
         "freeze_vision_encoder": true,
         "freeze_connector": false,
-        "scale_factor": 2,
-        "do_image_spliting": false,
+        "scale_factor": 1,
+        "do_image_splitting": false,
         "drop_n_last_frames": true,
         "grad_clip_norm": 1,
         "relaxed_action_decoding": true
     },
     "num_workers": 4,
     "batch_size": 16,
-    "steps": 10000,
+    "steps": 30000,
     "eval_freq": 1000,
-    "log_freq": 100,
+    "log_freq": 50,
     "save_checkpoint": true,
     "save_freq": 10000,
     "eval": {
-        "n_episodes": 32,
+        "n_episodes": 64,
         "batch_size": 16
     },
     "wandb": {
