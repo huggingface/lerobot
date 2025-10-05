@@ -34,7 +34,7 @@
         "freeze_vision_encoder": true,
         "freeze_connector": true,
         "scale_factor": 4,
-        "do_image_spliting": false,
+        "do_image_splitting": false,
         "drop_n_last_frames": true,
         "grad_clip_norm": 1,
         "relaxed_action_decoding": true

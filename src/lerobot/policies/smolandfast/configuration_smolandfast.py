@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
@@ -55,7 +55,7 @@ class SMOLANDFASTConfig(PreTrainedConfig):
     freeze_vision_encoder: bool = True
     freeze_connector: bool = True
     scale_factor: int = 4
-    do_image_spliting: bool = False
+    do_image_splitting: bool = False
     drop_n_last_frames: bool = True
 
     grad_clip_norm: float = 1
