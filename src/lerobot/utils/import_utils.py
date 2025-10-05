@@ -57,8 +57,4 @@ def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[b
         return package_exists
 
 
-_torch_available, _torch_version = is_package_available("torch", return_version=True)
 _transformers_available = is_package_available("transformers")
-_gym_xarm_available = is_package_available("gym_xarm")
-_gym_aloha_available = is_package_available("gym_aloha")
-_gym_pusht_available = is_package_available("gym_pusht")

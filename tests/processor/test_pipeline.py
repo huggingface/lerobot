@@ -35,6 +35,7 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 from tests.conftest import assert_contract_is_typed
 
 
@@ -245,7 +246,7 @@ def test_step_through():
     # Ensure all results are dicts (same format as input)
     for result in results:
         assert isinstance(result, dict)
-        assert all(isinstance(k, TransitionKey) for k in result.keys())
+        assert all(isinstance(k, TransitionKey) for k in result)
 
 
 def test_step_through_with_dict():
@@ -255,11 +256,11 @@ def test_step_through_with_dict():
     pipeline = DataProcessorPipeline([step1, step2])
 
     batch = {
-        "observation.image": None,
-        "action": None,
-        "next.reward": 0.0,
-        "next.done": False,
-        "next.truncated": False,
+        OBS_IMAGE: None,
+        ACTION: None,
+        REWARD: 0.0,
+        DONE: False,
+        TRUNCATED: False,
         "info": {},
     }
 
@@ -769,7 +770,7 @@ class MockStepWithNonSerializableParam(ProcessorStep):
         # Add type validation for multiplier
         if isinstance(multiplier, str):
             raise ValueError(f"multiplier must be a number, got string '{multiplier}'")
-        if not isinstance(multiplier, (int, float)):
+        if not isinstance(multiplier, (int | float)):
             raise TypeError(f"multiplier must be a number, got {type(multiplier).__name__}")
         self.multiplier = float(multiplier)
         self.env = env  # Non-serializable parameter (like gym.Env)
@@ -1622,9 +1623,7 @@ def test_override_with_callables():
 
             # Define a transform function
             def double_values(x):
-                if isinstance(x, (int, float)):
-                    return x * 2
-                elif isinstance(x, torch.Tensor):
+                if isinstance(x, (int | float | torch.Tensor)):
                     return x * 2
                 return x
 
@@ -1796,10 +1795,9 @@ def test_from_pretrained_nonexistent_path():
         )
 
     # Test with a local directory that exists but has no config files
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, pytest.raises(FileNotFoundError):
         # Since the directory exists but has no config, it will raise FileNotFoundError
-        with pytest.raises(FileNotFoundError):
-            DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor.json")
+        DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor.json")
 
 
 def test_save_load_with_custom_converter_functions():
@@ -1840,18 +1838,18 @@ def test_save_load_with_custom_converter_functions():
 
         # Verify it uses default converters by checking with standard batch format
         batch = {
-            "observation.image": torch.randn(1, 3, 32, 32),
-            "action": torch.randn(1, 7),
-            "next.reward": torch.tensor([1.0]),
-            "next.done": torch.tensor([False]),
-            "next.truncated": torch.tensor([False]),
+            OBS_IMAGE: torch.randn(1, 3, 32, 32),
+            ACTION: torch.randn(1, 7),
+            REWARD: torch.tensor([1.0]),
+            DONE: torch.tensor([False]),
+            TRUNCATED: torch.tensor([False]),
             "info": {},
         }
 
         # Should work with standard format (wouldn't work with custom converter)
         result = loaded(batch)
         # With new behavior, default to_output is _default_transition_to_batch, so result is batch dict
-        assert "observation.image" in result
+        assert OBS_IMAGE in result
 
 
 class NonCompliantStep:
@@ -2075,10 +2073,10 @@ class AddObservationStateFeatures(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         # State features (mix EE and a joint state)
-        features[PipelineFeatureType.OBSERVATION]["observation.state.ee.x"] = float
-        features[PipelineFeatureType.OBSERVATION]["observation.state.j1.pos"] = float
+        features[PipelineFeatureType.OBSERVATION][f"{OBS_STATE}.ee.x"] = float
+        features[PipelineFeatureType.OBSERVATION][f"{OBS_STATE}.j1.pos"] = float
         if self.add_front_image:
-            features[PipelineFeatureType.OBSERVATION]["observation.images.front"] = self.front_image_shape
+            features[PipelineFeatureType.OBSERVATION][f"{OBS_IMAGES}.front"] = self.front_image_shape
         return features
 
 
@@ -2093,11 +2091,11 @@ def test_aggregate_joint_action_only():
         patterns=["action.j1.pos", "action.j2.pos"],
     )
 
-    # Expect only "action" with joint names
-    assert "action" in out and "observation.state" not in out
-    assert out["action"]["dtype"] == "float32"
-    assert set(out["action"]["names"]) == {"j1.pos", "j2.pos"}
-    assert out["action"]["shape"] == (len(out["action"]["names"]),)
+    # Expect only ACTION with joint names
+    assert ACTION in out and OBS_STATE not in out
+    assert out[ACTION]["dtype"] == "float32"
+    assert set(out[ACTION]["names"]) == {"j1.pos", "j2.pos"}
+    assert out[ACTION]["shape"] == (len(out[ACTION]["names"]),)
 
 
 def test_aggregate_ee_action_and_observation_with_videos():
@@ -2108,22 +2106,22 @@ def test_aggregate_ee_action_and_observation_with_videos():
         pipeline=rp,
         initial_features={PipelineFeatureType.OBSERVATION: initial, PipelineFeatureType.ACTION: {}},
         use_videos=True,
-        patterns=["action.ee", "observation.state"],
+        patterns=["action.ee", OBS_STATE],
     )
 
     # Action should pack only EE names
-    assert "action" in out
-    assert set(out["action"]["names"]) == {"ee.x", "ee.y"}
-    assert out["action"]["dtype"] == "float32"
+    assert ACTION in out
+    assert set(out[ACTION]["names"]) == {"ee.x", "ee.y"}
+    assert out[ACTION]["dtype"] == "float32"
 
     # Observation state should pack both ee.x and j1.pos as a vector
-    assert "observation.state" in out
-    assert set(out["observation.state"]["names"]) == {"ee.x", "j1.pos"}
-    assert out["observation.state"]["dtype"] == "float32"
+    assert OBS_STATE in out
+    assert set(out[OBS_STATE]["names"]) == {"ee.x", "j1.pos"}
+    assert out[OBS_STATE]["dtype"] == "float32"
 
     # Cameras from initial_features appear as videos
     for cam in ("front", "side"):
-        key = f"observation.images.{cam}"
+        key = f"{OBS_IMAGES}.{cam}"
         assert key in out
         assert out[key]["dtype"] == "video"
         assert out[key]["shape"] == initial[cam]
@@ -2139,10 +2137,10 @@ def test_aggregate_both_action_types():
         patterns=["action.ee", "action.j1", "action.j2.pos"],
     )
 
-    assert "action" in out
+    assert ACTION in out
     expected = {"ee.x", "ee.y", "j1.pos", "j2.pos"}
-    assert set(out["action"]["names"]) == expected
-    assert out["action"]["shape"] == (len(expected),)
+    assert set(out[ACTION]["names"]) == expected
+    assert out[ACTION]["shape"] == (len(expected),)
 
 
 def test_aggregate_images_when_use_videos_false():
@@ -2156,8 +2154,8 @@ def test_aggregate_images_when_use_videos_false():
         patterns=None,
     )
 
-    key = "observation.images.back"
-    key_front = "observation.images.front"
+    key = f"{OBS_IMAGES}.back"
+    key_front = f"{OBS_IMAGES}.front"
     assert key not in out
     assert key_front not in out
 
@@ -2173,8 +2171,8 @@ def test_aggregate_images_when_use_videos_true():
         patterns=None,
     )
 
-    key = "observation.images.front"
-    key_back = "observation.images.back"
+    key = f"{OBS_IMAGES}.front"
+    key_back = f"{OBS_IMAGES}.back"
     assert key in out
     assert key_back in out
     assert out[key]["dtype"] == "video"
@@ -2194,9 +2192,9 @@ def test_initial_camera_not_overridden_by_step_image():
         pipeline=rp,
         initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
         use_videos=True,
-        patterns=["observation.images.front"],
+        patterns=[f"{OBS_IMAGES}.front"],
     )
 
-    key = "observation.images.front"
+    key = f"{OBS_IMAGES}.front"
     assert key in out
     assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial

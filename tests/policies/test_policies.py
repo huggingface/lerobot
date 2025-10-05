@@ -27,7 +27,6 @@ from lerobot import available_policies
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.constants import ACTION, OBS_STATE
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.utils import cycle, dataset_to_policy_features
 from lerobot.envs.factory import make_env, make_env_config
@@ -42,6 +41,7 @@ from lerobot.policies.factory import (
     make_pre_post_processors,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
@@ -52,19 +52,19 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
     # Create only one camera input which is squared to fit all current policy constraints
     # e.g. vqbet and tdmpc works with one camera only, and tdmpc requires it to be squared
     camera_features = {
-        "observation.images.laptop": {
+        f"{OBS_IMAGES}.laptop": {
             "shape": (84, 84, 3),
             "names": ["height", "width", "channels"],
             "info": None,
         },
     }
     motor_features = {
-        "action": {
+        ACTION: {
             "dtype": "float32",
             "shape": (6,),
             "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
         },
-        "observation.state": {
+        OBS_STATE: {
             "dtype": "float32",
             "shape": (6,),
             "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
@@ -159,7 +159,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     assert isinstance(policy, PreTrainedPolicy)
 
     # Check that we run select_actions and get the appropriate output.
-    env = make_env(train_cfg.env, n_envs=2)
+    envs = make_env(train_cfg.env, n_envs=2)
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -188,6 +188,12 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     # reset the policy and environment
     policy.reset()
+    # For testing purposes, we only need a single environment instance.
+    # So here we unwrap the first suite_name and first task_id to grab
+    # the actual env object (SyncVectorEnv) that exposes `.reset()`.
+    suite_name = next(iter(envs))
+    task_id = next(iter(envs[suite_name]))
+    env = envs[suite_name][task_id]
     observation, _ = env.reset(seed=train_cfg.seed)
 
     # apply transform to normalize the observations
@@ -275,13 +281,13 @@ def test_multikey_construction(multikey: bool):
     preventing erroneous creation of the policy object.
     """
     input_features = {
-        "observation.state": PolicyFeature(
+        OBS_STATE: PolicyFeature(
             type=FeatureType.STATE,
             shape=(10,),
         ),
     }
     output_features = {
-        "action": PolicyFeature(
+        ACTION: PolicyFeature(
             type=FeatureType.ACTION,
             shape=(5,),
         ),
@@ -291,14 +297,14 @@ def test_multikey_construction(multikey: bool):
         """Simulates the complete state/action is constructed from more granular multiple
         keys, of the same type as the overall state/action"""
         input_features = {}
-        input_features["observation.state.subset1"] = PolicyFeature(type=FeatureType.STATE, shape=(5,))
-        input_features["observation.state.subset2"] = PolicyFeature(type=FeatureType.STATE, shape=(5,))
-        input_features["observation.state"] = PolicyFeature(type=FeatureType.STATE, shape=(10,))
+        input_features[f"{OBS_STATE}.subset1"] = PolicyFeature(type=FeatureType.STATE, shape=(5,))
+        input_features[f"{OBS_STATE}.subset2"] = PolicyFeature(type=FeatureType.STATE, shape=(5,))
+        input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(10,))
 
         output_features = {}
         output_features["action.first_three_motors"] = PolicyFeature(type=FeatureType.ACTION, shape=(3,))
         output_features["action.last_two_motors"] = PolicyFeature(type=FeatureType.ACTION, shape=(2,))
-        output_features["action"] = PolicyFeature(
+        output_features[ACTION] = PolicyFeature(
             type=FeatureType.ACTION,
             shape=(5,),
         )

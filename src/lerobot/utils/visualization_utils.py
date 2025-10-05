@@ -19,8 +19,10 @@ from typing import Any
 import numpy as np
 import rerun as rr
 
+from .constants import OBS_PREFIX, OBS_STR
 
-def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
+
+def init_rerun(session_name: str = "lerobot_control_loop") -> None:
     """Initializes the Rerun SDK for visualizing the control loop."""
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
@@ -30,11 +32,8 @@ def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
 
 
 def _is_scalar(x):
-    return (
-        isinstance(x, float)
-        or isinstance(x, numbers.Real)
-        or isinstance(x, (np.integer, np.floating))
-        or (isinstance(x, np.ndarray) and x.ndim == 0)
+    return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
+        isinstance(x, np.ndarray) and x.ndim == 0
     )
 
 
@@ -63,7 +62,7 @@ def log_rerun_data(
         for k, v in observation.items():
             if v is None:
                 continue
-            key = k if str(k).startswith("observation.") else f"observation.{k}"
+            key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
 
             if _is_scalar(v):
                 rr.log(key, rr.Scalar(float(v)))

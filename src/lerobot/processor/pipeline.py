@@ -422,7 +422,7 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         """
         if save_directory is None:
             # Use default directory in HF_LEROBOT_HOME
-            from lerobot.constants import HF_LEROBOT_HOME
+            from lerobot.utils.constants import HF_LEROBOT_HOME
 
             sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
             save_directory = HF_LEROBOT_HOME / "processors" / sanitized_name

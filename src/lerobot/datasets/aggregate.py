@@ -93,14 +93,13 @@ def update_data_df(df, src_meta, dst_meta):
         pd.DataFrame: Updated DataFrame with adjusted indices.
     """
 
-    def _update(row):
-        row["episode_index"] = row["episode_index"] + dst_meta.info["total_episodes"]
-        row["index"] = row["index"] + dst_meta.info["total_frames"]
-        task = src_meta.tasks.iloc[row["task_index"]].name
-        row["task_index"] = dst_meta.tasks.loc[task].task_index.item()
-        return row
+    df["episode_index"] = df["episode_index"] + dst_meta.info["total_episodes"]
+    df["index"] = df["index"] + dst_meta.info["total_frames"]
 
-    return df.apply(_update, axis=1)
+    src_task_names = src_meta.tasks.index.take(df["task_index"].to_numpy())
+    df["task_index"] = dst_meta.tasks.loc[src_task_names, "task_index"].to_numpy()
+
+    return df
 
 
 def update_meta_data(
@@ -126,27 +125,21 @@ def update_meta_data(
         pd.DataFrame: Updated DataFrame with adjusted indices and timestamps.
     """
 
-    def _update(row):
-        row["meta/episodes/chunk_index"] = row["meta/episodes/chunk_index"] + meta_idx["chunk"]
-        row["meta/episodes/file_index"] = row["meta/episodes/file_index"] + meta_idx["file"]
-        row["data/chunk_index"] = row["data/chunk_index"] + data_idx["chunk"]
-        row["data/file_index"] = row["data/file_index"] + data_idx["file"]
-        for key, video_idx in videos_idx.items():
-            row[f"videos/{key}/chunk_index"] = row[f"videos/{key}/chunk_index"] + video_idx["chunk"]
-            row[f"videos/{key}/file_index"] = row[f"videos/{key}/file_index"] + video_idx["file"]
-            row[f"videos/{key}/from_timestamp"] = (
-                row[f"videos/{key}/from_timestamp"] + video_idx["latest_duration"]
-            )
-            row[f"videos/{key}/to_timestamp"] = (
-                row[f"videos/{key}/to_timestamp"] + video_idx["latest_duration"]
-            )
+    df["meta/episodes/chunk_index"] = df["meta/episodes/chunk_index"] + meta_idx["chunk"]
+    df["meta/episodes/file_index"] = df["meta/episodes/file_index"] + meta_idx["file"]
+    df["data/chunk_index"] = df["data/chunk_index"] + data_idx["chunk"]
+    df["data/file_index"] = df["data/file_index"] + data_idx["file"]
+    for key, video_idx in videos_idx.items():
+        df[f"videos/{key}/chunk_index"] = df[f"videos/{key}/chunk_index"] + video_idx["chunk"]
+        df[f"videos/{key}/file_index"] = df[f"videos/{key}/file_index"] + video_idx["file"]
+        df[f"videos/{key}/from_timestamp"] = df[f"videos/{key}/from_timestamp"] + video_idx["latest_duration"]
+        df[f"videos/{key}/to_timestamp"] = df[f"videos/{key}/to_timestamp"] + video_idx["latest_duration"]
 
-        row["dataset_from_index"] = row["dataset_from_index"] + dst_meta.info["total_frames"]
-        row["dataset_to_index"] = row["dataset_to_index"] + dst_meta.info["total_frames"]
-        row["episode_index"] = row["episode_index"] + dst_meta.info["total_episodes"]
-        return row
+    df["dataset_from_index"] = df["dataset_from_index"] + dst_meta.info["total_frames"]
+    df["dataset_to_index"] = df["dataset_to_index"] + dst_meta.info["total_frames"]
+    df["episode_index"] = df["episode_index"] + dst_meta.info["total_episodes"]
 
-    return df.apply(_update, axis=1)
+    return df
 
 
 def aggregate_datasets(
