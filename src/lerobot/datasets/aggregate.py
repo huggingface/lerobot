@@ -202,7 +202,7 @@ def aggregate_datasets(
     meta_idx = {"chunk": 0, "file": 0}
     data_idx = {"chunk": 0, "file": 0}
     videos_idx = {
-        key: {"chunk": 0, "file": 0, "latest_duration": 0, "episode_duration": 0} for key in video_keys
+        key: {"chunk": 0, "file": 0, "latest_duration": 0 } for key in video_keys
     }
 
     dst_meta.episodes = {}
@@ -210,7 +210,6 @@ def aggregate_datasets(
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
         videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
         data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size)
-
         meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
 
         dst_meta.info["total_episodes"] += src_meta.total_episodes
@@ -286,6 +285,11 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 )
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(str(src_path), str(dst_path))
+
+                # Reset latest_duration to 0 for new file
+                videos_idx[key]["latest_duration"] = 0.0
+                update_latest_duration = False
+
             else:
                 # Get the timestamps shift for this video
                 timestamps_shift_s = dst_meta.info["total_frames"] / dst_meta.info["fps"]
@@ -295,15 +299,16 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                     [dst_path, src_path],
                     dst_path,
                 )
+
                 # Update the latest_duration when appending (shifts timestamps!)
-                update_latest_duration = not update_latest_duration
+                update_latest_duration = True
 
         # Update the videos_idx with the final chunk and file indices for this key
         videos_idx[key]["chunk"] = chunk_idx
         videos_idx[key]["file"] = file_idx
 
         if update_latest_duration:
-            videos_idx[key]["latest_duration"] += timestamps_shift_s
+            videos_idx[key]["latest_duration"] = timestamps_shift_s
 
     return videos_idx
 
@@ -388,9 +393,6 @@ def aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx):
             data_idx,
             videos_idx,
         )
-
-        for k in videos_idx:
-            videos_idx[k]["latest_duration"] += videos_idx[k]["episode_duration"]
 
         meta_idx = append_or_create_parquet_file(
             df,
