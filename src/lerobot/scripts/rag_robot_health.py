@@ -60,7 +60,6 @@ from PIL import Image, ImageDraw
 import faiss
 import cohere
 
-import os
 os.environ["COHERE_API_KEY"] = "6V7WaFPKcEnSC8iF6HTca8HHkhvIOJVuVg7Xzer7"
 
 # ---------------------------- Config ----------------------------
