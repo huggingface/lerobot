@@ -27,17 +27,3 @@ def busy_wait(seconds):
         # On Linux time.sleep is accurate
         if seconds > 0:
             time.sleep(seconds)
-
-
-def safe_disconnect(func):
-    # TODO(aliberts): Allow to pass custom exceptions
-    # (e.g. ThreadServiceExit, KeyboardInterrupt, SystemExit, UnpluggedError, DynamixelCommError)
-    def wrapper(robot, *args, **kwargs):
-        try:
-            return func(robot, *args, **kwargs)
-        except Exception as e:
-            if robot.is_connected:
-                robot.disconnect()
-            raise e
-
-    return wrapper

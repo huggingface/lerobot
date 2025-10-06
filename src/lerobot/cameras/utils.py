@@ -15,13 +15,9 @@
 # limitations under the License.
 
 import platform
-from pathlib import Path
-from typing import TypeAlias
 
 from .camera import Camera
 from .configs import CameraConfig, Cv2Rotation
-
-IndexOrPath: TypeAlias = int | Path
 
 
 def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[str, Camera]:
@@ -37,8 +33,14 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
             from .realsense.camera_realsense import RealSenseCamera
 
             cameras[key] = RealSenseCamera(cfg)
+
+        elif cfg.type == "reachy2_camera":
+            from .reachy2_camera.reachy2_camera import Reachy2Camera
+
+            cameras[key] = Reachy2Camera(cfg)
+
         else:
-            raise ValueError(f"The motor type '{cfg.type}' is not valid.")
+            raise ValueError(f"The camera type '{cfg.type}' is not valid.")
 
     return cameras
 

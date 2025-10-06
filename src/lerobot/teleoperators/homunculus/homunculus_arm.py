@@ -18,12 +18,11 @@ import logging
 import threading
 from collections import deque
 from pprint import pformat
-from typing import Deque
 
 import serial
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors.motors_bus import MotorCalibration, MotorNormMode
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
@@ -60,7 +59,7 @@ class HomunculusArm(Teleoperator):
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
         # one deque *per joint* so we can inspect raw history if needed
-        self._buffers: dict[str, Deque[int]] = {
+        self._buffers: dict[str, deque[int]] = {
             joint: deque(maxlen=n)
             for joint in (
                 "shoulder_pitch",

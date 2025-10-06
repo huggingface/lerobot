@@ -48,11 +48,11 @@ def test_async_inference_e2e(monkeypatch):
     # Import grpc-dependent modules inside the test function
     import grpc
 
+    from lerobot.async_inference.configs import PolicyServerConfig, RobotClientConfig
+    from lerobot.async_inference.helpers import map_robot_keys_to_lerobot_features
+    from lerobot.async_inference.policy_server import PolicyServer
+    from lerobot.async_inference.robot_client import RobotClient
     from lerobot.robots.utils import make_robot_from_config
-    from lerobot.scripts.server.configs import PolicyServerConfig, RobotClientConfig
-    from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
-    from lerobot.scripts.server.policy_server import PolicyServer
-    from lerobot.scripts.server.robot_client import RobotClient
     from lerobot.transport import (
         services_pb2,  # type: ignore
         services_pb2_grpc,  # type: ignore
