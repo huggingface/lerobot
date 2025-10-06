@@ -246,7 +246,7 @@ def test_step_through():
     # Ensure all results are dicts (same format as input)
     for result in results:
         assert isinstance(result, dict)
-        assert all(isinstance(k, TransitionKey) for k in result.keys())
+        assert all(isinstance(k, TransitionKey) for k in result)
 
 
 def test_step_through_with_dict():
@@ -770,7 +770,7 @@ class MockStepWithNonSerializableParam(ProcessorStep):
         # Add type validation for multiplier
         if isinstance(multiplier, str):
             raise ValueError(f"multiplier must be a number, got string '{multiplier}'")
-        if not isinstance(multiplier, (int, float)):
+        if not isinstance(multiplier, (int | float)):
             raise TypeError(f"multiplier must be a number, got {type(multiplier).__name__}")
         self.multiplier = float(multiplier)
         self.env = env  # Non-serializable parameter (like gym.Env)
@@ -1623,9 +1623,7 @@ def test_override_with_callables():
 
             # Define a transform function
             def double_values(x):
-                if isinstance(x, (int, float)):
-                    return x * 2
-                elif isinstance(x, torch.Tensor):
+                if isinstance(x, (int | float | torch.Tensor)):
                     return x * 2
                 return x
 
@@ -1797,10 +1795,9 @@ def test_from_pretrained_nonexistent_path():
         )
 
     # Test with a local directory that exists but has no config files
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, pytest.raises(FileNotFoundError):
         # Since the directory exists but has no config, it will raise FileNotFoundError
-        with pytest.raises(FileNotFoundError):
-            DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor.json")
+        DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor.json")
 
 
 def test_save_load_with_custom_converter_functions():

@@ -35,7 +35,7 @@ def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     """Normalize camera_name into a non-empty list of strings."""
     if isinstance(camera_name, str):
         cams = [c.strip() for c in camera_name.split(",") if c.strip()]
-    elif isinstance(camera_name, (list, tuple)):
+    elif isinstance(camera_name, (list | tuple)):
         cams = [str(c).strip() for c in camera_name if str(c).strip()]
     else:
         raise TypeError(f"camera_name must be str or sequence[str], got {type(camera_name).__name__}")

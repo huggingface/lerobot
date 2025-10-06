@@ -33,7 +33,6 @@ TRUNCATED = "next.truncated"
 DONE = "next.done"
 
 ROBOTS = "robots"
-ROBOT_TYPE = "robot_type"
 TELEOPERATORS = "teleoperators"
 
 # files & directories
@@ -68,3 +67,6 @@ HF_LEROBOT_CALIBRATION = Path(os.getenv("HF_LEROBOT_CALIBRATION", default_calibr
 # streaming datasets
 LOOKBACK_BACKTRACKTABLE = 100
 LOOKAHEAD_BACKTRACKTABLE = 100
+
+# openpi
+OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38  # TODO(pepijn): Modify this when extending support to fp8 models
