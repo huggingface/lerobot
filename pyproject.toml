@@ -59,20 +59,20 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 dependencies = [
 
     # Hugging Face dependencies
-    "datasets>=4.0.0",
-    "diffusers>=0.27.2",
-    "huggingface-hub[hf-transfer,cli]>=0.34.2",
+    "datasets>=4.0.0,<4.2.0",
+    "diffusers>=0.27.2,<0.36.0",
+    "huggingface-hub[hf-transfer,cli]>=0.34.2,<0.36.0",
 
     # Core dependencies
-    "cmake>=3.29.0.1",
-    "einops>=0.8.0",
-    "opencv-python-headless>=4.9.0",
-    "av>=14.2.0",
-    "jsonlines>=4.0.0",
-    "packaging>=24.2",
-    "pynput>=1.7.7",
-    "pyserial>=3.5",
-    "wandb>=0.20.0",
+    "cmake>=3.29.0.1,<4.2.0",
+    "einops>=0.8.0,<0.9.0",
+    "opencv-python-headless>=4.9.0,<4.13.0",
+    "av>=14.2.0,<16.0.0",
+    "jsonlines>=4.0.0,<5.0.0",
+    "packaging>=24.2,<26.0",
+    "pynput>=1.7.7,<1.9.0",
+    "pyserial>=3.5,<4.0",
+    "wandb>=0.20.0,<0.23.0",
 
     "torch>=2.2.1,<2.8.0", # TODO: Bumb dependency
     "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bumb dependency
@@ -92,26 +92,26 @@ dependencies = [
 [project.optional-dependencies]
 
 # Common
-pygame-dep = ["pygame>=2.5.1"]
-placo-dep = ["placo>=0.9.6"]
-transformers-dep = ["transformers>=4.53.0"]
+pygame-dep = ["pygame>=2.5.1,<2.7.0"]
+placo-dep = ["placo>=0.9.6,<0.10.0"]
+transformers-dep = ["transformers>=4.53.0,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
 
 # Motors
-feetech = ["feetech-servo-sdk>=1.0.0"]
-dynamixel = ["dynamixel-sdk>=3.7.31"]
+feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
+dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
 
 # Robots
-gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0"]
+gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
-lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1"]
-reachy2 = ["reachy2_sdk>=1.0.14"]
+lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1,<28.0.0"]
+reachy2 = ["reachy2_sdk>=1.0.14,<1.1.0"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
-    "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
-    "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
+    "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
+    "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
-phone = ["hebi-py>=2.8.0", "teleop>=0.1.0"]
+phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0"]
 # stretch = [
 #     "hello-robot-stretch-body>=0.7.27 ; sys_platform == 'linux'",
 #     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
@@ -120,21 +120,21 @@ phone = ["hebi-py>=2.8.0", "teleop>=0.1.0"]
 
 # Policies
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
-smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
-hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
-async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
+async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
 
 # Development
-dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
-test = ["pytest>=8.1.0", "pytest-timeout>=2.4.0", "pytest-cov>=5.0.0", "mock-serial>=0.0.1 ; sys_platform != 'win32'"]
-video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
+dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
+test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
+video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
-aloha = ["gym-aloha>=0.1.1"]
-pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
-xarm = ["gym-xarm>=0.1.1"]
+aloha = ["gym-aloha>=0.1.1,<0.2.0"]
+pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
+xarm = ["gym-xarm>=0.1.1,<0.2.0"]
 libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
 
 

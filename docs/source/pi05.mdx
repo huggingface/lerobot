@@ -51,13 +51,13 @@ policy.type=pi05
 Here's a complete training command for finetuning the base π₀.₅ model on your own dataset:
 
 ```bash
-python src/lerobot/scripts/train.py \
+python src/lerobot/scripts/lerobot_train.py\
     --dataset.repo_id=your_dataset \
     --policy.type=pi05 \
-    --output_dir=./outputs/pi0_training \
-    --job_name=pi0_training \
-    --policy.repo_id=lerobot/pi05_base \
-    --policy.pretrained_path=your_repo_id \
+    --output_dir=./outputs/pi05_training \
+    --job_name=pi05_training \
+    --policy.repo_id=your_repo_id \
+    --policy.pretrained_path=lerobot/pi05_base \
     --policy.compile_model=true \
     --policy.gradient_checkpointing=true \
     --wandb.enable=true \
@@ -76,6 +76,15 @@ python src/lerobot/scripts/train.py \
 - **`--policy.pretrained_path=lerobot/pi05_base`**: The base π₀.₅ model you want to finetune, options are:
   - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
   - [lerobot/pi05_libero](https://huggingface.co/lerobot/pi05_libero) (specifically trained on the Libero dataset)
+
+If your dataset is not converted with `quantiles`, you can convert it with the following command:
+
+```bash
+python src/lerobot/datasets/v30/augment_dataset_quantile_stats.py \
+    --repo-id=your_dataset \
+```
+
+Or train pi05 with this normalization mapping: `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`
 
 ## Performance Results
 

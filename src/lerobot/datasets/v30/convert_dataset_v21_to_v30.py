@@ -26,9 +26,18 @@ This script will help you convert any LeRobot dataset already pushed to the hub 
 
 Usage:
 
+Convert a dataset from the hub:
 ```bash
 python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht
+```
+
+Convert a local dataset (works in place):
+```bash
+python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+    --repo-id=lerobot/pusht \
+    --root=/path/to/local/dataset/directory
+    --push-to-hub=false
 ```
 
 """
@@ -75,7 +84,7 @@ from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 
 V21 = "v2.1"
-
+V30 = "v3.0"
 
 """
 -------------------------
@@ -143,6 +152,17 @@ def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
     tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
     task_to_task_index = {task: task_index for task_index, task in tasks.items()}
     return tasks, task_to_task_index
+
+
+def validate_local_dataset_version(local_path: Path) -> None:
+    """Validate that the local dataset has the expected v2.1 version."""
+    info = load_info(local_path)
+    dataset_version = info.get("codebase_version", "unknown")
+    if dataset_version != V21:
+        raise ValueError(
+            f"Local dataset has codebase version '{dataset_version}', expected '{V21}'. "
+            f"This script is specifically for converting v2.1 datasets to v3.0."
+        )
 
 
 def convert_tasks(root, new_root):
@@ -407,7 +427,7 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
 
 def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
     info = load_info(root)
-    info["codebase_version"] = "v3.0"
+    info["codebase_version"] = V30
     del info["total_chunks"]
     del info["total_videos"]
     info["data_files_size_in_mb"] = data_file_size_in_mb
@@ -429,16 +449,36 @@ def convert_dataset(
     branch: str | None = None,
     data_file_size_in_mb: int | None = None,
     video_file_size_in_mb: int | None = None,
+    root: str | Path | None = None,
+    push_to_hub: bool = True,
+    force_conversion: bool = False,
 ):
-    root = HF_LEROBOT_HOME / repo_id
-    old_root = HF_LEROBOT_HOME / f"{repo_id}_old"
-    new_root = HF_LEROBOT_HOME / f"{repo_id}_v30"
-
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_file_size_in_mb is None:
         video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
 
+    # First check if the dataset already has a v3.0 version
+    if root is None and not force_conversion:
+        try:
+            print("Trying to download v3.0 version of the dataset from the hub...")
+            snapshot_download(repo_id, repo_type="dataset", revision=V30, local_dir=HF_LEROBOT_HOME / repo_id)
+            return
+        except Exception:
+            print("Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
+
+    # Set root based on whether local dataset path is provided
+    use_local_dataset = False
+    root = HF_LEROBOT_HOME / repo_id if root is None else Path(root) / repo_id
+    if root.exists():
+        validate_local_dataset_version(root)
+        use_local_dataset = True
+        print(f"Using local dataset at {root}")
+
+    old_root = root.parent / f"{root.name}_old"
+    new_root = root.parent / f"{root.name}_v30"
+
+    # Handle old_root cleanup if both old_root and root exist
     if old_root.is_dir() and root.is_dir():
         shutil.rmtree(str(root))
         shutil.move(str(old_root), str(root))
@@ -446,12 +486,13 @@ def convert_dataset(
     if new_root.is_dir():
         shutil.rmtree(new_root)
 
-    snapshot_download(
-        repo_id,
-        repo_type="dataset",
-        revision=V21,
-        local_dir=root,
-    )
+    if not use_local_dataset:
+        snapshot_download(
+            repo_id,
+            repo_type="dataset",
+            revision=V21,
+            local_dir=root,
+        )
 
     convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb)
     convert_tasks(root, new_root)
@@ -462,21 +503,22 @@ def convert_dataset(
     shutil.move(str(root), str(old_root))
     shutil.move(str(new_root), str(root))
 
-    hub_api = HfApi()
-    try:
-        hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
-    except HTTPError as e:
-        print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
-        pass
-    hub_api.delete_files(
-        delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
-        repo_id=repo_id,
-        revision=branch,
-        repo_type="dataset",
-    )
-    hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
+    if push_to_hub:
+        hub_api = HfApi()
+        try:
+            hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+        except HTTPError as e:
+            print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
+            pass
+        hub_api.delete_files(
+            delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
+            repo_id=repo_id,
+            revision=branch,
+            repo_type="dataset",
+        )
+        hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
-    LeRobotDataset(repo_id).push_to_hub()
+        LeRobotDataset(repo_id).push_to_hub()
 
 
 if __name__ == "__main__":
@@ -506,6 +548,23 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="File size in MB. Defaults to 100 for data and 500 for videos.",
+    )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Local directory to use for downloading/writing the dataset.",
+    )
+    parser.add_argument(
+        "--push-to-hub",
+        type=lambda input: input.lower() == "true",
+        default=True,
+        help="Push the converted dataset to the hub.",
+    )
+    parser.add_argument(
+        "--force-conversion",
+        action="store_true",
+        help="Force conversion even if the dataset already has a v3.0 version.",
     )
 
     args = parser.parse_args()
