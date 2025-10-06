@@ -36,7 +36,8 @@ def chw_to_hwc_uint8(img_t: torch.Tensor) -> np.ndarray:
         t = (t.clamp(0, 1) * 255.0).to(torch.uint8)
     elif t.dtype != torch.uint8:
         t = t.to(torch.uint8)
-    assert t.ndim == 3 and t.shape[0] <= t.shape[1] and t.shape[0] <= t.shape[2], f"Expected CxHxW, got {tuple(t.shape)}"
+    if not (t.ndim == 3 and t.shape[0] <= t.shape[1] and t.shape[0] <= t.shape[2]):
+        raise ValueError(f"Expected input tensor of shape CxHxW (C <= H and C <= W), got {tuple(t.shape)}")
     return t.permute(1, 2, 0).numpy()
 
 def save_first_frames_from_batch(batch, dataset: LeRobotDataset, ep: int, frames_dir: Path) -> list[str]:
