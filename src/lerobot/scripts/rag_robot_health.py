@@ -112,7 +112,7 @@ class EpisodeDoc:
 def _looks_num_str(s: str) -> bool:
     s = s.strip()
     if not s: return False
-    if s[0] in "+-": s = s[1:]
+    if s[0] in ('+', '-'): s = s[1:]
     return s.replace(".", "", 1).isdigit()
 
 def _coerce_scalar(val) -> float:
