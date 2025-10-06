@@ -157,7 +157,7 @@ def main():
     if args.use_action: use_state = False
     if args.use_state:  use_state = True
 
-    ds = LeRobotDataset(args.repo-id if hasattr(args, "repo-id") else args.repo_id, root=args.root, tolerance_s=1e-4)
+    ds = LeRobotDataset(args.repo_id, root=args.root, tolerance_s=1e-4)
     n_eps = len(ds.episode_data_index["from"])
 
     frames_dir = (args.outdir / "first_frames") if args.save_first_frames else None
