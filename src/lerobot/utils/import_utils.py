@@ -69,39 +69,64 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     Dynamically instantiates an object from its `ChoiceRegistry` configuration.
 
     This factory uses the module path and class name from the `config` object's
-    type to locate and instantiate the correct class, passing the `config` object
-    itself to the constructor.
-
-    Args:
-        config: The configuration object, an instance of a `ChoiceRegistry` subclass.
-
-    Returns:
-        An instance of the class specified by the `config` object's type.
+    type to locate and instantiate the corresponding device class (not the config).
+    It derives the device class name by removing a trailing 'Config' from the config
+    class name and tries a few candidate modules where the device implementation is
+    commonly located.
     """
     if not isinstance(config, ChoiceRegistry):
         raise ValueError(f"Config should be an instance of `ChoiceRegistry`, got {type(config)}")
 
-    class_module_path, class_name_type = config.__class__.__module__, config.__class__.__name__
+    config_cls = config.__class__
+    module_path = config_cls.__module__  # typical: lerobot_teleop_mydevice.config_mydevice
+    config_name = config_cls.__name__  # typical: MyDeviceConfig
 
-    try:
-        module = importlib.import_module(class_module_path)
-    except Exception as e:
-        raise ImportError(
-            f"Could not import module '{class_module_path}' for device  '{class_name_type}': {e}"
-        ) from e
+    # Derive device class name (strip "Config")
+    if not config_name.endswith("Config"):
+        raise ValueError(f"Config class name '{config_name}' does not end with 'Config'")
 
-    try:
-        cls = getattr(module, class_name_type)
-    except AttributeError as e:
-        raise AttributeError(f"Module '{class_module_path}' has no attribute '{class_name_type}'") from e
+    device_class_name = config_name[:-6]  # typical: MyDeviceConfig -> MyDevice
 
-    if not callable(cls):
-        raise TypeError(f"Resolved object {cls!r} is not callable")
+    # Build candidate modules to search for the device class
+    parts = module_path.split(".")
+    parent_module = ".".join(parts[:-1]) if len(parts) > 1 else module_path
+    candidates = [
+        parent_module,  # typical: lerobot_teleop_mydevice
+        parent_module + "." + device_class_name.lower(),  # typical: lerobot_teleop_mydevice.mydevice
+    ]
 
-    try:
-        return cls(config)
-    except TypeError as e:
-        raise TypeError(f"Failed to instantiate '{config}': {e}") from e
+    # handle modules named like "config_xxx" -> try replacing that piece with "xxx"
+    last = parts[-1] if parts else ""
+    if last.startswith("config_"):
+        candidates.append(".".join(parts[:-1] + [last.replace("config_", "")]))
+
+    # de-duplicate while preserving order
+    seen: set[str] = set()
+    candidates = [c for c in candidates if not (c in seen or seen.add(c))]
+
+    tried: list[str] = []
+    for candidate in candidates:
+        tried.append(candidate)
+        try:
+            module = importlib.import_module(candidate)
+        except ImportError:
+            continue
+
+        if hasattr(module, device_class_name):
+            cls = getattr(module, device_class_name)
+            if callable(cls):
+                try:
+                    return cls(config)
+                except TypeError as e:
+                    raise TypeError(
+                        f"Failed to instantiate '{device_class_name}' from module '{candidate}': {e}"
+                    ) from e
+
+    raise ImportError(
+        f"Could not locate device class '{device_class_name}' for config '{config_name}'. "
+        f"Tried modules: {tried}. Ensure your device class name is the config class name without "
+        f"'Config' and that it's importable from one of those modules."
+    )
 
 
 def register_third_party_devices() -> None:
@@ -112,12 +137,12 @@ def register_third_party_devices() -> None:
     'lerobot_robot_', 'lerobot_camera_' or 'lerobot_teleoperator_' and imports them.
     """
     prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_")
-    imported = []
-    failed = []
+    imported: list[str] = []
+    failed: list[str] = []
 
     for module_info in pkgutil.iter_modules():
         name = module_info.name
-        if any(name.startswith(p) for p in prefixes):
+        if name.startswith(prefixes):
             try:
                 importlib.import_module(name)
                 imported.append(name)
