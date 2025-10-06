@@ -14,10 +14,10 @@
 import abc
 import builtins
 import json
-import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
+from logging import getLogger
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -34,6 +34,7 @@ from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 
 T = TypeVar("T", bound="PreTrainedConfig")
+logger = getLogger(__name__)
 
 
 @dataclass
@@ -79,12 +80,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         self.pretrained_path: Path | None = None
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
-            logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+            logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
             self.device = auto_device.type
 
         # Automatically deactivate AMP if necessary
         if self.use_amp and not is_amp_available(self.device):
-            logging.warning(
+            logger.warning(
                 f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
             )
             self.use_amp = False
@@ -172,7 +173,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
             if CONFIG_NAME in os.listdir(model_id):
                 config_file = os.path.join(model_id, CONFIG_NAME)
             else:
-                logging.error(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
+                logger.error(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
         else:
             try:
                 config_file = hf_hub_download(
