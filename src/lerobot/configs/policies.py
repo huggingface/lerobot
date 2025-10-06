@@ -73,7 +73,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     license: str | None = None
     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.
-    pretrained_path: str | None = None
+    pretrained_path: Path | None = None
 
     def __post_init__(self) -> None:
         self.pretrained_path: Path | None = None

@@ -178,10 +178,7 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
     if isinstance(fields_to_filter, str):
         fields_to_filter = [fields_to_filter]
 
-    if args is None:
-        filtered_args = []
-    else:
-        filtered_args = list(args)
+    filtered_args = [] if args is None else list(args)
 
     for field in fields_to_filter:
         if get_path_arg(field, args):
