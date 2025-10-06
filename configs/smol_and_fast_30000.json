@@ -15,7 +15,7 @@
         "device": "cuda",
         "use_amp": false,
         "push_to_hub": false,
-        "chunk_size": 10,
+        "chunk_size": 15,
         "n_action_steps": 5,
         "vision_model_optimizer_lr": 0.0002,
         "connector_optimizer_lr": 0.0002,
@@ -32,22 +32,24 @@
         "scheduler_decay_lr": 2.5e-06,
         "precision": "float32",
         "freeze_vision_encoder": true,
-        "freeze_connector": true,
+        "freeze_connector": false,
         "scale_factor": 4,
         "do_image_splitting": false,
         "drop_n_last_frames": true,
         "grad_clip_norm": 1,
-        "relaxed_action_decoding": true
+        "relaxed_action_decoding": true,
+        "crop_shape": [84, 84]
     },
     "num_workers": 4,
     "batch_size": 16,
-    "steps": 10000,
+    "steps": 30000,
     "eval_freq": 1000,
-    "log_freq": 100,
+    "log_freq": 50,
     "save_checkpoint": true,
     "save_freq": 10000,
+    "profile_step_num": -1,
     "eval": {
-        "n_episodes": 32,
+        "n_episodes": 64,
         "batch_size": 16
     },
     "wandb": {
