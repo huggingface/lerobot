@@ -200,7 +200,9 @@ def build_docs(
     docs: List[EpisodeDoc] = []
     for ep_id, motor_avgs in ep_table.items():
         motor_z = {m: zscore(motor_avgs.get(m, float("nan")), mu.get(m, float("nan")), sigma.get(m, float("nan"))) for m in MOTORS}
-        flags = {m: (abs(motor_z.get(m, float("nan"))) > OUTLIER_Z) if not math.isnan(motor_z.get(m, float("nan"))) else False for m in MOTORS}
+        flags = {m: (abs(z) > OUTLIER_Z) if not math.isnan(z) else False
+                 for m in MOTORS
+                 for z in [motor_z.get(m, float("nan"))]}
         health = health_score_from_z(motor_z)
         frames = (frames_map or {}).get(str(ep_id))
         docs.append(EpisodeDoc(
