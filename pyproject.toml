@@ -286,8 +286,8 @@ module = "lerobot.*"
 ignore_errors = true
 
 [[tool.mypy.overrides]]
-# module = "lerobot.envs.*"
-# ignore_errors = false
+module = "lerobot.envs.*"
+ignore_errors = false
 
 
 # [[tool.mypy.overrides]]
@@ -302,7 +302,7 @@ ignore_errors = true
 # module = "lerobot.optim.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
+[[tool.mypy.overrides]]
 module = "lerobot.model.*"
 ignore_errors = false
 
