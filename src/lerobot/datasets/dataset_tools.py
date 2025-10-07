@@ -85,7 +85,7 @@ def delete_episodes(
         dataset: The source LeRobotDataset.
         episode_indices: List of episode indices to delete.
         output_dir: Directory to save the new dataset. If None, uses default location.
-        repo_id: Repository ID for the new dataset. If None, appends "_filtered" to original.
+        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
     """
     if not episode_indices:
         raise ValueError("No episodes to delete")
@@ -98,7 +98,7 @@ def delete_episodes(
     logging.info(f"Deleting {len(episode_indices)} episodes from dataset")
 
     if repo_id is None:
-        repo_id = dataset.repo_id
+        repo_id = f"{dataset.repo_id}_modified"
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
     episodes_to_keep = [i for i in range(dataset.meta.total_episodes) if i not in episode_indices]
