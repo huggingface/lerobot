@@ -30,7 +30,7 @@ import pandas
 import pandas as pd
 import pyarrow.parquet as pq
 import torch
-from datasets import Dataset, concatenate_datasets
+from datasets import Dataset
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
@@ -124,8 +124,8 @@ def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None)
 
     # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
     with SuppressProgressBars():
-        datasets = [Dataset.from_parquet(str(path), features=features) for path in paths]
-    return concatenate_datasets(datasets)
+        datasets = Dataset.from_parquet([str(path) for path in paths], features=features)
+    return datasets
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
