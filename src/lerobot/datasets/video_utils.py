@@ -447,15 +447,17 @@ def concatenate_video_files(
     # Replicate input streams in output container
     stream_map = {}
     for input_stream in input_container.streams:
-        if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible streams
-            stream_map[input_stream.index] = output_container.add_stream_from_template(
-                template=input_stream, opaque=True
-            )
-            stream_map[
-                input_stream.index
-            ].time_base = (
-                input_stream.time_base
-            )  # set the time base to the input stream time base (missing in the codec context)
+        if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible
+            output_stream = output_container.add_stream_from_template(template=input_stream, opaque=True)
+
+            codec_context = output_stream.codec_context
+
+            # Prevent "RuntimeError: Cannot access 'time_base' as a decoder" error
+            # Only try to mutate codec_context.time_base if is_encoder=True
+            if codec_context is not None and getattr(codec_context, "is_encoder", False):
+                codec_context.time_base = input_stream.time_base
+
+            stream_map[input_stream.index] = output_stream
 
     # Demux + remux packets (no re-encode)
     for packet in input_container.demux():
