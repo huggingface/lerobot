@@ -32,12 +32,17 @@ from concurrent import futures
 from dataclasses import asdict
 from pprint import pformat
 from queue import Empty, Queue
+from typing import Any
 
 import draccus
 import grpc
 import torch
 
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+from lerobot.processor import (
+    PolicyAction,
+    PolicyProcessorPipeline,
+)
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -82,8 +87,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.lerobot_features = None
         self.actions_per_chunk = None
         self.policy = None
-        self.preprocessor = None
-        self.postprocessor = None
+        self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
+        self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
 
     @property
     def running(self):
@@ -331,88 +336,70 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         4. Apply postprocessor (unnormalization, device movement)
         5. Convert to TimedAction list
         """
-        try:
-            """1. Prepare observation"""
-            start_prepare = time.perf_counter()
-            observation: Observation = raw_observation_to_observation(
-                observation_t.get_observation(),
-                self.lerobot_features,
-                self.policy_image_features,
-            )
-            prepare_time = time.perf_counter() - start_prepare
+        """1. Prepare observation"""
+        start_prepare = time.perf_counter()
+        observation: Observation = raw_observation_to_observation(
+            observation_t.get_observation(),
+            self.lerobot_features,
+            self.policy_image_features,
+        )
+        prepare_time = time.perf_counter() - start_prepare
 
-            """2. Apply preprocessor"""
-            start_preprocess = time.perf_counter()
-            if self.preprocessor is not None:
-                observation = self.preprocessor(observation)
-            else:
-                observation = {
-                    k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in observation.items()
-                }
-            self.last_processed_obs: TimedObservation = observation_t
-            preprocessing_time = time.perf_counter() - start_preprocess
+        """2. Apply preprocessor"""
+        start_preprocess = time.perf_counter()
+        observation = self.preprocessor(observation)
+        self.last_processed_obs: TimedObservation = observation_t
+        preprocessing_time = time.perf_counter() - start_preprocess
 
-            """3. Get action chunk"""
-            start_inference = time.perf_counter()
-            action_tensor = self._get_action_chunk(observation)
-            inference_time = time.perf_counter() - start_inference
-            self.logger.info(
-                f"Preprocessing and inference took {inference_time:.4f}s, action shape: {action_tensor.shape}"
-            )
+        """3. Get action chunk"""
+        start_inference = time.perf_counter()
+        action_tensor = self._get_action_chunk(observation)
+        inference_time = time.perf_counter() - start_inference
+        self.logger.info(
+            f"Preprocessing and inference took {inference_time:.4f}s, action shape: {action_tensor.shape}"
+        )
 
-            """4. Apply postprocessor"""
-            # Apply postprocessor if available (handles unnormalization and device movement)
-            # Postprocessor expects (B, action_dim) per action, but we have (B, chunk_size, action_dim)
-            # So we process each action in the chunk individually
-            start_postprocess = time.perf_counter()
-            if self.postprocessor is not None:
-                _, chunk_size, _ = action_tensor.shape
+        """4. Apply postprocessor"""
+        # Apply postprocessor (handles unnormalization and device movement)
+        # Postprocessor expects (B, action_dim) per action, but we have (B, chunk_size, action_dim)
+        # So we process each action in the chunk individually
+        start_postprocess = time.perf_counter()
+        _, chunk_size, _ = action_tensor.shape
 
-                # Process each action in the chunk
-                processed_actions = []
-                for i in range(chunk_size):
-                    # Extract action at timestep i: (B, action_dim)
-                    single_action = action_tensor[:, i, :]
-                    processed_action = self.postprocessor(single_action)
-                    processed_actions.append(processed_action)
+        # Process each action in the chunk
+        processed_actions = []
+        for i in range(chunk_size):
+            # Extract action at timestep i: (B, action_dim)
+            single_action = action_tensor[:, i, :]
+            processed_action = self.postprocessor(single_action)
+            processed_actions.append(processed_action)
 
-                # Stack back to (B, chunk_size, action_dim), then remove batch dim
-                action_tensor = torch.stack(processed_actions, dim=1).squeeze(0)
-                self.logger.debug(f"Postprocessed action shape: {action_tensor.shape}")
-            else:
-                # Fallback: just move to CPU and remove batch dimension
-                action_tensor = action_tensor.cpu().squeeze(0)
-                self.logger.debug(f"No postprocessor, moved to CPU, shape: {action_tensor.shape}")
+        # Stack back to (B, chunk_size, action_dim), then remove batch dim
+        action_tensor = torch.stack(processed_actions, dim=1).squeeze(0)
+        self.logger.debug(f"Postprocessed action shape: {action_tensor.shape}")
 
-            """5. Convert to TimedAction list"""
-            action_chunk = self._time_action_chunk(
-                observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
-            )
-            postprocess_stops = time.perf_counter()
-            postprocessing_time = postprocess_stops - start_postprocess
+        """5. Convert to TimedAction list"""
+        action_chunk = self._time_action_chunk(
+            observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
+        )
+        postprocess_stops = time.perf_counter()
+        postprocessing_time = postprocess_stops - start_postprocess
 
-            self.logger.info(
-                f"Observation {observation_t.get_timestep()} | "
-                f"Total time: {1000 * (postprocess_stops - start_prepare):.2f}ms"
-            )
+        self.logger.info(
+            f"Observation {observation_t.get_timestep()} | "
+            f"Total time: {1000 * (postprocess_stops - start_prepare):.2f}ms"
+        )
 
-            self.logger.debug(
-                f"Observation {observation_t.get_timestep()} | "
-                f"Prepare time: {1000 * prepare_time:.2f}ms | "
-                f"Preprocessing time: {1000 * preprocessing_time:.2f}ms | "
-                f"Inference time: {1000 * inference_time:.2f}ms | "
-                f"Postprocessing time: {1000 * postprocessing_time:.2f}ms | "
-                f"Total time: {1000 * (postprocess_stops - start_prepare):.2f}ms"
-            )
+        self.logger.debug(
+            f"Observation {observation_t.get_timestep()} | "
+            f"Prepare time: {1000 * prepare_time:.2f}ms | "
+            f"Preprocessing time: {1000 * preprocessing_time:.2f}ms | "
+            f"Inference time: {1000 * inference_time:.2f}ms | "
+            f"Postprocessing time: {1000 * postprocessing_time:.2f}ms | "
+            f"Total time: {1000 * (postprocess_stops - start_prepare):.2f}ms"
+        )
 
-            return action_chunk
-
-        except Exception as e:
-            self.logger.error(f"Error in _predict_action_chunk: {e}")
-            import traceback
-
-            self.logger.error(traceback.format_exc())
-            raise
+        return action_chunk
 
     def stop(self):
         """Stop the server"""

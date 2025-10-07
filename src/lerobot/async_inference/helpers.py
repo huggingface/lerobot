@@ -92,6 +92,7 @@ def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, 
     return resized.squeeze(0)
 
 
+# TODO(Steven): Consider implementing a pipeline step for this
 def raw_observation_to_observation(
     raw_observation: RawObservation,
     lerobot_features: dict[str, dict],
