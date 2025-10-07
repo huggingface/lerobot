@@ -52,11 +52,11 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so100_follower,
     koch_follower,
     make_robot_from_config,
     so100_follower,
     so101_follower,
-    bi_so100_follower,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore

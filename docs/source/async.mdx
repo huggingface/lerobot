@@ -39,7 +39,7 @@ python -m lerobot.async_inference.policy_server \
 This will start a policy server listening on `127.0.0.1:8080` (`localhost`, port 8080). At this stage, the policy server is empty, as all information related to which policy to run and with which parameters are specified during the first handshake with the client. Spin up a client with:
 
 ```shell
-python -m lerobot.async_inference.robot_client \ 
+python -m lerobot.async_inference.robot_client \
     --server_address=127.0.0.1:8080 \ # SERVER: the host address and port of the policy server
     --robot.type=so100_follower \ # ROBOT: your robot type
     --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: your robot port

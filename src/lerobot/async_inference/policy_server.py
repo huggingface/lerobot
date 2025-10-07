@@ -148,7 +148,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         start = time.perf_counter()
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         self.policy.to(self.device)
-        
+
         # Load preprocessor and postprocessor, overriding device to match requested device
         device_override = {"device": self.device}
         self.preprocessor, self.postprocessor = make_pre_post_processors(
@@ -157,7 +157,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             preprocessor_overrides={"device_processor": device_override},
             postprocessor_overrides={"device_processor": device_override},
         )
-        
+
         end = time.perf_counter()
 
         self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
@@ -323,7 +323,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
         """Predict an action chunk based on an observation.
-        
+
         Pipeline:
         1. Convert raw observation to LeRobot format
         2. Apply preprocessor (tokenization, normalization, batching, device placement)
@@ -342,21 +342,24 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             prepare_time = time.perf_counter() - start_prepare
 
             """2. Apply preprocessor"""
-            start_preproces = time.perf_counter()
+            start_preprocess = time.perf_counter()
             if self.preprocessor is not None:
                 observation = self.preprocessor(observation)
             else:
-                observation = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
-                              for k, v in observation.items()}
+                observation = {
+                    k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in observation.items()
+                }
             self.last_processed_obs: TimedObservation = observation_t
-            preprocessing_time = time.perf_counter() - start_preproces
+            preprocessing_time = time.perf_counter() - start_preprocess
 
             """3. Get action chunk"""
             start_inference = time.perf_counter()
             action_tensor = self._get_action_chunk(observation)
             inference_time = time.perf_counter() - start_inference
-            self.logger.info(f"Preprocessing and inference took {inference_time:.4f}s, action shape: {action_tensor.shape}")
-            
+            self.logger.info(
+                f"Preprocessing and inference took {inference_time:.4f}s, action shape: {action_tensor.shape}"
+            )
+
             """4. Apply postprocessor"""
             # Apply postprocessor if available (handles unnormalization and device movement)
             # Postprocessor expects (B, action_dim) per action, but we have (B, chunk_size, action_dim)
@@ -364,7 +367,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             start_postprocess = time.perf_counter()
             if self.postprocessor is not None:
                 _, chunk_size, _ = action_tensor.shape
-                
+
                 # Process each action in the chunk
                 processed_actions = []
                 for i in range(chunk_size):
@@ -372,7 +375,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
                     single_action = action_tensor[:, i, :]
                     processed_action = self.postprocessor(single_action)
                     processed_actions.append(processed_action)
-                
+
                 # Stack back to (B, chunk_size, action_dim), then remove batch dim
                 action_tensor = torch.stack(processed_actions, dim=1).squeeze(0)
                 self.logger.debug(f"Postprocessed action shape: {action_tensor.shape}")
@@ -403,10 +406,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             )
 
             return action_chunk
-            
+
         except Exception as e:
             self.logger.error(f"Error in _predict_action_chunk: {e}")
             import traceback
+
             self.logger.error(traceback.format_exc())
             raise
 
