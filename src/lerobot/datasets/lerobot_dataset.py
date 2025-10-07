@@ -730,8 +730,52 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features)
+        
+        # Filter dataset to only include frames from specified episodes BEFORE setting transform
+        if self.episodes is not None:
+            hf_dataset = hf_dataset.filter(lambda x: x["episode_index"] in self.episodes)
+            # After filtering, we need to update episode metadata to reflect new indices
+            self._update_episode_metadata_after_filter(hf_dataset)
+        
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
+
+    def _update_episode_metadata_after_filter(self, hf_dataset: datasets.Dataset) -> None:
+        """Update episode metadata after filtering to reflect new dataset indices."""
+        
+        # Get all episode indices from the filtered dataset
+        episode_indices = hf_dataset["episode_index"]
+        
+        # Build a mapping of episode_index to new dataset indices
+        episode_ranges = {}
+        for new_idx, ep_idx in enumerate(episode_indices):
+            # Convert to int if it's a tensor
+            if isinstance(ep_idx, torch.Tensor):
+                ep_idx = ep_idx.item()
+            
+            if ep_idx not in episode_ranges:
+                episode_ranges[ep_idx] = {"from": new_idx, "to": new_idx + 1}
+            else:
+                episode_ranges[ep_idx]["to"] = new_idx + 1
+        
+        # Update the episode metadata with new indices
+        # Note: self.meta.episodes is a datasets.Dataset, so we need to update it properly
+        logging.info(f"Updating episode metadata for {len(episode_ranges)} episodes after filtering to {len(hf_dataset)} frames")
+        
+        # Convert episodes dataset to dict, update it, and convert back
+        episodes_dict = {key: list(self.meta.episodes[key]) for key in self.meta.episodes.features}
+        
+        for ep_idx in episode_ranges:
+            old_from = episodes_dict["dataset_from_index"][ep_idx]
+            old_to = episodes_dict["dataset_to_index"][ep_idx]
+            new_from = episode_ranges[ep_idx]["from"]
+            new_to = episode_ranges[ep_idx]["to"]
+            logging.info(f"  Episode {ep_idx}: [{old_from}, {old_to}) -> [{new_from}, {new_to})")
+            episodes_dict["dataset_from_index"][ep_idx] = new_from
+            episodes_dict["dataset_to_index"][ep_idx] = new_to
+        
+        # Recreate the episodes dataset with updated values
+        self.meta.episodes = datasets.Dataset.from_dict(episodes_dict, features=self.meta.episodes.features)
 
     def _check_cached_episodes_sufficient(self) -> bool:
         """Check if the cached dataset contains all requested episodes."""
