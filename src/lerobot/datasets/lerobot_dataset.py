@@ -32,9 +32,9 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.datasets.async_video_encoder import AsyncVideoEncoder
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
+from lerobot.datasets.async_video_encoder import AsyncVideoEncoder
 from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_FEATURES,
@@ -346,6 +346,14 @@ class LeRobotDatasetMetadata:
         episode_dict.update(flatten_dict({"stats": episode_stats}))
         self._save_episode_metadata(episode_dict)
 
+        # In async mode, video columns are unknown until finalization. Add them with NaNs.
+        all_columns = set(df.columns)
+        for key in self.video_keys:
+            all_columns.add(f"videos/{key}/chunk_index")
+            all_columns.add(f"videos/{key}/file_index")
+            all_columns.add(f"videos/{key}/from_timestamp")
+            all_columns.add(f"videos/{key}/to_timestamp")
+        
         # Update info
         self.info["total_episodes"] += 1
         self.info["total_frames"] += episode_length
@@ -368,10 +376,14 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         for key in video_keys:
             if not self.features[key].get("info", None):
-                video_path = self.root / self.video_path.format(
-                    video_key=video_key, chunk_index=0, file_index=0
-                )
-                self.info["features"][key]["info"] = get_video_info(video_path)
+                # In async mode, the first video might not exist yet when this is called.
+                # It should be called during finalization.
+                try:
+                    video_path = self.root / self.get_video_file_path(0, key)
+                    if video_path.exists():
+                         self.info["features"][key]["info"] = get_video_info(video_path)
+                except (IndexError, TypeError):
+                     logging.warning(f"Could not update video info for key '{key}'. First episode might not be finalized yet.")
 
     def update_chunk_settings(
         self,
@@ -475,7 +487,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
-        batch_encoding_size: int = 1,
+        async_video_encoding: bool = False,
+        video_encoding_workers: int = 2,
+        video_encoding_queue_size: int = 100,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -586,8 +600,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
-            batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
-                Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
+            async_video_encoding (bool, optional): Flag to enable non-blocking video encoding.
+                If true save_episde() returns after writing the non video data which is fairly fast. Disabled by default.
+            video_encoding_workers (int, optional): Number of concurrent async encoding tasks.
+                Defaults to 2. A too-low value for this would show up as stop_async_video_encoder taking a long time.
+            video_encoding_queue_size (int, optional): Maximum number of video encoding tasks that can be enqueued.
+                If the limit is reached, save_episode() will become blocking again.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -599,8 +617,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.delta_indices = None
-        self.batch_encoding_size = batch_encoding_size
-        self.episodes_since_last_encoding = 0
 
         # Unused attributes
         self.image_writer = None
@@ -631,6 +647,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
+        # Recording attributes
+        self.episode_buffer = None
+        self.async_video_encoding = async_video_encoding
+        self.video_encoding_workers = video_encoding_workers
+        self.video_encoding_queue_size = video_encoding_queue_size
+        self.async_video_encoder = None
+        self._temp_dir_for_encoding = None
+
     def push_to_hub(
         self,
         branch: str | None = None,
@@ -643,6 +667,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         upload_large_folder: bool = False,
         **card_kwargs,
     ) -> None:
+        # Finalize any pending async videos before pushing
+        if self.async_video_encoder:
+            self.stop_async_video_encoder(wait=True)
+
         ignore_patterns = ["images/"]
         if not push_videos:
             ignore_patterns.append("videos/")
@@ -838,6 +866,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep = self.meta.episodes[ep_idx]
         item = {}
         for vid_key, query_ts in query_timestamps.items():
+            if f"videos/{vid_key}/from_timestamp" not in ep or pd.isna(ep[f"videos/{vid_key}/from_timestamp"]):
+                raise RuntimeError(f"Video metadata for episode {ep_idx} is missing. The dataset may not be finalized.")
+
             # Episodes are stored sequentially on a single mp4 to reduce the number of files.
             # Thus we load the start timestamp of the episode on this mp4 and,
             # shift the query timestamp accordingly.
@@ -966,9 +997,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         This will save to disk the current episode in self.episode_buffer.
 
-        Video encoding is handled automatically based on batch_encoding_size:
-        - If batch_encoding_size == 1: Videos are encoded immediately after each episode
-        - If batch_encoding_size > 1: Videos are encoded in batches.
+        Video encoding is handled automatically based on async_video_encoding:
+        - If async_video_encoding is False: Videos are encoded immediately after each episode, blocking recording until complete
+        - If async_video_encoding is True: Videos are encoded in worker tasks and concatenated during finalization.
 
         Args:
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
@@ -976,7 +1007,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 None.
         """
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
-
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 
         # size and task are special cases that won't be added to hf_dataset
@@ -985,143 +1015,77 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_tasks = list(set(tasks))
         episode_index = episode_buffer["episode_index"]
 
-        episode_buffer["index"] = np.arange(self.meta.total_frames, self.meta.total_frames + episode_length)
-        episode_buffer["episode_index"] = np.full((episode_length,), episode_index)
+        ep_stats = compute_episode_stats(self.episode_buffer, self.features)
+        ep_metadata = self._save_episode_data(self.episode_buffer)
 
-        # Update tasks and task indices with new tasks if any
-        self.meta.save_episode_tasks(episode_tasks)
+        if self.async_video_encoding and len(self.meta.video_keys) > 0:
+            if self.async_video_encoder is None:
+                self.start_async_video_encoder()
+            
+            # Create a dedicated temp dir for this episode's encoded videos
+            temp_dir_for_episode = Path(tempfile.mkdtemp(dir=self._temp_dir_for_encoding))
 
-        # Given tasks in natural language, find their corresponding task indices
-        episode_buffer["task_index"] = np.array([self.meta.get_task_index(task) for task in tasks])
-
-        for key, ft in self.features.items():
-            # index, episode_index, task_index are already processed above, and image and video
-            # are processed separately by storing image path and frame info as meta data
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
-                continue
-            episode_buffer[key] = np.stack(episode_buffer[key])
-
-        # Wait for image writer to end, so that episode stats over images can be computed
-        self._wait_image_writer()
-        ep_stats = compute_episode_stats(episode_buffer, self.features)
-
-        ep_metadata = self._save_episode_data(episode_buffer)
-        has_video_keys = len(self.meta.video_keys) > 0
-        use_batched_encoding = self.batch_encoding_size > 1
-
-        # Handle video encoding based on configuration
-        if has_video_keys:
-            if self.async_video_encoding:
-                # Submit encoding task to async encoder
-                if self.async_video_encoder is None:
-                    self.start_async_video_encoder()
-
-                success = self.async_video_encoder.submit_encoding_task(
-                    episode_index=episode_index,
-                    video_keys=self.meta.video_keys,
-                    fps=self.fps,
-                    root_path=self.root,
-                    priority=0,  # Default priority
-                )
-
-                if not success:
-                    logging.warning(f"Failed to submit async encoding task for episode {episode_index}")
-                    # Fallback to synchronous encoding
-                    self.encode_episode_videos(episode_index)
-            elif not use_batched_encoding:
-                # Synchronous encoding
-                self.encode_episode_videos(episode_index)
-
-        # `meta.save_episode` need to be executed after encoding the videos
-        self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
-
-        if has_video_keys and use_batched_encoding:
-            # Check if we should trigger batch encoding
-            self.episodes_since_last_encoding += 1
-            if self.episodes_since_last_encoding == self.batch_encoding_size:
-                start_ep = self.num_episodes - self.batch_encoding_size
-                end_ep = self.num_episodes
-                self._batch_save_episode_video(start_ep, end_ep)
-
-                if self.async_video_encoding:
-                    # Submit batch encoding tasks to async encoder
-                    if self.async_video_encoder is None:
-                        self.start_async_video_encoder()
-
-                    for ep_idx in range(start_ep, end_ep):
-                        success = self.async_video_encoder.submit_encoding_task(
-                            episode_index=ep_idx,
-                            video_keys=self.meta.video_keys,
-                            fps=self.fps,
-                            root_path=self.root,
-                            priority=1,  # Higher priority for batch encoding
-                        )
-                        if not success:
-                            logging.warning(
-                                f"Failed to submit async batch encoding task for episode {ep_idx}"
-                            )
-                else:
-                    # Synchronous batch encoding
-                    self.batch_encode_videos(start_ep, end_ep)
-
-                self.episodes_since_last_encoding = 0
-
-        if not episode_data:
-            # Reset episode buffer and clean up temporary images (if not already deleted during video encoding)
-            self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
-
-    def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
-        """
-        Batch save videos for multiple episodes.
-
-        Args:
-            start_episode: Starting episode index (inclusive)
-            end_episode: Ending episode index (exclusive). If None, encodes all episodes from start_episode to the current episode.
-        """
-        if end_episode is None:
-            end_episode = self.num_episodes
-
-        logging.info(
-            f"Batch encoding {self.batch_encoding_size} videos for episodes {start_episode} to {end_episode - 1}"
-        )
-
-        # Verify that we have one parquet file per episode
-        file_idx = self.meta.episodes[start_episode]["data/file_index"]
-        episode_df_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-
-        # Video file verification - skip if using async encoding since videos may not be encoded yet
-        if not self.async_video_encoding:
-            video_files = list(self.root.rglob("*.mp4"))
-            assert len(video_files) == (self.num_episodes - self.episodes_since_last_encoding) * len(
-                self.meta.video_keys
-                self.meta.episodes[ep_idx]["data/chunk_index"] != chunk_idx
-                or self.meta.episodes[ep_idx]["data/file_index"] != file_idx
-            ):
-                # The current episode is in a new chunk or file.
-                # Save previous episode dataframe and update the Hugging Face dataset by reloading it.
-                episode_df.to_parquet(episode_df_path)
-                self.meta.episodes = load_episodes(self.root)
-
-                # Load new episode dataframe
-                chunk_idx = self.meta.episodes[ep_idx]["data/chunk_index"]
-                file_idx = self.meta.episodes[ep_idx]["data/file_index"]
-                episode_df_path = self.root / DEFAULT_EPISODES_PATH.format(
-                    chunk_index=chunk_idx, file_index=file_idx
+            success = self.async_video_encoder.submit_encoding_task(
+                episode_index=episode_index,
+                video_keys=self.meta.video_keys,
+                fps=self.fps,
+                root_path=self.root,
+                temp_dir=temp_dir_for_episode,
             )
-                episode_df = pd.read_parquet(episode_df_path)
+            if not success:
+                logging.error(f"Failed to submit async encoding task for ep {episode_index}. Falling back to sync.")
+                self._save_episode_videos_sync(episode_index, ep_metadata)
 
-            # Save the current episode's video metadata to the dataframe
-            video_ep_metadata = {}
-            for video_key in self.meta.video_keys:
-                video_ep_metadata.update(self._save_episode_video(video_key, ep_idx))
-            video_ep_metadata.pop("episode_index")
-            video_ep_df = pd.DataFrame(video_ep_metadata, index=[ep_idx]).convert_dtypes(
-                dtype_backend="pyarrow"
-            )  # allows NaN values along with integers
+        elif len(self.meta.video_keys) > 0: # Synchronous encoding
+            self._save_episode_videos_sync(episode_index, ep_metadata)
 
-            episode_df = episode_df.combine_first(video_ep_df)
-            episode_df.to_parquet(episode_df_path)
-            self.meta.episodes = load_episodes(self.root)
+        # Save metadata with placeholders for video info in async mode
+        self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
+        self.clear_episode_buffer(delete_images=False) # Images are deleted by encoder now
+
+    def _save_episode_videos_sync(self, episode_index, ep_metadata):
+        """Helper for synchronous video saving and metadata update."""
+        for video_key in self.meta.video_keys:
+            video_meta = self._manage_video_file_and_get_metadata(video_key, episode_index)
+            ep_metadata.update(video_meta)
+        
+    def _finalize_async_videos(self):
+        """
+        Process completed async video tasks sequentially.
+        Completed episode video files are concatenated into large files up to a size limit
+        """
+        if not self.async_video_encoder:
+            return
+        episodes_meta_path = self.root / "meta" / "episodes.parquet"
+        sorted_tasks = sorted(self.async_video_encoder.get_completed_tasks(), key=lambda x: x.episode_index)
+        for task in sorted_tasks:
+            if not task.success:
+                logging.error(f"Skipping finalization for failed episode {task.episode_index}: {task.error_message}")
+                continue
+
+            all_metadata_for_ep = {}
+            for video_key, temp_video_path in task.temp_video_paths.items():
+                metadata = self._manage_video_file_and_get_metadata(video_key, task.episode_index, temp_video_path)
+                # Remove episode_index as it's used for merging, not as a column
+                metadata.pop("episode_index")
+                all_metadata_for_ep.update(metadata)
+
+            # Update the metadata for this single episode
+            episodes_df = pd.read_parquet(episodes_meta_path)
+            for key, value in all_metadata_for_ep.items():
+                episodes_df.loc[episodes_df["episode_index"] == task.episode_index, key] = value
+            episodes_df.to_parquet(episodes_meta_path, index=False)
+            # Reload the in-memory metadata to reflect the change for the next iteration.
+            self.meta.episodes = episodes_df.to_dict("records")
+
+            # Clean up the temporary directory for this episode's videos
+            shutil.rmtree(list(task.temp_video_paths.values())[0].parent, ignore_errors=True)
+
+        # After all episodes are finalized, update the video info in info.json
+        self.meta.update_video_info()
+        write_info(self.meta.info, self.meta.root)
+        
+        logging.info(f"Finalization complete. Updated metadata for {len(sorted_tasks)} episodes.")
 
     def _save_episode_data(self, episode_buffer: dict) -> dict:
         """Save episode data to a parquet file and update the Hugging Face dataset of frames data.
@@ -1196,12 +1160,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
         }
         return metadata
 
-    def _save_episode_video(self, video_key: str, episode_index: int) -> dict:
-        # Encode episode frames into a temporary video
-        ep_path = self._encode_temporary_episode_video(video_key, episode_index)
+    def _manage_video_file_and_get_metadata(self, video_key: str, episode_index: int, temp_video_path: Path | None = None) -> dict:
+        """
+        Manages moving/concatenating a video and returns its final metadata.
+        """
+
+        # Ensure we have an encoded video file to work with.
+        # If a temp_video_path is provided (async mode), we use it directly.
+        # Otherwise (sync mode), we encode the raw images to a new temporary file immediately.
+        if temp_video_path:
+            ep_path = temp_video_path
+        else:
+            ep_path = self._encode_temporary_episode_video(video_key, episode_index)
+            
         ep_size_in_mb = get_video_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
+        # Check if this is the very first episode being recorded for this video key.
         if self.meta.episodes is None or (
             f"videos/{video_key}/chunk_index" not in self.meta.episodes.column_names
             or f"videos/{video_key}/file_index" not in self.meta.episodes.column_names
@@ -1209,17 +1184,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Initialize indices for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
             latest_duration_in_s = 0.0
+            
             new_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
             new_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(ep_path), str(new_path))
         else:
-            # Retrieve information from the latest updated video file (possibly several episodes ago)
+            # This can assume the metadata for `episode_index - 1` is complete even in the async case
+            # because the _finalize_async_videos is processing episodes sequentially.
             latest_ep = self.meta.episodes[episode_index - 1]
             chunk_idx = latest_ep[f"videos/{video_key}/chunk_index"]
             file_idx = latest_ep[f"videos/{video_key}/file_index"]
-
+            
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
@@ -1301,93 +1278,49 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
 
-    def start_async_video_encoder(self) -> None:
-        """Start the async video encoder."""
-        if self.async_video_encoding and self.async_video_encoder is None:
-            self.async_video_encoder = AsyncVideoEncoder(
-                num_workers=self.video_encoding_workers,
-                max_queue_size=self.video_encoding_queue_size,
-                enable_logging=True,
-                gpu_encoding=self.gpu_video_encoding,
-                gpu_encoder_config=self.gpu_encoder_config,
-            )
-            self.async_video_encoder.start()
-            logging.info(f"Started async video encoder with {self.video_encoding_workers} workers")
-
-    def stop_async_video_encoder(self, wait: bool = True) -> None:
-        """Stop the async video encoder."""
-        if self.async_video_encoder is not None:
-            self.async_video_encoder.stop(wait=wait)
-            self.async_video_encoder = None
-            logging.info("Stopped async video encoder")
-
-    def wait_for_async_encoding(self, timeout: float | None = None) -> bool:
-        """Wait for all async encoding tasks to complete."""
-        if self.async_video_encoder is not None:
-            return self.async_video_encoder.wait_for_completion(timeout=timeout)
-        return True
-
+    def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
         since video encoding with ffmpeg is already using multithreading.
-        - Video encoding via ffmpeg (with optional GPU acceleration)
         """
-        # Initialize sync GPU encoder if needed
-        if self.gpu_video_encoding and self.sync_gpu_encoder is None:
-            from .sync_gpu_encoder import create_sync_gpu_encoder
-
-            self.sync_gpu_encoder = create_sync_gpu_encoder(
-                gpu_encoding=self.gpu_video_encoding,
-                gpu_encoder_config=self.gpu_encoder_config,
-                enable_logging=True,
-            )
-
-        # Use GPU-accelerated encoding if enabled
-        if self.gpu_video_encoding and self.sync_gpu_encoder:
-            self.sync_gpu_encoder.encode_episode_videos(
-                episode_index=episode_index,
-                video_keys=self.meta.video_keys,
-                fps=self.fps,
-                root_path=self.root,
-            )
-        else:
-            # Use traditional CPU encoding
-            for key in self.meta.video_keys:
-                video_path = self.root / self.meta.get_video_file_path(episode_index, key)
-                if video_path.is_file():
-                    # Skip if video is already encoded. Could be the case when resuming data recording.
-                    continue
-                img_dir = self._get_image_file_path(
-                    episode_index=episode_index, image_key=key, frame_index=0
-                ).parent
-                encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
-                shutil.rmtree(img_dir)
+        temp_path = Path(tempfile.mkdtemp(dir=self.root)) / f"{video_key}_{episode_index:03d}.mp4"
+        img_dir = self._get_image_file_dir(episode_index, video_key)
+        encode_video_frames(img_dir, temp_path, self.fps, overwrite=True)
+        shutil.rmtree(img_dir)
         return temp_path
-        # Initialize sync GPU encoder if needed
-        if self.gpu_video_encoding and self.sync_gpu_encoder is None:
-            from .sync_gpu_encoder import create_sync_gpu_encoder
 
-            self.sync_gpu_encoder = create_sync_gpu_encoder(
-                gpu_encoding=self.gpu_video_encoding,
-                gpu_encoder_config=self.gpu_encoder_config,
-                enable_logging=True,
-            )
+    def start_async_video_encoder(self):
+        if self.async_video_encoder:
+            return
+        # Create a single temporary directory to hold all per-episode temp dirs
+        self._temp_dir_for_encoding = tempfile.mkdtemp(prefix="lerobot_async_videos_")
+        self.async_video_encoder = AsyncVideoEncoder(
+            num_workers=self.video_encoding_workers,
+            max_queue_size=self.video_encoding_queue_size,
+        )
+        self.async_video_encoder.start()
+        logging.info(f"Started async video encoder. Temporary files will be in {self._temp_dir_for_encoding}")
 
-        # Use GPU-accelerated batch encoding if enabled
-        if self.gpu_video_encoding and self.sync_gpu_encoder:
-            self.sync_gpu_encoder.batch_encode_videos(
-                start_episode=start_episode,
-                end_episode=end_episode,
-                video_keys=self.meta.video_keys,
-                fps=self.fps,
-                root_path=self.root,
-            )
-        else:
-            # Use traditional CPU batch encoding
-            for ep_idx in range(start_episode, end_episode):
-                logging.info(f"Encoding videos for episode {ep_idx}")
-                self.encode_episode_videos(ep_idx)
+    def stop_async_video_encoder(self, wait: bool = True):
+        if not self.async_video_encoder:
+            return
+        logging.info("Stopping async video encoder...")
+        if wait:
+            if not self.async_video_encoder.wait_for_completion(timeout=300): # 5 min timeout
+                 logging.warning("Timeout reached while waiting for encoding tasks to complete.")
+            self._finalize_async_videos()
+        self.async_video_encoder.stop(wait=wait)
+        self.async_video_encoder = None
+        if self._temp_dir_for_encoding:
+            shutil.rmtree(self._temp_dir_for_encoding, ignore_errors=True)
+            self._temp_dir_for_encoding = None
+        logging.info("Async video encoder stopped.")
+
+    def __del__(self):
+        """Cleanup on object destruction."""
+        if hasattr(self, 'async_video_encoder') and self.async_video_encoder:
+            self.stop_async_video_encoder(wait=True)
 
     @classmethod
     def create(
@@ -1402,12 +1335,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
         video_backend: str | None = None,
-        batch_encoding_size: int = 1,
         async_video_encoding: bool = False,
         video_encoding_workers: int = 2,
         video_encoding_queue_size: int = 100,
-        gpu_video_encoding: bool = False,
-        gpu_encoder_config: dict[str, Any] | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1424,26 +1354,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.revision = None
         obj.tolerance_s = tolerance_s
         obj.image_writer = None
-        obj.batch_encoding_size = batch_encoding_size
         obj.episodes_since_last_encoding = 0
-
-        # Async video encoding configuration
-        obj.async_video_encoding = async_video_encoding
-        obj.video_encoding_workers = video_encoding_workers
-        obj.video_encoding_queue_size = video_encoding_queue_size
-        obj.async_video_encoder = None
-
-        # GPU video encoding configuration (independent of async encoding)
-        obj.gpu_video_encoding = gpu_video_encoding
-        obj.gpu_encoder_config = gpu_encoder_config
-        obj.sync_gpu_encoder = None
 
         if image_writer_processes or image_writer_threads:
             obj.start_image_writer(image_writer_processes, image_writer_threads)
-
-        # Start async video encoder if enabled
-        if obj.async_video_encoding:
-            obj.start_async_video_encoder()
 
         # TODO(aliberts, rcadene, alexander-soare): Merge this with OnlineBuffer/DataBuffer
         obj.episode_buffer = obj.create_episode_buffer()
@@ -1454,12 +1368,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.delta_timestamps = None
         obj.delta_indices = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
-        return obj
 
-    def __del__(self):
-        """Cleanup when the dataset is destroyed."""
-        if hasattr(self, "async_video_encoder") and self.async_video_encoder is not None:
-            self.stop_async_video_encoder(wait=False)
+        # Recording attributes
+        obj.episode_buffer = None
+        obj.async_video_encoding = async_video_encoding
+        obj.video_encoding_workers = video_encoding_workers
+        obj.video_encoding_queue_size = video_encoding_queue_size
+        obj.async_video_encoder = None
+        obj._temp_dir_for_encoding = None
+
+        return obj
 
 
 class MultiLeRobotDataset(torch.utils.data.Dataset):
@@ -1640,3 +1558,5 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             f"  Transformations: {self.image_transforms},\n"
             f")"
         )
+
+
