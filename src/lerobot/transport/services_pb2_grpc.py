@@ -65,9 +65,6 @@ class LearnerServiceServicer:
     """
 
     def StreamParameters(self, request, context):
-    def StreamParameters(
-        self, request: lerobot_dot_transport_dot_services__pb2.Empty, context: grpc.ServicerContext
-    ) -> Iterator[lerobot_dot_transport_dot_services__pb2.Parameters]:
         """Actor -> Learner to store transitions
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -75,11 +72,6 @@ class LearnerServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def SendTransitions(self, request_iterator, context):
-    def SendTransitions(
-        self,
-        request_iterator: Iterator[lerobot_dot_transport_dot_services__pb2.Transition],
-        context: grpc.ServicerContext,
-    ) -> lerobot_dot_transport_dot_services__pb2.Empty:
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -307,9 +299,6 @@ class AsyncInferenceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def SendPolicyInstructions(self, request, context):
-    def SendPolicyInstructions(
-        self, request: lerobot_dot_transport_dot_services__pb2.PolicySetup, context: grpc.ServicerContext
-    ) -> lerobot_dot_transport_dot_services__pb2.Empty:
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
