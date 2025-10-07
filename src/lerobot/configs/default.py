@@ -29,6 +29,8 @@ class DatasetConfig:
     repo_id: str
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | None = None
+    # Root directory where the raw dataset recordings by are stored
+    raw_dataset_root: str | None = None
     episodes: list[int] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     revision: str | None = None
