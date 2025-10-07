@@ -27,7 +27,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
 from ..utils import get_cv2_backend, get_cv2_rotation

@@ -23,6 +23,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import PolicyFeature
+from lerobot.utils.constants import OBS_STATE
 from tests.utils import require_package
 
 # -----------------------------------------------------------------------------
@@ -44,7 +45,7 @@ class MockPolicy:
 
     def predict_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Return a chunk of 20 dummy actions."""
-        batch_size = len(observation["observation.state"])
+        batch_size = len(observation[OBS_STATE])
         return torch.zeros(batch_size, 20, 6)
 
     def __init__(self):
@@ -65,8 +66,8 @@ class MockPolicy:
 def policy_server():
     """Fresh `PolicyServer` instance with a stubbed-out policy model."""
     # Import only when the test actually runs (after decorator check)
-    from lerobot.scripts.server.configs import PolicyServerConfig
-    from lerobot.scripts.server.policy_server import PolicyServer
+    from lerobot.async_inference.configs import PolicyServerConfig
+    from lerobot.async_inference.policy_server import PolicyServer
 
     test_config = PolicyServerConfig(host="localhost", port=9999)
     server = PolicyServer(test_config)
@@ -77,7 +78,7 @@ def policy_server():
 
     # Add mock lerobot_features that the observation similarity functions need
     server.lerobot_features = {
-        "observation.state": {
+        OBS_STATE: {
             "dtype": "float32",
             "shape": [6],
             "names": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
@@ -95,7 +96,7 @@ def policy_server():
 def _make_obs(state: torch.Tensor, timestep: int = 0, must_go: bool = False):
     """Create a TimedObservation with a given state vector."""
     # Import only when needed
-    from lerobot.scripts.server.helpers import TimedObservation
+    from lerobot.async_inference.helpers import TimedObservation
 
     return TimedObservation(
         observation={
@@ -191,10 +192,13 @@ def test_obs_sanity_checks(policy_server):
 def test_predict_action_chunk(monkeypatch, policy_server):
     """End-to-end test of `_predict_action_chunk` with a stubbed _get_action_chunk."""
     # Import only when needed
-    from lerobot.scripts.server.policy_server import PolicyServer
+    from lerobot.async_inference.policy_server import PolicyServer
 
     # Force server to act-style policy; patch method to return deterministic tensor
     policy_server.policy_type = "act"
+    # NOTE(Steven): Smelly tests as the Server is a state machine being partially mocked. Adding these processors as a quick fix.
+    policy_server.preprocessor = lambda obs: obs
+    policy_server.postprocessor = lambda tensor: tensor
     action_dim = 6
     batch_size = 1
     actions_per_chunk = policy_server.actions_per_chunk
