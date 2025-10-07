@@ -6,8 +6,6 @@ from typing import Iterator
 import grpc
 import warnings
 
-from lerobot.transport import services_pb2 as lerobot_dot_transport_dot_services__pb2
-
 GRPC_GENERATED_VERSION = '1.73.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
@@ -33,7 +31,6 @@ class LearnerServiceStub:
     The Learner implements this service.
     """
 
-    def __init__(self, channel):
     def __init__(self, channel: grpc.Channel):
         """Constructor.
 
@@ -293,11 +290,6 @@ class AsyncInferenceServicer:
     """
 
     def SendObservations(self, request_iterator, context):
-    def SendObservations(
-        self,
-        request_iterator: Iterator[lerobot_dot_transport_dot_services__pb2.Observation],
-        context: grpc.ServicerContext,
-    ) -> lerobot_dot_transport_dot_services__pb2.Empty:
         """Robot -> Policy to share observations with a remote inference server
         Policy -> Robot to share actions predicted for given observations
         """
