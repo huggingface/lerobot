@@ -78,20 +78,12 @@ class LearnerServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def SendInteractions(self, request_iterator, context):
-    def SendInteractions(
-        self,
-        request_iterator: Iterator[lerobot_dot_transport_dot_services__pb2.InteractionMessage],
-        context: grpc.ServicerContext,
-    ) -> lerobot_dot_transport_dot_services__pb2.Empty:
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def Ready(self, request, context):
-    def Ready(
-        self, request: lerobot_dot_transport_dot_services__pb2.Empty, context: grpc.ServicerContext
-    ) -> lerobot_dot_transport_dot_services__pb2.Empty:
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -247,7 +239,6 @@ class AsyncInferenceStub:
     Robot send observations to & executes action received from a remote Policy server
     """
 
-    def __init__(self, channel):
     def __init__(self, channel: grpc.Channel):
         """Constructor.
 
@@ -290,28 +281,14 @@ class AsyncInferenceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def GetActions(self, request, context):
-    def GetActions(
-        self, request: lerobot_dot_transport_dot_services__pb2.Empty, context: grpc.ServicerContext
-    ) -> lerobot_dot_transport_dot_services__pb2.Actions:
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def SendPolicyInstructions(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
 
     def Ready(self, request, context):
-    def Ready(
-        self, request: lerobot_dot_transport_dot_services__pb2.Empty, context: grpc.ServicerContext
-    ) -> lerobot_dot_transport_dot_services__pb2.Empty:
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
 
 
 def add_AsyncInferenceServicer_to_server(servicer, server):
