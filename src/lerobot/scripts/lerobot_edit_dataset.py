@@ -167,7 +167,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
-        new_dataset.push_to_hub(output_repo_id)
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 
 
 def handle_split(cfg: EditDatasetConfig) -> None:
@@ -192,7 +192,7 @@ def handle_split(cfg: EditDatasetConfig) -> None:
 
         if cfg.push_to_hub:
             logging.info(f"Pushing {split_name} split to hub as {split_repo_id}")
-            split_ds.push_to_hub(split_repo_id)
+            LeRobotDataset(split_ds.repo_id, root=split_ds.root).push_to_hub()
 
 
 def handle_merge(cfg: EditDatasetConfig) -> None:
@@ -224,7 +224,7 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {cfg.repo_id}")
-        merged_dataset.push_to_hub(cfg.repo_id)
+        LeRobotDataset(merged_dataset.repo_id, root=output_dir).push_to_hub()
 
 
 def handle_remove_feature(cfg: EditDatasetConfig) -> None:
@@ -255,7 +255,7 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
-        new_dataset.push_to_hub(output_repo_id)
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 
 
 @parser.wrap()
