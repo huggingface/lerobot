@@ -91,6 +91,9 @@ def test_async_inference_e2e(monkeypatch):
     policy_server.policy = MockPolicy()
     policy_server.actions_per_chunk = 20
     policy_server.device = "cpu"
+    # NOTE(Steven): Smelly tests as the Server is a state machine being partially mocked. Adding these processors as a quick fix.
+    policy_server.preprocessor = lambda obs: obs
+    policy_server.postprocessor = lambda tensor: tensor
 
     # Set up robot config and features
     robot_config = MockRobotConfig()

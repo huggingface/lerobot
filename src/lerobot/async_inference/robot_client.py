@@ -52,6 +52,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so100_follower,
     koch_follower,
     make_robot_from_config,
     so100_follower,
@@ -214,7 +215,7 @@ class RobotClient:
             )
             _ = self.stub.SendObservations(observation_iterator)
             obs_timestep = obs.get_timestep()
-            self.logger.info(f"Sent observation #{obs_timestep} | ")
+            self.logger.debug(f"Sent observation #{obs_timestep} | ")
 
             return True
 
@@ -467,7 +468,7 @@ class RobotClient:
             if self._ready_to_send_observation():
                 _captured_observation = self.control_loop_observation(task, verbose)
 
-            self.logger.info(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
+            self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
             time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
 
