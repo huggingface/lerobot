@@ -44,7 +44,7 @@ from lerobot.datasets.backward_compatibility import (
     ForwardCompatibilityError,
 )
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STR
-from lerobot.utils.utils import is_valid_numpy_dtype_string
+from lerobot.utils.utils import SuppressProgressBars, is_valid_numpy_dtype_string
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
@@ -123,7 +123,8 @@ def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None)
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
     # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
-    datasets = [Dataset.from_parquet(str(path), features=features) for path in paths]
+    with SuppressProgressBars():
+        datasets = [Dataset.from_parquet(str(path), features=features) for path in paths]
     return concatenate_datasets(datasets)
 
 
