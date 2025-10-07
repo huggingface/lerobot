@@ -68,7 +68,7 @@ def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) 
     return PIL.Image.fromarray(image_array)
 
 
-def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path):
+def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1):
     try:
         if isinstance(image, np.ndarray):
             img = image_array_to_pil_image(image)
@@ -76,7 +76,7 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path):
             img = image
         else:
             raise TypeError(f"Unsupported image type: {type(image)}")
-        img.save(fpath)
+        img.save(fpath, compress_level=compress_level)
     except Exception as e:
         print(f"Error writing image {fpath}: {e}")
 
