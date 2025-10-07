@@ -511,15 +511,125 @@ def _copy_and_reindex_data(
     return episode_data_metadata
 
 
+def _keep_episodes_from_video_with_av(
+    input_path: Path,
+    output_path: Path,
+    episodes_to_keep: list[tuple[float, float]],
+    fps: float,
+    vcodec: str = "libsvtav1",
+    pix_fmt: str = "yuv420p",
+) -> None:
+    """Keep only specified episodes from a video file using PyAV.
+
+    This function decodes frames from specified time ranges and re-encodes them with
+    properly reset timestamps to ensure monotonic progression.
+
+    Args:
+        input_path: Source video file path.
+        output_path: Destination video file path.
+        episodes_to_keep: List of (start_time, end_time) tuples for episodes to keep.
+        fps: Frame rate of the video.
+        vcodec: Video codec to use for encoding.
+        pix_fmt: Pixel format for output video.
+    """
+    from fractions import Fraction
+
+    import av
+
+    if not episodes_to_keep:
+        raise ValueError("No episodes to keep")
+
+    in_container = av.open(str(input_path))
+
+    # Check if video stream exists.
+    if not in_container.streams.video:
+        raise ValueError(
+            f"No video streams found in {input_path}. "
+            "The video file may be corrupted or empty. "
+            "Try re-downloading the dataset or checking the video file."
+        )
+
+    v_in = in_container.streams.video[0]
+
+    out = av.open(str(output_path), mode="w")
+
+    # Convert fps to Fraction for PyAV compatibility.
+    fps_fraction = Fraction(fps).limit_denominator(1000)
+    v_out = out.add_stream(vcodec, rate=fps_fraction)
+
+    # PyAV type stubs don't distinguish video streams from audio/subtitle streams.
+    v_out.width = v_in.codec_context.width
+    v_out.height = v_in.codec_context.height
+    v_out.pix_fmt = pix_fmt
+
+    # Set time_base to match the frame rate for proper timestamp handling.
+    v_out.time_base = Fraction(1, int(fps))
+
+    out.start_encoding()
+
+    # Create set of (start, end) ranges for fast lookup.
+    # Convert to a sorted list for efficient checking.
+    time_ranges = sorted(episodes_to_keep)
+
+    # Track frame index for setting PTS and current range being processed.
+    frame_count = 0
+    range_idx = 0
+
+    # Read through entire video once and filter frames.
+    for packet in in_container.demux(v_in):
+        for frame in packet.decode():
+            if frame is None:
+                continue
+
+            # Get frame timestamp.
+            frame_time = float(frame.pts * frame.time_base) if frame.pts is not None else 0.0
+
+            # Check if frame is in any of our desired time ranges.
+            # Skip ranges that have already passed.
+            while range_idx < len(time_ranges) and frame_time >= time_ranges[range_idx][1]:
+                range_idx += 1
+
+            # If we've passed all ranges, stop processing.
+            if range_idx >= len(time_ranges):
+                break
+
+            # Check if frame is in current range.
+            start_ts, end_ts = time_ranges[range_idx]
+            if frame_time < start_ts:
+                continue
+
+            # Frame is in range - create a new frame with reset timestamps.
+            # We need to create a copy to avoid modifying the original.
+            new_frame = frame.reformat(width=v_out.width, height=v_out.height, format=v_out.pix_fmt)
+            new_frame.pts = frame_count
+            new_frame.time_base = Fraction(1, int(fps))
+
+            # Encode and mux the frame.
+            for pkt in v_out.encode(new_frame):
+                out.mux(pkt)
+
+            frame_count += 1
+
+    # Flush encoder.
+    for pkt in v_out.encode():
+        out.mux(pkt)
+
+    out.close()
+    in_container.close()
+
+
 def _copy_and_reindex_videos(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     episode_mapping: dict[int, int],
+    vcodec: str = "libsvtav1",
+    pix_fmt: str = "yuv420p",
 ) -> dict[int, dict]:
     """Copy and filter video files, only re-encoding files with deleted episodes.
 
     For video files that only contain kept episodes, we copy them directly.
-    For files with mixed kept/deleted episodes, we decode kept episodes and re-encode.
+    For files with mixed kept/deleted episodes, we use PyAV filters to efficiently
+    re-encode only the desired segments.
 
     Args:
         src_dataset: Source dataset to copy from
@@ -529,10 +639,6 @@ def _copy_and_reindex_videos(
     Returns:
         dict mapping episode index to its video metadata (chunk_index, file_index, timestamps)
     """
-    import tempfile
-
-    from lerobot.datasets.image_writer import write_image
-    from lerobot.datasets.video_utils import decode_video_frames, encode_video_frames
 
     episodes_video_metadata: dict[int, dict] = {new_idx: {} for new_idx in episode_mapping.values()}
 
@@ -588,63 +694,54 @@ def _copy_and_reindex_videos(
                         f"videos/{video_key}/to_timestamp"
                     ]
             else:
-                with tempfile.TemporaryDirectory(prefix=f"video_{video_key}_") as temp_dir_str:
-                    temp_dir = Path(temp_dir_str)
-                    frame_count = 0
-                    current_file_duration = 0.0
+                # Build list of time ranges to keep, in sorted order.
+                sorted_keep_episodes = sorted(episodes_in_file, key=lambda x: episode_mapping[x])
+                episodes_to_keep_ranges: list[tuple[float, float]] = []
 
-                    sorted_keep_episodes = sorted(episodes_in_file, key=lambda x: episode_mapping[x])
+                for old_idx in sorted_keep_episodes:
+                    src_ep = src_dataset.meta.episodes[old_idx]
+                    from_ts = src_ep[f"videos/{video_key}/from_timestamp"]
+                    to_ts = src_ep[f"videos/{video_key}/to_timestamp"]
+                    episodes_to_keep_ranges.append((from_ts, to_ts))
 
-                    for old_idx in tqdm(
-                        sorted_keep_episodes,
-                        desc=f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx})",
-                        leave=False,
-                    ):
-                        src_ep = src_dataset.meta.episodes[old_idx]
-                        from_ts = src_ep[f"videos/{video_key}/from_timestamp"]
-                        ep_length = src_ep["length"]
+                # Use PyAV filters to efficiently re-encode only the desired segments.
+                assert src_dataset.meta.video_path is not None
+                src_video_path = src_dataset.root / src_dataset.meta.video_path.format(
+                    video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_video_path = dst_meta.root / dst_meta.video_path.format(
+                    video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                )
+                dst_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-                        video_path = src_dataset.root / src_dataset.meta.get_video_file_path(
-                            old_idx, video_key
-                        )
-                        timestamps = [from_ts + (i / src_dataset.meta.fps) for i in range(ep_length)]
-                        frames = decode_video_frames(
-                            video_path, timestamps, src_dataset.tolerance_s, src_dataset.video_backend
-                        )
+                logging.info(
+                    f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx}) "
+                    f"with {len(episodes_to_keep_ranges)} episodes"
+                )
+                _keep_episodes_from_video_with_av(
+                    src_video_path,
+                    dst_video_path,
+                    episodes_to_keep_ranges,
+                    src_dataset.meta.fps,
+                    vcodec,
+                    pix_fmt,
+                )
 
-                        for frame in frames:
-                            frame_path = temp_dir / f"frame-{frame_count:06d}.png"
-                            if isinstance(frame, torch.Tensor):
-                                frame_np = frame.cpu().numpy().transpose(1, 2, 0)
-                            else:
-                                frame_np = frame
-                            write_image(frame_np, frame_path)
-                            frame_count += 1
+                cumulative_ts = 0.0
+                for old_idx in sorted_keep_episodes:
+                    new_idx = episode_mapping[old_idx]
+                    src_ep = src_dataset.meta.episodes[old_idx]
+                    ep_length = src_ep["length"]
+                    ep_duration = ep_length / src_dataset.meta.fps
 
-                        ep_duration = ep_length / src_dataset.meta.fps
-                        current_file_duration += ep_duration
-
-                    dst_video_path = dst_meta.root / dst_meta.video_path.format(
-                        video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/chunk_index"] = src_chunk_idx
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/file_index"] = src_file_idx
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/from_timestamp"] = cumulative_ts
+                    episodes_video_metadata[new_idx][f"videos/{video_key}/to_timestamp"] = (
+                        cumulative_ts + ep_duration
                     )
-                    dst_video_path.parent.mkdir(parents=True, exist_ok=True)
-                    encode_video_frames(temp_dir, dst_video_path, src_dataset.meta.fps, overwrite=True)
 
-                    cumulative_ts = 0.0
-                    for old_idx in sorted_keep_episodes:
-                        new_idx = episode_mapping[old_idx]
-                        src_ep = src_dataset.meta.episodes[old_idx]
-                        ep_length = src_ep["length"]
-                        ep_duration = ep_length / src_dataset.meta.fps
-
-                        episodes_video_metadata[new_idx][f"videos/{video_key}/chunk_index"] = src_chunk_idx
-                        episodes_video_metadata[new_idx][f"videos/{video_key}/file_index"] = src_file_idx
-                        episodes_video_metadata[new_idx][f"videos/{video_key}/from_timestamp"] = cumulative_ts
-                        episodes_video_metadata[new_idx][f"videos/{video_key}/to_timestamp"] = (
-                            cumulative_ts + ep_duration
-                        )
-
-                        cumulative_ts += ep_duration
+                    cumulative_ts += ep_duration
 
     return episodes_video_metadata
 
