@@ -98,7 +98,8 @@ class SMOLANDFASTPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         loss_dict = self.model.forward(batch)
-        return loss_dict["loss"], loss_dict
+        loss = loss_dict.pop("loss")
+        return loss, loss_dict
 
 
 class SMOLANDFAST(nn.Module):

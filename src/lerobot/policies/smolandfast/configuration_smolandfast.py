@@ -56,7 +56,7 @@ class SMOLANDFASTConfig(PreTrainedConfig):
     freeze_connector: bool = True
     scale_factor: int = 4
     do_image_splitting: bool = False
-    drop_n_last_frames: bool = True
+    drop_n_last_frames: int = 0
 
     grad_clip_norm: float = 1
 

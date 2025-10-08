@@ -35,7 +35,7 @@
         "freeze_connector": false,
         "scale_factor": 4,
         "do_image_splitting": false,
-        "drop_n_last_frames": true,
+        "drop_n_last_frames": 10,
         "grad_clip_norm": 1,
         "relaxed_action_decoding": true,
         "crop_shape": [84, 84]
