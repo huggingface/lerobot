@@ -16,10 +16,12 @@
 
 import logging
 from collections import deque
-from copy import copy
 
 import torch
 from torch import nn
+
+from lerobot.datasets.utils import build_dataset_frame
+from lerobot.utils.constants import OBS_STR
 
 
 def populate_queues(
@@ -90,13 +92,17 @@ def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) 
 
 def build_inference_frame(
     observation: dict[str, torch.Tensor],
+    ds_features: dict[str, dict],
     device: torch.device,
     task: str | None = None,
     robot_type: str | None = None,
 ) -> dict[str, torch.Tensor]:
     """Build a inference frame from a raw observation."""
-    observation = copy(observation)
 
+    # Extracts the inference keys from the raw observation
+    observation = build_dataset_frame(ds_features, observation, prefix=OBS_STR)
+
+    # Performs the necessary conversions to the observation
     for name in observation:
         observation[name] = torch.from_numpy(observation[name])
         if "image" in name:
