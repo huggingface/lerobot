@@ -14,7 +14,7 @@ ACT is a **lightweight and efficient policy for imitation learning**, especially
   ></iframe>
 </div>
 
-*Watch this tutorial from the LeRobot team to learn how ACT works: [LeRobot ACT Tutorial](https://www.youtube.com/watch?v=ft73x0LfGpM)*
+_Watch this tutorial from the LeRobot team to learn how ACT works: [LeRobot ACT Tutorial](https://www.youtube.com/watch?v=ft73x0LfGpM)_
 
 ## Model Overview
 
@@ -37,6 +37,7 @@ ACT uses a transformer-based architecture with three main components:
 3. **Transformer Decoder**: Generates coherent action sequences using cross-attention
 
 The policy takes as input:
+
 - Multiple RGB images (e.g., from wrist cameras, front/top cameras)
 - Current robot joint positions
 - A latent style variable `z` (learned during training, set to zero during inference)
@@ -89,4 +90,3 @@ lerobot-record \
   --dataset.single_task="Your task description" \
   --policy.path=${HF_USER}/act_policy
 ```
-
