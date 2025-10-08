@@ -28,25 +28,6 @@ ACT stands out as an excellent starting point for several reasons:
 - **Lightweight**: Only ~80M parameters, making it efficient and easy to work with
 - **Data Efficient**: Often achieves high success rates with just 50 demonstrations
 
-### Key Innovations
-
-ACT addresses the core challenges of imitation learning through two main innovations:
-
-#### 1. Action Chunking
-
-Instead of predicting one action at a time (which can lead to compounding errors), ACT predicts a sequence of `k` future actions. This approach:
-- Reduces the effective horizon of tasks by k-fold
-- Mitigates compounding errors that accumulate over long trajectories
-- Better handles non-Markovian behavior in human demonstrations (e.g., pauses)
-
-#### 2. Temporal Ensembling
-
-ACT queries the policy at every timestep and combines overlapping action predictions using an exponential weighting scheme. This produces smooth, precise robot motions without discrete switching between observing and executing.
-
-#### 3. Conditional VAE (CVAE) Training
-
-ACT is trained as a conditional variational autoencoder to capture the natural variability and multi-modal behavior in human demonstrations. This allows the policy to focus on regions where precision matters most.
-
 ### Architecture
 
 ACT uses a transformer-based architecture with three main components:
