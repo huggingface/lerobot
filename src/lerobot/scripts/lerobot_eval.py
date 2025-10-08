@@ -188,21 +188,19 @@ def rollout(
             done = np.ones_like(done, dtype=bool)
             
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
-        # available of none of the envs finished.
+        # available if none of the envs finished.
         if "final_info" in info:
-            # successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
+            # NOTE: In Gymnasium >= 1.0, `final_info` is now a dict of arrays instead of a list of dicts.
+            # This block assumes the new format. If it's not a dict, you are probably using an old version
+            # of Gymnasium (< 1.0), which is no longer supported. Upgrade with:
+            #   pip install --upgrade gymnasium
             final_info = info["final_info"]
-
-            # Case 1: New format (Gymnasium >= 1.0) → dict of arrays
-            if isinstance(final_info, dict):
-                successes = final_info["is_success"].tolist()
-
-            # Case 2: Old format (Gymnasium < 1.0) → list/array of dicts
-            else:
-                successes = [
-                    fi.get("is_success", False) if fi is not None else False
-                    for fi in final_info
-                ]
+            if not isinstance(final_info, dict):
+                raise RuntimeError(
+                    "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
+                    "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
+                )
+            successes = final_info["is_success"].tolist()
         else:
             successes = [False] * env.num_envs
         all_actions.append(torch.from_numpy(action_numpy))
