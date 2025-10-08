@@ -75,6 +75,9 @@ def make_env(
     elif "metaworld" in cfg.type:
         from lerobot.envs.metaworld import create_metaworld_envs
 
+        if cfg.task is None:
+            raise ValueError("MetaWorld requires a task to be specified")
+
         return create_metaworld_envs(
             task=cfg.task,
             n_envs=n_envs,
@@ -92,7 +95,7 @@ def make_env(
 
     def _make_one():
         return gym.make(gym_handle, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
-    
+
     # NOTE: Requires Gymnasium >= 1.0 - SAME_STEP ensures envs reset in-step and `final_info` stays aligned.
     vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
 

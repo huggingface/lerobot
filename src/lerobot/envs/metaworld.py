@@ -241,14 +241,33 @@ data = {
         "window-close-v3": "SawyerWindowCloseV3Policy",
     },
 }
-# extract dicts
-TASK_DESCRIPTIONS = data["TASK_DESCRIPTIONS"]
-TASK_NAME_TO_ID = data["TASK_NAME_TO_ID"]
-DIFFICULTY_TO_TASKS = data["DIFFICULTY_TO_TASKS"]
+# extract and type-check top-level dicts
+task_descriptions_obj = data.get("TASK_DESCRIPTIONS")
+if not isinstance(task_descriptions_obj, dict):
+    raise TypeError("Expected TASK_DESCRIPTIONS to be a dict[str, str]")
 
-# this convert policy strings to real classes
-TASK_POLICY_MAPPING = {k: getattr(policies, v) for k, v in data["TASK_POLICY_MAPPING"].items()}
+TASK_DESCRIPTIONS: dict[str, str] = task_descriptions_obj
 
+task_name_to_id_obj = data.get("TASK_NAME_TO_ID")
+if not isinstance(task_name_to_id_obj, dict):
+    raise TypeError("Expected TASK_NAME_TO_ID to be a dict[str, int]")
+
+TASK_NAME_TO_ID: dict[str, int] = task_name_to_id_obj
+
+# difficulty -> tasks mapping
+difficulty_to_tasks = data.get("DIFFICULTY_TO_TASKS")
+if not isinstance(difficulty_to_tasks, dict):
+    raise TypeError("Expected 'DIFFICULTY_TO_TASKS' to be a dict[str, list[str]]")
+DIFFICULTY_TO_TASKS: dict[str, list[str]] = difficulty_to_tasks
+
+# convert policy strings -> actual policy classes
+task_policy_mapping = data.get("TASK_POLICY_MAPPING")
+if not isinstance(task_policy_mapping, dict):
+    raise TypeError("Expected 'TASK_POLICY_MAPPING' to be a dict[str, str]")
+TASK_POLICY_MAPPING: dict[str, Any] = {
+    task_name: getattr(policies, policy_class_name)
+    for task_name, policy_class_name in task_policy_mapping.items()
+}
 ACTION_DIM = 4
 OBS_DIM = 4
 
@@ -343,22 +362,33 @@ class MetaworldEnv(gym.Env):
         env._freeze_rand_vec = False  # otherwise no randomization
         return env
 
-    def _format_raw_obs(self, raw_obs: dict[str, Any], env=None) -> dict[str, Any]:
+    def _format_raw_obs(self, raw_obs: np.ndarray, env=None) -> dict[str, Any]:
         image = None
         if env is not None:
             image = env.render()
             if self.camera_name == "corner2":
-                image = np.flip(image, (0, 1))  # images for some reason are flipped
+                # NOTE: The "corner2" camera in MetaWorld environments outputs images with both axes inverted.
+                image = np.flip(image, (0, 1))
         agent_pos = raw_obs[:4]
         if self.obs_type == "state":
             raise NotImplementedError()
-        elif self.obs_type == "pixels":
-            obs = {"pixels": image.copy()}
-        elif self.obs_type == "pixels_agent_pos":
-            obs = {
-                "pixels": image.copy(),
-                "agent_pos": agent_pos,
-            }
+
+        elif self.obs_type in ("pixels", "pixels_agent_pos"):
+            assert image is not None, (
+                "Expected `image` to be rendered before constructing pixel-based observations. "
+                "This likely means `env.render()` returned None or the environment was not provided."
+            )
+
+            if self.obs_type == "pixels":
+                obs = {"pixels": image.copy()}
+
+            else:  # pixels_agent_pos
+                obs = {
+                    "pixels": image.copy(),
+                    "agent_pos": agent_pos,
+                }
+        else:
+            raise ValueError(f"Unknown obs_type: {self.obs_type}")
         return obs
 
     def reset(

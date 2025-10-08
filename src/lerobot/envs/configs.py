@@ -121,6 +121,8 @@ class PushtEnv(EnvConfig):
             "visualization_height": self.visualization_height,
             "max_episode_steps": self.episode_length,
         }
+
+
 @dataclass
 class ImagePreprocessingConfig:
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None

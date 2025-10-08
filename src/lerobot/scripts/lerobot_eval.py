@@ -186,7 +186,7 @@ def rollout(
         done = terminated | truncated | done
         if step + 1 == max_steps:
             done = np.ones_like(done, dtype=bool)
-            
+
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available if none of the envs finished.
         if "final_info" in info:
