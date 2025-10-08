@@ -29,6 +29,8 @@
     title: Using the Dataset Tools
   title: "Datasets"
 - sections:
+  - local: act
+    title: ACT
   - local: smolvla
     title: SmolVLA
   - local: pi0
