@@ -1,0 +1,18 @@
+{
+    "env": {
+        "type": "gym_manipulator",
+        "name": "grid_position",
+        "task": "GridPositionPrediction-v0"
+    },
+    "dataset": {
+        "repo_id": "spirosperos/grid-position-prediction",
+        "root": "./recording_grid_position_lerobot",
+        "task": "grid_position_prediction",
+        "num_episodes_to_record": 10,
+        "replay_episode": null,
+        "push_to_hub": true
+    },
+    "mode": "record"
+}
+
+

@@ -1,6 +1,6 @@
 # Grid HIL SERL Environment
 
-This example demonstrates a custom Mujoco environment with an 8x8 grid world for robotic manipulation tasks using HIL (Human-in-the-Loop) SERL (Sample-Efficient Reinforcement Learning).
+This example demonstrates a **simplified HIL-SERL setup** for computer vision-based grid position prediction. Instead of complex robotic manipulation, the algorithm learns to predict which of the 64 grid cells contains a red cube based on camera images, with human feedback during training.
 
 ## Overview
 
@@ -18,22 +18,37 @@ The environment consists of:
 
 ## Usage
 
-### Basic Usage
+### 1. Test the Environment
 ```bash
 cd examples/grid_hil_serl
 python grid_cube_randomizer.py
 ```
 
+### 2. Record Demonstrations
+```bash
+# Record training data automatically
+python record_grid_demo.py --episodes 50 --steps 10
+
+# Or use LeRobot's recording script (standard dataset format)
+python -m lerobot.scripts.rl.gym_manipulator --config_path record_grid_position_lerobot.json
+```
+
+### 3. Train HIL-SERL Policy
+```bash
+# Terminal 1: Start learner
+python -m lerobot.scripts.rl.learner --config_path train_grid_position.json
+
+# Terminal 2: Start actor (with human feedback)
+python -m lerobot.scripts.rl.actor --config_path train_grid_position.json
+```
+
 ### Command Line Options
 ```bash
-# Disable automatic image saving
-python grid_cube_randomizer.py --no-save
+# Environment testing
+python grid_cube_randomizer.py --interval 2.0 --no-save
 
-# Change randomization interval (seconds)
-python grid_cube_randomizer.py --interval 2.0
-
-# Custom scene file
-python grid_cube_randomizer.py --xml custom_scene.xml
+# Recording options
+python record_grid_demo.py --episodes 100 --steps 5 --output ./my_recordings
 ```
 
 ## Features
@@ -64,14 +79,34 @@ python grid_cube_randomizer.py --xml custom_scene.xml
 (0,7) → (-3.5, -3.5)  (7,7) → (3.5, -3.5)
 ```
 
+## HIL-SERL Workflow
+
+This simplified setup demonstrates the core HIL-SERL concept with minimal complexity:
+
+### Training Phase (Offline)
+1. **Automatic Data Collection**: Environment randomly places cube in different grid positions
+2. **Supervised Learning**: Algorithm learns to predict grid position from images
+3. **Ground Truth Labels**: Exact grid coordinates provided for each image
+
+### Human-in-the-Loop Phase (Online)
+1. **Algorithm Prediction**: Model predicts cube position from camera images
+2. **Human Feedback**: Human indicates if prediction is correct/incorrect
+3. **Iterative Learning**: Model improves based on human guidance
+
+### Key Simplifications
+- **No Robot Control**: Focus purely on computer vision prediction
+- **Discrete Predictions**: 64 possible outputs (one per grid cell)
+- **Perfect Ground Truth**: Exact position labels available
+- **Visual Task Only**: No complex motor control or physics
+
 ## Integration with LeRobot
 
-This environment can be integrated with LeRobot's HIL-SERL framework by:
+The environment integrates with LeRobot's HIL-SERL framework through:
 
-1. Creating a custom environment class that inherits from `FrankaGymEnv`
-2. Implementing the observation and action spaces
-3. Adding reward functions for manipulation tasks
-4. Using the grid positioning system for task generation
+1. **Custom Gym Environment**: `GridPositionPrediction-v0` registered with gymnasium
+2. **LeRobot-Compatible Interface**: Proper observation/action space formatting
+3. **Config Files**: `record_grid_position.json` and `train_grid_position.json`
+4. **Dataset Collection**: Automated recording of image-position pairs
 
 ## Technical Details
 
