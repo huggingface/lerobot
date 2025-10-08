@@ -371,7 +371,10 @@ class MetaworldEnv(gym.Env):
                 image = np.flip(image, (0, 1))
         agent_pos = raw_obs[:4]
         if self.obs_type == "state":
-            raise NotImplementedError()
+            raise NotImplementedError(
+                "'state' obs_type not implemented for MetaWorld. "
+                "Use pixel modes instead."
+            )
 
         elif self.obs_type in ("pixels", "pixels_agent_pos"):
             assert image is not None, (

@@ -30,7 +30,6 @@ from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 from robosuite.utils.transform_utils import quat2axisangle
 
-
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     """Normalize camera_name into a non-empty list of strings."""
     if isinstance(camera_name, str):
@@ -260,19 +259,23 @@ class LiberoEnv(gym.Env):
 
         is_success = self._env.check_success()
         terminated = done or is_success
-        info["is_success"] = is_success
-
+        info.update(
+            {
+                "task": self.task,
+                "task_id": self.task_id,
+                "done": done,
+                "is_success": is_success,
+            }
+        )
         observation = self._format_raw_obs(raw_obs)
-        if done:
+        if terminated:
+            info["final_info"] = {
+                "task": self.task,
+                "task_id": self.task_id,
+                "done": bool(done),
+                "is_success": bool(is_success),
+            }
             self.reset()
-            info.update(
-                {
-                    "task": self.task,
-                    "task_id": self.task_id,
-                    "done": done,
-                    "is_success": is_success,
-                }
-            )
         truncated = False
         return observation, reward, terminated, truncated, info
 
