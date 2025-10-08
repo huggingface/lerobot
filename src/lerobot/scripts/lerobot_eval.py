@@ -179,13 +179,6 @@ def rollout(
         if render_callback is not None:
             render_callback(env)
 
-        # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
-        # available of none of the envs finished.
-        if "final_info" in info:
-            successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
-        else:
-            successes = [False] * env.num_envs
-
         # Keep track of which environments are done so far.
         # Mark the episode as done if we reach the maximum step limit.
         # This ensures that the rollout always terminates cleanly at `max_steps`,
@@ -193,24 +186,39 @@ def rollout(
         done = terminated | truncated | done
         if step + 1 == max_steps:
             done = np.ones_like(done, dtype=bool)
+            
+        # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
+        # available of none of the envs finished.
+        if "final_info" in info:
+            # successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
+            final_info = info["final_info"]
 
+            # Case 1: New format (Gymnasium >= 1.0) → dict of arrays
+            if isinstance(final_info, dict):
+                successes = final_info["is_success"].tolist()
+
+            # Case 2: Old format (Gymnasium < 1.0) → list/array of dicts
+            else:
+                successes = [
+                    fi.get("is_success", False) if fi is not None else False
+                    for fi in final_info
+                ]
+        else:
+            successes = [False] * env.num_envs
         all_actions.append(torch.from_numpy(action_numpy))
         all_rewards.append(torch.from_numpy(reward))
         all_dones.append(torch.from_numpy(done))
         all_successes.append(torch.tensor(successes))
-
         step += 1
         running_success_rate = (
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
         )
         progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
         progbar.update()
-
     # Track the final observation.
     if return_observations:
         observation = preprocess_observation(observation)
         all_observations.append(deepcopy(observation))
-
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
         ACTION: torch.stack(all_actions, dim=1),

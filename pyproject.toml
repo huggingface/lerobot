@@ -79,7 +79,7 @@ dependencies = [
     "torchvision>=0.21.0,<0.23.0", # TODO: Bumb dependency
 
     "draccus==0.10.0", # TODO: Remove ==
-    "gymnasium>=0.29.1,<1.0.0", # TODO: Bumb dependency
+    "gymnasium>=0.29.1,<=1.1.0", # TODO: Bumb dependency
     "rerun-sdk>=0.21.0,<0.23.0", # TODO: Bumb dependency
 
     # Support dependencies
@@ -135,7 +135,7 @@ video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 aloha = ["gym-aloha>=0.1.1"]
 pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 xarm = ["gym-xarm>=0.1.1"]
-libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
+libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@upgrade-dep#egg=libero"]
 metaworld = ["metaworld>=3.0.0"]
 
 # All
