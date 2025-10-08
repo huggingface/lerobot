@@ -79,6 +79,11 @@ jobs:
             speech-dispatcher libgeos-dev portaudio19-dev
           elif [[ "${{ matrix.os }}" == 'macos-latest' ]]; then
             brew update && brew install git geos portaudio ffmpeg@7
+            # Add ffmpeg@7 paths for subsequent steps
+            echo "PATH=/opt/homebrew/opt/ffmpeg@7/bin:$PATH" >> $GITHUB_ENV
+            echo "LDFLAGS=-L/opt/homebrew/opt/ffmpeg@7/lib" >> $GITHUB_ENV
+            echo "CPPFLAGS=-I/opt/homebrew/opt/ffmpeg@7/include" >> $GITHUB_ENV
+            echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig" >> $GITHUB_ENV
             echo "DYLD_LIBRARY_PATH=/opt/homebrew/opt/ffmpeg@7/lib:/opt/homebrew/lib:/usr/local/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
           fi
       - name: Setup uv and Python
