@@ -267,7 +267,7 @@ class AsyncVideoEncoder:
     def _get_image_dir(self, root_path: Path, episode_index: int, image_key: str) -> Path:
         """Helper to construct the path to the raw images for an episode."""
         # This logic should match `_get_image_file_dir` in LeRobotDataset
-        return root_path / "images" / image_key / f"episode_{episode_index:06d}"
+        return root_path / "images" / image_key / f"episode-{episode_index:06d}"
 
     def _encode_to_temp_video(self, task: EncodingTask, video_key: str) -> Path:
         """Encode a single video to a temporary file."""
