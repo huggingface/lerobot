@@ -239,7 +239,7 @@ follower_id = ...
 leader_id = ...
 
 # A pretrained model (to be used in-distribution!)
-reward_classifier_id = "lerobot/reward_classifier_hil_serl_example"
+reward_classifier_id = "fracapuano/reward_classifier_hil_serl_example"
 reward_classifier = Classifier.from_pretrained(reward_classifier_id)
 
 reward_classifier.to(device)
