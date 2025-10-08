@@ -95,7 +95,6 @@ def test_get_policy_and_config_classes(policy_name: str):
 @pytest.mark.parametrize(
     "ds_repo_id,env_name,env_kwargs,policy_name,policy_kwargs",
     [
-        ("lerobot/xarm_lift_medium", "xarm", {}, "tdmpc", {"use_mpc": True}),
         ("lerobot/pusht", "pusht", {}, "diffusion", {}),
         ("lerobot/pusht", "pusht", {}, "vqbet", {}),
         ("lerobot/pusht", "pusht", {}, "act", {}),
