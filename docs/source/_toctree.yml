@@ -33,11 +33,13 @@
     title: π₀ (Pi0)
   - local: pi05
     title: π₀.₅ (Pi05)
+  title: "Policies"
+- sections:
   - local: libero
     title: Using Libero
   - local: metaworld
     title: Using MetaWorld
-  title: "Policies"
+  title: "Simulation"
 - sections:
   - local: introduction_processors
     title: Introduction to Robot Processors
