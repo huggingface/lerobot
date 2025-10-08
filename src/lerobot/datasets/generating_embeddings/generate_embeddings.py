@@ -47,17 +47,22 @@ import argparse
 import shutil
 from pathlib import Path
 
-from lerobot.datasets.generating_embeddings.encoders import DinoV2Encoder, ImageEncoder, LanguageEncoder, MiniLMEncoder
 import numpy as np
 import torch
 from tqdm import tqdm
 
+from lerobot.datasets.generating_embeddings.encoders import (
+    DinoV2Encoder,
+    ImageEncoder,
+    LanguageEncoder,
+    MiniLMEncoder,
+)
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
 def get_image_encoder(encoder_name: str, device: str = "cuda") -> ImageEncoder:
     """Factory function to get image encoder.
-    
+
     To add a new encoder:
     1. Create a new class inheriting from ImageEncoder
     2. Implement encode() and embedding_dim property
@@ -70,23 +75,23 @@ def get_image_encoder(encoder_name: str, device: str = "cuda") -> ImageEncoder:
     }
 
     if encoder_name not in encoders:
-        raise ValueError(
-            f"Unknown image encoder: {encoder_name}. Available options: {list(encoders.keys())}"
-        )
+        raise ValueError(f"Unknown image encoder: {encoder_name}. Available options: {list(encoders.keys())}")
 
     return encoders[encoder_name]()
 
 
 def get_language_encoder(encoder_name: str, device: str = "cuda") -> LanguageEncoder:
     """Factory function to get language encoder.
-    
+
     To add a new encoder:
     1. Create a new class inheriting from LanguageEncoder
     2. Implement encode() and embedding_dim property
     3. Add it to the encoders dictionary below
     """
     encoders = {
-        "minilm-l6": lambda: MiniLMEncoder(model_name="sentence-transformers/all-MiniLM-L6-v2", device=device),
+        "minilm-l6": lambda: MiniLMEncoder(
+            model_name="sentence-transformers/all-MiniLM-L6-v2", device=device
+        ),
         "minilm-l12": lambda: MiniLMEncoder(
             model_name="sentence-transformers/all-MiniLM-L12-v2", device=device
         ),
@@ -188,8 +193,10 @@ def generate_embeddings_for_dataset(
                     # Decode from video
                     current_ts = item["timestamp"].item()
                     video_frames = dataset._query_videos({cam_key: [current_ts]}, ep_idx)
-                    img = video_frames[cam_key]  # This returns tensor of shape (T, C, H, W) or might be squeezed
-                    
+                    img = video_frames[
+                        cam_key
+                    ]  # This returns tensor of shape (T, C, H, W) or might be squeezed
+
                     # Handle the tensor shape
                     if isinstance(img, torch.Tensor):
                         if img.ndim == 4:
@@ -203,7 +210,7 @@ def generate_embeddings_for_dataset(
                                 f"Unexpected video frame shape {img.shape} for camera {cam_key}. "
                                 f"Expected (T, C, H, W) or (C, H, W). Episode {ep_idx}, Frame {frame_idx}"
                             )
-                        
+
                         # Convert to numpy: (C, H, W) float32 [0, 1] -> (H, W, C) uint8 [0, 255]
                         img_np = (img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
                     else:
@@ -245,8 +252,9 @@ def generate_embeddings_for_dataset(
             "names": None,
         }
 
-    from lerobot.datasets.utils import write_info, DEFAULT_DATA_PATH
     import pandas as pd
+
+    from lerobot.datasets.utils import DEFAULT_DATA_PATH, write_info
 
     write_info(output_dataset.meta.info, output_dataset.root)
 
@@ -264,9 +272,7 @@ def generate_embeddings_for_dataset(
         frames_by_file[key].append(frame_idx)
 
     # Update each parquet file
-    for (chunk_idx, file_idx), frame_indices in tqdm(
-        frames_by_file.items(), desc="Updating parquet files"
-    ):
+    for (chunk_idx, file_idx), frame_indices in tqdm(frames_by_file.items(), desc="Updating parquet files"):
         parquet_path = output_dataset.root / DEFAULT_DATA_PATH.format(
             chunk_index=chunk_idx, file_index=file_idx
         )
@@ -346,9 +352,7 @@ Available language encoders:
         """,
     )
     parser.add_argument("--repo-id", type=str, required=True, help="Source dataset repository ID")
-    parser.add_argument(
-        "--output-repo-id", type=str, required=True, help="Output dataset repository ID"
-    )
+    parser.add_argument("--output-repo-id", type=str, required=True, help="Output dataset repository ID")
     parser.add_argument(
         "--image-encoder",
         type=str,
@@ -366,9 +370,7 @@ Available language encoders:
         action="store_true",
         help="Remove video files after generating embeddings",
     )
-    parser.add_argument(
-        "--local-dir", type=str, default=None, help="Local directory for source dataset"
-    )
+    parser.add_argument("--local-dir", type=str, default=None, help="Local directory for source dataset")
     parser.add_argument(
         "--output-local-dir", type=str, default=None, help="Local directory for output dataset"
     )

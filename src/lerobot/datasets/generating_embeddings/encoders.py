@@ -23,6 +23,7 @@ from PIL import Image
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class ImageEncoder:
     """Base class for image encoders."""
 
@@ -36,7 +37,7 @@ class ImageEncoder:
 
 class DinoV2Encoder(ImageEncoder):
     """DinoV2 image encoder.
-    
+
     DinoV2 is a self-supervised vision transformer that produces high-quality image embeddings.
     Supports multiple model sizes (ViT-S/14, ViT-B/14, ViT-L/14).
     """
@@ -46,7 +47,7 @@ class DinoV2Encoder(ImageEncoder):
         self.batch_size = batch_size
         self.model_name = model_name
         logger.info(f"Loading DinoV2 model: {model_name}")
-        self.model = torch.hub.load("facebookresearch/dinov2", model_name)
+        self.model = torch.hub.load("facebookresearch/dinov2", model_name)  # nosec B614
         self.model = self.model.to(self.device)
         self.model.eval()
 
@@ -105,7 +106,7 @@ class LanguageEncoder:
 
 class MiniLMEncoder(LanguageEncoder):
     """MiniLM language encoder.
-    
+
     MiniLM is a lightweight sentence transformer model that produces high-quality text embeddings.
     Supports L6 and L12 model sizes.
     """

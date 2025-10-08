@@ -39,9 +39,11 @@ from lerobot.datasets.generating_embeddings.generate_embeddings import (
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
+
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     """Compute cosine similarity between two vectors."""
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
 
 def validate_embeddings(
     original_repo_id: str,
@@ -81,7 +83,9 @@ def validate_embeddings(
             raise ValueError(f"Embedding feature not found: {feat}")
 
     # Select random sample indices
-    sample_indices = np.random.choice(original_dataset.num_frames, size=min(num_samples, original_dataset.num_frames), replace=False)
+    sample_indices = np.random.choice(
+        original_dataset.num_frames, size=min(num_samples, original_dataset.num_frames), replace=False
+    )
     print(f"Validating {len(sample_indices)} samples...")
 
     # Track statistics
@@ -136,14 +140,14 @@ def validate_embeddings(
     task_pass = task_mean_sim >= task_sim_threshold
 
     print(f"  Task: {task_mean_sim:.4f} {'✓' if task_pass else '✗'}")
-    
+
     for cam in camera_keys:
         cam_mean_sim = np.mean(image_similarities[cam])
         cam_pass = cam_mean_sim >= img_sim_threshold
         print(f"  {cam}: {cam_mean_sim:.4f} {'✓' if cam_pass else '✗'}")
 
     image_pass = all(np.mean(image_similarities[cam]) >= img_sim_threshold for cam in camera_keys)
-    
+
     print()
     if task_pass and image_pass:
         print("✓ PASSED")
@@ -165,9 +169,7 @@ Example:
       --num-samples 20
         """,
     )
-    parser.add_argument(
-        "--original-repo-id", type=str, required=True, help="Original dataset repository ID"
-    )
+    parser.add_argument("--original-repo-id", type=str, required=True, help="Original dataset repository ID")
     parser.add_argument(
         "--embeddings-repo-id",
         type=str,
@@ -218,4 +220,3 @@ Example:
 
 if __name__ == "__main__":
     main()
-

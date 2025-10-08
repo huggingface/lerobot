@@ -5,6 +5,7 @@ Generate embeddings for LeRobot datasets to make them more lightweight and effic
 ## Overview
 
 This script processes v3.0 LeRobot datasets and adds pre-computed embeddings for:
+
 - **Task embeddings**: Language command embeddings using MiniLM
 - **Image embeddings**: Frame embeddings using DinoV2
 
@@ -94,14 +95,14 @@ The script is designed to be easily extensible. To add a new encoder:
 ```python
 class MyCustomImageEncoder(ImageEncoder):
     """Your custom image encoder."""
-    
+
     def __init__(self, device: str = "cuda"):
         super().__init__(device)
         # Load your model
         self.model = load_my_model()
         self.model = self.model.to(self.device)
         self.model.eval()
-    
+
     def encode(self, images: list[np.ndarray]) -> np.ndarray:
         """Encode a batch of images."""
         # Your encoding logic here
@@ -110,7 +111,7 @@ class MyCustomImageEncoder(ImageEncoder):
             emb = self.model(img)
             embeddings.append(emb)
         return np.array(embeddings)
-    
+
     @property
     def embedding_dim(self) -> int:
         """Return embedding dimension."""
