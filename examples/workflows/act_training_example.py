@@ -43,7 +43,6 @@ policy.to(device)
 
 # To perform action chunking, ACT expects a given number of actions as targets
 delta_timestamps = {
-    # "observation.state": make_delta_timestamps(cfg.observation_delta_indices, dataset_metadata.fps),
     "action": make_delta_timestamps(cfg.action_delta_indices, dataset_metadata.fps),
 }
 
@@ -57,11 +56,9 @@ dataset = LeRobotDataset(dataset_id, delta_timestamps=delta_timestamps)
 
 # Create the optimizer and dataloader for offline training
 optimizer = cfg.get_optimizer_preset().build(policy.parameters())
-num_workers = 0
 batch_size = 32
 dataloader = torch.utils.data.DataLoader(
     dataset,
-    num_workers=num_workers,
     batch_size=batch_size,
     shuffle=True,
     pin_memory=device.type != "cpu",
@@ -97,5 +94,5 @@ postprocessor.save_pretrained(output_directory)
 
 # Save all assets to the Hub
 policy.push_to_hub("fracapuano/robot_learning_tutorial_act_example_model")
-preprocessor.push_to_hub("fracapuano/robot_learning_tutorial_act_example_preprocessor")
-postprocessor.push_to_hub("fracapuano/robot_learning_tutorial_act_example_postprocessor")
+preprocessor.push_to_hub("fracapuano/robot_learning_tutorial_act_example_pipeline")
+postprocessor.push_to_hub("fracapuano/robot_learning_tutorial_act_example_pipeline")
