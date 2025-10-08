@@ -34,7 +34,7 @@ class GridPositionEnv(gym.Env):
     Reward: Binary feedback from human (correct/incorrect prediction)
     """
 
-    def __init__(self, xml_path="grid_scene.xml", render_mode="rgb_array"):
+    def __init__(self, xml_path="grid_scene.xml", render_mode="rgb_array", show_viewer: bool = True):
         super().__init__()
 
         # Load Mujoco model
@@ -47,6 +47,14 @@ class GridPositionEnv(gym.Env):
 
         # Setup renderer for observations
         self.renderer = mujoco.Renderer(self.model, height=1080, width=1920)
+        # Optional interactive viewer for visualization
+        self.viewer = None
+        self._show_viewer = bool(show_viewer)
+        if self._show_viewer:
+            try:
+                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            except Exception:
+                self.viewer = None
 
         # Observation space: High-definition RGB images
         self.observation_space = spaces.Box(
@@ -83,6 +91,11 @@ class GridPositionEnv(gym.Env):
         self.data.qvel[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "cube_joint"):mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "cube_joint") + 6] = [0, 0, 0, 0, 0, 0]
 
         mujoco.mj_forward(self.model, self.data)
+        if self.viewer is not None:
+            try:
+                self.viewer.sync()
+            except Exception:
+                pass
 
         # Store current grid position (0-63)
         self.current_position = y_cell * self.grid_size + x_cell
@@ -113,7 +126,7 @@ class GridPositionEnv(gym.Env):
         position = self._randomize_cube_position()
         obs = self._get_observation()
 
-        # Placeholder reward (would be set by human feedback in HIL)
+        # Placeholder reward before wrapper computes it (will be recomputed in wrapper)
         reward = 0.0
         terminated = False
         truncated = False
@@ -139,7 +152,11 @@ class GridPositionEnv(gym.Env):
     def close(self):
         """Clean up resources."""
         # Renderer doesn't have a close method in this version
-        pass
+        try:
+            if self.viewer is not None:
+                self.viewer.close()
+        except Exception:
+            pass
 
     def get_current_position(self):
         """Get current grid position (0-63)."""
@@ -165,39 +182,61 @@ class GridPositionLeRobotEnv:
     """
 
     def __init__(self, xml_path="grid_scene.xml"):
-        self.env = GridPositionEnv(xml_path)
+        self.env = GridPositionEnv(xml_path, show_viewer=True)
 
         # LeRobot observation space format - use 'observation.image' as expected by SAC
         self.observation_space = {
             "observation.image": spaces.Box(
                 low=0, high=255, shape=(1080, 1920, 3), dtype=np.uint8
-            ),
-            "observation.state": spaces.Box(
-                low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32
             )
         }
 
-        # Dummy action space for compatibility
-        self.action_space = spaces.Discrete(64)  # 64 possible grid positions
+        # Action is predicted grid cell as 2-int vector [x, y] in [0,7]
+        self.action_space = spaces.Box(low=0.0, high=7.0, shape=(2,), dtype=np.float32)
 
     def reset(self, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
 
         # Convert to LeRobot format
         lerobot_obs = {
-            "observation.image": obs,
-            "observation.state": np.array([info["grid_position"]], dtype=np.float32)
+            "observation.image": obs
         }
 
         return lerobot_obs, info
 
     def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
+        # Compute reward based on predicted [x, y] vs current ground-truth before advancing env
+        gt_position = int(self.env.get_current_position())
+        gt_x = gt_position % self.env.grid_size
+        gt_y = gt_position // self.env.grid_size
+
+        # Clamp and round action to valid cell indices
+        action = np.asarray(action, dtype=np.float32)
+        pred_x = int(np.clip(np.rint(action[0]), 0, self.env.grid_size - 1))
+        pred_y = int(np.clip(np.rint(action[1]), 0, self.env.grid_size - 1))
+
+        # Dense reward shaping based on L1 grid error (normalized to [0,1])
+        max_l1 = 2 * (self.env.grid_size - 1)
+        l1_error = abs(pred_x - gt_x) + abs(pred_y - gt_y)
+        reward = 1.0 - (l1_error / max_l1)
+
+        # Advance environment to next random position
+        obs, _, terminated, truncated, info = self.env.step(0)
 
         # Convert to LeRobot format
         lerobot_obs = {
-            "observation.image": obs,
-            "observation.state": np.array([info["grid_position"]], dtype=np.float32)
+            "observation.image": obs
+        }
+
+        # Enrich info with prediction details
+        info = {
+            **info,
+            "gt_x": gt_x,
+            "gt_y": gt_y,
+            "pred_x": pred_x,
+            "pred_y": pred_y,
+            "correct": pred_x == gt_x and pred_y == gt_y,
+            "error.l1": float(l1_error),
         }
 
         return lerobot_obs, reward, terminated, truncated, info

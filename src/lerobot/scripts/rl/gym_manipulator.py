@@ -1912,6 +1912,85 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
         env = TorchActionWrapper(env=env, device=cfg.device)
         return env
 
+    # Custom lightweight gym path for grid position env without a robot
+    if cfg.type == "gym_manipulator" and getattr(cfg, "task", None) == "GridPositionPrediction-v0" and (
+        not hasattr(cfg, "robot") or getattr(cfg, "robot", None) is None
+    ):
+        # Dynamically load the example env without requiring it to be a package
+        try:
+            from examples.grid_hil_serl.grid_position_env import GridPositionLeRobotEnv  # type: ignore
+        except Exception:
+            import importlib.util
+            import sys
+            from pathlib import Path
+
+            # __file__ = repo_root/src/lerobot/scripts/rl/gym_manipulator.py
+            # repo_root is parents[4]
+            repo_root = Path(__file__).resolve().parents[4]
+            mod_path = repo_root / "examples/grid_hil_serl/grid_position_env.py"
+            spec = importlib.util.spec_from_file_location("grid_position_env", str(mod_path))
+            assert spec and spec.loader, f"Failed to load module at {mod_path}"
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)  # type: ignore[attr-defined]
+            GridPositionLeRobotEnv = getattr(module, "GridPositionLeRobotEnv")
+
+        env = GridPositionLeRobotEnv()
+        # Ensure simulation window is visible for human supervision
+        try:
+            # If underlying env exposes a 'viewer', try to show/sync it
+            if hasattr(env, "env") and hasattr(env.env, "viewer") and env.env.viewer is not None:
+                env.env.viewer.sync()
+        except Exception:
+            pass
+
+        # Optional center-crop + resize to match training resolution
+        resize_size = getattr(getattr(cfg, "wrapper", None), "resize_size", None)
+        if resize_size is not None:
+            import numpy as np
+            from PIL import Image
+
+            class _ResizeWrapper(gym.ObservationWrapper):
+                def __init__(self, env: gym.Env, size: list[int] | tuple[int, int]):
+                    super().__init__(env)
+                    # size is [H, W]
+                    self.size = (int(size[0]), int(size[1]))
+
+                def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+                    img = observation["observation.image"]  # HWC uint8
+                    h, w, _ = img.shape
+                    side = min(h, w)
+                    top = (h - side) // 2
+                    left = (w - side) // 2
+                    crop = img[top : top + side, left : left + side]
+                    pil = Image.fromarray(crop)
+                    pil = pil.resize((self.size[1], self.size[0]), Image.BILINEAR)
+                    observation["observation.image"] = np.asarray(pil, dtype=np.uint8)
+                    return observation
+
+            env = _ResizeWrapper(env=env, size=resize_size)
+
+        # Convert numpy observations to torch tensors on the right device without
+        # relying on preprocess_observation (no 'agent_pos' in this env)
+        import torch
+        import numpy as np
+
+        class _ToTorchImageWrapper(gym.ObservationWrapper):
+            def __init__(self, env: gym.Env, device: str):
+                super().__init__(env)
+                self.device = torch.device(device)
+
+            def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+                img = observation["observation.image"]  # HWC uint8 numpy
+                # HWC -> CHW, uint8 -> float32 in [0,1]
+                img_t = torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1).float() / 255.0
+                observation["observation.image"] = img_t.to(self.device, non_blocking=self.device.type == "cuda")
+                return observation
+
+        env = _ToTorchImageWrapper(env=env, device=cfg.device)
+        env = BatchCompatibleWrapper(env=env)
+        env = TorchActionWrapper(env=env, device=cfg.device)
+        return env
+
     if not hasattr(cfg, "robot") or not hasattr(cfg, "teleop"):
         raise ValueError(
             "Configuration for 'gym_manipulator' must be HILSerlRobotEnvConfig with robot and teleop."

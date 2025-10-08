@@ -266,6 +266,11 @@ def act_with_policy(
     episode_intervention_steps = 0
     episode_total_steps = 0
 
+    # Auto-supervision running stats (accuracy and L1 error)
+    auto_steps = 0
+    auto_correct = 0
+    auto_l1_sum = 0.0
+
     policy_timer = TimerManager("Policy inference", log=False)
 
     for interaction_step in range(cfg.policy.online_steps):
@@ -285,6 +290,77 @@ def act_with_policy(
         else:
             action = online_env.action_space.sample()
 
+        # Optional human confirmation for grid task
+        is_grid_task = getattr(cfg.env, "task", "") == "GridPositionPrediction-v0"
+        is_auto_supervision = getattr(cfg.env, "mode", "") == "auto_supervision"
+        user_corrected = False
+        corrected_action_tensor = None
+        if is_grid_task and not is_auto_supervision:
+            try:
+                import numpy as np
+                # Convert action to CPU numpy and flatten
+                act_np = action.detach().cpu().numpy() if hasattr(action, "detach") else np.array(action)
+                act_np = np.array(act_np).reshape(-1)
+                if act_np.size >= 2:
+                    pred_x = int(np.clip(np.rint(act_np[0]), 0, 7))
+                    pred_y = int(np.clip(np.rint(act_np[1]), 0, 7))
+                    print(f"[HIL] Predicted grid: [{pred_x}, {pred_y}]  (raw={act_np[:2]})")
+                    user = input("[HIL] Press Enter to accept or type corrected x,y (0-7): ").strip()
+                    if user:
+                        try:
+                            ux, uy = [int(s) for s in user.split(",")]
+                            ux = int(np.clip(ux, 0, 7))
+                            uy = int(np.clip(uy, 0, 7))
+                            corrected_action_tensor = torch.tensor([ux, uy], dtype=torch.float32, device=device)
+                            action = corrected_action_tensor
+                            user_corrected = True
+                        except Exception:
+                            print("[HIL] Invalid input, keeping predicted action.")
+            except Exception as e:
+                logging.warning(f"[HIL] Human confirmation skipped due to error: {e}")
+
+        # Auto-supervision path: replace action with ground-truth and record prediction for stats
+        pred_for_stats = None
+        gt_x_pre = None
+        gt_y_pre = None
+        if is_grid_task and is_auto_supervision:
+            try:
+                import numpy as np
+                # Compute predicted indices from current action for stats
+                act_np = action.detach().cpu().numpy() if hasattr(action, "detach") else np.array(action)
+                act_np = np.array(act_np).reshape(-1)
+                if act_np.size >= 2:
+                    pred_x = int(np.clip(np.rint(act_np[0]), 0, 7))
+                    pred_y = int(np.clip(np.rint(act_np[1]), 0, 7))
+                    pred_for_stats = (pred_x, pred_y)
+
+                # Walk wrappers to find current GT before stepping
+                env_cursor = online_env
+                for _ in range(8):
+                    # Direct method on cursor
+                    if hasattr(env_cursor, "get_current_position"):
+                        pos = env_cursor.get_current_position()
+                        gt_x_pre = int(pos % 8)
+                        gt_y_pre = int(pos // 8)
+                        break
+                    # Method on nested env
+                    if hasattr(env_cursor, "env") and hasattr(env_cursor.env, "get_current_position"):
+                        pos = env_cursor.env.get_current_position()
+                        gt_x_pre = int(pos % 8)
+                        gt_y_pre = int(pos // 8)
+                        break
+                    if hasattr(env_cursor, "env"):
+                        env_cursor = env_cursor.env
+                    else:
+                        break
+
+                if gt_x_pre is not None and gt_y_pre is not None:
+                    corrected_action_tensor = torch.tensor([gt_x_pre, gt_y_pre], dtype=torch.float32, device=device)
+                    action = corrected_action_tensor
+                    user_corrected = True  # treat as intervention for buffers
+            except Exception as e:
+                logging.debug(f"[HIL] Auto-supervision GT fetch failed: {e}")
+
         # Debug logging for action generation
         if interaction_step % 100 == 0:  # Log every 100 steps to avoid spam
             action_np = action.detach().cpu().numpy() if hasattr(action, "detach") else action
@@ -295,6 +371,57 @@ def act_with_policy(
                 )
 
         next_obs, reward, done, truncated, info = online_env.step(action)
+
+        # For grid task, attach complementary info for learner about predictions and corrections
+        if is_grid_task:
+            try:
+                import numpy as np
+                # Extract GT and computed reward/error from env info when available
+                gt_x = info.get("gt_x")
+                gt_y = info.get("gt_y")
+                pred_x = info.get("pred_x")
+                pred_y = info.get("pred_y")
+                error_l1 = info.get("error.l1")
+
+                # Mark whether human intervened at this step
+                info["is_intervention"] = bool(user_corrected)
+                if user_corrected and corrected_action_tensor is not None:
+                    info["action_intervention"] = corrected_action_tensor.detach().cpu()
+
+                # Also log the raw prediction error vector
+                if pred_x is not None and gt_x is not None:
+                    info["error.dx"] = int(pred_x) - int(gt_x)
+                    info["error.dy"] = int(pred_y) - int(gt_y)
+                if error_l1 is not None:
+                    info["error.l1"] = float(error_l1)
+
+                # If auto-supervision, overwrite stats with pre-step pred vs pre-step GT when available
+                if is_auto_supervision and pred_for_stats is not None and gt_x_pre is not None:
+                    dx = pred_for_stats[0] - gt_x_pre
+                    dy = pred_for_stats[1] - gt_y_pre
+                    info["auto.pred_x"] = int(pred_for_stats[0])
+                    info["auto.pred_y"] = int(pred_for_stats[1])
+                    info["auto.gt_x"] = int(gt_x_pre)
+                    info["auto.gt_y"] = int(gt_y_pre)
+                    info["auto.error.dx"] = int(dx)
+                    info["auto.error.dy"] = int(dy)
+                    info["auto.error.l1"] = int(abs(dx) + abs(dy))
+
+                    # Update running stats
+                    auto_steps += 1
+                    auto_l1_sum += abs(dx) + abs(dy)
+                    if dx == 0 and dy == 0:
+                        auto_correct += 1
+
+                    # Periodically log convergence stats
+                    if auto_steps % 50 == 0:
+                        acc = 100.0 * auto_correct / max(1, auto_steps)
+                        mean_l1 = auto_l1_sum / max(1, auto_steps)
+                        logging.info(
+                            f"[AUTO] steps={auto_steps} accuracy={acc:.1f}% mean_L1={mean_l1:.3f}"
+                        )
+            except Exception as e:
+                logging.debug(f"[HIL] Could not attach grid info: {e}")
 
         sum_reward_episode += float(reward)
         # Increment total steps counter for intervention rate

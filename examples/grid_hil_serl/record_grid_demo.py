@@ -72,16 +72,33 @@ def record_demonstrations_from_config(config_path: str):
     # Create environment
     env = GridPositionLeRobotEnv()
 
-    # Infer image shape from first reset
+    # Target image size for training (keep aspect ratio via center-square crop, then resize)
+    target_h, target_w = 128, 128
+
+    # Helper: center-square crop and resize to (128,128)
+    def _center_crop_resize(image_hwc: np.ndarray, out_h: int = 128, out_w: int = 128) -> np.ndarray:
+        h, w, _ = image_hwc.shape
+        side = min(h, w)
+        top = (h - side) // 2
+        left = (w - side) // 2
+        crop = image_hwc[top : top + side, left : left + side]
+        img = Image.fromarray(crop)
+        img = img.resize((out_w, out_h), resample=Image.BILINEAR)
+        return np.asarray(img, dtype=np.uint8)
+
+    # Prime env and process one frame to validate pipeline
     obs, info = env.reset()
     image_hwc = obs["observation.image"]  # H, W, C uint8
-    h, w, c = image_hwc.shape
+    image_hwc = _center_crop_resize(image_hwc, target_h, target_w)
 
     # Define features for LeRobot dataset
     # Observation: input image only; Action: target grid position as [x, y] integers
+    # Include reward/done to be compatible with RL replay buffer expectations
     features = {
-        "observation.image": {"dtype": "image", "shape": (3, h, w), "names": None},
+        "observation.image": {"dtype": "image", "shape": (3, target_h, target_w), "names": None},
         "action": {"dtype": "int64", "shape": (2,), "names": None},
+        "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
+        "next.done": {"dtype": "bool", "shape": (1,), "names": None},
     }
 
     # Initialize LeRobot dataset (images saved as files, rows in parquet)
@@ -109,6 +126,7 @@ def record_demonstrations_from_config(config_path: str):
         for step in range(steps_per_episode):
             # Save current image to img.jpg (for quick visual check)
             image_array = obs["observation.image"]  # HWC uint8
+            image_array = _center_crop_resize(image_array, target_h, target_w)
             Image.fromarray(image_array).save("img.jpg")
 
             # Prepare frame for dataset: action stores the ground-truth position
@@ -116,9 +134,13 @@ def record_demonstrations_from_config(config_path: str):
                 current_position % 8,
                 current_position // 8,
             ], dtype=np.int64)
+            # Offline pretraining: use zero reward; mark done on last step of episode
+            is_last = (step == steps_per_episode - 1)
             frame = {
                 "observation.image": image_array,  # LeRobot will write image file
                 "action": action_xy,
+                "next.reward": np.array([0.0], dtype=np.float32),
+                "next.done": np.array([is_last], dtype=bool),
             }
 
             dataset.add_frame(frame=frame, task=task_string)
@@ -129,8 +151,8 @@ def record_demonstrations_from_config(config_path: str):
                 f"(action=[{current_position % 8}, {current_position // 8}])"
             )
 
-            # Advance environment (randomize cube position)
-            obs, reward, terminated, truncated, info = env.step(0)
+            # Advance environment using ground-truth action to satisfy env API
+            obs, reward, terminated, truncated, info = env.step(action_xy)
             current_position = int(info["grid_position"])  # next label
 
         # Save episode to parquet + meta
