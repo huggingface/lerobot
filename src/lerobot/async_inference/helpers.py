@@ -92,11 +92,11 @@ def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, 
     return resized.squeeze(0)
 
 
+# TODO(Steven): Consider implementing a pipeline step for this
 def raw_observation_to_observation(
     raw_observation: RawObservation,
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
-    device: str,
 ) -> Observation:
     observation = {}
 
@@ -105,9 +105,7 @@ def raw_observation_to_observation(
         if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions in observations
             if "image" in k:
                 # Policy expects images in shape (B, C, H, W)
-                observation[k] = prepare_image(v).unsqueeze(0).to(device)
-            else:
-                observation[k] = v.to(device)
+                observation[k] = prepare_image(v).unsqueeze(0)
         else:
             observation[k] = v
 
