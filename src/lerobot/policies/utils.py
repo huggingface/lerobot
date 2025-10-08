@@ -16,6 +16,7 @@
 
 import logging
 from collections import deque
+from copy import copy
 
 import torch
 from torch import nn
@@ -85,3 +86,28 @@ def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) 
         logging.warning(f"Missing key(s) when loading model: {missing_keys}")
     if unexpected_keys:
         logging.warning(f"Unexpected key(s) when loading model: {unexpected_keys}")
+
+
+def build_inference_frame(
+    observation: dict[str, torch.Tensor],
+    device: torch.device,
+    task: str | None = None,
+    robot_type: str | None = None,
+) -> dict[str, torch.Tensor]:
+    """Build a inference frame from a raw observation."""
+    observation = copy(observation)
+
+    for name in observation:
+        observation[name] = torch.from_numpy(observation[name])
+        if "image" in name:
+            observation[name] = observation[name].type(torch.float32) / 255
+            observation[name] = observation[name].permute(2, 0, 1).contiguous()
+
+        # Needs to add a batch dimension when running inference
+        observation[name] = observation[name].unsqueeze(0)
+        observation[name] = observation[name].to(device)
+
+    observation["task"] = task if task else ""
+    observation["robot_type"] = robot_type if robot_type else ""
+
+    return observation
