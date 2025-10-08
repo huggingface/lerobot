@@ -287,7 +287,6 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "lerobot.envs.*"
-# Enable type checking only for the envs module
 ignore_errors = false
 
 
@@ -303,9 +302,9 @@ ignore_errors = false
 # module = "lerobot.optim.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.model.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.model.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.processor.*"
