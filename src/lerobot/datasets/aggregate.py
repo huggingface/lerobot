@@ -202,7 +202,7 @@ def aggregate_datasets(
     meta_idx = {"chunk": 0, "file": 0}
     data_idx = {"chunk": 0, "file": 0}
     videos_idx = {
-        key: {"chunk": 0, "file": 0, "latest_duration": 0 } for key in video_keys
+        key: {"chunk": 0, "file": 0, "latest_duration": 0, "total_episode_duration": 0 } for key in video_keys
     }
 
     dst_meta.episodes = {}
@@ -287,7 +287,9 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 shutil.copy(str(src_path), str(dst_path))
 
                 # Reset latest_duration to 0 for new file
+                timestamps_shift_s = dst_meta.info["total_frames"] / dst_meta.info["fps"]
                 videos_idx[key]["latest_duration"] = 0.0
+                videos_idx[key]["total_episode_duration"] = timestamps_shift_s
                 update_latest_duration = False
 
             else:
@@ -307,8 +309,9 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
         videos_idx[key]["chunk"] = chunk_idx
         videos_idx[key]["file"] = file_idx
 
+        # Ensure we are rotating the file correctly be decreasing the total_episode_duration from the timestamps_shift_s
         if update_latest_duration:
-            videos_idx[key]["latest_duration"] = timestamps_shift_s
+            videos_idx[key]["latest_duration"] = timestamps_shift_s - videos_idx[key]["total_episode_duration"]
 
     return videos_idx
 
