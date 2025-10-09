@@ -140,7 +140,7 @@ class StaraiCello(Robot):
                 range_max=range_maxes[motor],
             )
 
-        # self.bus.write_calibration(self.calibration)
+        self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
@@ -238,14 +238,14 @@ class StaraiCello(Robot):
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in postion.items() if key.endswith(".pos")}
         goal_pos["Motor_0"] = 0
-        goal_pos["Motor_1"] = -80
-        goal_pos["Motor_2"] = 80
+        goal_pos["Motor_1"] = -100
+        goal_pos["Motor_2"] = 60
         goal_pos["Motor_3"] = 0
-        goal_pos["Motor_4"] = 0
+        goal_pos["Motor_4"] = 30
         goal_pos["Motor_5"] = 0
-        goal_pos["gripper"] = 80
+        goal_pos["gripper"] = 50
         self.bus.sync_write("Goal_Position", goal_pos,motion_time = 1500)
         time.sleep(1.5)
         self.bus.disable_torque()
-        time.sleep(2)
+        # time.sleep(2)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
