@@ -449,7 +449,14 @@ def concatenate_video_files(
     for input_stream in input_container.streams:
         if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible streams
             stream_map[input_stream.index] = output_container.add_stream_from_template(
-                template=input_stream, opaque=True
+                template=input_stream,
+                opaque=True,
+                # Since the template (input stream) has a decoding codec context,
+                # the created (output) stream will inherit a decoding codec context as well.
+                # This is not a problem since we are using stream copy mode (no re-encoding).
+                # However, the time base is not automatically copied from the template,
+                # so we explicitly set it to the stream to be created.
+                time_base=input_stream.time_base,
             )
 
     # Demux + remux packets (no re-encode)
