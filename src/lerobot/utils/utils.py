@@ -88,6 +88,9 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
     if device == "xpu" and dtype == torch.float64:
         if hasattr(torch.xpu, "get_device_capability"):
             device_capability = torch.xpu.get_device_capability()
+            # NOTE: Some Intel XPU devices do not support double precision (FP64).
+            # The `has_fp64` flag is returned by `torch.xpu.get_device_capability()`
+            # when available; if False, we fall back to float32 for compatibility.
             if not device_capability.get("has_fp64", False):
                 logging.warning(f"Device {device} does not support float64, using float32 instead.")
                 return torch.float32
@@ -96,7 +99,6 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
                 f"Device {device} capability check failed. Assuming no support for float64, using float32 instead."
             )
             return torch.float32
-        return dtype
     else:
         return dtype
 
