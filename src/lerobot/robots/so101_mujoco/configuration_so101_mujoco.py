@@ -37,6 +37,9 @@ class SO101MujocoConfig(RobotConfig):
     # MuJoCo model path
     xml_path: Path = Path("gym-hil/gym_hil/assets/SO101/pick_scene.xml")
 
+    # Cube positions configuration (must be specified in recording YAML config)
+    cube_positions_path: Path | None = None
+
     # Control frequencies (all exact multiples for timing accuracy)
     record_fps: int = 30       # Recording/dataset frequency
     control_fps: int = 180     # Internal control loop frequency (6 × 30)

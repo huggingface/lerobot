@@ -27,6 +27,7 @@ Key features:
 - Gravity compensation
 """
 
+import json
 import logging
 from functools import cached_property
 from pathlib import Path
@@ -102,11 +103,36 @@ class SO101MujocoRobot(Robot):
         # This dict just tracks cameras for lerobot_record
         self.cameras = {f"camera_{name}": None for name in config.camera_names}
 
+        # Load cube positions from JSON
+        self.cube_positions = self._load_cube_positions()
+
         logger.info(
             f"SO101MujocoRobot initialized: "
             f"record={config.record_fps}Hz, control={config.control_fps}Hz, "
             f"physics={config.physics_fps}Hz"
         )
+
+    def _load_cube_positions(self) -> list[dict]:
+        """Load cube positions from JSON configuration file."""
+        cube_positions_path = self.config.cube_positions_path
+
+        if cube_positions_path is None:
+            logger.warning("No cube_positions_path specified in config - block positioning will not be available")
+            return []
+
+        if not cube_positions_path.exists():
+            logger.warning(f"Cube positions file not found at {cube_positions_path}, using empty list")
+            return []
+
+        try:
+            with open(cube_positions_path, 'r') as f:
+                data = json.load(f)
+                positions = data.get("cube_positions", [])
+                logger.info(f"Loaded {len(positions)} cube positions from {cube_positions_path}")
+                return positions
+        except Exception as e:
+            logger.error(f"Error loading cube positions from {cube_positions_path}: {e}")
+            return []
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -697,18 +723,23 @@ class SO101MujocoRobot(Robot):
         ee_pos = self.data.site_xpos[self.ee_site_id]
         logger.info(f"Robot reset to home position - EE at: [{ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}]")
 
-    def reset_block_position(self, x_range: tuple[float, float] = (0.0, 0.4),
-                            y_range: tuple[float, float] = (0.0, 0.3)) -> None:
+    def reset_block_position(self, episode_index: int) -> tuple[float, float, float] | None:
         """
-        Randomize block position within specified ranges.
+        Set block position from predefined positions only.
 
         With new robot orientation (robot base at X=0.2, pointing in +Y direction):
-        - X range: ±0.2m from robot centerline (robot is at X=0.2)
-        - Y range: forward workspace from base edge to 30cm forward
+        - Positions are loaded from cube_positions.json
+        - Each episode must have a predefined position
 
         Args:
-            x_range: (min_x, max_x) in meters, default (0.0, 0.4) - ±0.2m left/right of robot
-            y_range: (min_y, max_y) in meters, default (0.0, 0.3) - forward workspace
+            episode_index: Episode index to look up in predefined positions JSON config.
+                          Must exist in the JSON file.
+
+        Returns:
+            Tuple of (x, y, z) position where the block was placed, or None if block not found
+
+        Raises:
+            ValueError: If no predefined position exists for the given episode_index
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected")
@@ -717,16 +748,30 @@ class SO101MujocoRobot(Robot):
         block_body_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_BODY, "block")
         if block_body_id < 0:
             logger.warning("Block body not found in model - skipping reset")
-            return
+            return None
 
         # Get qpos address for block's freejoint (7 DOF: 3 pos + 4 quat)
         block_jnt_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "block")
         block_qpos_adr = self.model.jnt_qposadr[block_jnt_id]
 
-        # Randomize position
-        x = np.random.uniform(x_range[0], x_range[1])
-        y = np.random.uniform(y_range[0], y_range[1])
-        z = 0.012  # Cube half-size to sit on floor
+        # Find predefined position for this episode
+        if not self.cube_positions:
+            raise ValueError(
+                f"No cube positions loaded. Please ensure cube_positions.json exists at "
+                f"{self.config.cube_positions_path}"
+            )
+
+        matching_pos = next((p for p in self.cube_positions if p.get("episode") == episode_index), None)
+        if not matching_pos:
+            raise ValueError(
+                f"No predefined position found for episode {episode_index}. "
+                f"Please add this episode to {self.config.cube_positions_path}"
+            )
+
+        x = float(matching_pos["x"])
+        y = float(matching_pos["y"])
+        z = float(matching_pos.get("z", 0.012))  # Default z to cube half-size
+        logger.info(f"Using predefined position for episode {episode_index}: [{x:.3f}, {y:.3f}, {z:.3f}]")
 
         # Set position
         self.data.qpos[block_qpos_adr:block_qpos_adr + 3] = [x, y, z]
@@ -742,6 +787,7 @@ class SO101MujocoRobot(Robot):
         mj.mj_forward(self.model, self.data)
 
         logger.info(f"Block reset to position: [{x:.3f}, {y:.3f}, {z:.3f}]")
+        return (x, y, z)
 
     def get_block_position(self) -> tuple[float, float, float] | None:
         """Get current block position for episode metadata."""

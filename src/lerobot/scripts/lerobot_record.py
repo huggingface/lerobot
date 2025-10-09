@@ -464,13 +464,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             if hasattr(robot, 'reset_to_home_position'):
                 robot.reset_to_home_position()
 
-            # Randomize block position at the start of each episode for SO-101 MuJoCo robot
+            # Set block position at the start of each episode for SO-101 MuJoCo robot
+            # Uses predefined positions from cube_positions.json
             block_initial_pos = None
             if hasattr(robot, 'reset_block_position'):
-                robot.reset_block_position()
-                # Get and store block position for episode metadata
-                if hasattr(robot, 'get_block_position'):
-                    block_initial_pos = robot.get_block_position()
+                block_initial_pos = robot.reset_block_position(episode_index=dataset.num_episodes)
 
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
             record_loop(
@@ -497,9 +495,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             ):
                 log_say("Reset the environment", cfg.play_sounds)
 
-                # Randomize block position for SO-101 MuJoCo robot
+                # Reset block position for SO-101 MuJoCo robot (for next episode)
                 if hasattr(robot, 'reset_block_position'):
-                    robot.reset_block_position()
+                    robot.reset_block_position(episode_index=dataset.num_episodes)
 
                 record_loop(
                     robot=robot,
@@ -521,12 +519,16 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 dataset.clear_episode_buffer()
                 continue
 
-            # TODO: Store block position as episode-level metadata
-            # For now, block position is logged but not saved to dataset
-            # if block_initial_pos is not None:
-            #     logger.info(f"Block position: [{block_initial_pos[0]:.3f}, {block_initial_pos[1]:.3f}, {block_initial_pos[2]:.3f}]")
+            # Store block position as episode-level metadata for reproducibility
+            episode_metadata = {}
+            if block_initial_pos is not None:
+                episode_metadata["block/initial_x"] = block_initial_pos[0]
+                episode_metadata["block/initial_y"] = block_initial_pos[1]
+                episode_metadata["block/initial_z"] = block_initial_pos[2]
+                logging.info(f"Block initial position: [{block_initial_pos[0]:.3f}, {block_initial_pos[1]:.3f}, {block_initial_pos[2]:.3f}]")
 
-            dataset.save_episode()
+            # Save episode with custom metadata
+            dataset.save_episode(episode_metadata=episode_metadata if episode_metadata else None)
             recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)

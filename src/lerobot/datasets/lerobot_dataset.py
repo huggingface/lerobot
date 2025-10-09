@@ -1004,7 +1004,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
-    def save_episode(self, episode_data: dict | None = None) -> None:
+    def save_episode(self, episode_data: dict | None = None, episode_metadata: dict | None = None) -> None:
         """
         This will save to disk the current episode in self.episode_buffer.
 
@@ -1016,6 +1016,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
+            episode_metadata (dict | None, optional): Dict containing custom episode-level metadata to store
+                (e.g., initial object positions, task parameters). This metadata will be saved in the episodes
+                parquet file and can be accessed later. Keys should use forward slashes for nested structure
+                (e.g., "object/initial_x"). Defaults to None.
         """
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
 
@@ -1054,6 +1058,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if has_video_keys and not use_batched_encoding:
             for video_key in self.meta.video_keys:
                 ep_metadata.update(self._save_episode_video(video_key, episode_index))
+
+        # Add custom episode metadata if provided
+        if episode_metadata is not None:
+            ep_metadata.update(episode_metadata)
 
         # `meta.save_episode` need to be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
