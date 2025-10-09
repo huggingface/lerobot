@@ -38,8 +38,8 @@ def robot_client():
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
     # Import only when the test actually runs (after decorator check)
-    from lerobot.scripts.server.configs import RobotClientConfig
-    from lerobot.scripts.server.robot_client import RobotClient
+    from lerobot.async_inference.configs import RobotClientConfig
+    from lerobot.async_inference.robot_client import RobotClient
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()
@@ -73,7 +73,7 @@ def robot_client():
 
 def _make_actions(start_ts: float, start_t: int, count: int):
     """Generate `count` consecutive TimedAction objects starting at timestep `start_t`."""
-    from lerobot.scripts.server.helpers import TimedAction
+    from lerobot.async_inference.helpers import TimedAction
 
     fps = 30  # emulates most common frame-rate
     actions = []
@@ -124,7 +124,7 @@ def test_aggregate_action_queues_combines_actions_in_overlap(
 ):
     """`_aggregate_action_queues` must combine actions on overlapping timesteps according
     to the provided aggregate_fn, here tested with multiple coefficients."""
-    from lerobot.scripts.server.helpers import TimedAction
+    from lerobot.async_inference.helpers import TimedAction
 
     robot_client.chunks_received = 0
 

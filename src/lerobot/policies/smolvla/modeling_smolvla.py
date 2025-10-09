@@ -53,124 +53,20 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 """
 
 import math
-import os
-import re
 from collections import deque
 
-import safetensors
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers import AutoProcessor
 
-from lerobot.constants import ACTION, OBS_STATE
-from lerobot.policies.normalize import (
-    Normalize,
-    Unnormalize,
-)
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
     populate_queues,
 )
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.utils import get_safe_dtype
-
-# Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
-_VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
-
-
-def canonicalise(k: str) -> str:
-    """
-    Remove dataset-variant markers like '.so100-blue_' or '.so100_' from a
-    normalisation-buffer key.
-    """
-    return _VARIANT_RE.sub(".buffer_", k)
-
-
-def standardise_state_dict(
-    checkpoint: dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
-) -> tuple[dict[str, torch.Tensor], list[str]]:
-    """
-    • Re-keys `checkpoint ` so that every entry matches the *reference* key set.
-    • If several variant keys collapse to the same canonical name we keep the
-      first one and log the collision.
-    • Returns the new dict + a list of entries that could not be matched.
-    """
-    out, collisions, unmatched = {}, {}, []
-
-    for k, v in checkpoint.items():
-        canon = canonicalise(k)
-        if canon in ref_keys:
-            if canon in out:  # duplicate after collapsing
-                collisions.setdefault(canon, []).append(k)
-            else:
-                out[canon] = v
-        else:
-            unmatched.append(k)
-
-    if verbose:
-        for canon, variants in collisions.items():
-            print(f"[standardise_state_dict] '{canon}'  ←  {variants}")
-        if unmatched:
-            print(f"[standardise_state_dict] kept {len(unmatched)} unmatched keys")
-
-    out.update({k: checkpoint[k] for k in unmatched})
-    return out, unmatched
-
-
-def rename_checkpoint_keys(checkpoint: dict, rename_str: str):
-    """
-    Renames keys in a checkpoint dictionary based on the given rename string.
-
-    Args:
-        checkpoint (dict): The checkpoint dictionary.
-        rename_str (str): A string specifying key mappings in the format "old1//new1,old2//new2".
-
-    Returns:
-        dict: The modified checkpoint with renamed keys.
-    """
-
-    rename_dict = dict(pair.split("//") for pair in rename_str.split(","))
-
-    new_checkpoint = {}
-    for k, v in checkpoint.items():
-        for old_key, new_key in rename_dict.items():
-            if old_key in k:
-                k = k.replace(old_key, new_key)
-        new_checkpoint[k] = v
-    return new_checkpoint
-
-
-def load_smolvla(
-    model: torch.nn.Module,
-    filename: str | os.PathLike,
-    *,
-    device: str = "cpu",
-    checkpoint_keys_mapping: str = "",
-) -> torch.nn.Module:
-    state_dict = safetensors.torch.load_file(filename, device=device)
-
-    # Optional user-supplied renames (e.g. "model._orig_mod.//model.")
-    if checkpoint_keys_mapping and "//" in checkpoint_keys_mapping:
-        state_dict = rename_checkpoint_keys(state_dict, checkpoint_keys_mapping)
-
-    state_dict, _ = standardise_state_dict(state_dict, set(model.state_dict().keys()))
-
-    # HACK(aliberts): to not overwrite normalization parameters as they should come from the dataset
-    norm_keys = ("normalize_inputs", "normalize_targets", "unnormalize_outputs")
-    state_dict = {k: v for k, v in state_dict.items() if not k.startswith(norm_keys)}
-
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-
-    if not all(key.startswith(norm_keys) for key in missing) or unexpected:
-        raise RuntimeError(
-            "SmolVLA %d missing / %d unexpected keys",
-            len(missing),
-            len(unexpected),
-        )
-
-    return model
 
 
 def create_sinusoidal_pos_embedding(
@@ -326,28 +222,17 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: SmolVLAConfig,
-        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
                     the configuration class is used.
-            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
-                that they will be passed with a call to `load_state_dict` before the policy is used.
         """
 
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
 
-        self.language_tokenizer = AutoProcessor.from_pretrained(self.config.vlm_model_name).tokenizer
         self.model = VLAFlowMatching(config)
         self.reset()
 
@@ -356,23 +241,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
-
-    # HACK(aliberts, danaaubakirova): we overwrite this classmethod here to fix smolVLA-specific issues
-    @classmethod
-    def _load_as_safetensor(
-        cls,
-        model: "SmolVLAPolicy",
-        model_file: str,
-        map_location: str,
-        strict: bool,
-    ):
-        safetensors.torch.load_model(model, model_file, strict=strict, device=map_location)
-        return load_smolvla(
-            model,
-            model_file,
-            device=map_location,
-            checkpoint_keys_mapping="model._orig_mod.//model.",
-        )
 
     def get_optim_params(self) -> dict:
         return self.parameters()
@@ -389,15 +257,14 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-        lang_tokens, lang_masks = self.prepare_language(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
         actions = actions[:, :, :original_action_dim]
-
-        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
 
         if self.config.adapt_to_pi_aloha:
             actions = self._pi_aloha_encode_actions(actions)
@@ -407,8 +274,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def _prepare_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
-
-        batch = self.normalize_inputs(batch)
 
         return batch
 
@@ -450,11 +315,11 @@ class SmolVLAPolicy(PreTrainedPolicy):
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
+
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-        lang_tokens, lang_masks = self.prepare_language(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("actions_id_pad")
         loss_dict = {}
@@ -517,30 +382,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
             images.append(img)
             img_masks.append(mask)
         return images, img_masks
-
-    def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
-        """Tokenize the text input"""
-        device = batch[OBS_STATE].device
-        tasks = batch["task"]
-        if isinstance(tasks, str):
-            tasks = [tasks]
-
-        if len(tasks) == 1:
-            tasks = [tasks[0] for _ in range(batch[OBS_STATE].shape[0])]
-
-        tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
-
-        tokenized_prompt = self.language_tokenizer.__call__(
-            tasks,
-            padding=self.config.pad_language_to,
-            padding_side="right",
-            max_length=self.config.tokenizer_max_length,
-            return_tensors="pt",
-        )
-        lang_tokens = tokenized_prompt["input_ids"].to(device=device)
-        lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
-
-        return lang_tokens, lang_masks
 
     def _pi_aloha_decode_state(self, state):
         # Flip the joints.
