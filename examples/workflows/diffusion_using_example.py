@@ -2,29 +2,33 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.utils import build_inference_frame, make_robot_action
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 
 device = torch.device("mps")  # or "cuda" or "cpu"
-model_id = "fracapuano/robot_learning_tutorial_act_example_model"
-model = ACTPolicy.from_pretrained(model_id)
+model_id = "fracapuano/robot_learning_tutorial_diffusion_example_model"
+
+model = DiffusionPolicy.from_pretrained(model_id)
 
 dataset_id = "lerobot/svla_so101_pickplace"
 # This only downloads the metadata for the dataset, ~10s of MB even for large-scale datasets
 dataset_metadata = LeRobotDatasetMetadata(dataset_id)
-preprocess, postprocess = make_pre_post_processors(model.config, dataset_stats=dataset_metadata.stats)
+preprocess, postprocess = make_pre_post_processors(
+    model.config, model_id, dataset_stats=dataset_metadata.stats
+)
+
+MAX_EPISODES = 5
+MAX_STEPS_PER_EPISODE = 20
+
 
 # # find ports using lerobot-find-port
 follower_port = ...  # something like "/dev/tty.usbmodem58760431631"
 
 # # the robot ids are used the load the right calibration files
 follower_id = ...  # something like "follower_so100"
-
-MAX_EPISODES = 5
-MAX_STEPS_PER_EPISODE = 20
 
 # Robot and environment configuration
 # Camera keys must match the name and resolutions of the ones used for training!
@@ -38,6 +42,7 @@ robot_cfg = SO100FollowerConfig(port=follower_port, id=follower_id, cameras=came
 robot = SO100Follower(robot_cfg)
 robot.connect()
 
+
 for _ in range(MAX_EPISODES):
     for _ in range(MAX_STEPS_PER_EPISODE):
         obs = robot.get_observation()
@@ -47,9 +52,7 @@ for _ in range(MAX_EPISODES):
 
         action = model.select_action(obs)
         action = postprocess(action)
-
         action = make_robot_action(action, dataset_metadata.features)
-
         robot.send_action(action)
 
     print("Episode finished! Starting new episode...")
