@@ -103,7 +103,7 @@ def predict_action(
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
-        observation = build_inference_frame(observation, device)
+        observation = build_inference_frame(observation, device, task=task, robot_type=robot_type)
 
         observation = preprocessor(observation)
 
@@ -112,12 +112,6 @@ def predict_action(
         action = policy.select_action(observation)
 
         action = postprocessor(action)
-
-        # Remove batch dimension
-        action = action.squeeze(0)
-
-        # Move to cpu, if not already the case
-        action = action.to("cpu")
 
     return action
 

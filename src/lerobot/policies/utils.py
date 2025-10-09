@@ -122,6 +122,8 @@ def build_inference_frame(
 
 def make_robot_action(action_tensor: torch.Tensor, ds_features: dict[str, dict]) -> dict[str, float]:
     """Turns a tensor action into a RobotAction, a dictionary of named motor positions."""
+    action_tensor = action_tensor.squeeze(0)
+    action_tensor = action_tensor.to("cpu")
 
     action_names = ds_features[ACTION]["names"]
     act_processed_policy: RobotAction = {
