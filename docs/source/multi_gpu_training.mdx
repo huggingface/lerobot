@@ -1,0 +1,96 @@
+# Multi-GPU Training
+
+This guide shows you how to train policies on multiple GPUs using [Hugging Face Accelerate](https://huggingface.co/docs/accelerate).
+
+## Installation
+
+First, ensure you have accelerate installed:
+
+```bash
+pip install accelerate
+```
+
+Or install it with the LeRobot accelerate extra:
+
+```bash
+pip install lerobot[accelerate]
+```
+
+## Configuration
+
+Configure accelerate for your hardware setup by running:
+
+```bash
+accelerate config
+```
+
+This interactive setup will ask you questions about your training environment (number of GPUs, mixed precision settings, etc.). For a simple multi-GPU setup on a single machine, you can use these recommended settings:
+
+- Compute environment: This machine
+- Number of machines: 1
+- Number of processes: (number of GPUs you want to use)
+- GPU ids to use: (leave empty to use all)
+- Mixed precision: fp16 or bf16 (recommended for faster training)
+
+## Training with Multiple GPUs
+
+You can launch training in two ways:
+
+### Option 1: Using accelerate config (recommended)
+
+If you ran `accelerate config`, simply launch with:
+
+```bash
+accelerate launch $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --output_dir=outputs/train/act_multi_gpu \
+  --job_name=act_multi_gpu \
+  --wandb.enable=true
+```
+
+### Option 2: Without config (specify parameters directly)
+
+If you prefer not to run `accelerate config`, you can specify all parameters in the command:
+
+```bash
+accelerate launch \
+  --multi_gpu \
+  --num_processes=2 \
+  --mixed_precision=fp16 \
+  $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --output_dir=outputs/train/act_multi_gpu \
+  --job_name=act_multi_gpu \
+  --wandb.enable=true
+```
+
+**Key accelerate parameters:**
+- `--multi_gpu`: Enable multi-GPU training
+- `--num_processes=2`: Number of GPUs to use
+- `--mixed_precision=fp16`: Use fp16 mixed precision (or `bf16` if supported)
+
+## How It Works
+
+When you launch training with accelerate:
+
+1. **Automatic detection**: LeRobot automatically detects if it's running under accelerate
+2. **Data distribution**: Your batch is automatically split across GPUs
+3. **Gradient synchronization**: Gradients are synchronized across GPUs during backpropagation
+4. **Single process logging**: Only the main process logs to wandb and saves checkpoints
+
+## Mixed Precision Training
+
+For faster training, you can enable mixed precision (fp16 or bf16). This is configured during `accelerate config` or by passing `--mixed_precision=fp16` to `accelerate launch`. LeRobot's `use_amp` setting is automatically handled when using accelerate.
+
+## Notes
+
+- The `--policy.use_amp` flag in `lerobot-train` is only used when **not** running with accelerate. When using accelerate, mixed precision is controlled by accelerate's configuration.
+- Training logs, checkpoints, and hub uploads are only done by the main process to avoid conflicts.
+- The effective batch size is `batch_size × num_gpus`. If you use 4 GPUs with `--batch_size=8`, your effective batch size is 32.
+- Learning rate scheduling is handled correctly across multiple processes—LeRobot sets `step_scheduler_with_optimizer=False` to prevent accelerate from adjusting scheduler steps based on the number of processes.
+- When saving or pushing models, LeRobot automatically unwraps the model from accelerate's distributed wrapper to ensure compatibility.
+
+For more advanced configurations and troubleshooting, see the [Accelerate documentation](https://huggingface.co/docs/accelerate).
+

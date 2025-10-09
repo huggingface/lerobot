@@ -421,10 +421,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
     if not accelerator or accelerator.is_main_process:
         logging.info("End of training")
 
-    if cfg.policy.push_to_hub:
-        policy.push_model_to_hub(cfg)
-        preprocessor.push_to_hub(cfg.policy.repo_id)
-        postprocessor.push_to_hub(cfg.policy.repo_id)
+        if cfg.policy.push_to_hub:
+            unwrapped_policy = policy if not accelerator else accelerator.unwrap_model(policy)
+            unwrapped_policy.push_model_to_hub(cfg)
+            preprocessor.push_to_hub(cfg.policy.repo_id)
+            postprocessor.push_to_hub(cfg.policy.repo_id)
 
 
 def main():
