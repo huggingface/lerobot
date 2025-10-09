@@ -383,7 +383,7 @@ class LeRobotDatasetMetadata:
         if not (0 <= episode_index < len(self.episodes)):
             raise IndexError(f"episode_index {episode_index} is out of bounds.")
 
-        # 1. Find the location of the episode's metadata from the HF dataset
+        # Find the location of the episode's metadata from the HF dataset
         episode_info = self.episodes[episode_index]
         chunk_idx = episode_info["meta/episodes/chunk_index"]
         file_idx = episode_info["meta/episodes/file_index"]
@@ -392,7 +392,7 @@ class LeRobotDatasetMetadata:
         if not parquet_path.exists():
             raise FileNotFoundError(f"Parquet file for episode {episode_index} not found at {parquet_path}")
 
-        # 2. Load the corresponding parquet file into a pandas dataframe
+        # Load the corresponding parquet file into a pandas dataframe
         df = pd.read_parquet(parquet_path)
         row_indices = df[df['episode_index'] == episode_index].index
 
@@ -401,17 +401,17 @@ class LeRobotDatasetMetadata:
 
         row_index = row_indices[0]
 
-        # 3. Update the metadata in the dataframe
+        # Update the metadata in the dataframe
         for key, value in episode_metadata.items():
             if key not in df.columns:
                 logging.warning(f"Metadata key '{key}' not found. Adding it as a new column.")
                 df[key] = pd.NA
             df.loc[row_index, key] = value
 
-        # 4. Save the updated dataframe back to disk
+        # Save the updated dataframe back to disk
         df.to_parquet(parquet_path, index=False)
 
-        # 5. Remove the cache and reload the episodes dataset to reflect changes
+        # Remove the cache and reload the episodes dataset to reflect changes
         cached_dir = get_hf_dataset_cache_dir(self.episodes)
         if cached_dir is not None and Path(cached_dir).exists():
             shutil.rmtree(cached_dir)
@@ -1130,10 +1130,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         if not self.async_video_encoder:
             return
-        episodes_meta_path = self.root / "meta" / "episodes.parquet"
+
+        # Reload the in-memory metadata about episodes
+        self.meta.episodes = load_episodes(self.root)
 
         sorted_tasks = sorted(self.async_video_encoder.get_completed_tasks(), key=lambda x: x.episode_index)
-        logging.info(f'sorted_tasks {sorted_tasks}')
+        logging.info(f'Finalizing episodes {sorted_tasks}')
         for task in sorted_tasks:
             if not task.success:
                 logging.error(f"Skipping finalization for failed episode {task.episode_index}: {task.error_message}")
@@ -1147,21 +1149,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 metadata.pop("episode_index")
                 all_metadata_for_ep.update(metadata)
 
-            # Update the metadata for this single episode
-            # episodes_df = pd.read_parquet(episodes_meta_path)
-            # for key, value in all_metadata_for_ep.items():
-            #     episodes_df.loc[episodes_df["episode_index"] == task.episode_index, key] = value
-            # episodes_df.to_parquet(episodes_meta_path, index=False)
-            # # Reload the in-memory metadata to reflect the change for the next iteration.
-            # self.meta.episodes = episodes_df.to_dict("records")
-
             # update the placeholder that was created for this episode with the data known now that async video encoding is complete.
             self.meta.update_episode_metadata(task.episode_index, all_metadata_for_ep)
             first_ep = self.meta.episodes[0]
-            logging.info(f'first ep metadata {first_ep}')
 
             # Clean up the temporary directory for this episode's videos
-            logging.info(f'removing path {list(task.temp_video_paths.values())[0].parent}')
             shutil.rmtree(list(task.temp_video_paths.values())[0].parent, ignore_errors=True)
 
         # After all episodes are finalized, update the video info in info.json
@@ -1278,18 +1270,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # because the _finalize_async_videos is processing episodes sequentially.
             latest_ep = self.meta.episodes[episode_index - 1]
 
-            logging.info(f'This does not appear to be the first episode in the dataset, therefore we must pick up with the chunk and file index of the latest ep, which looks like this {latest_ep}')
-            #TODO these are missing after all.
-            chunk_idx = latest_ep[f"videos/{video_key}/chunk_index"]
-            file_idx = latest_ep[f"videos/{video_key}/file_index"]
+            # It should not be necessary to convert these to ints. Is metadata getting written incorrectly?
+            chunk_idx = int(latest_ep[f"videos/{video_key}/chunk_index"])
+            file_idx = int(latest_ep[f"videos/{video_key}/file_index"])
             
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
-            latest_size_in_mb = get_video_size_in_mb(latest_path)
-            latest_duration_in_s = get_video_duration_in_s(latest_path)
+            # with this episode contactenated to the last one, the video file may become too big.
+            # this is the usual reason to start a new video file.
 
-            if latest_size_in_mb + ep_size_in_mb >= self.meta.video_files_size_in_mb:
+            # alternately, the video from the previous episode may not exist because LeRobotDataset was initialized with download_videos=False
+            # this is also an acceptable reason to start a new video file.
+
+            if not latest_path.exists() or get_video_size_in_mb(latest_path) + ep_size_in_mb >= self.meta.video_files_size_in_mb:
                 # Move temporary episode video to a new video file in the dataset
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
                 new_path = self.root / self.meta.video_path.format(
@@ -1299,13 +1293,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 shutil.move(str(ep_path), str(new_path))
                 latest_duration_in_s = 0.0
             else:
+                latest_duration_in_s = get_video_duration_in_s(latest_path)
                 # Update latest video file
                 concatenate_video_files(
                     [latest_path, ep_path],
                     latest_path,
                 )
 
-        # Remove temporary directory
+        # TODO, it should be ok to remove this episode's temporary directory here but it was causing problems. investigate.
         # logging.info(f'removing this {str(ep_path.parent)}')
         # shutil.rmtree(str(ep_path.parent))
 
