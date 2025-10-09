@@ -7,8 +7,6 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
-  - local: il_sim
-    title: Imitation Learning in Sim
   - local: cameras
     title: Cameras
   - local: integrate_hardware
@@ -21,6 +19,8 @@
     title: Use Async Inference
   title: "Tutorials"
 - sections:
+  - local: lerobot-dataset-format
+    title: LeRobotDataset Format
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
   - local: porting_datasets_v3
@@ -35,6 +35,8 @@
     title: π₀.₅ (Pi05)
   title: "Policies"
 - sections:
+  - local: il_sim
+    title: Imitation Learning in Sim
   - local: libero
     title: Using Libero
   - local: metaworld
