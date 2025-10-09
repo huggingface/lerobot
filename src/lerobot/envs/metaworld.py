@@ -372,8 +372,7 @@ class MetaworldEnv(gym.Env):
         agent_pos = raw_obs[:4]
         if self.obs_type == "state":
             raise NotImplementedError(
-                "'state' obs_type not implemented for MetaWorld. "
-                "Use pixel modes instead."
+                "'state' obs_type not implemented for MetaWorld. Use pixel modes instead."
             )
 
         elif self.obs_type in ("pixels", "pixels_agent_pos"):

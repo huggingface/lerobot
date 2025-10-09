@@ -213,8 +213,6 @@ https://pypi.org/project/lerobot/
   tooling, and best practices across simulation and real-world datasets.
 </p>
 
-
-
 ## Contribute
 
 If you would like to contribute to 🤗 LeRobot, please check out our [contribution guide](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md).
