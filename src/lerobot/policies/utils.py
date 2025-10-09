@@ -21,7 +21,8 @@ import torch
 from torch import nn
 
 from lerobot.datasets.utils import build_dataset_frame
-from lerobot.utils.constants import OBS_STR
+from lerobot.processor import RobotAction
+from lerobot.utils.constants import ACTION, OBS_STR
 
 
 def populate_queues(
@@ -117,3 +118,13 @@ def build_inference_frame(
     observation["robot_type"] = robot_type if robot_type else ""
 
     return observation
+
+
+def make_robot_action(action_tensor: torch.Tensor, ds_features: dict[str, dict]) -> dict[str, float]:
+    """Turns a tensor action into a RobotAction, a dictionary of named motor positions."""
+
+    action_names = ds_features[ACTION]["names"]
+    act_processed_policy: RobotAction = {
+        f"{name}": float(action_tensor[i]) for i, name in enumerate(action_names)
+    }
+    return act_processed_policy
