@@ -104,6 +104,21 @@ def replay(cfg: ReplayConfig):
 
     robot.connect()
 
+    # Restore environment to recorded state (for SO-101 MuJoCo robot)
+    if hasattr(robot, 'reset_to_home_position'):
+        robot.reset_to_home_position()
+
+    # Restore block position from episode metadata (for SO-101 MuJoCo robot)
+    if hasattr(robot, 'set_block_position_direct'):
+        episode_meta = dataset.meta.episodes[cfg.dataset.episode]
+        if all(k in episode_meta for k in ['block/initial_x', 'block/initial_y', 'block/initial_z']):
+            robot.set_block_position_direct(
+                float(episode_meta['block/initial_x']),
+                float(episode_meta['block/initial_y']),
+                float(episode_meta['block/initial_z'])
+            )
+            logging.info(f"Restored block to recorded position from episode {cfg.dataset.episode} metadata")
+
     log_say("Replaying episode", cfg.play_sounds, blocking=True)
     for idx in range(len(episode_frames)):
         start_episode_t = time.perf_counter()

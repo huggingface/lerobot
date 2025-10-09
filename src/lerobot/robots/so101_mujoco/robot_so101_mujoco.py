@@ -490,16 +490,42 @@ class SO101MujocoRobot(Robot):
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
-        Execute velocity commands for 1/30s using high-frequency control.
+        Main action dispatch - auto-detects action type and routes appropriately.
 
-        Action dict should contain velocity keys: 'vx', 'vy', 'vz', 'yaw_rate', 'gripper_delta'
-        (These are set by _from_keyboard_to_base_action or can be provided directly)
+        Action types:
+        - Velocity commands (teleop): {vx, vy, vz, yaw_rate, gripper_delta}
+        - Joint positions (replay/policy): {shoulder_pan.pos, shoulder_lift.pos, ...}
 
-        Returns the final joint position targets (for recording).
+        Returns the commanded action dict.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected")
 
+        # Auto-detect action type
+        has_velocity_keys = any(k in action for k in ["vx", "vy", "vz", "yaw_rate", "gripper_delta"])
+        has_position_keys = any(f"{jn}.pos" in action for jn in self.JOINT_NAMES)
+
+        if has_position_keys:
+            # Replay/policy mode - direct position control
+            return self._send_action_position(action)
+        elif has_velocity_keys or not action:
+            # Teleop mode - velocity-based control (empty action uses stored velocities)
+            return self._send_action_teleop(action)
+        else:
+            raise ValueError(
+                f"Unknown action format. Expected either velocity keys (vx, vy, vz) "
+                f"or position keys ({self.JOINT_NAMES[0]}.pos, ...). Got: {list(action.keys())}"
+            )
+
+    def _send_action_teleop(self, action: dict[str, Any]) -> dict[str, Any]:
+        """
+        Velocity-based control for teleoperation.
+
+        Action dict contains velocity keys: 'vx', 'vy', 'vz', 'yaw_rate', 'gripper_delta'
+        Runs high-frequency control loop with Jacobian/IK computation.
+
+        Returns the final joint position targets (for recording).
+        """
         # Get velocity commands from action dict (set by _from_keyboard_to_base_action)
         # If action is empty, use stored keyboard velocities (backward compatibility with test scripts)
         if action:
@@ -530,6 +556,35 @@ class SO101MujocoRobot(Robot):
             )
 
         return action_to_record
+
+    def _send_action_position(self, action: dict[str, Any]) -> dict[str, Any]:
+        """
+        Position-based control for replay/policy execution.
+
+        Action dict contains joint position targets: {shoulder_pan.pos, ...}
+        Directly sets joint position targets and steps physics.
+        No IK/Jacobian computation - just tracks the commanded positions.
+
+        Returns the commanded action dict.
+        """
+        # Extract and set joint positions
+        for joint_name in self.JOINT_NAMES:
+            key = f"{joint_name}.pos"
+            if key in action:
+                target_pos = float(action[key])
+                # Set actuator control (PD controller tracks this)
+                self.data.ctrl[self.act_ids[joint_name]] = target_pos
+
+        # Step physics for one record period (30Hz = 12 physics steps at 360Hz)
+        n_physics_steps = int((1.0 / self.config.record_fps) / self.physics_dt)
+        for _ in range(n_physics_steps):
+            mj.mj_step(self.model, self.data)
+
+        # Render GLFW visualization
+        self._render_glfw()
+
+        # Return commanded action
+        return action.copy()
 
     def _control_step(self, vx: float, vy: float, vz: float, yaw_rate: float, gripper_delta: float):
         """
@@ -610,6 +665,8 @@ class SO101MujocoRobot(Robot):
             self.j_lo[gdof],
             self.j_hi[gdof]
         )
+        # Update q_des to match actual gripper control (for recording)
+        self.q_des[gdof] = self.data.ctrl[gidx]
 
         # --- Step physics multiple times ---
         for _ in range(self.n_physics_per_control):
@@ -801,6 +858,41 @@ class SO101MujocoRobot(Robot):
         block_qpos_adr = self.model.jnt_qposadr[block_jnt_id]
         pos = self.data.qpos[block_qpos_adr:block_qpos_adr + 3]
         return (float(pos[0]), float(pos[1]), float(pos[2]))
+
+    def set_block_position_direct(self, x: float, y: float, z: float) -> None:
+        """
+        Directly set block position (for replay).
+
+        Args:
+            x: X coordinate in meters
+            y: Y coordinate in meters
+            z: Z coordinate in meters
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected")
+
+        block_jnt_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "block")
+        if block_jnt_id < 0:
+            logger.warning("Block not found in model - cannot set position")
+            return
+
+        # Get qpos address for block's freejoint (7 DOF: 3 pos + 4 quat)
+        block_qpos_adr = self.model.jnt_qposadr[block_jnt_id]
+
+        # Set position
+        self.data.qpos[block_qpos_adr:block_qpos_adr + 3] = [x, y, z]
+
+        # Reset orientation to upright (identity quaternion: w=1, x=0, y=0, z=0)
+        self.data.qpos[block_qpos_adr + 3:block_qpos_adr + 7] = [1, 0, 0, 0]
+
+        # Reset velocities
+        block_qvel_adr = self.model.jnt_dofadr[block_jnt_id]
+        self.data.qvel[block_qvel_adr:block_qvel_adr + 6] = 0.0
+
+        # Forward kinematics to update derived quantities
+        mj.mj_forward(self.model, self.data)
+
+        logger.info(f"Block set to position: [{x:.3f}, {y:.3f}, {z:.3f}]")
 
     def disconnect(self) -> None:
         """Close MuJoCo model and renderer."""
