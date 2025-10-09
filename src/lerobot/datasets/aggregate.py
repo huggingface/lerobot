@@ -193,6 +193,9 @@ def aggregate_datasets(
         robot_type=robot_type,
         features=features,
         root=aggr_root,
+        chunks_size=chunk_size,
+        data_files_size_in_mb=data_files_size_in_mb,
+        video_files_size_in_mb=video_files_size_in_mb,
     )
 
     logging.info("Find all tasks")

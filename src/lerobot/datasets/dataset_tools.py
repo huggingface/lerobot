@@ -201,6 +201,9 @@ def split_dataset(
             robot_type=dataset.meta.robot_type,
             root=split_output_dir,
             use_videos=len(dataset.meta.video_keys) > 0,
+            chunks_size=dataset.meta.chunks_size,
+            data_files_size_in_mb=dataset.meta.data_files_size_in_mb,
+            video_files_size_in_mb=dataset.meta.video_files_size_in_mb,
         )
 
         video_metadata = None
