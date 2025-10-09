@@ -1,19 +1,3 @@
-#!/usr/bin/env python
-
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import logging
 import time
 from typing import Any
@@ -75,6 +59,10 @@ class StaraiViolin(Teleoperator):
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
             )
             self.calibrate()
+        if self.is_calibrated:
+            logger.info(f"{self} slow start in progress, please wait for 3 seconds.")
+            self.move_to_initial_position()
+
         self.configure()
         logger.info(f"{self} connected.")
 
@@ -167,4 +155,25 @@ class StaraiViolin(Teleoperator):
 
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)
+        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+    
+    def move_to_initial_position(self)-> dict[str, Any]:
+        postion = self.get_action()
+
+
+        # if not self.is_connected:
+        #     raise DeviceNotConnectedError(f"{self} is not connected.")
+        goal_pos = {}
+        goal_pos = {key.removesuffix(".pos"): val for key, val in postion.items() if key.endswith(".pos")}
+        goal_pos["Motor_0"] = 0
+        goal_pos["Motor_1"] = -100
+        goal_pos["Motor_2"] = 60
+        goal_pos["Motor_3"] = 0
+        goal_pos["Motor_4"] = 30
+        goal_pos["Motor_5"] = 0
+        goal_pos["gripper"] = 50
+        self.bus.sync_write("Goal_Position", goal_pos,motion_time = 1500)
+        time.sleep(1.5)
+        self.bus.disable_torque(motors = "gripper",mode = "unlocked")
+        # time.sleep(2)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
