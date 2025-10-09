@@ -233,15 +233,25 @@ class OpenCVCamera(Camera):
 
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         if not width_success or self.capture_width != actual_width:
-            raise RuntimeError(
-                f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=})."
+            logger.warning(
+                f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=}). "
+                f"Using camera's actual width={actual_width}."
             )
+            self.capture_width = actual_width
 
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         if not height_success or self.capture_height != actual_height:
-            raise RuntimeError(
-                f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=})."
+            logger.warning(
+                f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=}). "
+                f"Using camera's actual height={actual_height}."
             )
+            self.capture_height = actual_height
+
+        # Update output dimensions based on actual capture dimensions and rotation
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            self.width, self.height = self.capture_height, self.capture_width
+        else:
+            self.width, self.height = self.capture_width, self.capture_height
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
