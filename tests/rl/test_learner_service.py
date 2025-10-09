@@ -50,7 +50,7 @@ def create_learner_service_stub(
 ):
     import grpc
 
-    from lerobot.scripts.rl.learner_service import LearnerService
+    from lerobot.rl.learner_service import LearnerService
     from lerobot.transport import services_pb2_grpc  # generated from .proto
 
     """Fixture to start a LearnerService gRPC server and provide a connected stub."""

@@ -24,9 +24,9 @@ The comments in this code may sometimes refer to these references:
 # ruff: noqa: N806
 
 from collections import deque
+from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
-from typing import Callable
 
 import einops
 import numpy as np
@@ -35,11 +35,10 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_STATE, REWARD
-from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_PREFIX, OBS_STATE, OBS_STR, REWARD
 
 
 class TDMPCPolicy(PreTrainedPolicy):
@@ -63,25 +62,18 @@ class TDMPCPolicy(PreTrainedPolicy):
     config_class = TDMPCConfig
     name = "tdmpc"
 
-    def __init__(self, config: TDMPCConfig, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
+    def __init__(
+        self,
+        config: TDMPCConfig,
+    ):
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
                 the configuration class is used.
-            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
-                that they will be passed with a call to `load_state_dict` before the policy is used.
         """
         super().__init__(config)
         config.validate_features()
         self.config = config
-
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
 
         self.model = TDMPCTOLD(config)
         self.model_target = deepcopy(self.model)
@@ -99,18 +91,18 @@ class TDMPCPolicy(PreTrainedPolicy):
         called on `env.reset()`
         """
         self._queues = {
-            "observation.state": deque(maxlen=1),
-            "action": deque(maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)),
+            OBS_STATE: deque(maxlen=1),
+            ACTION: deque(maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)),
         }
         if self.config.image_features:
-            self._queues["observation.image"] = deque(maxlen=1)
+            self._queues[OBS_IMAGE] = deque(maxlen=1)
         if self.config.env_state_feature:
-            self._queues["observation.environment_state"] = deque(maxlen=1)
+            self._queues[OBS_ENV_STATE] = deque(maxlen=1)
         # Previous mean obtained from the cross-entropy method (CEM) used during MPC. It is used to warm start
         # CEM for the next step.
         self._prev_mean: torch.Tensor | None = None
 
-    @torch.no_grad
+    @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
@@ -137,16 +129,21 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         actions = torch.clamp(actions, -1, +1)
 
-        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
-        batch = self.normalize_inputs(batch)
+        # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
+        if ACTION in batch:
+            batch.pop(ACTION)
+
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
+        # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
+        if ACTION in batch:
+            batch.pop(ACTION)
 
         self._queues = populate_queues(self._queues, batch)
 
@@ -315,11 +312,9 @@ class TDMPCPolicy(PreTrainedPolicy):
         """
         device = get_device_from_parameters(self)
 
-        batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
-        batch = self.normalize_targets(batch)
 
         info = {}
 
@@ -330,7 +325,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         action = batch[ACTION]  # (t, b, action_dim)
         reward = batch[REWARD]  # (t, b)
-        observations = {k: v for k, v in batch.items() if k.startswith("observation.")}
+        observations = {k: v for k, v in batch.items() if k.startswith(OBS_PREFIX)}
 
         # Apply random image augmentations.
         if self.config.image_features and self.config.max_random_shift_ratio > 0:
@@ -392,10 +387,10 @@ class TDMPCPolicy(PreTrainedPolicy):
                 temporal_loss_coeffs
                 * F.mse_loss(z_preds[1:], z_targets, reduction="none").mean(dim=-1)
                 # `z_preds` depends on the current observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
+                * ~batch[f"{OBS_STR}.state_is_pad"][0]
                 * ~batch["action_is_pad"]
                 # `z_targets` depends on the next observation.
-                * ~batch["observation.state_is_pad"][1:]
+                * ~batch[f"{OBS_STR}.state_is_pad"][1:]
             )
             .sum(0)
             .mean()
@@ -408,7 +403,7 @@ class TDMPCPolicy(PreTrainedPolicy):
                 * F.mse_loss(reward_preds, reward, reduction="none")
                 * ~batch["next.reward_is_pad"]
                 # `reward_preds` depends on the current observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
+                * ~batch[f"{OBS_STR}.state_is_pad"][0]
                 * ~batch["action_is_pad"]
             )
             .sum(0)
@@ -424,11 +419,11 @@ class TDMPCPolicy(PreTrainedPolicy):
                     reduction="none",
                 ).sum(0)  # sum over ensemble
                 # `q_preds_ensemble` depends on the first observation and the actions.
-                * ~batch["observation.state_is_pad"][0]
+                * ~batch[f"{OBS_STR}.state_is_pad"][0]
                 * ~batch["action_is_pad"]
                 # q_targets depends on the reward and the next observations.
                 * ~batch["next.reward_is_pad"]
-                * ~batch["observation.state_is_pad"][1:]
+                * ~batch[f"{OBS_STR}.state_is_pad"][1:]
             )
             .sum(0)
             .mean()
@@ -446,7 +441,7 @@ class TDMPCPolicy(PreTrainedPolicy):
                 temporal_loss_coeffs
                 * raw_v_value_loss
                 # `v_targets` depends on the first observation and the actions, as does `v_preds`.
-                * ~batch["observation.state_is_pad"][0]
+                * ~batch[f"{OBS_STR}.state_is_pad"][0]
                 * ~batch["action_is_pad"]
             )
             .sum(0)
@@ -482,7 +477,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             * mse
             * temporal_loss_coeffs
             # `action_preds` depends on the first observation and the actions.
-            * ~batch["observation.state_is_pad"][0]
+            * ~batch[f"{OBS_STR}.state_is_pad"][0]
             * ~batch["action_is_pad"]
         ).mean()
 

@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import abc
+import builtins
 from pathlib import Path
-from typing import Any, Type
+from typing import Any
 
 import draccus
 
-from lerobot.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.motors.motors_bus import MotorCalibration
+from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from .config import TeleoperatorConfig
 
@@ -37,7 +38,7 @@ class Teleoperator(abc.ABC):
     """
 
     # Set these in ALL subclasses
-    config_class: Type[TeleoperatorConfig]
+    config_class: builtins.type[TeleoperatorConfig]
     name: str
 
     def __init__(self, config: TeleoperatorConfig):

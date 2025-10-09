@@ -1,0 +1,79 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This Dockerfile is designed for a lerobot user who wants to
+# experiment with the project. It starts from an Python Slim base image.
+
+# docker build -f docker/Dockerfile.user -t lerobot-user .
+# docker run -it --rm lerobot-user
+
+# Configure the base image
+ARG PYTHON_VERSION=3.10
+FROM python:${PYTHON_VERSION}-slim
+
+# Configure environment variables
+ENV DEBIAN_FRONTEND=noninteractive \
+    MUJOCO_GL=egl \
+    PATH=/lerobot/.venv/bin:$PATH
+
+# Install system dependencies and uv (as root)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git curl libglib2.0-0 libegl1-mesa-dev ffmpeg \
+    libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
+    cmake pkg-config ninja-build \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && useradd --create-home --shell /bin/bash user_lerobot \
+    && usermod -aG sudo user_lerobot \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Create application directory and set permissions
+WORKDIR /lerobot
+RUN chown -R user_lerobot:user_lerobot /lerobot
+
+# Switch to the non-root user
+USER user_lerobot
+
+# Environment variables for the testing
+ENV HOME=/home/user_lerobot \
+    HF_HOME=/home/user_lerobot/.cache/huggingface \
+    HF_LEROBOT_HOME=/home/user_lerobot/.cache/huggingface/lerobot \
+    TORCH_HOME=/home/user_lerobot/.cache/torch \
+    TRITON_CACHE_DIR=/home/user_lerobot/.cache/triton
+
+# Create the virtual environment
+# We use a virtual environment inside the container—even though the container itself \
+# provides isolation—to closely resemble local development and allow users to \
+# run other Python projects in the same container without dependency conflicts.
+RUN uv venv
+
+# Install Python dependencies for caching
+COPY --chown=user_lerobot:user_lerobot pyproject.toml README.md MANIFEST.in ./
+COPY --chown=user_lerobot:user_lerobot src/ src/
+
+ARG UNBOUND_DEPS=false
+
+RUN if [ "$UNBOUND_DEPS" = "true" ]; then \
+    sed -i 's/,[[:space:]]*<[0-9\.]*//g' pyproject.toml; \
+    echo "Dependencies unbound:" && cat pyproject.toml; \
+    fi
+
+RUN uv pip install --no-cache ".[all]"
+
+# Copy the rest of the application code
+# Make sure to have the git-LFS files for testing
+COPY --chown=user_lerobot:user_lerobot . .
+
+# Set the default command
+CMD ["/bin/bash"]

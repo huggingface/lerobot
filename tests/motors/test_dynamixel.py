@@ -1,6 +1,22 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import re
 import sys
-from typing import Generator
+from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,7 +24,7 @@ import pytest
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import MODEL_NUMBER_TABLE, DynamixelMotorsBus
 from lerobot.motors.dynamixel.tables import X_SERIES_CONTROL_TABLE
-from lerobot.utils.encoding_utils import encode_twos_complement
+from lerobot.motors.encoding_utils import encode_twos_complement
 
 try:
     import dynamixel_sdk as dxl

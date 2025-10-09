@@ -22,4 +22,4 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("stretch3")
 @dataclass
 class Stretch3GamePadConfig(TeleoperatorConfig):
-    mock: bool = False
+    """Stretch3GamePadConfig"""

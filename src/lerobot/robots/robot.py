@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import abc
+import builtins
 from pathlib import Path
-from typing import Any, Type
+from typing import Any
 
 import draccus
 
-from lerobot.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 from lerobot.motors import MotorCalibration
+from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
 
@@ -39,7 +40,7 @@ class Robot(abc.ABC):
     """
 
     # Set these in ALL subclasses
-    config_class: Type[RobotConfig]
+    config_class: builtins.type[RobotConfig]
     name: str
 
     def __init__(self, config: RobotConfig):
