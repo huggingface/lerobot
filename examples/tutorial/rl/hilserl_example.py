@@ -75,7 +75,7 @@ def run_learner(
 
             # Combine batches - this is the key HIL-SERL mechanism!
             batch = {}
-            for key in online_batch.keys():
+            for key in online_batch:
                 if key in offline_batch:
                     batch[key] = torch.cat([online_batch[key], offline_batch[key]], dim=0)
                 else:
@@ -161,10 +161,9 @@ def run_actor(
                 policy_next_obs = make_policy_obs(next_obs, device=device)
                 reward = reward_classifier.predict_reward(policy_next_obs)
 
-                if reward >= 1.0:  # success detected! halt episode
-                    if not done:
-                        terminated = True
-                        done = True
+                if reward >= 1.0 and not done:  # success detected! halt episode
+                    terminated = True
+                    done = True
 
                 # In HIL-SERL, human interventions come from the teleop device
                 is_intervention = False
