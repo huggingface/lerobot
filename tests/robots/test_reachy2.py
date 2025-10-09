@@ -245,14 +245,14 @@ def test_get_observation(reachy2):
     obs = reachy2.get_observation()
 
     expected_keys = set(reachy2.joints_dict)
-    expected_keys.update(f"{v}" for v in REACHY2_VEL.keys() if reachy2.config.with_mobile_base)
+    expected_keys.update(f"{v}" for v in REACHY2_VEL if reachy2.config.with_mobile_base)
     expected_keys.update(reachy2.cameras.keys())
     assert set(obs.keys()) == expected_keys
 
-    for motor in reachy2.joints_dict.keys():
+    for motor in reachy2.joints_dict:
         assert obs[motor] == reachy2.reachy.joints[REACHY2_JOINTS[motor]].present_position
     if reachy2.config.with_mobile_base:
-        for vel in REACHY2_VEL.keys():
+        for vel in REACHY2_VEL:
             assert obs[vel] == reachy2.reachy.mobile_base.odometry[REACHY2_VEL[vel]]
     if reachy2.config.with_left_teleop_camera:
         assert obs["teleop_left"].shape == (
@@ -282,7 +282,7 @@ def test_send_action(reachy2):
         action.update({k: i * 0.1 for i, k in enumerate(REACHY2_VEL.keys(), start=1)})
 
     previous_present_position = {
-        k: reachy2.reachy.joints[REACHY2_JOINTS[k]].present_position for k in reachy2.joints_dict.keys()
+        k: reachy2.reachy.joints[REACHY2_JOINTS[k]].present_position for k in reachy2.joints_dict
     }
     returned = reachy2.send_action(action)
 
@@ -290,7 +290,7 @@ def test_send_action(reachy2):
         assert returned == action
 
     assert reachy2.reachy._goal_position_set_total == len(reachy2.joints_dict)
-    for motor in reachy2.joints_dict.keys():
+    for motor in reachy2.joints_dict:
         expected_pos = action[motor]
         real_pos = reachy2.reachy.joints[REACHY2_JOINTS[motor]].goal_position
         if reachy2.config.max_relative_target is None:
