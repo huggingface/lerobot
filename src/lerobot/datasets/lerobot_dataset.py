@@ -150,7 +150,6 @@ class LeRobotDatasetMetadata:
         ep = self.episodes[ep_index]
         chunk_idx = ep[f"videos/{vid_key}/chunk_index"]
         file_idx = ep[f"videos/{vid_key}/file_index"]
-        logging.warning(f'this is what we have {ep} {chunk_idx} {file_idx}')
         fpath = self.video_path.format(video_key=vid_key, chunk_index=chunk_idx, file_index=file_idx)
         return Path(fpath)
 
@@ -367,6 +366,58 @@ class LeRobotDatasetMetadata:
         self.stats = aggregate_stats([self.stats, episode_stats]) if self.stats is not None else episode_stats
         write_stats(self.stats, self.root)
 
+    def update_episode_metadata(self, episode_index: int, episode_metadata: dict) -> None:
+        """Update the metadata for a single, existing episode.
+
+        This method locates an episode by its index, updates its metadata fields with the provided
+        dictionary, and saves the changes back to the corresponding parquet file. It assumes the
+        episode and its corresponding parquet file already exist.
+
+        Args:
+            episode_index: The index of the episode to update.
+            episode_metadata: A dictionary containing the metadata fields to update.
+        """
+        if self.episodes is None:
+            raise RuntimeError("Cannot update metadata because no episodes have been saved yet.")
+
+        if not (0 <= episode_index < len(self.episodes)):
+            raise IndexError(f"episode_index {episode_index} is out of bounds.")
+
+        # 1. Find the location of the episode's metadata from the HF dataset
+        episode_info = self.episodes[episode_index]
+        chunk_idx = episode_info["meta/episodes/chunk_index"]
+        file_idx = episode_info["meta/episodes/file_index"]
+        parquet_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Parquet file for episode {episode_index} not found at {parquet_path}")
+
+        # 2. Load the corresponding parquet file into a pandas dataframe
+        df = pd.read_parquet(parquet_path)
+        row_indices = df[df['episode_index'] == episode_index].index
+
+        if row_indices.empty:
+            raise ValueError(f"Episode index {episode_index} not found in its parquet file: {parquet_path}")
+
+        row_index = row_indices[0]
+
+        # 3. Update the metadata in the dataframe
+        for key, value in episode_metadata.items():
+            if key not in df.columns:
+                logging.warning(f"Metadata key '{key}' not found. Adding it as a new column.")
+                df[key] = pd.NA
+            df.loc[row_index, key] = value
+
+        # 4. Save the updated dataframe back to disk
+        df.to_parquet(parquet_path, index=False)
+
+        # 5. Remove the cache and reload the episodes dataset to reflect changes
+        cached_dir = get_hf_dataset_cache_dir(self.episodes)
+        if cached_dir is not None and Path(cached_dir).exists():
+            shutil.rmtree(cached_dir)
+
+        self.episodes = load_episodes(self.root)
+
     def update_video_info(self, video_key: str | None = None) -> None:
         """
         Warning: this function writes info from first episode videos, implicitly assuming that all videos have
@@ -378,10 +429,9 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         for key in video_keys:
             if not self.features[key].get("info", None):
-                # In async mode, the first video might not exist yet when this is called.
-                # It should be called during finalization.
+                # In async mode, the first video's metadata will not exist when this is called, but the video will
                 try:
-                    video_path = self.root / self.get_video_file_path(0, key)
+                    video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
                     if video_path.exists():
                          self.info["features"][key]["info"] = get_video_info(video_path)
                 except (IndexError, TypeError):
@@ -1056,10 +1106,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if self.async_video_encoding:
                 if self.async_video_encoder is None:
                     self.start_async_video_encoder()
-
-                # video encoding cannot begin if there are any unfinished images.
-                if self.image_writer is not None:
-                    self._wait_image_writer()
                 
                 # Create a dedicated temp dir for this episode's encoded videos
                 temp_dir_for_episode = Path(tempfile.mkdtemp(dir=self._temp_dir_for_encoding))
@@ -1098,7 +1144,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episodes_meta_path = self.root / "meta" / "episodes.parquet"
 
         sorted_tasks = sorted(self.async_video_encoder.get_completed_tasks(), key=lambda x: x.episode_index)
-        logging.warning(f'sorted_tasks {sorted_tasks}')
+        logging.info(f'sorted_tasks {sorted_tasks}')
         for task in sorted_tasks:
             if not task.success:
                 logging.error(f"Skipping finalization for failed episode {task.episode_index}: {task.error_message}")
@@ -1106,20 +1152,27 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
             all_metadata_for_ep = {}
             for video_key, temp_video_path in task.temp_video_paths.items():
+                assert Path(temp_video_path).exists()
                 metadata = self._manage_video_file_and_get_metadata(video_key, task.episode_index, temp_video_path)
                 # Remove episode_index as it's used for merging, not as a column
                 metadata.pop("episode_index")
                 all_metadata_for_ep.update(metadata)
 
             # Update the metadata for this single episode
-            episodes_df = pd.read_parquet(episodes_meta_path)
-            for key, value in all_metadata_for_ep.items():
-                episodes_df.loc[episodes_df["episode_index"] == task.episode_index, key] = value
-            episodes_df.to_parquet(episodes_meta_path, index=False)
-            # Reload the in-memory metadata to reflect the change for the next iteration.
-            self.meta.episodes = episodes_df.to_dict("records")
+            # episodes_df = pd.read_parquet(episodes_meta_path)
+            # for key, value in all_metadata_for_ep.items():
+            #     episodes_df.loc[episodes_df["episode_index"] == task.episode_index, key] = value
+            # episodes_df.to_parquet(episodes_meta_path, index=False)
+            # # Reload the in-memory metadata to reflect the change for the next iteration.
+            # self.meta.episodes = episodes_df.to_dict("records")
+
+            # update the placeholder that was created for this episode with the data known now that async video encoding is complete.
+            self.meta.update_episode_metadata(task.episode_index, all_metadata_for_ep)
+            first_ep = self.meta.episodes[0]
+            logging.info(f'first ep metadata {first_ep}')
 
             # Clean up the temporary directory for this episode's videos
+            logging.info(f'removing path {list(task.temp_video_paths.values())[0].parent}')
             shutil.rmtree(list(task.temp_video_paths.values())[0].parent, ignore_errors=True)
 
         # After all episodes are finalized, update the video info in info.json
@@ -1235,6 +1288,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # This can assume the metadata for `episode_index - 1` is complete even in the async case
             # because the _finalize_async_videos is processing episodes sequentially.
             latest_ep = self.meta.episodes[episode_index - 1]
+
+            logging.info(f'This does not appear to be the first episode in the dataset, therefore we must pick up with the chunk and file index of the latest ep, which looks like this {latest_ep}')
             #TODO these are missing after all.
             chunk_idx = latest_ep[f"videos/{video_key}/chunk_index"]
             file_idx = latest_ep[f"videos/{video_key}/file_index"]
@@ -1262,14 +1317,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
 
         # Remove temporary directory
-        shutil.rmtree(str(ep_path.parent))
+        # logging.info(f'removing this {str(ep_path.parent)}')
+        # shutil.rmtree(str(ep_path.parent))
 
         # Update video info (only needed when first episode is encoded since it reads from episode 0)
         if episode_index == 0:
             self.meta.update_video_info(video_key)
             write_info(self.meta.info, self.meta.root)  # ensure video info always written properly
 
-        logging.warning(f'episode metadata {chunk_idx} type {type(chunk_idx)}')
         metadata = {
             "episode_index": episode_index,
             f"videos/{video_key}/chunk_index": chunk_idx,
@@ -1348,17 +1403,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def stop_async_video_encoder(self, wait: bool = True):
         if not self.async_video_encoder:
             return
-        logging.info("Stopping async video encoder...")
-        if wait:
-            if not self.async_video_encoder.wait_for_completion(timeout=300): # 5 min timeout
-                 logging.warning("Timeout reached while waiting for encoding tasks to complete.")
-            self._finalize_async_videos()
-        self.async_video_encoder.stop(wait=wait)
-        self.async_video_encoder = None
-        if self._temp_dir_for_encoding:
-            shutil.rmtree(self._temp_dir_for_encoding, ignore_errors=True)
-            self._temp_dir_for_encoding = None
-        logging.info("Async video encoder stopped.")
+        try:
+            if wait:
+                if not self.async_video_encoder.wait_for_completion(timeout=300): # 5 min timeout
+                     logging.warning("Timeout reached while waiting for encoding tasks to complete.")
+                self._finalize_async_videos()
+        finally:
+            self.async_video_encoder.stop(wait=wait)
+            self.async_video_encoder = None
+            if self._temp_dir_for_encoding:
+                # shutil.rmtree(self._temp_dir_for_encoding, ignore_errors=True)
+                self._temp_dir_for_encoding = None
 
     def __del__(self):
         """Cleanup on object destruction."""
