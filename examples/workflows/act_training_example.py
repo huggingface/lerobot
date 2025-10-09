@@ -1,4 +1,4 @@
-"""This script demonstrates how to train Diffusion Policy on the PushT environment."""
+"""This script demonstrates how to train ACT Policy on a real-world dataset."""
 
 from pathlib import Path
 
@@ -19,7 +19,7 @@ def make_delta_timestamps(delta_indices: list[int] | None, fps: int) -> list[flo
     return [i / fps for i in delta_indices]
 
 
-output_directory = Path("outputs/robot_learning_tutorial/hil_serl")
+output_directory = Path("outputs/robot_learning_tutorial/act")
 output_directory.mkdir(parents=True, exist_ok=True)
 
 # Select your device
