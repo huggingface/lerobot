@@ -50,7 +50,7 @@ def robot_client():
         server_address="localhost:9999",
         policy_type="test",
         pretrained_name_or_path="test",
-        actions_per_chunk=20
+        actions_per_chunk=20,
     )
 
     client = RobotClient(test_config)
