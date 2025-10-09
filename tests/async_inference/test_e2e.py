@@ -48,14 +48,14 @@ def test_async_inference_e2e(monkeypatch):
     # Import grpc-dependent modules inside the test function
     import grpc
 
+    from lerobot.async_inference.configs import PolicyServerConfig, RobotClientConfig
+    from lerobot.async_inference.helpers import map_robot_keys_to_lerobot_features
+    from lerobot.async_inference.policy_server import PolicyServer
+    from lerobot.async_inference.robot_client import RobotClient
     from lerobot.robots.utils import make_robot_from_config
-    from lerobot.scripts.server.configs import PolicyServerConfig, RobotClientConfig
-    from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
-    from lerobot.scripts.server.policy_server import PolicyServer
-    from lerobot.scripts.server.robot_client import RobotClient
     from lerobot.transport import (
-        async_inference_pb2,  # type: ignore
-        async_inference_pb2_grpc,  # type: ignore
+        services_pb2,  # type: ignore
+        services_pb2_grpc,  # type: ignore
     )
     from tests.mocks.mock_robot import MockRobotConfig
 
@@ -91,6 +91,9 @@ def test_async_inference_e2e(monkeypatch):
     policy_server.policy = MockPolicy()
     policy_server.actions_per_chunk = 20
     policy_server.device = "cpu"
+    # NOTE(Steven): Smelly tests as the Server is a state machine being partially mocked. Adding these processors as a quick fix.
+    policy_server.preprocessor = lambda obs: obs
+    policy_server.postprocessor = lambda tensor: tensor
 
     # Set up robot config and features
     robot_config = MockRobotConfig()
@@ -113,13 +116,13 @@ def test_async_inference_e2e(monkeypatch):
 
     # Bypass potentially heavy model loading inside SendPolicyInstructions
     def _fake_send_policy_instructions(self, request, context):  # noqa: N802
-        return async_inference_pb2.Empty()
+        return services_pb2.Empty()
 
     monkeypatch.setattr(PolicyServer, "SendPolicyInstructions", _fake_send_policy_instructions, raising=True)
 
     # Build gRPC server running a PolicyServer
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="policy_server"))
-    async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
+    services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
 
     # Use the host/port specified in the fixture's config
     server_address = f"{policy_server.config.host}:{policy_server.config.port}"

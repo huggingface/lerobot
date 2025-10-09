@@ -22,8 +22,8 @@ from stretch_body.robot import Robot as StretchAPI
 from stretch_body.robot_params import RobotParams
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.constants import OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import get_nested_item
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
 from ..robot import Robot
 from .configuration_stretch3 import Stretch3RobotConfig
@@ -163,10 +163,6 @@ class Stretch3Robot(Robot):
 
         # TODO(aliberts): return action_sent when motion is limited
         return action
-
-    def print_logs(self) -> None:
-        pass
-        # TODO(aliberts): move robot-specific logs logic here
 
     def teleop_safety_stop(self) -> None:
         if self.teleop is not None:
