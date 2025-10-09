@@ -81,5 +81,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .reachy2_teleoperator import Reachy2Teleoperator
 
         return Reachy2Teleoperator(config)
+    elif config.type == "so101_keyboard":
+        from .keyboard.teleop_so101_keyboard import SO101KeyboardTeleop
+
+        return SO101KeyboardTeleop(config)
     else:
         raise ValueError(config.type)

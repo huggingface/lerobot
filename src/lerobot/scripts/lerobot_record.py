@@ -97,6 +97,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    so101_mujoco,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -109,6 +110,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so101_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
+from lerobot.teleoperators.keyboard.teleop_so101_keyboard import SO101KeyboardTeleop  # noqa: F401
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
@@ -260,7 +262,7 @@ def record_loop(
 
     teleop_arm = teleop_keyboard = None
     if isinstance(teleop, list):
-        teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
+        teleop_keyboard = next((t for t in teleop if isinstance(t, (KeyboardTeleop, SO101KeyboardTeleop))), None)
         teleop_arm = next(
             (
                 t
@@ -323,6 +325,10 @@ def record_loop(
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
 
+            # For SO101KeyboardTeleop with SO101MujocoRobot, convert keyboard state to base action
+            if isinstance(teleop, SO101KeyboardTeleop) and hasattr(robot, '_from_keyboard_to_base_action'):
+                act = robot._from_keyboard_to_base_action(act)
+
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
 
@@ -354,6 +360,11 @@ def record_loop(
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
         # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
         _sent_action = robot.send_action(robot_action_to_send)
+
+        # For simulation robots (MuJoCo), use the returned action from send_action (final joint positions)
+        # instead of the teleop output (velocity commands)
+        if _sent_action is not None and hasattr(robot, '_glfw_window'):  # MuJoCo simulation robot
+            action_values = _sent_action
 
         # Write to dataset
         if dataset is not None:
@@ -449,6 +460,18 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     with VideoEncodingManager(dataset):
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+            # Reset robot to home position at the start of each episode (SO-101 MuJoCo)
+            if hasattr(robot, 'reset_to_home_position'):
+                robot.reset_to_home_position()
+
+            # Randomize block position at the start of each episode for SO-101 MuJoCo robot
+            block_initial_pos = None
+            if hasattr(robot, 'reset_block_position'):
+                robot.reset_block_position()
+                # Get and store block position for episode metadata
+                if hasattr(robot, 'get_block_position'):
+                    block_initial_pos = robot.get_block_position()
+
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
             record_loop(
                 robot=robot,
@@ -473,6 +496,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
             ):
                 log_say("Reset the environment", cfg.play_sounds)
+
+                # Randomize block position for SO-101 MuJoCo robot
+                if hasattr(robot, 'reset_block_position'):
+                    robot.reset_block_position()
+
                 record_loop(
                     robot=robot,
                     events=events,
@@ -492,6 +520,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 events["exit_early"] = False
                 dataset.clear_episode_buffer()
                 continue
+
+            # TODO: Store block position as episode-level metadata
+            # For now, block position is logged but not saved to dataset
+            # if block_initial_pos is not None:
+            #     logger.info(f"Block position: [{block_initial_pos[0]:.3f}, {block_initial_pos[1]:.3f}, {block_initial_pos[2]:.3f}]")
 
             dataset.save_episode()
             recorded_episodes += 1

@@ -31,3 +31,9 @@ class KeyboardTeleopConfig(TeleoperatorConfig):
 @dataclass
 class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
     use_gripper: bool = True
+
+
+@TeleoperatorConfig.register_subclass("so101_keyboard")
+@dataclass
+class SO101KeyboardTeleopConfig(TeleoperatorConfig):
+    """SO-101 keyboard teleop config"""
