@@ -424,9 +424,6 @@ class AsyncVideoEncoder:
         # Output to a unique file inside the task's dedicated temporary directory
         output_path = task.temp_dir / f"{video_key}.mp4"
 
-        # Using the existing CPU-based encoder from video_utils
-        # encode_video_frames(imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True)
-
         # Encode the video using GPU or CPU
         if self.gpu_encoding and self.gpu_encoder:
             # Use GPU encoding with timeout
@@ -437,12 +434,12 @@ class AsyncVideoEncoder:
 
                 if not success:
                     if self.enable_logging:
-                        logging.warning(f"GPU encoding failed for {video_path}, falling back to CPU encoding")
+                        logging.warning(f"GPU encoding failed for {output_path}, falling back to CPU encoding")
                     # Fallback to CPU encoding
                     encode_video_frames(imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True)
             except Exception as e:
                 if self.enable_logging:
-                    logging.error(f"GPU encoding error for {video_path}: {e}, falling back to CPU encoding")
+                    logging.error(f"GPU encoding error for {output_path}: {e}, falling back to CPU encoding")
                 # Fallback to CPU encoding
                 encode_video_frames(imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True)
         else:
