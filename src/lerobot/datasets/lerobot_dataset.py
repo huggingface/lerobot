@@ -29,7 +29,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
 import torch.utils
-from datasets import Dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
@@ -58,7 +57,6 @@ from lerobot.datasets.utils import (
     load_nested_dataset,
     load_stats,
     load_tasks,
-    to_parquet_with_hf_images,
     update_chunk_file_indices,
     validate_episode_buffer,
     validate_frame,
@@ -88,12 +86,15 @@ class LeRobotDatasetMetadata:
         root: str | Path | None = None,
         revision: str | None = None,
         force_cache_sync: bool = False,
+        metadata_buffer_size: int = 10,
     ):
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
         self.writer = None
         self.latest_episode = None
+        self.metadata_buffer: list[dict] = []
+        self.metadata_buffer_size = metadata_buffer_size
 
         try:
             if force_cache_sync:
@@ -107,8 +108,44 @@ class LeRobotDatasetMetadata:
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
 
+    def _flush_metadata_buffer(self) -> None:
+        """Write all buffered episode metadata to parquet file."""
+        if not self.metadata_buffer:
+            return
+
+        combined_dict = {}
+        for episode_dict in self.metadata_buffer:
+            for key, value in episode_dict.items():
+                if key not in combined_dict:
+                    combined_dict[key] = []
+                # Extract value and serialize numpy arrays
+                # because PyArrow's from_pydict function doesn't support numpy arrays
+                val = value[0] if isinstance(value, list) else value
+                combined_dict[key].append(val.tolist() if isinstance(val, np.ndarray) else val)
+
+        first_ep = self.metadata_buffer[0]
+        chunk_idx = first_ep["meta/episodes/chunk_index"][0]
+        file_idx = first_ep["meta/episodes/file_index"][0]
+
+        table = pa.Table.from_pydict(combined_dict)
+
+        if not self.writer:
+            path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.writer = pq.ParquetWriter(
+                path, schema=table.schema, compression="snappy", use_dictionary=True
+            )
+
+        self.writer.write_table(table)
+
+        self.latest_episode = self.metadata_buffer[-1]
+        self.metadata_buffer.clear()
+
     def _close_writer(self) -> None:
         """Close and cleanup the parquet writer if it exists."""
+        if len(self.metadata_buffer) > 0:
+            self._flush_metadata_buffer()
+
         writer = getattr(self, "writer", None)
         if writer is not None:
             writer.close()
@@ -273,19 +310,18 @@ class LeRobotDatasetMetadata:
             write_tasks(self.tasks, self.root)
 
     def _save_episode_metadata(self, episode_dict: dict) -> None:
-        """Save episode metadata to a parquet file and update the Hugging Face dataset of episodes metadata.
+        """Buffer episode metadata and write to parquet in batches for efficiency.
 
-        This function processes episodes metadata from a dictionary, converts it into a Hugging Face dataset,
-        and saves it as a parquet file. It handles both the creation of new parquet files and the
-        updating of existing ones based on size constraints. After saving the metadata, it reloads
-        the Hugging Face dataset to ensure it is up-to-date.
+        This function accumulates episode metadata in a buffer and flushes it when the buffer
+        reaches the configured size. This reduces I/O overhead by writing multiple episodes
+        at once instead of one row at a time.
 
         Notes: We both need to update parquet files and HF dataset:
         - `pandas` loads parquet file in RAM
         - `datasets` relies on a memory mapping from pyarrow (no RAM). It either converts parquet files to a pyarrow cache on disk,
           or loads directly from pyarrow cache.
         """
-        # Convert buffer into HF Dataset
+        # Convert to list format for each value
         episode_dict = {key: [value] for key, value in episode_dict.items()}
         num_frames = episode_dict["length"][0]
 
@@ -324,7 +360,8 @@ class LeRobotDatasetMetadata:
             av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
 
             if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
-                # Size limit is reached, prepare new parquet file
+                # Size limit is reached, flush buffer and prepare new parquet file
+                self._flush_metadata_buffer()
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
                 self._close_writer()
             # Update the existing pandas dataframe with new row
@@ -333,21 +370,12 @@ class LeRobotDatasetMetadata:
             episode_dict["dataset_from_index"] = [self.latest_episode["dataset_to_index"][0]]
             episode_dict["dataset_to_index"] = [self.latest_episode["dataset_to_index"][0] + num_frames]
 
-        ep_dataset = Dataset.from_dict(episode_dict)
-        df = pd.DataFrame(ep_dataset)
-        num_frames = len(df)
-        table = pa.Table.from_pandas(df, preserve_index=False)
-
-        if not self.writer:
-            path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
-            path.parent.mkdir(parents=True, exist_ok=True)
-
-            self.writer = pq.ParquetWriter(
-                path, schema=table.schema, compression="snappy", use_dictionary=True
-            )
-
-        self.writer.write_table(table, row_group_size=num_frames)
+        # Add to buffer
+        self.metadata_buffer.append(episode_dict)
         self.latest_episode = episode_dict
+
+        if len(self.metadata_buffer) >= self.metadata_buffer_size:
+            self._flush_metadata_buffer()
 
     def save_episode(
         self,
@@ -460,6 +488,7 @@ class LeRobotDatasetMetadata:
         robot_type: str | None = None,
         root: str | Path | None = None,
         use_videos: bool = True,
+        metadata_buffer_size: int = 10,
     ) -> "LeRobotDatasetMetadata":
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
@@ -481,6 +510,8 @@ class LeRobotDatasetMetadata:
         obj.revision = None
         obj.writer = None
         obj.latest_episode = None
+        obj.metadata_buffer = []
+        obj.metadata_buffer_size = metadata_buffer_size
         return obj
 
 
@@ -1162,9 +1193,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_dataset = datasets.Dataset.from_dict(ep_dict, features=self.hf_features, split="train")
         ep_dataset = embed_images(ep_dataset)
         ep_num_frames = len(ep_dataset)
-        df = pd.DataFrame(ep_dataset)
-
-        has_images = any(key in self.meta.image_keys for key in ep_dict)
 
         if self.latest_episode is None:
             # Initialize indices and frame count for a new dataset made of the first episode data
@@ -1213,21 +1241,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        if has_images:
-            # For images, to_parquet_with_hf_images always overwrites the file
-            # So we need to manually handle concatenation if writing multiple episodes to same file
-            if path.exists():
-                existing_df = pd.read_parquet(path)
-                df = pd.concat([existing_df, df], ignore_index=True)
-            to_parquet_with_hf_images(df, path)
-        else:
-            # For non-image data, use standard PyArrow parquet writer
-            table = pa.Table.from_pandas(df, preserve_index=False)
-            if not self.writer:
-                self.writer = pq.ParquetWriter(
-                    path, schema=table.schema, compression="snappy", use_dictionary=True
-                )
-            self.writer.write_table(table, row_group_size=ep_num_frames)
+        table = ep_dataset.with_format("arrow")[:]
+        if not self.writer:
+            self.writer = pq.ParquetWriter(
+                path, schema=table.schema, compression="snappy", use_dictionary=True
+            )
+        self.writer.write_table(table)
 
         metadata = {
             "data/chunk_index": chunk_idx,
