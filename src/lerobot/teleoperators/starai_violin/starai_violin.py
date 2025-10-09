@@ -105,7 +105,7 @@ class StaraiViolin(Teleoperator):
                 range_max=range_maxes[motor],
             )
 
-        # self.bus.write_calibration(self.calibration)
+        self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print(f"Calibration saved to {self.calibration_fpath}")
 

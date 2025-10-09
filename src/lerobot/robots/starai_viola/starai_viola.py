@@ -141,7 +141,7 @@ class StaraiViola(Robot):
                 range_max=range_maxes[motor],
             )
 
-        # self.bus.write_calibration(self.calibration)
+        self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
