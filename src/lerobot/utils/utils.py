@@ -27,6 +27,7 @@ from statistics import mean
 
 import numpy as np
 import torch
+from datasets.utils.logging import disable_progress_bar, enable_progress_bar
 
 
 def inside_slurm():
@@ -245,6 +246,25 @@ def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
     minutes = int(elapsed_time_s // 60)
     seconds = elapsed_time_s % 60
     return days, hours, minutes, seconds
+
+
+class SuppressProgressBars:
+    """
+    Context manager to suppress progress bars.
+
+    Example
+    --------
+    ```python
+    with SuppressProgressBars():
+        # Code that would normally show progress bars
+    ```
+    """
+
+    def __enter__(self):
+        disable_progress_bar()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        enable_progress_bar()
 
 
 class TimerManager:
