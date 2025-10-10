@@ -69,7 +69,9 @@ class AlohaEnv(EnvConfig):
 
     def __post_init__(self):
         if self.obs_type == "pixels":
-            self.features["top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3))
+            self.features["top"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
         elif self.obs_type == "pixels_agent_pos":
             self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(14,))
             self.features["pixels/top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 640, 3))
@@ -112,7 +114,9 @@ class PushtEnv(EnvConfig):
 
     def __post_init__(self):
         if self.obs_type == "pixels_agent_pos":
-            self.features["pixels"] = PolicyFeature(type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3))
+            self.features["pixels"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
         elif self.obs_type == "environment_state_agent_pos":
             self.features["environment_state"] = PolicyFeature(type=FeatureType.ENV, shape=(16,))
 
