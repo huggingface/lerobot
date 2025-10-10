@@ -143,8 +143,7 @@ class LeRobotDatasetMetadata:
 
     def _close_writer(self) -> None:
         """Close and cleanup the parquet writer if it exists."""
-        if len(self.metadata_buffer) > 0:
-            self._flush_metadata_buffer()
+        self._flush_metadata_buffer()
 
         writer = getattr(self, "writer", None)
         if writer is not None:
@@ -188,6 +187,12 @@ class LeRobotDatasetMetadata:
         return packaging.version.parse(self.info["codebase_version"])
 
     def get_data_file_path(self, ep_index: int) -> Path:
+        if self.episodes is None:
+            self.episodes = load_episodes(self.root)
+        if ep_index >= len(self.episodes):
+            raise IndexError(
+                f"Episode index {ep_index} out of range. Episodes: {len(self.episodes) if self.episodes else 0}"
+            )
         ep = self.episodes[ep_index]
         chunk_idx = ep["data/chunk_index"]
         file_idx = ep["data/file_index"]
@@ -195,6 +200,12 @@ class LeRobotDatasetMetadata:
         return Path(fpath)
 
     def get_video_file_path(self, ep_index: int, vid_key: str) -> Path:
+        if self.episodes is None:
+            self.episodes = load_episodes(self.root)
+        if ep_index >= len(self.episodes):
+            raise IndexError(
+                f"Episode index {ep_index} out of range. Episodes: {len(self.episodes) if self.episodes else 0}"
+            )
         ep = self.episodes[ep_index]
         chunk_idx = ep[f"videos/{vid_key}/chunk_index"]
         file_idx = ep[f"videos/{vid_key}/file_index"]
@@ -350,20 +361,23 @@ class LeRobotDatasetMetadata:
             file_idx = self.latest_episode["meta/episodes/file_index"][0]
 
             latest_path = (
-                self.root / self.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
+                self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
                 if self.writer is None
                 else self.writer.where
             )
-            latest_size_in_mb = get_file_size_in_mb(Path(latest_path))
-            latest_num_frames = self.latest_episode["episode_index"][0]
 
-            av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
+            if Path(latest_path).exists():
+                latest_size_in_mb = get_file_size_in_mb(Path(latest_path))
+                latest_num_frames = self.latest_episode["episode_index"][0]
 
-            if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
-                # Size limit is reached, flush buffer and prepare new parquet file
-                self._flush_metadata_buffer()
-                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
-                self._close_writer()
+                av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
+
+                if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
+                    # Size limit is reached, flush buffer and prepare new parquet file
+                    self._flush_metadata_buffer()
+                    chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
+                    self._close_writer()
+
             # Update the existing pandas dataframe with new row
             episode_dict["meta/episodes/chunk_index"] = [chunk_idx]
             episode_dict["meta/episodes/file_index"] = [file_idx]
@@ -489,6 +503,9 @@ class LeRobotDatasetMetadata:
         root: str | Path | None = None,
         use_videos: bool = True,
         metadata_buffer_size: int = 10,
+        chunks_size: int | None = None,
+        data_files_size_in_mb: int | None = None,
+        video_files_size_in_mb: int | None = None,
     ) -> "LeRobotDatasetMetadata":
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
@@ -503,7 +520,16 @@ class LeRobotDatasetMetadata:
         obj.tasks = None
         obj.episodes = None
         obj.stats = None
-        obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, features, use_videos, robot_type)
+        obj.info = create_empty_dataset_info(
+            CODEBASE_VERSION,
+            fps,
+            features,
+            use_videos,
+            robot_type,
+            chunks_size,
+            data_files_size_in_mb,
+            video_files_size_in_mb,
+        )
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError()
         write_json(obj.info, obj.root / INFO_PATH)
