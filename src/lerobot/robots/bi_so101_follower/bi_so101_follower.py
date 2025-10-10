@@ -16,6 +16,7 @@
 
 import logging
 import time
+import numpy as np
 from functools import cached_property
 from typing import Any
 
@@ -65,6 +66,9 @@ class BiSO101Follower(Robot):
         self.left_arm = SO101Follower(left_arm_config)
         self.right_arm = SO101Follower(right_arm_config)
         self.cameras = make_cameras_from_configs(config.cameras)
+        self._last_camera_obs: dict[str, Any] = {
+            cam_key: self._make_blank_camera_obs(cam_key) for cam_key in self.cameras
+        }
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -77,6 +81,12 @@ class BiSO101Follower(Robot):
         return {
             cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
         }
+
+    def _make_blank_camera_obs(self, cam_key: str) -> np.ndarray:
+        cam_config = self.config.cameras.get(cam_key)
+        height = getattr(cam_config, "height", None) or 1
+        width = getattr(cam_config, "width", None) or 1
+        return np.zeros((height, width, 3), dtype=np.uint8)
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -130,9 +140,33 @@ class BiSO101Follower(Robot):
 
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read(timeout_ms=3000)
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            try:
+                obs = cam.async_read(timeout_ms=1000)
+            except Exception as exc:  # noqa: BLE001 keep full traceback for debugging
+                dt_ms = (time.perf_counter() - start) * 1e3
+                obs = self._last_camera_obs.get(cam_key)
+                if obs is None:
+                    obs = self._make_blank_camera_obs(cam_key)
+                    self._last_camera_obs[cam_key] = obs
+                    logger.warning(
+                        "Failed to read camera %s (%s); using blank observation. Took %.1fms",
+                        cam_key,
+                        exc,
+                        dt_ms,
+                    )
+                else:
+                    logger.warning(
+                        "Failed to read camera %s (%s); reusing cached observation. Took %.1fms",
+                        cam_key,
+                        exc,
+                        dt_ms,
+                    )
+            else:
+                dt_ms = (time.perf_counter() - start) * 1e3
+                self._last_camera_obs[cam_key] = obs
+                logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+            obs_dict[cam_key] = obs
 
         return obs_dict
 
