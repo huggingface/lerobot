@@ -74,7 +74,9 @@ class AlohaEnv(EnvConfig):
             )
         elif self.obs_type == "pixels_agent_pos":
             self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(14,))
-            self.features["pixels/top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3))
+            self.features["pixels/top"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
 
     @property
     def gym_kwargs(self) -> dict:
