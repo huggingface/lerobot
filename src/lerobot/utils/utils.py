@@ -138,8 +138,13 @@ def init_logging(
         logger.removeHandler(handler)
 
     # Check if this is a non-main process in multi-GPU training
-    # Use process_index to be more explicit (main process is index 0)
-    is_non_main_process = accelerator is not None and hasattr(accelerator, 'process_index') and accelerator.process_index != 0
+    # Check environment variables set by accelerate (more reliable than checking accelerator object)
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    is_non_main_process = local_rank > 0
+    
+    # Fallback to accelerator object check if LOCAL_RANK not set
+    if local_rank == -1 and accelerator is not None:
+        is_non_main_process = hasattr(accelerator, 'process_index') and accelerator.process_index != 0
 
     # Write logs to console (only for main process in multi-GPU training)
     if not is_non_main_process:
