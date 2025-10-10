@@ -136,15 +136,18 @@ def init_logging(
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
 
-    # Write logs to console
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(console_level.upper())
-    logger.addHandler(console_handler)
-    if accelerator is not None and not accelerator.is_main_process:
-        # Disable duplicate logging on non-main processes
-        logging.info(f"Setting logging level on non-main process {accelerator.process_index} to WARNING.")
-        logging.getLogger().setLevel(logging.WARNING)
+    # Check if this is a non-main process in multi-GPU training
+    is_non_main_process = accelerator is not None and not accelerator.is_main_process
+
+    # Write logs to console (only for main process in multi-GPU training)
+    if not is_non_main_process:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        console_handler.setLevel(console_level.upper())
+        logger.addHandler(console_handler)
+    else:
+        # For non-main processes, set logger level to WARNING to suppress most logs
+        logger.setLevel(logging.WARNING)
 
     # Additionally write logs to file
     if log_file is not None:

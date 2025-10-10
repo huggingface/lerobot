@@ -92,9 +92,10 @@ For faster training, you can enable mixed precision (fp16 or bf16). This is conf
 ## Notes
 
 - The `--policy.use_amp` flag in `lerobot-train` is only used when **not** running with accelerate. When using accelerate, mixed precision is controlled by accelerate's configuration.
-- Training logs, checkpoints, and hub uploads are only done by the main process to avoid conflicts.
+- Training logs, checkpoints, and hub uploads are only done by the main process to avoid conflicts. Non-main processes have console logging disabled to prevent duplicate output.
 - The effective batch size is `batch_size × num_gpus`. If you use 4 GPUs with `--batch_size=8`, your effective batch size is 32.
 - Learning rate scheduling is handled correctly across multiple processes—LeRobot sets `step_scheduler_with_optimizer=False` to prevent accelerate from adjusting scheduler steps based on the number of processes.
 - When saving or pushing models, LeRobot automatically unwraps the model from accelerate's distributed wrapper to ensure compatibility.
+- WandB integration automatically initializes only on the main process, preventing multiple runs from being created.
 
 For more advanced configurations and troubleshooting, see the [Accelerate documentation](https://huggingface.co/docs/accelerate).
