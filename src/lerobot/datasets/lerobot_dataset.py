@@ -438,6 +438,9 @@ class LeRobotDatasetMetadata:
         robot_type: str | None = None,
         root: str | Path | None = None,
         use_videos: bool = True,
+        chunks_size: int | None = None,
+        data_files_size_in_mb: int | None = None,
+        video_files_size_in_mb: int | None = None,
     ) -> "LeRobotDatasetMetadata":
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
@@ -452,7 +455,16 @@ class LeRobotDatasetMetadata:
         obj.tasks = None
         obj.episodes = None
         obj.stats = None
-        obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, features, use_videos, robot_type)
+        obj.info = create_empty_dataset_info(
+            CODEBASE_VERSION,
+            fps,
+            features,
+            use_videos,
+            robot_type,
+            chunks_size,
+            data_files_size_in_mb,
+            video_files_size_in_mb,
+        )
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError()
         write_json(obj.info, obj.root / INFO_PATH)
