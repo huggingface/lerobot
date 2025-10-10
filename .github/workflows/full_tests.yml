@@ -51,7 +51,11 @@ jobs:
   # It runs everytime a PR is approved or a push to main
   full-tests:
     name: Full Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     if: |
       (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
       github.event_name == 'push' ||
@@ -64,11 +68,16 @@ jobs:
           lfs: true
           persist-credentials: false
 
-      - name: Install apt dependencies
+      - name: Install dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y build-essential \
-          git curl libglib2.0-0 libegl1-mesa-dev ffmpeg libusb-1.0-0-dev \
-          speech-dispatcher libgeos-dev portaudio19-dev
+          if [[ "${{ matrix.os }}" == 'ubuntu-latest' ]]; then
+            sudo apt-get update && sudo apt-get install -y build-essential \
+            git curl libglib2.0-0 libegl1-mesa-dev ffmpeg libusb-1.0-0-dev \
+            speech-dispatcher libgeos-dev portaudio19-dev
+          elif [[ "${{ matrix.os }}" == 'macos-latest' ]]; then
+            brew update && brew install git geos portaudio ffmpeg@7
+            echo "DYLD_LIBRARY_PATH=/opt/homebrew/opt/ffmpeg@7/lib:/opt/homebrew/lib:/usr/local/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+          fi
 
       - name: Setup uv and Python
         uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
