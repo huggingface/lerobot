@@ -26,25 +26,11 @@ from queue import Queue
 from typing import Any
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.keyboard_event_manager import get_keyboard_manager
+from lerobot.utils.keyboard_event_manager import PYNPUT_AVAILABLE
 
 from ..teleoperator import Teleoperator
 from .configuration_keyboard import SO101KeyboardTeleopConfig
-
-PYNPUT_AVAILABLE = True
-try:
-    if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
-        logging.info("No DISPLAY set. Skipping pynput import.")
-        raise ImportError("pynput blocked intentionally due to no display.")
-
-    from pynput import keyboard
-except ImportError:
-    keyboard = None
-    PYNPUT_AVAILABLE = False
-except Exception as e:
-    keyboard = None
-    PYNPUT_AVAILABLE = False
-    logging.info(f"Could not import pynput: {e}")
-
 
 class SO101KeyboardTeleop(Teleoperator):
     """
@@ -69,7 +55,7 @@ class SO101KeyboardTeleop(Teleoperator):
 
         self.event_queue = Queue()
         self.current_pressed = {}
-        self.listener = None
+        self.keyboard_manager = None
 
     @property
     def action_features(self) -> dict:
@@ -83,9 +69,8 @@ class SO101KeyboardTeleop(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
-        # Consider connected if listener was created, even if thread isn't alive
-        # (macOS accessibility issues can cause thread to die but we can still function)
-        return PYNPUT_AVAILABLE and isinstance(self.listener, keyboard.Listener)
+        # Connected if the shared keyboard manager is active
+        return self.keyboard_manager is not None and self.keyboard_manager.is_active
 
     @property
     def is_calibrated(self) -> bool:
@@ -96,50 +81,64 @@ class SO101KeyboardTeleop(Teleoperator):
             raise DeviceAlreadyConnectedError(
                 "SO101KeyboardTeleop is already connected. Do not run `connect()` twice."
             )
-
-        if PYNPUT_AVAILABLE:
-            logging.info("pynput is available - enabling SO-101 keyboard listener.")
-            self.listener = keyboard.Listener(
-                on_press=self._on_press,
-                on_release=self._on_release,
-            )
-            self.listener.start()
+        
+        # Always use the shared keyboard manager (singleton)
+        self.keyboard_manager = get_keyboard_manager()
+        
+        if self.keyboard_manager is None:
+            logging.warning("Keyboard event manager not available - SO-101 keyboard teleop cannot connect.")
+            return
+        
+        # Import keyboard here to get Key enums (only if manager is available)
+        from pynput import keyboard
+        
+        # Start the manager if not already started
+        if not self.keyboard_manager.is_active:
+            logging.info("Starting shared keyboard event manager for SO-101 keyboard teleop.")
+            self.keyboard_manager.start()
         else:
-            logging.info("pynput not available - skipping keyboard listener.")
-            self.listener = None
+            logging.info("Using already-active shared keyboard event manager for SO-101 keyboard teleop.")
+        
+        # Register handlers for all keys we care about
+        for char in ["w", "a", "s", "d", "q", "e", "r", "f", "[", "]", "o", "c"]:
+            self.keyboard_manager.register_char_press_handler(
+                char, lambda c=char: self.event_queue.put((c, True))
+            )
+            self.keyboard_manager.register_char_release_handler(
+                char, lambda c=char: self.event_queue.put((c, False))
+            )
+        
+        # Register shift and ctrl
+        self.keyboard_manager.register_key_press_handler(
+            keyboard.Key.shift, lambda: self.event_queue.put(("shift", True))
+        )
+        self.keyboard_manager.register_key_release_handler(
+            keyboard.Key.shift, lambda: self.event_queue.put(("shift", False))
+        )
+        self.keyboard_manager.register_key_press_handler(
+            keyboard.Key.shift_l, lambda: self.event_queue.put(("shift", True))
+        )
+        self.keyboard_manager.register_key_release_handler(
+            keyboard.Key.shift_l, lambda: self.event_queue.put(("shift", False))
+        )
+        self.keyboard_manager.register_key_press_handler(
+            keyboard.Key.ctrl, lambda: self.event_queue.put(("ctrl", True))
+        )
+        self.keyboard_manager.register_key_release_handler(
+            keyboard.Key.ctrl, lambda: self.event_queue.put(("ctrl", False))
+        )
+        self.keyboard_manager.register_key_press_handler(
+            keyboard.Key.ctrl_l, lambda: self.event_queue.put(("ctrl", True))
+        )
+        self.keyboard_manager.register_key_release_handler(
+            keyboard.Key.ctrl_l, lambda: self.event_queue.put(("ctrl", False))
+        )
 
     def calibrate(self) -> None:
         pass  # No calibration needed
 
     def configure(self) -> None:
         pass  # No configuration needed
-
-    def _on_press(self, key):
-        # Map special keys
-        key_name = None
-        if key == keyboard.Key.shift or key == keyboard.Key.shift_l:
-            key_name = "shift"
-        elif key == keyboard.Key.ctrl or key == keyboard.Key.ctrl_l:
-            key_name = "ctrl"
-        elif hasattr(key, "char") and key.char in ["w", "a", "s", "d", "q", "e", "r", "f", "[", "]", "o", "c"]:
-            key_name = key.char
-
-        if key_name:
-            self.event_queue.put((key_name, True))
-
-    def _on_release(self, key):
-        # Map special keys
-        key_name = None
-        if key == keyboard.Key.shift or key == keyboard.Key.shift_l:
-            key_name = "shift"
-        elif key == keyboard.Key.ctrl or key == keyboard.Key.ctrl_l:
-            key_name = "ctrl"
-        elif hasattr(key, "char") and key.char in ["w", "a", "s", "d", "q", "e", "r", "f", "[", "]", "o", "c"]:
-            key_name = key.char
-        # Note: ESC handling removed - lerobot_record has its own keyboard listener for that
-
-        if key_name:
-            self.event_queue.put((key_name, False))
 
     def _drain_pressed_keys(self):
         """Process all queued key events to get current state."""
@@ -192,5 +191,10 @@ class SO101KeyboardTeleop(Teleoperator):
             raise DeviceNotConnectedError(
                 "SO101KeyboardTeleop is not connected. You need to run `connect()` before `disconnect()`."
             )
-        if self.listener is not None:
-            self.listener.stop()
+        
+        # Note: We don't stop the shared manager here because:
+        # 1. It might be used by lerobot_record or other components
+        # 2. The manager is a singleton, so stopping it would affect all users
+        # 3. lerobot_record.py will stop it when recording is complete
+        logging.info("Disconnecting from shared keyboard manager (not stopping it - shared resource)")
+        self.keyboard_manager = None

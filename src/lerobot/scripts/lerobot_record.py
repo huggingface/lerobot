@@ -537,6 +537,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     if teleop is not None:
         teleop.disconnect()
 
+    # Stop the keyboard event manager if it was started
     if not is_headless() and listener is not None:
         listener.stop()
 

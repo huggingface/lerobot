@@ -137,10 +137,12 @@ def init_keyboard_listener():
     This function sets up a listener for specific keys (right arrow, left arrow, escape) to control
     the program flow during execution, such as stopping recording or exiting loops. It gracefully
     handles headless environments where keyboard listening is not possible.
+    
+    Uses a shared keyboard event manager to avoid conflicts with keyboard-based teleoperators.
 
     Returns:
         A tuple containing:
-        - The `pynput.keyboard.Listener` instance, or `None` if in a headless environment.
+        - The keyboard event manager instance, or `None` if in a headless environment.
         - A dictionary of event flags (e.g., `exit_early`) that are set by key presses.
     """
     # Allow to exit early while recording an episode or resetting the environment,
@@ -155,32 +157,40 @@ def init_keyboard_listener():
         logging.warning(
             "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
         )
-        listener = None
-        return listener, events
+        return None, events
 
-    # Only import pynput if not in a headless environment
+    # Use the shared keyboard event manager to avoid conflicts with teleoperators
+    from lerobot.utils.keyboard_event_manager import get_keyboard_manager
     from pynput import keyboard
-
-    def on_press(key):
-        try:
-            if key == keyboard.Key.right:
-                print("Right arrow key pressed. Exiting loop...")
-                events["exit_early"] = True
-            elif key == keyboard.Key.left:
-                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
-            elif key == keyboard.Key.esc:
-                print("Escape key pressed. Stopping data recording...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
-        except Exception as e:
-            print(f"Error handling key press: {e}")
-
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
-
-    return listener, events
+    
+    manager = get_keyboard_manager()
+    if manager is None:
+        logging.warning("Keyboard event manager not available")
+        return None, events
+    
+    # Register handlers for recording control keys
+    def on_right_arrow():
+        print("Right arrow key pressed. Exiting loop...")
+        events["exit_early"] = True
+    
+    def on_left_arrow():
+        print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+        events["rerecord_episode"] = True
+        events["exit_early"] = True
+    
+    def on_esc():
+        print("Escape key pressed. Stopping data recording...")
+        events["stop_recording"] = True
+        events["exit_early"] = True
+    
+    manager.register_key_press_handler(keyboard.Key.right, on_right_arrow)
+    manager.register_key_press_handler(keyboard.Key.left, on_left_arrow)
+    manager.register_key_press_handler(keyboard.Key.esc, on_esc)
+    
+    # Start the manager
+    manager.start()
+    
+    return manager, events
 
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
