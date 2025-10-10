@@ -206,6 +206,11 @@ class ImageTransformsConfig:
                 type="SharpnessJitter",
                 kwargs={"sharpness": (0.5, 1.5)},
             ),
+            "affine": ImageTransformConfig(
+                weight=1.0,
+                type="RandomAffine",
+                kwargs={"degrees": (-5.0, 5.0), "translate": (0.05, 0.05)},
+            ),
         }
     )
 
@@ -217,6 +222,8 @@ def make_transform_from_config(cfg: ImageTransformConfig):
         return v2.ColorJitter(**cfg.kwargs)
     elif cfg.type == "SharpnessJitter":
         return SharpnessJitter(**cfg.kwargs)
+    elif cfg.type == "RandomAffine":
+        return v2.RandomAffine(**cfg.kwargs)
     else:
         raise ValueError(f"Transform '{cfg.type}' is not valid.")
 
