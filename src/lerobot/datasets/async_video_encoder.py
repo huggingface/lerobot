@@ -87,6 +87,7 @@ class AsyncVideoEncoder:
         enable_logging: bool = True,
         gpu_encoding: bool = False,
         gpu_encoder_config: dict[str, Any] | None = None,
+        vcodec: str = 'h264',
     ):
         """
         Initialize the async video encoder.
@@ -99,6 +100,7 @@ class AsyncVideoEncoder:
         self.num_workers = num_workers
         self.max_queue_size = max_queue_size
         self.enable_logging = enable_logging
+        self.vcodec = vcodec
 
         # Task queue (priority queue)
         self.task_queue = queue.PriorityQueue(maxsize=max_queue_size)
@@ -115,10 +117,10 @@ class AsyncVideoEncoder:
         self.running = False
         self.shutdown_event = threading.Event()
 
-
         # GPU encoding support
         self.gpu_encoding = gpu_encoding
         self.gpu_encoder = None
+
 
         if self.gpu_encoding:
             config = gpu_encoder_config or {}
@@ -436,15 +438,15 @@ class AsyncVideoEncoder:
                     if self.enable_logging:
                         logging.warning(f"GPU encoding failed for {output_path}, falling back to CPU encoding")
                     # Fallback to CPU encoding
-                    encode_video_frames(imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True)
+                    encode_video_frames(imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True, vcodec=self.vcodec)
             except Exception as e:
                 if self.enable_logging:
                     logging.error(f"GPU encoding error for {output_path}: {e}, falling back to CPU encoding")
                 # Fallback to CPU encoding
-                encode_video_frames(imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True)
+                encode_video_frames(imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True, vcodec=self.vcodec)
         else:
             # Use CPU encoding
-            encode_video_frames(imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True)
+            encode_video_frames(imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True, vcodec=self.vcodec)
 
         if self.enable_logging:
             logging.debug(f"Encoded temporary video: {output_path}")

@@ -148,8 +148,8 @@ class LeRobotDatasetMetadata:
 
     def get_video_file_path(self, ep_index: int, vid_key: str) -> Path:
         ep = self.episodes[ep_index]
-        chunk_idx = ep[f"videos/{vid_key}/chunk_index"]
-        file_idx = ep[f"videos/{vid_key}/file_index"]
+        chunk_idx = int(ep[f"videos/{vid_key}/chunk_index"])
+        file_idx = int(ep[f"videos/{vid_key}/file_index"])
         fpath = self.video_path.format(video_key=vid_key, chunk_index=chunk_idx, file_index=file_idx)
         return Path(fpath)
 
@@ -273,15 +273,6 @@ class LeRobotDatasetMetadata:
         - `pandas` loads parquet file in RAM
         - `datasets` relies on a memory mapping from pyarrow (no RAM). It either converts parquet files to a pyarrow cache on disk,
           or loads directly from pyarrow cache.
-
-
-        # In async mode, video columns are unknown until finalization. Add them with NaNs.
-        all_columns = set(df.columns)
-        for key in self.video_keys:
-            all_columns.add(f"videos/{key}/chunk_index")
-            all_columns.add(f"videos/{key}/file_index")
-            all_columns.add(f"videos/{key}/from_timestamp")
-            all_columns.add(f"videos/{key}/to_timestamp")
         """
         # Convert buffer into HF Dataset
         episode_dict = {key: [value] for key, value in episode_dict.items()}
@@ -542,6 +533,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         async_video_encoding: bool = False,
         video_encoding_workers: int = 2,
         video_encoding_queue_size: int = 100,
+        vcodec: str = "libsvtav1",
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -658,6 +650,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 Defaults to 2. A too-low value for this would show up as stop_async_video_encoder taking a long time.
             video_encoding_queue_size (int, optional): Maximum number of video encoding tasks that can be enqueued.
                 If the limit is reached, save_episode() will become blocking again.
+            vcodec (str, optional): video codec to use. One of ["h264", "hevc", "libsvtav1"].
+                libsvtav1 is the default but has a greater up front cost for a smaller file size. h264 is much faster up front to encode by perhaps 4x, but makes a larger file.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -706,6 +700,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.video_encoding_queue_size = video_encoding_queue_size
         self.async_video_encoder = None
         self._temp_dir_for_encoding = None
+        self.vcodec = vcodec
 
     def push_to_hub(
         self,
@@ -1095,14 +1090,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 
+        logging.info("_save_episode_data")
+        ep_metadata = self._save_episode_data(episode_buffer)
+
         # Wait for image writer to end, so that episode stats over images can be computed
         self._wait_image_writer()
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
-        ep_metadata = self._save_episode_data(episode_buffer)
-        has_video_keys = len(self.meta.video_keys) > 0
-
-        if has_video_keys:
+        if len(self.meta.video_keys) > 0:
             if self.async_video_encoding:
                 if self.async_video_encoder is None:
                     self.start_async_video_encoder()
@@ -1110,6 +1105,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 # Create a dedicated temp dir for this episode's encoded videos
                 temp_dir_for_episode = Path(tempfile.mkdtemp(dir=self._temp_dir_for_encoding))
 
+                logging.info(f"Submitting encoding task ep {episode_index} {self.meta.video_keys}")
                 success = self.async_video_encoder.submit_encoding_task(
                     episode_index=episode_index,
                     video_keys=self.meta.video_keys,
@@ -1125,6 +1121,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self._save_episode_videos_sync(episode_index, ep_metadata)
 
         # Save metadata with placeholders for video info in async mode
+        ep_stats = {} # placeholder
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
         self.clear_episode_buffer(delete_images=False) # Images are deleted by encoder now
 
@@ -1294,6 +1291,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # alternately, the video from the previous episode may not exist because LeRobotDataset was initialized with download_videos=False
             # this is also an acceptable reason to start a new video file.
 
+            # TODO: https://github.com/huggingface/lerobot/issues/2161
+            # the muxer only concatenation seems to have a problem with non monotonically increasing timestamps.
             if not latest_path.exists() or get_video_size_in_mb(latest_path) + ep_size_in_mb >= self.meta.video_files_size_in_mb:
                 # Move temporary episode video to a new video file in the dataset
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
@@ -1322,8 +1321,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         metadata = {
             "episode_index": episode_index,
-            f"videos/{video_key}/chunk_index": chunk_idx,
-            f"videos/{video_key}/file_index": file_idx,
+            f"videos/{video_key}/chunk_index": int(chunk_idx),
+            f"videos/{video_key}/file_index": int(file_idx),
             f"videos/{video_key}/from_timestamp": latest_duration_in_s,
             f"videos/{video_key}/to_timestamp": latest_duration_in_s + ep_duration_in_s,
         }
@@ -1379,7 +1378,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         temp_path = Path(tempfile.mkdtemp(dir=self.root)) / f"{video_key}_{episode_index:03d}.mp4"
         img_dir = self._get_image_file_dir(episode_index, video_key)
-        encode_video_frames(img_dir, temp_path, self.fps, overwrite=True)
+        encode_video_frames(img_dir, temp_path, self.fps, overwrite=True, vcodec=self.vcodec)
         shutil.rmtree(img_dir)
         return temp_path
 
@@ -1391,6 +1390,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.async_video_encoder = AsyncVideoEncoder(
             num_workers=self.video_encoding_workers,
             max_queue_size=self.video_encoding_queue_size,
+            vcodec=self.vcodec,
         )
         self.async_video_encoder.start()
         logging.info(f"Started async video encoder. Temporary files will be in {self._temp_dir_for_encoding}")
@@ -1431,6 +1431,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         async_video_encoding: bool = False,
         video_encoding_workers: int = 2,
         video_encoding_queue_size: int = 100,
+        vcodec: str = "libsvtav1",
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1469,6 +1470,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.video_encoding_queue_size = video_encoding_queue_size
         obj.async_video_encoder = None
         obj._temp_dir_for_encoding = None
+        obj.vcodec = vcodec
 
         return obj
 
