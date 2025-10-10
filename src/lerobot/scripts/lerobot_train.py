@@ -163,17 +163,20 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
     """
     cfg.validate()
-    logging.info(pformat(cfg.to_dict()))
-
+    
     if accelerator and not accelerator.is_main_process:
         # Disable logging on non-main processes.
         cfg.wandb.enable = False
+
+    if not accelerator or accelerator.is_main_process:
+        logging.info(pformat(cfg.to_dict()))
 
     if cfg.wandb.enable and cfg.wandb.project:
         wandb_logger = WandBLogger(cfg)
     else:
         wandb_logger = None
-        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+        if not accelerator or accelerator.is_main_process:
+            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     if cfg.seed is not None:
         set_seed(cfg.seed, accelerator=accelerator)
@@ -183,7 +186,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    logging.info("Creating dataset")
+    if not accelerator or accelerator.is_main_process:
+        logging.info("Creating dataset")
     dataset = make_dataset(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
@@ -191,10 +195,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
     if cfg.eval_freq > 0 and cfg.env is not None:
-        logging.info("Creating env")
+        if not accelerator or accelerator.is_main_process:
+            logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
-    logging.info("Creating policy")
+    if not accelerator or accelerator.is_main_process:
+        logging.info("Creating policy")
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
@@ -232,7 +238,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
         **postprocessor_kwargs,
     )
 
-    logging.info("Creating optimizer and scheduler")
+    if not accelerator or accelerator.is_main_process:
+        logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
     grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
 
@@ -304,6 +311,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
 
     if not accelerator or accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
+        
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)

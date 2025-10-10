@@ -16,15 +16,15 @@ Or install it with the LeRobot accelerate extra:
 pip install lerobot[accelerate]
 ```
 
-## Configuration
+## Configuration (Optional)
 
-Configure accelerate for your hardware setup by running:
+You can optionally configure accelerate for your hardware setup by running:
 
 ```bash
 accelerate config
 ```
 
-This interactive setup will ask you questions about your training environment (number of GPUs, mixed precision settings, etc.). For a simple multi-GPU setup on a single machine, you can use these recommended settings:
+This interactive setup will ask you questions about your training environment (number of GPUs, mixed precision settings, etc.) and saves the configuration for future use. For a simple multi-GPU setup on a single machine, you can use these recommended settings:
 
 - Compute environment: This machine
 - Number of machines: 1
@@ -32,26 +32,15 @@ This interactive setup will ask you questions about your training environment (n
 - GPU ids to use: (leave empty to use all)
 - Mixed precision: fp16 or bf16 (recommended for faster training)
 
+**Note:** You can skip this step and specify parameters directly in the launch command (see Option 1 below).
+
 ## Training with Multiple GPUs
 
 You can launch training in two ways:
 
-### Option 1: Using accelerate config (recommended)
+### Option 1: Without config (specify parameters directly)
 
-If you ran `accelerate config`, simply launch with:
-
-```bash
-accelerate launch $(which lerobot-train) \
-  --dataset.repo_id=${HF_USER}/my_dataset \
-  --policy.type=act \
-  --output_dir=outputs/train/act_multi_gpu \
-  --job_name=act_multi_gpu \
-  --wandb.enable=true
-```
-
-### Option 2: Without config (specify parameters directly)
-
-If you prefer not to run `accelerate config`, you can specify all parameters in the command:
+You can specify all parameters directly in the command without running `accelerate config`:
 
 ```bash
 accelerate launch \
@@ -61,6 +50,7 @@ accelerate launch \
   $(which lerobot-train) \
   --dataset.repo_id=${HF_USER}/my_dataset \
   --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_trained_policy \
   --output_dir=outputs/train/act_multi_gpu \
   --job_name=act_multi_gpu \
   --wandb.enable=true
@@ -70,6 +60,20 @@ accelerate launch \
 - `--multi_gpu`: Enable multi-GPU training
 - `--num_processes=2`: Number of GPUs to use
 - `--mixed_precision=fp16`: Use fp16 mixed precision (or `bf16` if supported)
+
+### Option 2: Using accelerate config
+
+If you prefer to save your configuration, run `accelerate config` once and then simply launch with:
+
+```bash
+accelerate launch $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_trained_policy \
+  --output_dir=outputs/train/act_multi_gpu \
+  --job_name=act_multi_gpu \
+  --wandb.enable=true
+```
 
 ## How It Works
 
