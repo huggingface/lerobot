@@ -110,7 +110,7 @@ class LeRobotDatasetMetadata:
 
     def _flush_metadata_buffer(self) -> None:
         """Write all buffered episode metadata to parquet file."""
-        if not self.metadata_buffer:
+        if not hasattr(self, "metadata_buffer") or len(self.metadata_buffer) == 0:
             return
 
         combined_dict = {}
