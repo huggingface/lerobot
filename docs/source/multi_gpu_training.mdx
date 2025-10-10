@@ -57,6 +57,7 @@ accelerate launch \
 ```
 
 **Key accelerate parameters:**
+
 - `--multi_gpu`: Enable multi-GPU training
 - `--num_processes=2`: Number of GPUs to use
 - `--mixed_precision=fp16`: Use fp16 mixed precision (or `bf16` if supported)
@@ -97,4 +98,3 @@ For faster training, you can enable mixed precision (fp16 or bf16). This is conf
 - When saving or pushing models, LeRobot automatically unwraps the model from accelerate's distributed wrapper to ensure compatibility.
 
 For more advanced configurations and troubleshooting, see the [Accelerate documentation](https://huggingface.co/docs/accelerate).
-

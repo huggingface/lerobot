@@ -15,10 +15,10 @@
 # limitations under the License.
 import logging
 import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
-from collections.abc import Callable
 
 import torch
 from termcolor import colored
@@ -163,7 +163,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
         cfg: A `TrainPipelineConfig` object containing all training configurations.
     """
     cfg.validate()
-    
+
     if accelerator and not accelerator.is_main_process:
         # Disable logging on non-main processes.
         cfg.wandb.enable = False
@@ -311,7 +311,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
 
     if not accelerator or accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
-        
+
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
