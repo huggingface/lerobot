@@ -25,8 +25,12 @@
     title: Using LeRobotDataset
   - local: porting_datasets_v3
     title: Porting Large Datasets
+  - local: using_dataset_tools
+    title: Using the Dataset Tools
   title: "Datasets"
 - sections:
+  - local: act
+    title: ACT
   - local: smolvla
     title: SmolVLA
   - local: pi0

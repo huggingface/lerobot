@@ -8,7 +8,7 @@ To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blo
 
 - Your own robot which exposes a communication interface (e.g. serial, CAN, TCP)
 - A way to read sensor data and send motor commands programmatically, e.g. manufacturer's SDK or API, or your own protocol implementation.
-- LeRobot installed in your environment. Follow our [Installation Guide](./installation.mdx).
+- LeRobot installed in your environment. Follow our [Installation Guide](./installation).
 
 ## Choose your motors
 
@@ -65,7 +65,7 @@ class MyCoolRobotConfig(RobotConfig):
 ```
 <!-- prettier-ignore-end -->
 
-[Cameras tutorial](./cameras.mdx) to understand how to detect and add your camera.
+[Cameras tutorial](./cameras) to understand how to detect and add your camera.
 
 Next, we'll create our actual robot class which inherits from `Robot`. This abstract class defines a contract you must follow for your robot to be usable with the rest of the LeRobot tools.
 
