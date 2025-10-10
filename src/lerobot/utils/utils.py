@@ -138,7 +138,8 @@ def init_logging(
         logger.removeHandler(handler)
 
     # Check if this is a non-main process in multi-GPU training
-    is_non_main_process = accelerator is not None and not accelerator.is_main_process
+    # Use process_index to be more explicit (main process is index 0)
+    is_non_main_process = accelerator is not None and hasattr(accelerator, 'process_index') and accelerator.process_index != 0
 
     # Write logs to console (only for main process in multi-GPU training)
     if not is_non_main_process:
@@ -147,8 +148,10 @@ def init_logging(
         console_handler.setLevel(console_level.upper())
         logger.addHandler(console_handler)
     else:
-        # For non-main processes, set logger level to WARNING to suppress most logs
-        logger.setLevel(logging.WARNING)
+        # For non-main processes, add a NullHandler to completely suppress output
+        # and set level to ERROR to minimize any logging
+        logger.addHandler(logging.NullHandler())
+        logger.setLevel(logging.ERROR)
 
     # Additionally write logs to file
     if log_file is not None:
