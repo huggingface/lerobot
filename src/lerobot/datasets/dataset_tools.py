@@ -409,6 +409,9 @@ def _fractions_to_episode_indices(
 
     for split_name, fraction in splits.items():
         num_episodes = int(total_episodes * fraction)
+        if num_episodes == 0:
+            logging.warning(f"Split '{split_name}' has no episodes, skipping...")
+            continue
         end_idx = start_idx + num_episodes
         if split_name == list(splits.keys())[-1]:
             end_idx = total_episodes

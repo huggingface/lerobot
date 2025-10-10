@@ -57,10 +57,10 @@ lerobot-edit-dataset \
 lerobot-edit-dataset \
     --repo_id lerobot/pusht \
     --operation.type split \
-    --operation.splits '{"train": [0, 1, 2, 3], "val": [4, 5]}'
+    --operation.splits '{"task1": [0, 1, 2, 3], "task2": [4, 5]}'
 ```
 
-Resulting datasets are saved under the repo id with the split name appended, e.g. `lerobot/pusht_train`, `lerobot/pusht_test`, `lerobot/pusht_val`.
+There are no constraints on the split names, they can be determined by the user. Resulting datasets are saved under the repo id with the split name appended, e.g. `lerobot/pusht_train`, `lerobot/pusht_task1`, `lerobot/pusht_task2`.
 
 #### Merge Datasets
 
