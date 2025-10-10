@@ -22,11 +22,12 @@ Usage:
 
 import logging
 import math
+import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from threading import Event, Lock, Thread
 
-import numpy as np
 import torch
 from torch import Tensor
 
@@ -34,11 +35,12 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # no
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.constants import OBS_IMAGES
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
-from lerobot.policies.factory import get_policy_class
+from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
+from lerobot.processor.factory import make_default_robot_observation_processor
+from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -47,8 +49,8 @@ from lerobot.robots import (  # noqa: F401
     so101_follower,
 )
 from lerobot.robots.utils import make_robot_from_config
+from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.hub import HubMixin
-from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
 
 logging.basicConfig(level=logging.INFO)
@@ -79,12 +81,13 @@ class RobotWrapper:
 
 class ActionQueue:
     def __init__(self, cfg: RTCConfig):
-        self.queue = None
+        self.queue = None  # Processed actions for robot rollout
+        self.original_queue = None  # Original actions for RTC
         self.lock = Lock()
         self.last_index = 0
         self.cfg = cfg
 
-    def get(self, timeout: float = 0.1) -> Tensor | None:
+    def get(self) -> Tensor | None:
         with self.lock:
             if self.queue is None or self.last_index >= len(self.queue):
                 return None
@@ -114,41 +117,53 @@ class ActionQueue:
             return self.last_index
 
     def get_left_over(self) -> Tensor:
+        """Get left over ORIGINAL actions for RTC prev_chunk_left_over."""
         with self.lock:
-            if self.queue is None:
+            if self.original_queue is None:
                 return None
-            return self.queue[: self.last_index]
+            return self.original_queue[self.last_index :]
 
     def merge(
-        self, predicted_actions: Tensor, real_delay: int, action_index_before_inference: int | None = 0
+        self,
+        original_actions: Tensor,
+        processed_actions: Tensor,
+        real_delay: int,
+        action_index_before_inference: int | None = 0,
     ):
         with self.lock:
             self._check_delays(real_delay, action_index_before_inference)
 
             if self.cfg.enabled:
-                self._replace_actions_queue(predicted_actions, real_delay)
+                self._replace_actions_queue(original_actions, processed_actions, real_delay)
                 return
 
-            self._append_actions_queue(predicted_actions)
+            self._append_actions_queue(original_actions, processed_actions)
 
-    def _replace_actions_queue(self, predicted_actions: Tensor, real_delay: int):
-        self.queue = predicted_actions.clone()
+    def _replace_actions_queue(self, original_actions: Tensor, processed_actions: Tensor, real_delay: int):
+        self.original_queue = original_actions.clone()
+        self.queue = processed_actions.clone()
 
-        logger.info(f"predicted_actions shape: {predicted_actions.shape}")
+        logger.info(f"original_actions shape: {original_actions.shape}")
+        logger.info(f"processed_actions shape: {processed_actions.shape}")
         logger.info(f"real_delay: {real_delay}")
-        logger.info(f"self.queue shape: {self.queue.shape}")
 
         # First real_delay actions are already executed
+        self.original_queue = self.original_queue[real_delay:]
         self.queue = self.queue[real_delay:]
         self.last_index = 0
 
-    def _append_actions_queue(self, predicted_actions: Tensor):
+    def _append_actions_queue(self, original_actions: Tensor, processed_actions: Tensor):
         if self.queue is None:
-            self.queue = predicted_actions.clone()
+            self.original_queue = original_actions.clone()
+            self.queue = processed_actions.clone()
             return
 
-        self.queue = torch.cat([self.queue, predicted_actions.clone()])
+        self.original_queue = torch.cat([self.original_queue, original_actions.clone()])
+        self.original_queue = self.original_queue[self.last_index :]
+
+        self.queue = torch.cat([self.queue, processed_actions.clone()])
         self.queue = self.queue[self.last_index :]
+
         self.last_index = 0
 
     def _check_delays(self, real_delay: int, action_index_before_inference: int | None = None):
@@ -220,6 +235,7 @@ def is_image_key(k: str) -> bool:
 def get_actions(
     policy,
     robot: RobotWrapper,
+    robot_observation_processor,
     action_queue: ActionQueue,
     shutdown_event: Event,
     cfg: RTCDemoConfig,
@@ -229,74 +245,113 @@ def get_actions(
     Args:
         policy: The policy instance (SmolVLA, Pi0, etc.)
         robot: The robot instance for getting observations
-        rtc_processor: RTC processor for guidance
+        robot_observation_processor: Processor for raw robot observations
         action_queue: Queue to put new action chunks
         shutdown_event: Event to signal shutdown
         cfg: Demo configuration
     """
-    logger.info("[GET_ACTIONS] Starting get actions thread")
+    try:
+        logger.info("[GET_ACTIONS] Starting get actions thread")
 
-    latency_tracker = LatencyTracker()  # Track latency of action chunks
-    fps = cfg.fps
+        latency_tracker = LatencyTracker()  # Track latency of action chunks
+        fps = cfg.fps
+        time_per_chunk = 1.0 / fps
 
-    dataset_features = hw_to_dataset_features(robot.observation_features(), "observation")
-    policy_device = policy.config.device
+        dataset_features = hw_to_dataset_features(robot.observation_features(), "observation")
+        policy_device = policy.config.device
 
-    while not shutdown_event.is_set():
-        if action_queue.qsize() < cfg.action_queue_size_to_get_new_actions:
-            current_time = time.perf_counter()
-            action_index_before_inference = action_queue.get_action_index()
-            prev_actions = action_queue.get_left_over()
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=cfg.policy,
+            pretrained_path=cfg.policy.pretrained_path,
+            preprocessor_overrides={
+                "device_processor": {"device": cfg.policy.device},
+            },
+        )
 
-            time_per_chunk = 1.0 / fps
-            inference_latency = latency_tracker.max()
-            inference_delay = math.ceil(inference_latency / time_per_chunk)
+        while not shutdown_event.is_set():
+            if action_queue.qsize() < cfg.action_queue_size_to_get_new_actions:
+                current_time = time.perf_counter()
+                action_index_before_inference = action_queue.get_action_index()
+                prev_actions = action_queue.get_left_over()
 
-            obs = robot.get_observation()
-            obs_with_policy_features = build_dataset_frame(dataset_features, obs, prefix="observation")
+                inference_latency = latency_tracker.max()
+                inference_delay = math.ceil(inference_latency / time_per_chunk)
 
-            for k, v in obs_with_policy_features.items():
-                if isinstance(v, np.ndarray):
-                    obs_with_policy_features[k] = torch.from_numpy(v).to(policy_device)
+                obs = robot.get_observation()
 
-                if is_image_key(k):
-                    obs_with_policy_features[k] = obs_with_policy_features[k].type(torch.float32) / 255
-                    obs_with_policy_features[k] = obs_with_policy_features[k].permute(2, 0, 1).unsqueeze(0)
-                elif isinstance(obs_with_policy_features[k], torch.Tensor):
-                    obs_with_policy_features[k] = obs_with_policy_features[k].unsqueeze(0)
+                # Apply robot observation processor
+                obs_processed = robot_observation_processor(obs)
 
-            obs_with_policy_features["task"] = cfg.task
-
-            logger.info(f"[GET_ACTIONS] obs_with_policy_features: {obs_with_policy_features}")
-            actions = policy.predict_action_chunk(
-                obs_with_policy_features,
-                noise=None,
-                inference_delay=inference_delay,
-                prev_chunk_left_over=prev_actions,
-            )
-
-            # Drop the batch dimension
-            actions = actions.squeeze(0)
-
-            new_latency = time.perf_counter() - current_time
-            new_delay = math.ceil(new_latency / time_per_chunk)
-            latency_tracker.add(new_latency)
-
-            if cfg.action_queue_size_to_get_new_actions < cfg.rtc.execution_horizon + new_delay:
-                logger.warning(
-                    "[GET_ACTIONS] cfg.action_queue_size_to_get_new_actions Too small, It should be higher than inference delay + execution horizon."
+                obs_with_policy_features = build_dataset_frame(
+                    dataset_features, obs_processed, prefix="observation"
                 )
 
-            logger.debug(f"[GET_ACTIONS] new_delay: {new_delay}")
-            logger.debug(f"[GET_ACTIONS] actions shape: {actions.shape}")
-            logger.debug(f"[GET_ACTIONS] action_index_before_inference: {action_index_before_inference}")
+                for name in obs_with_policy_features:
+                    obs_with_policy_features[name] = torch.from_numpy(obs_with_policy_features[name])
+                    if "image" in name:
+                        obs_with_policy_features[name] = (
+                            obs_with_policy_features[name].type(torch.float32) / 255
+                        )
+                        obs_with_policy_features[name] = (
+                            obs_with_policy_features[name].permute(2, 0, 1).contiguous()
+                        )
+                    obs_with_policy_features[name] = obs_with_policy_features[name].unsqueeze(0)
+                    obs_with_policy_features[name] = obs_with_policy_features[name].to(policy_device)
 
-            action_queue.merge(actions, new_delay, action_index_before_inference)
-        else:
-            # Small sleep to prevent busy waiting
-            time.sleep(0.01)
+                # for k, v in obs_with_policy_features.items():
+                #     if isinstance(v, np.ndarray):
+                #         obs_with_policy_features[k] = torch.from_numpy(v).to(policy_device)
 
-    logger.info("[GET_ACTIONS] get actions thread shutting down")
+                #     if is_image_key(k):
+                #         obs_with_policy_features[k] = obs_with_policy_features[k].type(torch.float32) / 255
+                #         obs_with_policy_features[k] = obs_with_policy_features[k].permute(2, 0, 1).unsqueeze(0)
+                #     elif isinstance(obs_with_policy_features[k], torch.Tensor):
+                #         obs_with_policy_features[k] = obs_with_policy_features[k].unsqueeze(0)
+
+                obs_with_policy_features["task"] = cfg.task
+
+                preproceseded_obs = preprocessor(obs_with_policy_features)
+
+                actions = policy.predict_action_chunk(
+                    preproceseded_obs,
+                    noise=None,
+                    inference_delay=inference_delay,
+                    prev_chunk_left_over=prev_actions,
+                )
+
+                # Store original actions (before postprocessing) for RTC
+                original_actions = actions.squeeze(0).clone()
+
+                postprocessed_actions = postprocessor(actions)
+
+                postprocessed_actions = postprocessed_actions.squeeze(0)
+
+                new_latency = time.perf_counter() - current_time
+                new_delay = math.ceil(new_latency / time_per_chunk)
+                latency_tracker.add(new_latency)
+
+                if cfg.action_queue_size_to_get_new_actions < cfg.rtc.execution_horizon + new_delay:
+                    logger.warning(
+                        "[GET_ACTIONS] cfg.action_queue_size_to_get_new_actions Too small, It should be higher than inference delay + execution horizon."
+                    )
+
+                logger.debug(f"[GET_ACTIONS] new_delay: {new_delay}")
+                logger.debug(f"[GET_ACTIONS] original_actions shape: {original_actions.shape}")
+                logger.debug(f"[GET_ACTIONS] postprocessed_actions shape: {postprocessed_actions.shape}")
+                logger.debug(f"[GET_ACTIONS] action_index_before_inference: {action_index_before_inference}")
+
+                action_queue.merge(
+                    original_actions, postprocessed_actions, new_delay, action_index_before_inference
+                )
+            else:
+                # Small sleep to prevent busy waiting
+                time.sleep(0.01)
+
+        logger.info("[GET_ACTIONS] get actions thread shutting down")
+    except Exception as e:
+        logger.error(f"[GET_ACTIONS] Fatal exception in get_actions thread: {e}")
+        logger.error(traceback.format_exc())
+        sys.exit(1)
 
 
 def actor_control(
@@ -313,31 +368,35 @@ def actor_control(
         shutdown_event: Event to signal shutdown
         cfg: Demo configuration
     """
-    logger.info("[ACTOR] Starting actor thread")
+    try:
+        logger.info("[ACTOR] Starting actor thread")
 
-    action_interval = 1.0 / cfg.fps
-    action_count = 0
+        action_interval = 1.0 / cfg.fps
+        action_count = 0
 
-    while not shutdown_event.is_set():
-        start_time = time.perf_counter()
+        while not shutdown_event.is_set():
+            start_time = time.perf_counter()
 
-        # Try to get an action from the queue with timeout
-        action = action_queue.get()
+            # Try to get an action from the queue with timeout
+            action = action_queue.get()
 
-        if action is not None:
-            action = action.cpu()
-            action = {key: action[i].item() for i, key in enumerate(robot.action_features())}
-            robot.send_action(action)
+            if action is not None:
+                action = action.cpu()
+                action = {key: action[i].item() for i, key in enumerate(robot.action_features())}
+                robot.send_action(action)
 
-            action_count += 1
-            logger.info(f"[ACTOR] Executed action {action_count}, action: {action}")
+                action_count += 1
 
-        # Wait for the next action time
-        elapsed = time.perf_counter() - start_time
-        if elapsed < action_interval:
-            time.sleep(action_interval - elapsed)
+            # Wait for the next action time
+            elapsed = time.perf_counter() - start_time
+            if elapsed < action_interval:
+                time.sleep(action_interval - elapsed)
 
-    logger.info(f"[ACTOR] Actor thread shutting down. Total actions executed: {action_count}")
+        logger.info(f"[ACTOR] Actor thread shutting down. Total actions executed: {action_count}")
+    except Exception as e:
+        logger.error(f"[ACTOR] Fatal exception in actor_control thread: {e}")
+        logger.error(traceback.format_exc())
+        sys.exit(1)
 
 
 def stop_by_duration(shutdown_event: Event, cfg: RTCDemoConfig):
@@ -386,13 +445,16 @@ def demo_cli(cfg: RTCDemoConfig):
 
     robot_wrapper = RobotWrapper(robot)
 
+    # Create robot observation processor
+    robot_observation_processor = make_default_robot_observation_processor()
+
     # Create action queue for communication between threads
     action_queue = ActionQueue(cfg.rtc)
 
     # Start chunk requester thread
     get_actions_thread = Thread(
         target=get_actions,
-        args=(policy, robot_wrapper, action_queue, shutdown_event, cfg),
+        args=(policy, robot_wrapper, robot_observation_processor, action_queue, shutdown_event, cfg),
         daemon=True,
         name="GetActions",
     )
