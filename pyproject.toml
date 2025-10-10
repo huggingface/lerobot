@@ -124,6 +124,7 @@ smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
+accelerate = ["accelerate>=1.10.0"]
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
 
 # Development

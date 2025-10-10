@@ -99,7 +99,7 @@ class WandBLogger:
         cfg.wandb.run_id = run_id
         # Handle custom step key for rl asynchronous training.
         self._wandb_custom_step_key: set[str] | None = None
-        print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
+        logging.info(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
         logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
         self._wandb = wandb
 
