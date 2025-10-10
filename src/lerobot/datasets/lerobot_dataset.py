@@ -870,7 +870,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     @property
     def num_frames(self) -> int:
-        """Number of frames in selected episodes."""
+        """Number of frames in selected episodes.
+
+        Note: When episodes a subset of the full dataset is requested, we must return the
+        actual loaded data length (len(self.hf_dataset)) rather than metadata total_frames.
+        self.meta.total_frames is the total number of frames in the full dataset.
+        """
+        if self.episodes is not None and self.hf_dataset is not None:
+            return len(self.hf_dataset)
         return self.meta.total_frames
 
     @property
