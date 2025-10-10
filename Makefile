@@ -119,9 +119,9 @@ test-tdmpc-ete-train:
 		--policy.type=tdmpc \
 		--policy.device=$(DEVICE) \
 		--policy.push_to_hub=false \
-		--env.type=aloha \
+		--env.type=pusht \
 		--env.episode_length=5 \
-		--dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
+		--dataset.repo_id=lerobot/pusht_image \
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
@@ -139,7 +139,7 @@ test-tdmpc-ete-eval:
 	lerobot-eval \
 		--policy.path=tests/outputs/tdmpc/checkpoints/000002/pretrained_model \
 		--policy.device=$(DEVICE) \
-		--env.type=aloha \
+		--env.type=pusht \
 		--env.episode_length=5 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1
