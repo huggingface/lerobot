@@ -125,7 +125,15 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
                 ],
                 dtype=float,
             )
-            r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+            delta_rot = np.array(
+                [
+                    wx * self.end_effector_step_sizes["wx"],
+                    wy * self.end_effector_step_sizes["wy"],
+                    wz * self.end_effector_step_sizes["wz"],
+                ],
+                dtype=float,
+            )
+            r_abs = Rotation.from_rotvec(delta_rot).as_matrix()
             desired = np.eye(4, dtype=float)
             desired[:3, :3] = ref[:3, :3] @ r_abs
             desired[:3, 3] = ref[:3, 3] + delta_p
@@ -379,7 +387,8 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
             # Discrete gripper actions are in [0, 1, 2]
             # 0: open, 1: close, 2: stay
             # We need to shift them to [-1, 0, 1] and then scale them to clip_max
-            gripper_vel = (gripper_vel - 1) * self.clip_max
+            discrete_gripper_mean = 0
+            gripper_vel = (gripper_vel - discrete_gripper_mean) * self.clip_max
 
         # Compute desired gripper position
         delta = gripper_vel * float(self.speed_factor)

@@ -50,6 +50,7 @@ import logging
 import os
 import time
 from functools import lru_cache
+from pprint import pformat
 from queue import Empty
 
 import grpc
@@ -60,8 +61,10 @@ from torch.multiprocessing import Event, Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
+
+# from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
 from lerobot.policies.factory import make_policy
-from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
@@ -77,6 +80,7 @@ from lerobot.transport.utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
+from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.transition import (
@@ -235,6 +239,7 @@ def act_with_policy(
         init_logging(log_file=log_file, display_pid=True)
         logging.info("Actor policy process logging initialized")
 
+    logging.info(pformat(cfg.to_dict()))
     logging.info("make_env online")
 
     online_env, teleop_device = make_robot_env(cfg=cfg.env)
@@ -251,16 +256,25 @@ def act_with_policy(
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
-    policy: SACPolicy = make_policy(
+    policy: ACFQLPolicy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
+    # get the initial policy parameters from the learner
+    if cfg.policy.offline_steps > 0:
+        logging.info("[ACTOR] Waiting for initial policy parameters from learner")
+        update_policy_parameters(
+            policy=policy, parameters_queue=parameters_queue, device=device, wait_for_update=True
+        )
+
     obs, info = online_env.reset()
     env_processor.reset()
     action_processor.reset()
+    if hasattr(teleop_device, "reset"):
+        teleop_device.reset()
 
     # Process initial observation
     transition = create_transition(observation=obs, info=info)
@@ -326,6 +340,8 @@ def act_with_policy(
         if intervention_info.get(TeleopEvents.IS_INTERVENTION, False):
             episode_intervention = True
             episode_intervention_steps += 1
+            # TODO: The policy state should be reset when an intervention occurs when chunking is enabled, to clear the action queue
+            policy.reset()  # Reset policy state if needed
 
         complementary_info = {
             "discrete_penalty": torch.tensor(
@@ -351,7 +367,7 @@ def act_with_policy(
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
-            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
+            stats = get_frequency_stats(policy_timer)
 
             if len(list_transition_to_send_to_learner) > 0:
                 push_transitions_to_transport_queue(
@@ -360,8 +376,7 @@ def act_with_policy(
                 )
                 list_transition_to_send_to_learner = []
 
-            stats = get_frequency_stats(policy_timer)
-            policy_timer.reset()
+            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
             # Calculate intervention rate
             intervention_rate = 0.0
@@ -381,6 +396,8 @@ def act_with_policy(
                 )
             )
 
+            policy_timer.reset()
+
             # Reset intervention counters and environment
             sum_reward_episode = 0.0
             episode_intervention = False
@@ -391,6 +408,11 @@ def act_with_policy(
             obs, info = online_env.reset()
             env_processor.reset()
             action_processor.reset()
+
+            policy.reset()  # Reset policy state if needed
+
+            if hasattr(teleop_device, "reset"):
+                teleop_device.reset()
 
             # Process initial observation
             transition = create_transition(observation=obs, info=info)
@@ -626,7 +648,7 @@ def transitions_stream(shutdown_event: Event, transitions_queue: Queue, timeout:
 
 
 def interactions_stream(
-    shutdown_event: Event,
+    shutdown_event: Event,  # type: ignore
     interactions_queue: Queue,
     timeout: float,  # type: ignore
 ) -> services_pb2.Empty:
@@ -649,8 +671,15 @@ def interactions_stream(
 #  Policy functions
 
 
-def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
+def update_policy_parameters(
+    policy: ACFQLPolicy, parameters_queue: Queue, device, wait_for_update: bool = False
+):
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
+
+    while bytes_state_dict is None and wait_for_update:
+        # logging.info("[ACTOR] Waiting for updated policy parameters from Learner...")
+        bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
+        time.sleep(2)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
         state_dicts = bytes_to_state_dict(bytes_state_dict)
@@ -667,15 +696,15 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
 
         # Load actor state dict
         actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        policy.actor.load_state_dict(actor_state_dict)
+        policy.actor_onestep_flow.load_state_dict(actor_state_dict, strict=True)
 
-        # Load discrete critic if present
-        if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
-            discrete_critic_state_dict = move_state_dict_to_device(
-                state_dicts["discrete_critic"], device=device
-            )
-            policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
-            logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
+        # # Load discrete critic if present
+        # if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
+        #     discrete_critic_state_dict = move_state_dict_to_device(
+        #         state_dicts["discrete_critic"], device=device
+        #     )
+        #     policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
+        #     logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
 
 
 #  Utilities functions
@@ -714,7 +743,7 @@ def get_frequency_stats(timer: TimerManager) -> dict[str, float]:
     if timer.count > 1:
         avg_fps = timer.fps_avg
         p90_fps = timer.fps_percentile(90)
-        logging.debug(f"[ACTOR] Average policy frame rate: {avg_fps}")
+        logging.info(f"[ACTOR] Average policy frame rate: {avg_fps}")
         logging.debug(f"[ACTOR] Policy frame rate 90th percentile: {p90_fps}")
         stats = {
             "Policy frequency [Hz]": avg_fps,
@@ -735,4 +764,5 @@ def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
 
 
 if __name__ == "__main__":
+    register_third_party_devices()
     actor_cli()

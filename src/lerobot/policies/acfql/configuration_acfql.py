@@ -61,40 +61,18 @@ class CriticNetworkConfig:
     activate_final: bool = True
     final_activation: str | None = None
     layer_norm: bool = True
-    default_init: float | None = None
     init_final: float | None = None
 
 
 @dataclass
-class ActorNetworkConfig:
-    hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
-    activate_final: bool = False
-    layer_norm: bool = False
-    default_init: float | None = None
-
-
-@dataclass
-class PolicyConfig:
-    # use_tanh_squash: bool = True
-    # std_min: float = 1e-5
-    # std_max: float = 10.0
-    # init_final: float = 0.05
-    init_final: float | None = None
-
-
-@dataclass
-class DiscreteActorNetworkConfig:
-    """Configuration for the discrete actor network."""
-
+class ActorVectorFieldNetworkConfig:
     hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
     activate_final: bool = True
     layer_norm: bool = False
 
 
 @dataclass
-class DiscretePolicyConfig:
-    """Configuration for the discrete policy."""
-
+class PolicyConfig:
     init_final: float | None = None
 
 
@@ -165,9 +143,7 @@ class ACFQLConfig(PreTrainedConfig):
     # Number of steps for online training
     online_steps: int = 1000000
     # Number of steps for pretraining (if applicable)
-    pretrain_steps: int = 0
-    # Whether to reset critics after pretraining
-    reset_critics_after_pretraining: bool = False
+    offline_steps: int = 0
     # Seed for the online environment
     online_env_seed: int = 10000
     # Capacity of the online replay buffer
@@ -176,12 +152,13 @@ class ACFQLConfig(PreTrainedConfig):
     offline_buffer_capacity: int = 100000
     # Whether to use asynchronous prefetching for the buffers
     async_prefetch: bool = False
+    # TODO(lilkm): Check this
     # Number of steps before learning starts
     online_step_before_learning: int = 100
-    online_step_before_learning_with_env: int = 100
     # Frequency of policy updates
     policy_update_freq: int = 1
 
+    # TODO(lilkm): Check this
     force_full_n_steps: bool = True
     use_terminal_for_next_state: bool = True
     mask_truncated_td_loss: bool = False
@@ -189,8 +166,6 @@ class ACFQLConfig(PreTrainedConfig):
     # SAC algorithm parameters
     # Discount factor for the SAC algorithm
     discount: float = 0.99
-    # Initial temperature value
-    temperature_init: float = 1.0
     # Number of critics in the ensemble
     num_critics: int = 2
     # Number of subsampled critics for training
@@ -199,8 +174,6 @@ class ACFQLConfig(PreTrainedConfig):
     critic_lr: float = 3e-4
     # Learning rate for the actor network
     actor_lr: float = 3e-4
-    # Learning rate for the temperature parameter
-    temperature_lr: float = 3e-4
     # Weight for the critic target update
     critic_target_update_weight: float = 0.005
     # Aggregation method for Q-values, can be "mean" or "max"
@@ -211,66 +184,24 @@ class ACFQLConfig(PreTrainedConfig):
     flow_steps: int = 10
     # Whether to normalize the Q-loss
     normalize_q_loss: bool = False
+    # Whether to use TD loss (should be True for normal training)
+    use_td_loss: bool = True
     # Update-to-data ratio for the UTD algorithm (If you want enable utd_ratio, you need to set it to >1)
-    utd_ratio: int = 1
+    utd_ratio: int = 2
     # Hidden dimension size for the state encoder
     state_encoder_hidden_dim: int = 256
     # Dimension of the latent space
     latent_dim: int = 256
-    # Target entropy for the SAC algorithm
-    target_entropy: float | None = None
-    # Whether to use backup entropy for the SAC algorithm
-    use_backup_entropy: bool = True
     # Gradient clipping norm for the SAC algorithm
     grad_clip_norm: float = 40.0
-
-    # Cal-QL parameters
-    # Whether to use Cal-QL (Calibrated Q-Learning)
-    use_calql: bool = False
-    # Whether to apply Cal-QL bounds to random actions (if False, only applies to policy actions)
-    calql_bound_random_actions: bool = False
-    # Number of actions to sample for CQL/Cal-QL
-    cql_n_actions: int = 10
-    # CQL temperature parameter
-    cql_temp: float = 1.0
-    # CQL alpha weight for the CQL loss
-    cql_alpha: float = 5.0
-    # Whether to use CQL loss
-    use_cql_loss: bool = False
-    # Whether to use TD loss (can be disabled for pure CQL)
-    use_td_loss: bool = True
-    # CQL action sampling method: "uniform" or "normal"
-    cql_action_sample_method: str = "uniform"
-    # Whether to use importance sampling in CQL
-    cql_importance_sample: bool = False
-    # Whether to use max target backup in CQL
-    cql_max_target_backup: bool = False
-    # CQL clipping bounds for the Q-value difference
-    cql_clip_diff_min: float = -float("inf")
-    cql_clip_diff_max: float = float("inf")
-    # CQL target action gap for auto-tuning
-    cql_target_action_gap: float = 1.0
-    # Whether to auto-tune CQL alpha
-    cql_autotune_alpha: bool = False
-    # Initial value for CQL alpha Lagrange multiplier
-    cql_alpha_lagrange_init: float = 1.0
-    cql_use_bc_for_sampling: bool = False
 
     # Network configuration
     # Configuration for the critic network architecture
     critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     # Configuration for the actor network architecture
-    actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
-    # Configuration for the discrete actor network architecture
-    discrete_actor_network_kwargs: DiscreteActorNetworkConfig = field(
-        default_factory=DiscreteActorNetworkConfig
-    )
+    actor_network_kwargs: ActorVectorFieldNetworkConfig = field(default_factory=ActorVectorFieldNetworkConfig)
     # Configuration for the policy parameters
     policy_kwargs: PolicyConfig = field(default_factory=PolicyConfig)
-    # Configuration for the discrete policy
-    discrete_policy_kwargs: DiscretePolicyConfig = field(default_factory=DiscretePolicyConfig)
-    # Configuration for the discrete critic network
-    discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     # Configuration for actor-learner architecture
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     # Configuration for concurrency settings (you can use threads or processes for the actor and learner)
@@ -281,19 +212,13 @@ class ACFQLConfig(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
-        # Any validation specific to SAC configuration
 
     def get_optimizer_preset(self) -> MultiAdamConfig:
         optimizer_groups = {
             "actor_bc_flow": {"lr": self.actor_lr},
             "actor_onestep_flow": {"lr": self.actor_lr},
             "critic": {"lr": self.critic_lr},
-            "temperature": {"lr": self.temperature_lr},
         }
-
-        # Add CQL alpha optimizer if auto-tuning is enabled
-        if self.cql_autotune_alpha:
-            optimizer_groups["cql_alpha_lagrange"] = {"lr": self.critic_lr}  # Use same lr as critic
 
         return MultiAdamConfig(
             weight_decay=0.0,
@@ -325,6 +250,7 @@ class ACFQLConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        # TODO(lilkmn): Maybe implement action deltas for QC-FQL
         return None  # SAC typically predicts one action at a time
 
     @property

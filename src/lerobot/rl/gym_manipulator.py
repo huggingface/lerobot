@@ -74,6 +74,7 @@ from lerobot.teleoperators import (
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
+from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
@@ -201,15 +202,15 @@ class RobotEnv(gym.Env):
         self.observation_space = gym.spaces.Dict(observation_spaces)
 
         # Define the action space for joint positions along with setting an intervention flag.
-        action_dim = 3
+        action_dim = 6  # 3 for (x, y, z) and 3 for (wx, wy, wz) rotation
         bounds = {}
         bounds["min"] = -np.ones(action_dim)
         bounds["max"] = np.ones(action_dim)
 
         if self.use_gripper:
             action_dim += 1
-            bounds["min"] = np.concatenate([bounds["min"], [0]])
-            bounds["max"] = np.concatenate([bounds["max"], [2]])
+            bounds["min"] = np.concatenate([bounds["min"], [-1]])
+            bounds["max"] = np.concatenate([bounds["max"], [1]])
 
         self.action_space = gym.spaces.Box(
             low=bounds["min"],
@@ -282,10 +283,19 @@ class RobotEnv(gym.Env):
 
         current_observation = self._get_observation()
         if current_observation is not None:
-            image_keys = [key for key in current_observation if "image" in key]
+            pixels = current_observation.get("pixels", None)
+            if pixels is None:
+                return
+            image_keys = pixels.keys()
 
             for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(current_observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                cv2.imshow(
+                    key,
+                    cv2.cvtColor(
+                        pixels[key] if isinstance(pixels[key], np.ndarray) else pixels[key].numpy(),
+                        cv2.COLOR_RGB2BGR,
+                    ),
+                )
                 cv2.waitKey(1)
 
     def close(self) -> None:
@@ -485,10 +495,11 @@ def make_processors(
             ),
             EEBoundsAndSafety(
                 end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
+                max_ee_step_m=0.10,  # TODO: make this configurable
             ),
             GripperVelocityToJoint(
                 clip_max=cfg.processor.max_gripper_pos,
-                speed_factor=1.0,
+                speed_factor=0.075,  # TODO: make this configurable
                 discrete_gripper=True,
             ),
             InverseKinematicsRLStep(
@@ -589,6 +600,8 @@ def control_loop(
     )
     env_processor.reset()
     action_processor.reset()
+    if hasattr(teleop_device, "reset"):
+        teleop_device.reset()
 
     # Process initial observation
     transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
@@ -641,13 +654,15 @@ def control_loop(
     episode_step = 0
     episode_start_time = time.perf_counter()
 
+    log_say(f"Recording episode {episode_idx}", play_sounds=True)
+
     while episode_idx < cfg.dataset.num_episodes_to_record:
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
-        neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
+        neutral_action = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float32)
         if use_gripper:
-            neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
+            neutral_action = torch.cat([neutral_action, torch.tensor([0.0])])  # Gripper stay
 
         # Use the new step function
         transition = step_env_and_process_transition(
@@ -708,6 +723,10 @@ def control_loop(
             obs, info = env.reset()
             env_processor.reset()
             action_processor.reset()
+            if hasattr(teleop_device, "reset"):
+                teleop_device.reset()
+
+            log_say(f"Recording episode {episode_idx}", play_sounds=True)
 
             transition = create_transition(observation=obs, info=info)
             transition = env_processor(transition)
@@ -767,4 +786,5 @@ def main(cfg: GymManipulatorConfig) -> None:
 
 
 if __name__ == "__main__":
+    register_third_party_devices()
     main()

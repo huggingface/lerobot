@@ -443,6 +443,9 @@ class InterventionActionProcessorStep(ProcessorStep):
                     teleop_action.get("delta_x", 0.0),
                     teleop_action.get("delta_y", 0.0),
                     teleop_action.get("delta_z", 0.0),
+                    teleop_action.get("delta_wx", 0.0),
+                    teleop_action.get("delta_wy", 0.0),
+                    teleop_action.get("delta_wz", 0.0),
                 ]
                 if self.use_gripper:
                     action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
