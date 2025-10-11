@@ -33,7 +33,7 @@ class BiStaraiLeader(Teleoperator):
     """
 
     config_class = BiStaraiLeaderConfig
-    name = "bi_so100_leader"
+    name = "bi_starai_leader"
 
     def __init__(self, config: BiStaraiLeaderConfig):
         super().__init__(config)
