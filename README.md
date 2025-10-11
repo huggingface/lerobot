@@ -12,11 +12,62 @@
 [![Status](https://img.shields.io/pypi/status/lerobot)](https://pypi.org/project/lerobot/)
 [![Version](https://img.shields.io/pypi/v/lerobot)](https://pypi.org/project/lerobot/)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
-[<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Discord-Logo-Blurple.png" alt="Discord" width="90"/>](https://discord.gg/s3KuuzsPFb)
+[![Discord](https://dcbadge.vercel.app/api/server/C5P34WJ68S?style=flat)](https://discord.gg/s3KuuzsPFb)
 
 <!-- [![Coverage](https://codecov.io/gh/huggingface/lerobot/branch/main/graph/badge.svg?token=TODO)](https://codecov.io/gh/huggingface/lerobot) -->
 
 </div>
+
+<h2 align="center">
+    <p><a href="https://huggingface.co/docs/lerobot/hope_jr">
+        Build Your Own HopeJR Robot!</a></p>
+</h2>
+
+<div align="center">
+  <img
+    src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/hope_jr/hopejr.png"
+    alt="HopeJR robot"
+    title="HopeJR robot"
+    width="60%"
+  />
+
+  <p><strong>Meet HopeJR – A humanoid robot arm and hand for dexterous manipulation!</strong></p>
+  <p>Control it with exoskeletons and gloves for precise hand movements.</p>
+  <p>Perfect for advanced manipulation tasks! 🤖</p>
+
+  <p><a href="https://huggingface.co/docs/lerobot/hope_jr">
+      See the full HopeJR tutorial here.</a></p>
+</div>
+
+<br/>
+
+<h2 align="center">
+    <p><a href="https://huggingface.co/docs/lerobot/so101">
+        Build Your Own SO-101 Robot!</a></p>
+</h2>
+
+<div align="center">
+  <table>
+    <tr>
+      <td align="center"><img src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/so101/so101.webp" alt="SO-101 follower arm" title="SO-101 follower arm" width="90%"/></td>
+      <td align="center"><img src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/so101/so101-leader.webp" alt="SO-101 leader arm" title="SO-101 leader arm" width="90%"/></td>
+    </tr>
+  </table>
+
+  <p><strong>Meet the updated SO100, the SO-101 – Just €114 per arm!</strong></p>
+  <p>Train it in minutes with a few simple moves on your laptop.</p>
+  <p>Then sit back and watch your creation act autonomously! 🤯</p>
+
+  <p><a href="https://huggingface.co/docs/lerobot/so101">
+      See the full SO-101 tutorial here.</a></p>
+
+  <p>Want to take it to the next level? Make your SO-101 mobile by building LeKiwi!</p>
+  <p>Check out the <a href="https://huggingface.co/docs/lerobot/lekiwi">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
+
+  <img src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/lekiwi/kiwi.webp" alt="LeKiwi mobile robot" title="LeKiwi mobile robot" width="50%">
+</div>
+
+<br/>
 
 <h3 align="center">
     <p>LeRobot: State-of-the-art AI for real-world robotics</p>
@@ -24,13 +75,13 @@
 
 ---
 
-🤗 LeRobot acts as the unified framework for state-of-the-art robot learning, covering simulation, real-world control, datasets, and pretrained policies built in PyTorch.
+🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
 
-It centralizes the definition of robot environments, datasets, and models, and ensure compatibility across the robotics ecosystem: if a robot or environment is supported in LeRobot, it works seamlessly with the majority of training frameworks and policy architectures (ACT, Diffusion Policy, TDMPC, SmolVLA, ...).
+🤗 LeRobot contains state-of-the-art approaches that have been shown to transfer to the real-world with a focus on imitation learning and reinforcement learning.
 
-We aim to democratize robotics by making modern robot learning simple, modular, and open , empowering anyone to collect data, train models, and deploy them on affordable real-world robots.
+🤗 LeRobot already provides a set of pretrained models, datasets with human collected demonstrations, and simulation environments to get started without assembling a robot. In the coming weeks, the plan is to add more and more support for real-world robotics on the most affordable and capable robots out there.
 
-There are already thousands of pretrained LeRobot models and datasets available on the Hugging Face Hub that you can explore and use to get started right away.
+🤗 LeRobot hosts pretrained models and datasets on this Hugging Face community page: [huggingface.co/lerobot](https://huggingface.co/lerobot)
 
 #### Examples of pretrained models on simulation environments
 
@@ -99,13 +150,13 @@ pip install -e .
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 
 - [aloha](https://github.com/huggingface/gym-aloha)
-- [libero](https://huggingface.co/docs/lerobot/en/libero)
-- [metaworld](https://github.com/huggingface/gym-pusht)
+- [xarm](https://github.com/huggingface/gym-xarm)
+- [pusht](https://github.com/huggingface/gym-pusht)
 
-For instance, to install 🤗 LeRobot with libero and metaworld, use:
+For instance, to install 🤗 LeRobot with aloha and pusht, use:
 
 ```bash
-pip install -e ".[libero, metaworld]"
+pip install -e ".[aloha, pusht]"
 ```
 
 ### Installation from PyPI
@@ -124,7 +175,7 @@ To install additional functionality, use one of the following:
 
 ```bash
 pip install 'lerobot[all]'          # All available features
-pip install 'lerobot[aloha,pusht]'  # Specific features (Aloha & Pusht Environments)
+pip install 'lerobot[aloha,pusht]'  # Specific features (Aloha & Pusht)
 pip install 'lerobot[feetech]'      # Feetech motor support
 ```
 
@@ -134,84 +185,110 @@ _Replace `[...]` with your desired features._
 For a full list of optional dependencies, see:
 https://pypi.org/project/lerobot/
 
-<h2>Our Robots</h2>
+### Weights & Biases
 
-<details>
-  <summary><b>SO-101</b> - Affordable dual-arm robot (€114/arm)</summary>
-  <p align="center">
-    <img src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/so101/so101.webp" alt="SO-101 robot arm" width="70%"/>
-  </p>
-  <p align="center">
-    The SO-101 is a low-cost, open-source dual-arm robot designed for imitation learning and real-world control.<br/>
-    <a href="https://huggingface.co/docs/lerobot/so101">🔗 See SO-101 tutorial</a>
-  </p>
-</details>
+To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
 
-<details>
-  <summary><b>LeKiwi</b> - Mobile base for SO-101</summary>
-  <p align="center">
-    <img src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/lekiwi/kiwi.webp" alt="LeKiwi mobile robot" width="70%"/>
-  </p>
-  <p align="center">
-    LeKiwi turns SO-101 into a mobile robot, combining locomotion and manipulation for autonomous tasks.<br/>
-    <a href="https://huggingface.co/docs/lerobot/lekiwi">🔗 See LeKiwi tutorial</a>
-  </p>
-</details>
+```bash
+wandb login
+```
 
-<details>
-  <summary><b>Hope JR</b> - Humanoid arm for dexterous manipulation</summary>
-  <p align="center">
-    <img src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/hope_jr/hopejr.png" alt="HopeJR robot" width="70%"/>
-  </p>
-  <p align="center">
-    Hope JR is a humanoid hand and arm for fine manipulation, controllable via exoskeletons and gloves.<br/>
-    <a href="https://huggingface.co/docs/lerobot/hope_jr">🔗 See HopeJR tutorial</a>
-  </p>
-</details>
+(note: you will also need to enable WandB in the configuration. See below.)
 
-<details>
-  <summary><b>SO-100</b> - Early prototype of SO-101</summary>
-  <p align="center">
-    <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/so100-lerobot.jpg" alt="SO-100 robot" width="70%"/>
-  </p>
-  <p align="center">
-    The SO-100 is the predecessor to SO-101, built for rapid prototyping and early policy testing.<br/>
-    <a href="https://huggingface.co/docs/lerobot/so100">🔗 See SO-100 tutorial</a>
-  </p>
-</details>
+### Visualize datasets
 
-<details>
-  <summary><b>Koch v1.1</b> - Lightweight research manipulator</summary>
-  <p align="center">
-    <img src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/koch/koch_v1_1.webp" alt="Koch v1.1 robot" width="70%"/>
-  </p>
-  <p align="center">
-    Koch v1.1 is a compact research manipulator built for modularity, speed, and reproducibility.<br/>
-    <a href="https://huggingface.co/docs/lerobot/koch_v1_1">🔗 See Koch v1.1 tutorial</a>
-  </p>
-</details>
+Check out [example 1](https://github.com/huggingface/lerobot/blob/main/examples/dataset/load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically downloads data from the Hugging Face hub.
 
-<details>
-  <summary><b>Reachy 2</b> - Open-source humanoid platform</summary>
-  <p align="center">
-    <img src="https://www.pollen-robotics.com/wp-content/uploads/2024/10/reachy2_full_robot.webp" alt="Reachy 2 robot" width="70%"/>
-  </p>
-  <p align="center">
-    Reachy 2 is a community-built open humanoid, ideal for perception and embodied AI research.<br/>
-    <a href="https://huggingface.co/docs/lerobot/reachy2">🔗 See Reachy 2 tutorial</a>
-  </p>
-</details>
+You can also locally visualize episodes from a dataset on the hub by executing our script from the command line:
 
-<h2>LeRobotDataset</h2>
-<p>
-  To learn more about our <code>LeRobotDataset</code> and how to visualize it, see
-  <a href="https://huggingface.co/docs/lerobot/lerobot-dataset-v3">this guide</a>.
-</p>
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0
+```
 
-<p>
-  The <code>LeRobotDataset</code> is quickly becoming the foundation for open robotics data — unifying formats,
-  tooling, and best practices across simulation and real-world datasets.
-</p>
+or from a dataset in a local folder with the `root` option and the `--local-files-only` (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --root ./my_local_data_dir \
+    --local-files-only 1 \
+    --episode-index 0
+```
+
+It will open `rerun.io` and display the camera streams, robot states and actions, like this:
+
+https://github-production-user-asset-6210df.s3.amazonaws.com/4681518/328035972-fd46b787-b532-47e2-bb6f-fd536a55a7ed.mov?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20240505%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240505T172924Z&X-Amz-Expires=300&X-Amz-Signature=d680b26c532eeaf80740f08af3320d22ad0b8a4e4da1bcc4f33142c15b509eda&X-Amz-SignedHeaders=host&actor_id=24889239&key_id=0&repo_id=748713144
+
+Our script can also visualize datasets stored on a distant server. See `lerobot-dataset-viz --help` for more instructions.
+
+### The `LeRobotDataset` format
+
+A dataset in `LeRobotDataset` format is very simple to use. It can be loaded from a repository on the Hugging Face hub or a local folder simply with e.g. `dataset = LeRobotDataset("lerobot/aloha_static_coffee")` and can be indexed into like any Hugging Face and PyTorch dataset. For instance `dataset[0]` will retrieve a single temporal frame from the dataset containing observation(s) and an action as PyTorch tensors ready to be fed to a model.
+
+A specificity of `LeRobotDataset` is that, rather than retrieving a single frame by its index, we can retrieve several frames based on their temporal relationship with the indexed frame, by setting `delta_timestamps` to a list of relative times with respect to the indexed frame. For example, with `delta_timestamps = {"observation.image": [-1, -0.5, -0.2, 0]}` one can retrieve, for a given index, 4 frames: 3 "previous" frames 1 second, 0.5 seconds, and 0.2 seconds before the indexed frame, and the indexed frame itself (corresponding to the 0 entry). See example [1_load_lerobot_dataset.py](https://github.com/huggingface/lerobot/blob/main/examples/dataset/load_lerobot_dataset.py) for more details on `delta_timestamps`.
+
+Under the hood, the `LeRobotDataset` format makes use of several ways to serialize data which can be useful to understand if you plan to work more closely with this format. We tried to make a flexible yet simple dataset format that would cover most type of features and specificities present in reinforcement learning and robotics, in simulation and in real-world, with a focus on cameras and robot states but easily extended to other types of sensory inputs as long as they can be represented by a tensor.
+
+Here are the important details and internal structure organization of a typical `LeRobotDataset` instantiated with `dataset = LeRobotDataset("lerobot/aloha_static_coffee")`. The exact features will change from dataset to dataset but not the main aspects:
+
+```
+dataset attributes:
+  ├ hf_dataset: a Hugging Face dataset (backed by Arrow/parquet). Typical features example:
+  │  ├ observation.images.cam_high (VideoFrame):
+  │  │   VideoFrame = {'path': path to a mp4 video, 'timestamp' (float32): timestamp in the video}
+  │  ├ observation.state (list of float32): position of an arm joints (for instance)
+  │  ... (more observations)
+  │  ├ action (list of float32): goal position of an arm joints (for instance)
+  │  ├ episode_index (int64): index of the episode for this sample
+  │  ├ frame_index (int64): index of the frame for this sample in the episode ; starts at 0 for each episode
+  │  ├ timestamp (float32): timestamp in the episode
+  │  ├ next.done (bool): indicates the end of an episode ; True for the last frame in each episode
+  │  └ index (int64): general index in the whole dataset
+  ├ meta: a LeRobotDatasetMetadata object containing:
+  │  ├ info: a dictionary of metadata on the dataset
+  │  │  ├ codebase_version (str): this is to keep track of the codebase version the dataset was created with
+  │  │  ├ fps (int): frame per second the dataset is recorded/synchronized to
+  │  │  ├ features (dict): all features contained in the dataset with their shapes and types
+  │  │  ├ total_episodes (int): total number of episodes in the dataset
+  │  │  ├ total_frames (int): total number of frames in the dataset
+  │  │  ├ robot_type (str): robot type used for recording
+  │  │  ├ data_path (str): formattable string for the parquet files
+  │  │  └ video_path (str): formattable string for the video files (if using videos)
+  │  ├ episodes: a DataFrame containing episode metadata with columns:
+  │  │  ├ episode_index (int): index of the episode
+  │  │  ├ tasks (list): list of tasks for this episode
+  │  │  ├ length (int): number of frames in this episode
+  │  │  ├ dataset_from_index (int): start index of this episode in the dataset
+  │  │  └ dataset_to_index (int): end index of this episode in the dataset
+  │  ├ stats: a dictionary of statistics (max, mean, min, std) for each feature in the dataset, for instance
+  │  │  ├ observation.images.front_cam: {'max': tensor with same number of dimensions (e.g. `(c, 1, 1)` for images, `(c,)` for states), etc.}
+  │  │  └ ...
+  │  └ tasks: a DataFrame containing task information with task names as index and task_index as values
+  ├ root (Path): local directory where the dataset is stored
+  ├ image_transforms (Callable): optional image transformations to apply to visual modalities
+  └ delta_timestamps (dict): optional delta timestamps for temporal queries
+```
+
+A `LeRobotDataset` is serialised using several widespread file formats for each of its parts, namely:
+
+- hf_dataset stored using Hugging Face datasets library serialization to parquet
+- videos are stored in mp4 format to save space
+- metadata are stored in plain json/jsonl files
+
+Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
+
+#### Reproduce state-of-the-art (SOTA)
+
+We provide some pretrained policies on our [hub page](https://huggingface.co/lerobot) that can achieve state-of-the-art performances.
+You can reproduce their training by loading the config from their run. Simply running:
+
+```bash
+lerobot-train --config_path=lerobot/diffusion_pusht
+```
+
+reproduces SOTA results for Diffusion Policy on the PushT task.
 
 ## Contribute
 

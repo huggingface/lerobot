@@ -19,8 +19,6 @@
     title: Use Async Inference
   title: "Tutorials"
 - sections:
-  - local: lerobot-dataset-format
-    title: LeRobotDataset Format
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
   - local: porting_datasets_v3

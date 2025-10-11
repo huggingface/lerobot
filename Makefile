@@ -141,8 +141,8 @@ test-tdmpc-ete-eval:
 		--policy.device=$(DEVICE) \
 		--env.type=pusht \
 		--env.episode_length=5 \
-		--env.visualization_width=96 \
-		--env.visualization_height=96 \
+		--env.observation_height=96 \
+        --env.observation_width=96 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1
 
