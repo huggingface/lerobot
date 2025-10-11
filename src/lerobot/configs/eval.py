@@ -35,13 +35,13 @@ class EvalPipelineConfig:
     job_name: str | None = None
     seed: int | None = 1000
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = policy_path
+            self.policy.pretrained_path = Path(policy_path)
 
         else:
             logging.warning(
@@ -50,9 +50,11 @@ class EvalPipelineConfig:
 
         if not self.job_name:
             if self.env is None:
-                self.job_name = f"{self.policy.type}"
+                self.job_name = f"{self.policy.type if self.policy is not None else 'scratch'}"
             else:
-                self.job_name = f"{self.env.type}_{self.policy.type}"
+                self.job_name = (
+                    f"{self.env.type}_{self.policy.type if self.policy is not None else 'scratch'}"
+                )
 
         if not self.output_dir:
             now = dt.datetime.now()
