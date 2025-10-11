@@ -525,7 +525,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 episode_metadata["block/initial_x"] = block_initial_pos[0]
                 episode_metadata["block/initial_y"] = block_initial_pos[1]
                 episode_metadata["block/initial_z"] = block_initial_pos[2]
-                logging.info(f"Block initial position: [{block_initial_pos[0]:.3f}, {block_initial_pos[1]:.3f}, {block_initial_pos[2]:.3f}]")
+                if len(block_initial_pos) > 3:  # If yaw is included
+                    episode_metadata["block/initial_yaw_deg"] = block_initial_pos[3]
+                    logging.info(f"Block initial position: [{block_initial_pos[0]:.3f}, {block_initial_pos[1]:.3f}, {block_initial_pos[2]:.3f}], yaw: {block_initial_pos[3]:.1f}°")
+                else:
+                    logging.info(f"Block initial position: [{block_initial_pos[0]:.3f}, {block_initial_pos[1]:.3f}, {block_initial_pos[2]:.3f}]")
 
             # Save episode with custom metadata
             dataset.save_episode(episode_metadata=episode_metadata if episode_metadata else None)

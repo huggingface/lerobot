@@ -780,20 +780,21 @@ class SO101MujocoRobot(Robot):
         ee_pos = self.data.site_xpos[self.ee_site_id]
         logger.info(f"Robot reset to home position - EE at: [{ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}]")
 
-    def reset_block_position(self, episode_index: int) -> tuple[float, float, float] | None:
+    def reset_block_position(self, episode_index: int) -> tuple[float, float, float, float] | None:
         """
         Set block position from predefined positions only.
 
         With new robot orientation (robot base at X=0.2, pointing in +Y direction):
         - Positions are loaded from cube_positions.json
         - Each episode must have a predefined position
+        - Yaw angle: 0° = facing +Y direction, rotates counterclockwise (0-180°)
 
         Args:
             episode_index: Episode index to look up in predefined positions JSON config.
                           Must exist in the JSON file.
 
         Returns:
-            Tuple of (x, y, z) position where the block was placed, or None if block not found
+            Tuple of (x, y, z, yaw_deg) where the block was placed, or None if block not found
 
         Raises:
             ValueError: If no predefined position exists for the given episode_index
@@ -828,13 +829,19 @@ class SO101MujocoRobot(Robot):
         x = float(matching_pos["x"])
         y = float(matching_pos["y"])
         z = float(matching_pos.get("z", 0.012))  # Default z to cube half-size
-        logger.info(f"Using predefined position for episode {episode_index}: [{x:.3f}, {y:.3f}, {z:.3f}]")
+        yaw_deg = float(matching_pos.get("yaw_deg", 0.0))  # Default yaw to 0°
+
+        logger.info(f"Using predefined position for episode {episode_index}: [{x:.3f}, {y:.3f}, {z:.3f}], yaw: {yaw_deg}°")
 
         # Set position
         self.data.qpos[block_qpos_adr:block_qpos_adr + 3] = [x, y, z]
 
-        # Reset orientation to upright (identity quaternion: w=1, x=0, y=0, z=0)
-        self.data.qpos[block_qpos_adr + 3:block_qpos_adr + 7] = [1, 0, 0, 0]
+        # Convert yaw from degrees to radians and create quaternion
+        # Yaw rotates around Z-axis: 0° = facing +Y, counterclockwise rotation
+        yaw_rad = np.deg2rad(yaw_deg)
+        # Quaternion for rotation around Z-axis: [cos(θ/2), 0, 0, sin(θ/2)]
+        quat = np.array([np.cos(yaw_rad / 2), 0, 0, np.sin(yaw_rad / 2)])
+        self.data.qpos[block_qpos_adr + 3:block_qpos_adr + 7] = quat
 
         # Get qvel address and reset velocities
         block_qvel_adr = self.model.jnt_dofadr[block_jnt_id]
@@ -843,8 +850,8 @@ class SO101MujocoRobot(Robot):
         # Forward to update derived quantities
         mj.mj_forward(self.model, self.data)
 
-        logger.info(f"Block reset to position: [{x:.3f}, {y:.3f}, {z:.3f}]")
-        return (x, y, z)
+        logger.info(f"Block reset to position: [{x:.3f}, {y:.3f}, {z:.3f}], yaw: {yaw_deg}°")
+        return (x, y, z, yaw_deg)
 
     def get_block_position(self) -> tuple[float, float, float] | None:
         """Get current block position for episode metadata."""
@@ -859,7 +866,7 @@ class SO101MujocoRobot(Robot):
         pos = self.data.qpos[block_qpos_adr:block_qpos_adr + 3]
         return (float(pos[0]), float(pos[1]), float(pos[2]))
 
-    def set_block_position_direct(self, x: float, y: float, z: float) -> None:
+    def set_block_position_direct(self, x: float, y: float, z: float, yaw_deg: float = 0.0) -> None:
         """
         Directly set block position (for replay).
 
@@ -867,6 +874,7 @@ class SO101MujocoRobot(Robot):
             x: X coordinate in meters
             y: Y coordinate in meters
             z: Z coordinate in meters
+            yaw_deg: Yaw angle in degrees (0° = facing +Y, counterclockwise rotation)
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected")
@@ -882,8 +890,11 @@ class SO101MujocoRobot(Robot):
         # Set position
         self.data.qpos[block_qpos_adr:block_qpos_adr + 3] = [x, y, z]
 
-        # Reset orientation to upright (identity quaternion: w=1, x=0, y=0, z=0)
-        self.data.qpos[block_qpos_adr + 3:block_qpos_adr + 7] = [1, 0, 0, 0]
+        # Convert yaw from degrees to radians and create quaternion
+        yaw_rad = np.deg2rad(yaw_deg)
+        # Quaternion for rotation around Z-axis: [cos(θ/2), 0, 0, sin(θ/2)]
+        quat = np.array([np.cos(yaw_rad / 2), 0, 0, np.sin(yaw_rad / 2)])
+        self.data.qpos[block_qpos_adr + 3:block_qpos_adr + 7] = quat
 
         # Reset velocities
         block_qvel_adr = self.model.jnt_dofadr[block_jnt_id]
@@ -892,7 +903,7 @@ class SO101MujocoRobot(Robot):
         # Forward kinematics to update derived quantities
         mj.mj_forward(self.model, self.data)
 
-        logger.info(f"Block set to position: [{x:.3f}, {y:.3f}, {z:.3f}]")
+        logger.info(f"Block set to position: [{x:.3f}, {y:.3f}, {z:.3f}], yaw: {yaw_deg}°")
 
     def disconnect(self) -> None:
         """Close MuJoCo model and renderer."""
