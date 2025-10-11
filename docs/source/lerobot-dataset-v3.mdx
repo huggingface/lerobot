@@ -298,7 +298,7 @@ for episode in range(num_episodes):
         dataset.add_frame(frame)
     dataset.save_episode()
 
-# Call finalize() when done recording and  before push_to_hub()
+# Call finalize() when done recording and before push_to_hub()
 dataset.finalize()  # Closes parquet writers, writes metadata footers
 dataset.push_to_hub()
 ```
