@@ -1,7 +1,9 @@
 import argparse
 import json
 import os
+import random
 import shutil
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -65,6 +67,12 @@ def parse_arguments():
         type=str,
         default=None,
         help="Path to local dataset directory containing data, meta, and video folders. If provided, will use local data instead of downloading from HuggingFace"
+    )
+
+    parser.add_argument(
+        "--verify_clipping",
+        action="store_true",
+        help="Enable verification of clipping results after processing (default: False)"
     )
 
     return parser.parse_args()
@@ -146,6 +154,168 @@ def load_local_data(local_data_path):
     print(f"Loaded local metadata from: {meta_path}")
     
     return meta, combined_df
+
+
+def get_video_duration_ffprobe(video_path):
+    """Get video duration using ffprobe."""
+    cmd = [
+        'ffprobe', '-v', 'quiet', '-print_format', 'json',
+        '-show_format', str(video_path)
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout)
+        return float(data['format']['duration'])
+    except Exception as e:
+        return None
+
+
+def verify_clipping_results(args, target_clip_duration):
+    """
+    Verify that episodes have been properly clipped to the target duration.
+    Randomly samples at most 10 episodes to check (or all if less than 10).
+    
+    Args:
+        args: Command line arguments containing paths
+        target_clip_duration: Expected duration per episode in seconds
+    """
+    print("=" * 60)
+    print("VERIFYING CLIPPING RESULTS")
+    print("=" * 60)
+    
+    refined_dir = Path(args.refined_dir)
+    
+    # Check if refined dataset exists
+    dataset_file = refined_dir / "dataset" / "data-00000-of-00001.arrow"
+    meta_file = refined_dir / "meta" / "info.json"
+    
+    if not dataset_file.exists():
+        print(f"❌ Dataset file not found: {dataset_file}")
+        return False
+        
+    if not meta_file.exists():
+        print(f"❌ Metadata file not found: {meta_file}")
+        return False
+    
+    try:
+        # Load metadata
+        with open(meta_file, 'r') as f:
+            meta = json.load(f)
+        
+        # Load dataset
+        dataset = Dataset.from_file(str(dataset_file))
+        df = dataset.to_pandas()
+        
+        print(f"✓ Loaded dataset with {len(df)} total frames")
+        print(f"✓ Target clip duration: {target_clip_duration} seconds")
+        
+        # Get all episode indices
+        episode_indices = sorted(df['episode_index'].unique())
+        total_episodes = len(episode_indices)
+        
+        print(f"✓ Found {total_episodes} episodes")
+        
+        # Sample episodes to check (max 10 or all if less than 10)
+        max_episodes_to_check = min(10, total_episodes)
+        if total_episodes <= 10:
+            episodes_to_check = episode_indices
+            print(f"✓ Checking all {total_episodes} episodes")
+        else:
+            episodes_to_check = sorted(random.sample(episode_indices, max_episodes_to_check))
+            print(f"✓ Randomly sampling {max_episodes_to_check} episodes to check: {episodes_to_check}")
+        
+        # Verify episode durations in dataset
+        print("\nDATA VERIFICATION:")
+        fps = meta.get("fps", 30)
+        all_passed = True
+        
+        for ep_idx in episodes_to_check:
+            episode_data = df[df['episode_index'] == ep_idx]
+            frame_count = len(episode_data)
+            
+            if len(episode_data) > 0:
+                min_timestamp = episode_data['timestamp'].min()
+                max_timestamp = episode_data['timestamp'].max()
+                duration = max_timestamp - min_timestamp
+                expected_frames = int(target_clip_duration * fps)
+                
+                # Check if duration is close to target (within 5% tolerance)
+                duration_ok = abs(duration - target_clip_duration) <= (target_clip_duration * 0.05)
+                frames_ok = abs(frame_count - expected_frames) <= (expected_frames * 0.05)
+                
+                status = "✅" if (duration_ok and frames_ok) else "❌"
+                print(f"  Episode {ep_idx}: {frame_count} frames, {duration:.2f}s {status}")
+                
+                if not (duration_ok and frames_ok):
+                    all_passed = False
+                    print(f"    Expected: ~{expected_frames} frames, ~{target_clip_duration}s")
+            else:
+                print(f"  Episode {ep_idx}: No data found ❌")
+                all_passed = False
+        
+        # Verify video files if they exist
+        print("\nVIDEO VERIFICATION:")
+        cameras = ["left", "top"]
+        video_dir = refined_dir / "videos"
+        
+        if not video_dir.exists():
+            # Check in clipped_dataset instead
+            video_dir = Path(args.output_dir) / "videos"
+            if video_dir.exists():
+                print(f"✓ Checking videos in clipped dataset: {video_dir}")
+            else:
+                print("ℹ️ No video files found to verify")
+                video_dir = None
+        else:
+            print(f"✓ Checking videos in refined dataset: {video_dir}")
+        
+        if video_dir and video_dir.exists():
+            for camera in cameras:
+                camera_dir = video_dir / camera / "chunk-000"
+                if camera_dir.exists():
+                    video_files = sorted(camera_dir.glob("file-*.mp4"))
+                    print(f"\n  {camera.upper()} camera:")
+                    
+                    for video_file in video_files:
+                        if video_file.name.replace('.mp4', '').split('-')[-1].isdigit():
+                            # Extract episode number from filename
+                            ep_num = int(video_file.name.replace('.mp4', '').split('-')[-1])
+                            if ep_num in episodes_to_check:
+                                duration = get_video_duration_ffprobe(video_file)
+                                if duration is not None:
+                                    duration_ok = abs(duration - target_clip_duration) <= (target_clip_duration * 0.05)
+                                    status = "✅" if duration_ok else "❌"
+                                    print(f"    Episode {ep_num}: {duration:.2f}s {status}")
+                                    if not duration_ok:
+                                        all_passed = False
+                                else:
+                                    print(f"    Episode {ep_num}: Could not read duration ❌")
+                                    all_passed = False
+                else:
+                    print(f"  {camera.upper()} camera: Directory not found")
+        
+        # Summary
+        print("\n" + "=" * 60)
+        if all_passed:
+            print("🎉 VERIFICATION PASSED: All checked episodes are properly clipped!")
+        else:
+            print("⚠️  VERIFICATION FAILED: Some episodes may not be properly clipped!")
+        
+        # Print metadata info
+        if "clipping_info" in meta:
+            clipping_info = meta["clipping_info"]
+            print(f"\nCLIPPING METADATA:")
+            print(f"  Original duration: {clipping_info.get('original_duration_seconds', 'N/A'):.1f}s")
+            print(f"  Target clip duration: {clipping_info.get('clip_duration_seconds', 'N/A')}s")
+            print(f"  Frames per episode: {clipping_info.get('frames_per_episode_clipped', 'N/A')}")
+            print(f"  Processing date: {clipping_info.get('processing_date', 'N/A')}")
+        
+        print("=" * 60)
+        return all_passed
+        
+    except Exception as e:
+        print(f"❌ Error during verification: {e}")
+        return False
 
 
 def clip_split_hf_videos(args, df, fps):
@@ -493,6 +663,15 @@ def main():
 
     # Upload to HuggingFace
     upload_to_hf(args, merged_df, updated_meta, merged_parquet_path)
+
+    # Verify clipping results if requested
+    if args.verify_clipping:
+        print(f"\nRunning clipping verification...")
+        verification_passed = verify_clipping_results(args, args.clip_second)
+        if verification_passed:
+            print("✅ Clipping verification completed successfully!")
+        else:
+            print("⚠️ Clipping verification found issues. Please check the output above.")
 
 
 if __name__ == "__main__":
