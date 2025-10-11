@@ -168,6 +168,14 @@ class OpenCVCamera(Camera):
                 f"Failed to open {self}.Run `lerobot-find-cameras opencv` to find available cameras."
             )
 
+        if self.config.enable_mjpeg:
+            fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+            success = self.videocapture.set(cv2.CAP_PROP_FOURCC, fourcc)
+            if not success:
+                logger.warning("%s failed to enable MJPEG mode", self)
+            else:
+                logger.info("%s using MJPEG capture", self)
+
         self._configure_capture_settings()
 
         if warmup:
