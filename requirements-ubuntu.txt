@@ -188,19 +188,14 @@ gym-hil==0.1.10
     # via lerobot
 gym-pusht==0.1.5
     # via lerobot
-gym-xarm==0.1.1
-    # via lerobot
 gymnasium==0.29.1
     # via
     #   gym-aloha
     #   gym-hil
     #   gym-pusht
-    #   gym-xarm
     #   gymnasium-robotics
     #   lerobot
     #   pettingzoo
-gymnasium-robotics==1.2.4
-    # via gym-xarm
 hf-transfer==0.1.9
     # via huggingface-hub
 hf-xet==1.1.5
@@ -283,8 +278,6 @@ mujoco==2.3.7
     #   dm-control
     #   gym-aloha
     #   gym-hil
-    #   gym-xarm
-    #   gymnasium-robotics
 multidict==6.6.3
     # via
     #   aiohttp

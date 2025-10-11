@@ -260,19 +260,23 @@ class LiberoEnv(gym.Env):
 
         is_success = self._env.check_success()
         terminated = done or is_success
-        info["is_success"] = is_success
-
+        info.update(
+            {
+                "task": self.task,
+                "task_id": self.task_id,
+                "done": done,
+                "is_success": is_success,
+            }
+        )
         observation = self._format_raw_obs(raw_obs)
-        if done:
+        if terminated:
+            info["final_info"] = {
+                "task": self.task,
+                "task_id": self.task_id,
+                "done": bool(done),
+                "is_success": bool(is_success),
+            }
             self.reset()
-            info.update(
-                {
-                    "task": self.task,
-                    "task_id": self.task_id,
-                    "done": done,
-                    "is_success": is_success,
-                }
-            )
         truncated = False
         return observation, reward, terminated, truncated, info
 

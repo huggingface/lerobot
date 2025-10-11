@@ -7,8 +7,6 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
-  - local: il_sim
-    title: Imitation Learning in Sim
   - local: cameras
     title: Cameras
   - local: integrate_hardware
@@ -37,9 +35,15 @@
     title: π₀ (Pi0)
   - local: pi05
     title: π₀.₅ (Pi05)
+  title: "Policies"
+- sections:
+  - local: il_sim
+    title: Imitation Learning in Sim
   - local: libero
     title: Using Libero
-  title: "Policies"
+  - local: metaworld
+    title: Using MetaWorld
+  title: "Simulation"
 - sections:
   - local: introduction_processors
     title: Introduction to Robot Processors
