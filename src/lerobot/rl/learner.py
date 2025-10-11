@@ -67,7 +67,8 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 # from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.processor.pipeline import PolicyProcessorPipeline
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
@@ -315,6 +316,21 @@ def add_actor_information_and_train(
         env_cfg=cfg.env,
     )
 
+    # Create processors - only provide dataset_stats if not resuming from saved processors
+    processor_kwargs = {}
+    postprocessor_kwargs = {}
+    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+        # Only provide dataset_stats when not resuming from saved processor state
+        # params = _convert_normalization_params_to_tensor(cfg.policy.dataset_stats)
+        processor_kwargs["dataset_stats"] = cfg.policy.dataset_stats
+
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        pretrained_path=cfg.policy.pretrained_path,
+        **processor_kwargs,
+        **postprocessor_kwargs,
+    )
+
     assert isinstance(policy, nn.Module)
 
     policy.train()
@@ -380,6 +396,42 @@ def add_actor_information_and_train(
                 observations = batch["state"]
                 next_observations = batch["next_state"]
 
+                observations = preprocessor(
+                    {
+                        "observation.state": observations["observation.state"],
+                        "observation.images.top": observations["observation.images.top"].permute(0, 3, 2, 1),
+                        "observation.images.wrist": observations["observation.images.wrist"].permute(
+                            0, 3, 2, 1
+                        ),
+                    }
+                )
+
+                observations = {
+                    "observation.state": observations["observation.state"],
+                    "observation.images.top": observations["observation.images.top"].permute(0, 3, 2, 1),
+                    "observation.images.wrist": observations["observation.images.wrist"].permute(0, 3, 2, 1),
+                }
+
+                next_observations = preprocessor(
+                    {
+                        "observation.state": next_observations["observation.state"],
+                        "observation.images.top": next_observations["observation.images.top"].permute(
+                            0, 3, 2, 1
+                        ),
+                        "observation.images.wrist": next_observations["observation.images.wrist"].permute(
+                            0, 3, 2, 1
+                        ),
+                    }
+                )
+
+                next_observations = {
+                    "observation.state": next_observations["observation.state"],
+                    "observation.images.top": next_observations["observation.images.top"].permute(0, 3, 2, 1),
+                    "observation.images.wrist": next_observations["observation.images.wrist"].permute(
+                        0, 3, 2, 1
+                    ),
+                }
+
                 check_nan_in_transition(
                     observations=observations,
                     actions=actions.reshape(actions.shape[0], -1),
@@ -428,6 +480,36 @@ def add_actor_information_and_train(
             actions = batch[ACTION]  # [B, h, action_dim]
             observations = batch["state"]
             next_observations = batch["next_state"]
+
+            observations = preprocessor(
+                {
+                    "observation.state": observations["observation.state"],
+                    "observation.images.top": observations["observation.images.top"].permute(0, 3, 2, 1),
+                    "observation.images.wrist": observations["observation.images.wrist"].permute(0, 3, 2, 1),
+                }
+            )
+
+            observations = {
+                "observation.state": observations["observation.state"],
+                "observation.images.top": observations["observation.images.top"].permute(0, 3, 2, 1),
+                "observation.images.wrist": observations["observation.images.wrist"].permute(0, 3, 2, 1),
+            }
+
+            next_observations = preprocessor(
+                {
+                    "observation.state": next_observations["observation.state"],
+                    "observation.images.top": next_observations["observation.images.top"].permute(0, 3, 2, 1),
+                    "observation.images.wrist": next_observations["observation.images.wrist"].permute(
+                        0, 3, 2, 1
+                    ),
+                }
+            )
+
+            next_observations = {
+                "observation.state": next_observations["observation.state"],
+                "observation.images.top": next_observations["observation.images.top"].permute(0, 3, 2, 1),
+                "observation.images.wrist": next_observations["observation.images.wrist"].permute(0, 3, 2, 1),
+            }
 
             check_nan_in_transition(
                 observations=observations,
@@ -558,6 +640,8 @@ def add_actor_information_and_train(
                     offline_replay_buffer=offline_replay_buffer,
                     dataset_repo_id=cfg.dataset.repo_id if cfg.dataset else None,
                     fps=fps,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
                 )
 
         logging.info(f"[LEARNER] Completed offline pretraining after {offline_steps} steps")
@@ -928,6 +1012,8 @@ def save_training_checkpoint(
     offline_replay_buffer: ReplayBuffer | None = None,
     dataset_repo_id: str | None = None,
     fps: int = 30,
+    preprocessor: PolicyProcessorPipeline | None = None,
+    postprocessor: PolicyProcessorPipeline | None = None,
 ) -> None:
     """
     Save training checkpoint and associated data.
@@ -967,6 +1053,8 @@ def save_training_checkpoint(
         policy=policy,
         optimizer=optimizers,
         scheduler=None,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
     )
 
     # Save interaction step manually

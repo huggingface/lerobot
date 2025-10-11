@@ -76,7 +76,13 @@ from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
 from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
-from lerobot.utils.utils import log_say
+from lerobot.utils.utils import (
+    TimerManager,
+    init_logging,
+    log_say,
+)
+
+from .utils import get_frequency_stats
 
 logging.basicConfig(level=logging.INFO)
 
@@ -536,16 +542,20 @@ def step_env_and_process_transition(
     Returns:
         Processed transition with updated state.
     """
-
     # Create action transition
     transition[TransitionKey.ACTION] = action
     transition[TransitionKey.OBSERVATION] = (
         env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
     )
+    # start_time_action_processor = time.perf_counter()
     processed_action_transition = action_processor(transition)
+    # end_time_action_processor = time.perf_counter()
+
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
+    # start_time_env_step = time.perf_counter()
     obs, reward, terminated, truncated, info = env.step(processed_action)
+    # end_time_env_step = time.perf_counter()
 
     reward = reward + processed_action_transition[TransitionKey.REWARD]
     terminated = terminated or processed_action_transition[TransitionKey.DONE]
@@ -563,7 +573,15 @@ def step_env_and_process_transition(
         info=new_info,
         complementary_data=complementary_data,
     )
+
+    # start_time_env_processor = time.perf_counter()
     new_transition = env_processor(new_transition)
+    # end_time_env_processor = time.perf_counter()
+    # logging.info(
+    #     f"Action processor time: {end_time_action_processor - start_time_action_processor:.4f}s, "
+    #     f"Env step time: {end_time_env_step - start_time_env_step:.4f}s, "
+    #     f"Env processor time: {end_time_env_processor - start_time_env_processor:.4f}s  "
+    # )
 
     return new_transition
 
@@ -656,7 +674,11 @@ def control_loop(
 
     log_say(f"Recording episode {episode_idx}", play_sounds=True)
 
+    fps_tracker = TimerManager("Episode FPS", log=False)
+    episode_started = True
+
     while episode_idx < cfg.dataset.num_episodes_to_record:
+        fps_tracker.start()
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
@@ -707,6 +729,8 @@ def control_loop(
             logging.info(
                 f"Episode ended after {episode_step} steps in {episode_time:.1f}s with reward {transition[TransitionKey.REWARD]}"
             )
+            stats = get_frequency_stats(fps_tracker)
+            logging.info(", ".join([f"{k} : {v:.2f}" for k, v in stats.items()]))
             episode_step = 0
             episode_idx += 1
 
@@ -726,6 +750,9 @@ def control_loop(
             if hasattr(teleop_device, "reset"):
                 teleop_device.reset()
 
+            fps_tracker.reset()
+            episode_started = False
+
             log_say(f"Recording episode {episode_idx}", play_sounds=True)
 
             transition = create_transition(observation=obs, info=info)
@@ -733,6 +760,11 @@ def control_loop(
 
         # Maintain fps timing
         busy_wait(dt - (time.perf_counter() - step_start_time))
+
+        if not episode_started:
+            episode_started = True
+        else:
+            fps_tracker.stop()
 
     if dataset is not None and cfg.dataset.push_to_hub:
         logging.info("Pushing dataset to hub")
@@ -770,6 +802,8 @@ def replay_trajectory(
 @parser.wrap()
 def main(cfg: GymManipulatorConfig) -> None:
     """Main entry point for gym manipulator script."""
+    init_logging()
+
     env, teleop_device = make_robot_env(cfg.env)
     env_processor, action_processor = make_processors(env, teleop_device, cfg.env, cfg.device)
 

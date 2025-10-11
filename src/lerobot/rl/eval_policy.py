@@ -16,6 +16,7 @@
 import logging
 import time
 from pprint import pformat
+from typing import Any
 
 import gymnasium as gym
 from termcolor import colored
@@ -24,13 +25,15 @@ from torch import nn
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor import (
     DataProcessorPipeline,
     EnvTransition,
     TransitionKey,
     create_transition,
 )
+from lerobot.processor.core import PolicyAction
+from lerobot.processor.pipeline import PolicyProcessorPipeline
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
@@ -62,6 +65,8 @@ def eval_policy(
     env: gym.Env,
     policy,
     n_episodes,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
     action_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
     teleop_device: Teleoperator,
@@ -69,9 +74,9 @@ def eval_policy(
     fps=None,
 ):
     sum_reward_episode = []
-    episode_timer = TimerManager("Episode duration", log=True, logger=logging)
+    fps_tracker = TimerManager("Episode FPS", log=False)
     for _ in range(n_episodes):
-        episode_timer.reset()
+        fps_tracker.reset()
         policy.reset()
         obs, info = env.reset()
         complementary_data = {}
@@ -93,21 +98,36 @@ def eval_policy(
         episode_steps = 0
 
         while True:
-            episode_timer.start()
+            fps_tracker.start()
             start_time = time.perf_counter()
             observation = {
                 k: v
                 for k, v in transition[TransitionKey.OBSERVATION].items()
                 if k in cfg.policy.input_features
             }
-            start_time_policy = time.perf_counter()
+
+            observation = preprocessor(
+                {
+                    "observation.state": observation["observation.state"],
+                    "observation.images.top": observation["observation.images.top"].permute(0, 3, 2, 1),
+                    "observation.images.wrist": observation["observation.images.wrist"].permute(0, 3, 2, 1),
+                }
+            )
+
+            observation = {
+                "observation.state": observation["observation.state"],
+                "observation.images.top": observation["observation.images.top"].permute(0, 3, 2, 1),
+                "observation.images.wrist": observation["observation.images.wrist"].permute(0, 3, 2, 1),
+            }
+
+            # start_time_policy = time.perf_counter()
             action = policy.select_action(observation)
-            end_time_policy = time.perf_counter()
+            # end_time_policy = time.perf_counter()
 
             # obs, reward, terminated, truncated, _ = env.step(action)
             # Use the new step function
 
-            start_time_env_step = time.perf_counter()
+            # start_time_env_step = time.perf_counter()
             transition = step_env_and_process_transition(
                 env=env,
                 transition=transition,
@@ -115,29 +135,31 @@ def eval_policy(
                 env_processor=env_processor,
                 action_processor=action_processor,
             )
-            end_time_env_step = time.perf_counter()
-            logging.info(
-                f"Times: policy {end_time_policy - start_time_policy:.4f}s, env step {end_time_env_step - start_time_env_step:.4f}s"
-            )
+            # end_time_env_step = time.perf_counter()
+            # logging.info(
+            #     f"Times: policy {end_time_policy - start_time_policy:.4f}s, env step {end_time_env_step - start_time_env_step:.4f}s"
+            # )
             terminated = transition.get(TransitionKey.DONE, False)
             truncated = transition.get(TransitionKey.TRUNCATED, False)
             reward = transition.get(TransitionKey.REWARD, 0.0)
 
             episode_reward += reward
             episode_steps += 1
-            episode_timer.stop()
-            if terminated or truncated:
-                break
 
             if fps is not None:
                 dt_time = time.perf_counter() - start_time
                 busy_wait(1 / fps - dt_time)
 
+            fps_tracker.stop()
+
+            if terminated or truncated:
+                break
+
         sum_reward_episode.append(episode_reward)
         episode_action_fps = episode_steps / (time.perf_counter() - start_time_for_episode)
         logging.info(f"Episode action fps: {episode_action_fps:.2f}")
-        stats = get_frequency_stats(episode_timer)
-        logging.info(f"Policy frequency stats: {stats}")
+        stats = get_frequency_stats(fps_tracker)
+        logging.info(", ".join([f"{k} : {v:.2f}" for k, v in stats.items()]))
 
     logging.info(f"Success after 20 steps {sum_reward_episode}")
     logging.info(f"success rate {sum(sum_reward_episode) / len(sum_reward_episode)}")
@@ -190,6 +212,22 @@ def main(cfg: TrainRLServerPipelineConfig):
         env_cfg=cfg.env,
         # ds_meta=dataset_meta,
     )
+
+    # Create processors - only provide dataset_stats if not resuming from saved processors
+    processor_kwargs = {}
+    postprocessor_kwargs = {}
+    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+        # Only provide dataset_stats when not resuming from saved processor state
+        # params = _convert_normalization_params_to_tensor(cfg.policy.dataset_stats)
+        processor_kwargs["dataset_stats"] = cfg.policy.dataset_stats
+
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        pretrained_path=cfg.policy.pretrained_path,
+        **processor_kwargs,
+        **postprocessor_kwargs,
+    )
+
     # policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
     policy.eval()
     assert isinstance(policy, nn.Module)
@@ -199,6 +237,8 @@ def main(cfg: TrainRLServerPipelineConfig):
         env,
         policy=policy,
         n_episodes=10,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
         env_processor=env_processor,
         action_processor=action_processor,
         teleop_device=teleop_device,

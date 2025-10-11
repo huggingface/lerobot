@@ -315,6 +315,14 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
+    elif isinstance(policy_cfg, ACFQLConfig):
+        from lerobot.policies.acfql.processor_acfql import make_acfql_pre_post_processors
+
+        processors = make_acfql_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
     else:
         raise NotImplementedError(f"Processor for policy type '{policy_cfg.type}' is not implemented.")
 

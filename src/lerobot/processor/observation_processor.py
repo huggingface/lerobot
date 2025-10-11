@@ -70,6 +70,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         """
         # Convert to tensor
         img_tensor = torch.from_numpy(img)
+        img_tensor = img_tensor.to(device="cuda")  # TODO(jpizarrom): make this configurable
 
         # Add batch dimension if needed
         if img_tensor.ndim == 3:
