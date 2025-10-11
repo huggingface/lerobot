@@ -842,7 +842,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Get available episode indices from cached dataset
         available_episodes = {
             ep_idx.item() if isinstance(ep_idx, torch.Tensor) else ep_idx
-            for ep_idx in self.hf_dataset["episode_index"]
+            for ep_idx in self.hf_dataset.unique("episode_index")
         }
 
         # Determine requested episodes
