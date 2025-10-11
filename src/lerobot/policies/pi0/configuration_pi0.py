@@ -20,6 +20,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import OBS_IMAGES
 
 
@@ -80,6 +81,11 @@ class PI0Config(PreTrainedConfig):
     scheduler_decay_lr: float = 2.5e-6
 
     tokenizer_max_length: int = 48  # see openpi `__post_init__`
+
+    # Real Time Chunking configuration
+    rtc_config: RTCConfig = RTCConfig()
+
+    # TODO: Add EMA
 
     def __post_init__(self):
         super().__post_init__()
