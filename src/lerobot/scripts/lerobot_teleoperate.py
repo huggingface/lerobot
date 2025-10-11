@@ -58,6 +58,7 @@ from pprint import pformat
 
 import rerun as rr
 
+from lerobot.async_inference.bimanual_koch_utils import action_dict_to_tensor, get_bimanual_action_features
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
@@ -92,11 +93,12 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, log_rerun_action_chunk
 
 from lerobot.teleoperators.bi_koch_leader.config_bi_koch_leader import make_bimanual_koch_teleop_processors
 from lerobot.robots.bi_koch_follower.config_bi_koch_follower import make_bimanual_koch_robot_processors
 
+from lerobot.async_inference.bimanual_koch_utils import compute_current_ee
 
 @dataclass
 class TeleoperateConfig:
@@ -141,6 +143,8 @@ def teleop_loop(
     for _ in range(10):
         print("\n")
 
+    action_features = get_bimanual_action_features(robot, teleop_action_processor)
+
     while True:
         loop_start = time.perf_counter()
         # Retrieve normalized action and raw values if available
@@ -165,7 +169,12 @@ def teleop_loop(
 
         # Process teleop action through pipeline
         teleop_action = teleop_action_processor((raw_action, obs))
+        teleop_action_tensor = action_dict_to_tensor(teleop_action, action_features)
         # Process action for robot through pipeline
+        current_ee = compute_current_ee(obs, teleop_action_processor, action_features)
+        # log_rerun_action_chunk(teleop_action_tensor.unsqueeze(0))
+        log_rerun_action_chunk(current_ee.unsqueeze(0), name="current_ee_") # you will notice lag here, because this is using the true state of the robot. The URDF shows the solver state of the robot, which is slightly ahead.
+
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
         # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
@@ -237,7 +246,8 @@ def teleop_loop(
             return
 
         # Move cursor up exactly the number of lines we printed
-        move_cursor_up(len(output_lines) + 10)
+        move_cursor_up(len(output_lines))
+        # move_cursor_up(10), # uncomment this to debug the raw encoder reading values
 
 
 @parser.wrap()

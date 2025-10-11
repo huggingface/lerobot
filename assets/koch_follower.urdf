@@ -378,4 +378,13 @@
     <axis xyz="0 0 -1" />
     <limit lower="-2.45" upper="0.032" effort="0.5" velocity="100" />
   </joint>
+
+  <!-- End-effector frame: corrects for joint_5's -45° static offset -->
+  <link name="ee_frame"/>
+
+  <joint name="ee_frame_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0.785398163397 0 0"/>  <!-- +45° around X to cancel joint_5's -45° -->
+    <parent link="link_6"/>
+    <child link="ee_frame"/>
+  </joint>
 </robot>

@@ -125,15 +125,17 @@ def transform_from_pose(p):
     return T
 
 
-def log_rerun_action_chunk(action_chunk: torch.Tensor):
+def log_rerun_action_chunk(action_chunk: torch.Tensor, name="action_chunk_"):
     action_chunk = action_chunk.cpu().numpy()
     for i, action in enumerate(action_chunk):
         left_action = action[:6]
         right_action = action[7:]
         T_left = transform_from_pose(left_action)
         T_right = transform_from_pose(right_action)
-        rr.log(f"follower_left/robot/base_link/action_chunk_{i}", rr.Transform3D(translation=T_left[:3, 3], mat3x3=T_left[:3, :3], axis_length=0.1))
-        rr.log(f"follower_right/robot/base_link/action_chunk_{i}", rr.Transform3D(translation=T_right[:3, 3], mat3x3=T_right[:3, :3], axis_length=0.1))
+        # rr.log(f"follower_left/robot/base_link/{name}{i}", rr.Transform3D(translation=T_left[:3, 3], mat3x3=T_left[:3, :3], axis_length=0.1))
+        # rr.log(f"follower_right/robot/base_link/{name}{i}", rr.Transform3D(translation=T_right[:3, 3], mat3x3=T_right[:3, :3], axis_length=0.1))
+        rr.log(f"leader_left/robot/base_link/{name}{i}", rr.Transform3D(translation=T_left[:3, 3], mat3x3=T_left[:3, :3], axis_length=0.1))
+        rr.log(f"leader_right/robot/base_link/{name}{i}", rr.Transform3D(translation=T_right[:3, 3], mat3x3=T_right[:3, :3], axis_length=0.1))
 
 
 def parse_urdf_graph(urdf_path: str):

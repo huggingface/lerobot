@@ -1,0 +1,25 @@
+robot:
+  type: bi_koch_follower
+  left_arm_port: /dev/follower-left
+  right_arm_port: /dev/follower-right
+  id: bimanual_follower
+  cameras:
+    top: 
+      type: opencv
+      index_or_path: /dev/camera-top
+      width: 640
+      height: 360
+      fps: 30
+    left_wrist:
+      type: opencv
+      index_or_path: /dev/camera-left-wrist
+      width: 640
+      height: 480
+      fps: 30
+    right_wrist:
+      type: opencv
+      index_or_path: /dev/camera-right-wrist
+      width: 640
+      height: 480
+      fps: 30
+

@@ -40,17 +40,18 @@ class BiKochLeaderConfig(TeleoperatorConfig):
 
 
 def make_bimanual_koch_teleop_processors(teleop, display_data: bool) -> RobotProcessorPipeline[RobotAction, RobotAction]:
+    URDF_PATH = "/home/steven/research/lerobot/assets/koch_follower.urdf"
     left_teleop_kinematics_solver = RobotKinematics(
-        urdf_path="assets/koch_follower.urdf",
-        target_frame_name="link_6",
+        urdf_path=URDF_PATH,
+        target_frame_name="ee_frame",
         entity_path_prefix="leader_left",
         display_data=display_data,
         joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
         offset=0.4,
     )
     right_teleop_kinematics_solver = RobotKinematics(
-        urdf_path="assets/koch_follower.urdf",
-        target_frame_name="link_6",
+        urdf_path=URDF_PATH,
+        target_frame_name="ee_frame",
         entity_path_prefix="leader_right",
         display_data=display_data,
         joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
