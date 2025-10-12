@@ -94,6 +94,6 @@ preprocessor.save_pretrained(output_directory)
 postprocessor.save_pretrained(output_directory)
 
 # Save all assets to the Hub
-policy.push_to_hub("fracapuano/robot_learning_tutorial_diffusion_example_model")
-preprocessor.push_to_hub("fracapuano/robot_learning_tutorial_diffusion_example_model")
-postprocessor.push_to_hub("fracapuano/robot_learning_tutorial_diffusion_example_model")
+policy.push_to_hub("fracapuano/robot_learning_tutorial_diffusion")
+preprocessor.push_to_hub("fracapuano/robot_learning_tutorial_diffusion")
+postprocessor.push_to_hub("fracapuano/robot_learning_tutorial_diffusion")
