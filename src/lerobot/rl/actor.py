@@ -306,6 +306,7 @@ def act_with_policy(
     policy_timer = TimerManager("Policy inference", log=False)
     fps_tracker = TimerManager("Episode FPS", log=False)
     episode_started = True
+    episode_start_time = time.perf_counter()
 
     for interaction_step in range(cfg.policy.online_steps):
         fps_tracker.start()
@@ -399,7 +400,10 @@ def act_with_policy(
         transition = new_transition
 
         if done or truncated:
-            logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
+            episode_time = time.perf_counter() - episode_start_time
+            logging.info(
+                f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}, Episode time: {episode_time:.2f}s"
+            )
 
             stats = get_frequency_stats(policy_timer)
 
@@ -412,8 +416,6 @@ def act_with_policy(
                     transitions_queue=transitions_queue,
                 )
                 list_transition_to_send_to_learner = []
-
-            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
             # Calculate intervention rate
             intervention_rate = 0.0
@@ -433,6 +435,8 @@ def act_with_policy(
                 )
             )
 
+            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
+
             policy_timer.reset()
             fps_tracker.reset()
             episode_started = False
@@ -449,6 +453,8 @@ def act_with_policy(
             action_processor.reset()
 
             policy.reset()  # Reset policy state if needed
+
+            episode_start_time = time.perf_counter()
 
             # Process initial observation
             transition = create_transition(observation=obs, info=info)
