@@ -91,31 +91,40 @@ def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) 
         logging.warning(f"Unexpected key(s) when loading model: {unexpected_keys}")
 
 
-def build_inference_frame(
+def prepare_observation_for_inference(
     observation: dict[str, torch.Tensor],
-    ds_features: dict[str, dict],
     device: torch.device,
     task: str | None = None,
     robot_type: str | None = None,
 ) -> dict[str, torch.Tensor]:
-    """Build a inference frame from a raw observation."""
-
-    # Extracts the inference keys from the raw observation
-    observation = build_dataset_frame(ds_features, observation, prefix=OBS_STR)
-
-    # Performs the necessary conversions to the observation
+    """Prepares an observation for inference by making Pytorch tensors and adding the relevant batch dimension."""
     for name in observation:
         observation[name] = torch.from_numpy(observation[name])
         if "image" in name:
             observation[name] = observation[name].type(torch.float32) / 255
             observation[name] = observation[name].permute(2, 0, 1).contiguous()
-
-        # Needs to add a batch dimension when running inference
         observation[name] = observation[name].unsqueeze(0)
         observation[name] = observation[name].to(device)
 
     observation["task"] = task if task else ""
     observation["robot_type"] = robot_type if robot_type else ""
+
+    return observation
+
+
+def build_inference_frame(
+    observation: dict[str, torch.Tensor],
+    device: torch.device,
+    ds_features: dict[str, dict],
+    task: str | None = None,
+    robot_type: str | None = None,
+) -> dict[str, torch.Tensor]:
+    """Build a inference frame from a raw observation."""
+    # Extracts the correct keys from the incoming raw observation
+    observation = build_dataset_frame(ds_features, observation, prefix=OBS_STR)
+
+    # Performs the necessary conversions to the observation
+    observation = prepare_observation_for_inference(observation, device, task, robot_type)
 
     return observation
 

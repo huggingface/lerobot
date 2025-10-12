@@ -31,7 +31,7 @@ from deepdiff import DeepDiff
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_FEATURES
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import build_inference_frame
+from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.robots import Robot
 
@@ -103,8 +103,7 @@ def predict_action(
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
-        observation = build_inference_frame(observation, device, task=task, robot_type=robot_type)
-
+        observation = prepare_observation_for_inference(observation, device, task, robot_type)
         observation = preprocessor(observation)
 
         # Compute the next action with the policy
