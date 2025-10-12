@@ -102,17 +102,17 @@ def eval_policy(
             }
 
             # Preprocess observation
-            # Change image from HWC to CHW
+            # Change image from CHW to HWC
             observation = preprocessor(
                 {
                     **{"observation.state": observation["observation.state"]},
-                    **{k: v.permute(0, 3, 2, 1) for k, v in observation.items() if "observation.images" in k},
+                    **{k: v.permute(0, 2, 3, 1) for k, v in observation.items() if "observation.images" in k},
                 }
             )
             # Change image from HWC to CHW
             observation = {
                 **{"observation.state": observation["observation.state"]},
-                **{k: v.permute(0, 3, 2, 1) for k, v in observation.items() if "observation.images" in k},
+                **{k: v.permute(0, 3, 1, 2) for k, v in observation.items() if "observation.images" in k},
             }
 
             action = policy.select_action(observation)

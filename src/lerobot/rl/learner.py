@@ -399,8 +399,9 @@ def add_actor_information_and_train(
                 observations = preprocessor(
                     {
                         **{"observation.state": observations["observation.state"]},
+                        # [B, C, H, W] -> [B, H, W, C]
                         **{
-                            k: v.permute(0, 3, 2, 1)
+                            k: v.permute(0, 2, 3, 1)
                             for k, v in observations.items()
                             if "observation.images" in k
                         },
@@ -409,16 +410,18 @@ def add_actor_information_and_train(
 
                 observations = {
                     **{"observation.state": observations["observation.state"]},
+                    # [B, H, W, C] -> [B, C, H, W]
                     **{
-                        k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k
+                        k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k
                     },
                 }
 
                 next_observations = preprocessor(
                     {
                         **{"observation.state": next_observations["observation.state"]},
+                        # [B, C, H, W] -> [B, H, W, C]
                         **{
-                            k: v.permute(0, 3, 2, 1)
+                            k: v.permute(0, 2, 3, 1)
                             for k, v in next_observations.items()
                             if "observation.images" in k
                         },
@@ -427,8 +430,9 @@ def add_actor_information_and_train(
 
                 next_observations = {
                     **{"observation.state": next_observations["observation.state"]},
+                    # [B, H, W, C] -> [B, C, H, W]
                     **{
-                        k: v.permute(0, 3, 2, 1)
+                        k: v.permute(0, 3, 1, 2)
                         for k, v in next_observations.items()
                         if "observation.images" in k
                     },
@@ -486,22 +490,25 @@ def add_actor_information_and_train(
             observations = preprocessor(
                 {
                     **{"observation.state": observations["observation.state"]},
+                    # [B, C, H, W] -> [B, H, W, C]
                     **{
-                        k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k
+                        k: v.permute(0, 2, 3, 1) for k, v in observations.items() if "observation.images" in k
                     },
                 }
             )
 
             observations = {
                 **{"observation.state": observations["observation.state"]},
-                **{k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k},
+                # [B, H, W, C] -> [B, C, H, W]
+                **{k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k},
             }
 
             next_observations = preprocessor(
                 {
                     **{"observation.state": next_observations["observation.state"]},
+                    # [B, C, H, W] -> [B, H, W, C]
                     **{
-                        k: v.permute(0, 3, 2, 1)
+                        k: v.permute(0, 2, 3, 1)
                         for k, v in next_observations.items()
                         if "observation.images" in k
                     },
@@ -510,8 +517,9 @@ def add_actor_information_and_train(
 
             next_observations = {
                 **{"observation.state": next_observations["observation.state"]},
+                # [B, H, W, C] -> [B, C, H, W]
                 **{
-                    k: v.permute(0, 3, 2, 1)
+                    k: v.permute(0, 3, 1, 2)
                     for k, v in next_observations.items()
                     if "observation.images" in k
                 },
@@ -727,22 +735,25 @@ def add_actor_information_and_train(
             observations = preprocessor(
                 {
                     **{"observation.state": observations["observation.state"]},
+                    # [B, C, H, W] -> [B, H, W, C]
                     **{
-                        k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k
+                        k: v.permute(0, 2, 3, 1) for k, v in observations.items() if "observation.images" in k
                     },
                 }
             )
 
             observations = {
                 **{"observation.state": observations["observation.state"]},
-                **{k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k},
+                # [B, H, W, C] -> [B, C, H, W]
+                **{k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k},
             }
 
             next_observations = preprocessor(
                 {
                     **{"observation.state": next_observations["observation.state"]},
+                    # [B, C, H, W] -> [B, H, W, C]
                     **{
-                        k: v.permute(0, 3, 2, 1)
+                        k: v.permute(0, 2, 3, 1)
                         for k, v in next_observations.items()
                         if "observation.images" in k
                     },
@@ -751,8 +762,9 @@ def add_actor_information_and_train(
 
             next_observations = {
                 **{"observation.state": next_observations["observation.state"]},
+                # [B, H, W, C] -> [B, C, H, W]
                 **{
-                    k: v.permute(0, 3, 2, 1)
+                    k: v.permute(0, 3, 1, 2)
                     for k, v in next_observations.items()
                     if "observation.images" in k
                 },
@@ -817,20 +829,23 @@ def add_actor_information_and_train(
         observations = preprocessor(
             {
                 **{"observation.state": observations["observation.state"]},
-                **{k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k},
+                # [B, C, H, W] -> [B, H, W, C]
+                **{k: v.permute(0, 2, 3, 1) for k, v in observations.items() if "observation.images" in k},
             }
         )
 
         observations = {
             **{"observation.state": observations["observation.state"]},
-            **{k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k},
+            # [B, H, W, C] -> [B, C, H, W]
+            **{k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k},
         }
 
         next_observations = preprocessor(
             {
                 **{"observation.state": next_observations["observation.state"]},
+                # [B, C, H, W] -> [B, H, W, C]
                 **{
-                    k: v.permute(0, 3, 2, 1)
+                    k: v.permute(0, 3, 1, 2)
                     for k, v in next_observations.items()
                     if "observation.images" in k
                 },
@@ -839,7 +854,8 @@ def add_actor_information_and_train(
 
         next_observations = {
             **{"observation.state": next_observations["observation.state"]},
-            **{k: v.permute(0, 3, 2, 1) for k, v in next_observations.items() if "observation.images" in k},
+            # [B, H, W, C] -> [B, C, H, W]
+            **{k: v.permute(0, 3, 1, 2) for k, v in next_observations.items() if "observation.images" in k},
         }
 
         check_nan_in_transition(

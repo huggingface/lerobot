@@ -322,14 +322,16 @@ def act_with_policy(
         observation_for_inference = preprocessor(
             {
                 **{"observation.state": observation["observation.state"]},
-                **{k: v.permute(0, 3, 2, 1) for k, v in observation.items() if "observation.images" in k},
+                # [B, C, H, W] -> [B, H, W, C]
+                **{k: v.permute(0, 2, 3, 1) for k, v in observation.items() if "observation.images" in k},
             }
         )
 
         observation_for_inference = {
             **{"observation.state": observation_for_inference["observation.state"]},
+            # [B, H, W, C] -> [B, C, H, W]
             **{
-                k: v.permute(0, 3, 2, 1)
+                k: v.permute(0, 3, 1, 2)
                 for k, v in observation_for_inference.items()
                 if "observation.images" in k
             },
