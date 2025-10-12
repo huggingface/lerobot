@@ -398,38 +398,40 @@ def add_actor_information_and_train(
 
                 observations = preprocessor(
                     {
-                        "observation.state": observations["observation.state"],
-                        "observation.images.top": observations["observation.images.top"].permute(0, 3, 2, 1),
-                        "observation.images.wrist": observations["observation.images.wrist"].permute(
-                            0, 3, 2, 1
-                        ),
+                        **{"observation.state": observations["observation.state"]},
+                        **{
+                            k: v.permute(0, 3, 2, 1)
+                            for k, v in observations.items()
+                            if "observation.images" in k
+                        },
                     }
                 )
 
                 observations = {
-                    "observation.state": observations["observation.state"],
-                    "observation.images.top": observations["observation.images.top"].permute(0, 3, 2, 1),
-                    "observation.images.wrist": observations["observation.images.wrist"].permute(0, 3, 2, 1),
+                    **{"observation.state": observations["observation.state"]},
+                    **{
+                        k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k
+                    },
                 }
 
                 next_observations = preprocessor(
                     {
-                        "observation.state": next_observations["observation.state"],
-                        "observation.images.top": next_observations["observation.images.top"].permute(
-                            0, 3, 2, 1
-                        ),
-                        "observation.images.wrist": next_observations["observation.images.wrist"].permute(
-                            0, 3, 2, 1
-                        ),
+                        **{"observation.state": next_observations["observation.state"]},
+                        **{
+                            k: v.permute(0, 3, 2, 1)
+                            for k, v in next_observations.items()
+                            if "observation.images" in k
+                        },
                     }
                 )
 
                 next_observations = {
-                    "observation.state": next_observations["observation.state"],
-                    "observation.images.top": next_observations["observation.images.top"].permute(0, 3, 2, 1),
-                    "observation.images.wrist": next_observations["observation.images.wrist"].permute(
-                        0, 3, 2, 1
-                    ),
+                    **{"observation.state": next_observations["observation.state"]},
+                    **{
+                        k: v.permute(0, 3, 2, 1)
+                        for k, v in next_observations.items()
+                        if "observation.images" in k
+                    },
                 }
 
                 check_nan_in_transition(
@@ -483,32 +485,36 @@ def add_actor_information_and_train(
 
             observations = preprocessor(
                 {
-                    "observation.state": observations["observation.state"],
-                    "observation.images.top": observations["observation.images.top"].permute(0, 3, 2, 1),
-                    "observation.images.wrist": observations["observation.images.wrist"].permute(0, 3, 2, 1),
+                    **{"observation.state": observations["observation.state"]},
+                    **{
+                        k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k
+                    },
                 }
             )
 
             observations = {
-                "observation.state": observations["observation.state"],
-                "observation.images.top": observations["observation.images.top"].permute(0, 3, 2, 1),
-                "observation.images.wrist": observations["observation.images.wrist"].permute(0, 3, 2, 1),
+                **{"observation.state": observations["observation.state"]},
+                **{k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k},
             }
 
             next_observations = preprocessor(
                 {
-                    "observation.state": next_observations["observation.state"],
-                    "observation.images.top": next_observations["observation.images.top"].permute(0, 3, 2, 1),
-                    "observation.images.wrist": next_observations["observation.images.wrist"].permute(
-                        0, 3, 2, 1
-                    ),
+                    **{"observation.state": next_observations["observation.state"]},
+                    **{
+                        k: v.permute(0, 3, 2, 1)
+                        for k, v in next_observations.items()
+                        if "observation.images" in k
+                    },
                 }
             )
 
             next_observations = {
-                "observation.state": next_observations["observation.state"],
-                "observation.images.top": next_observations["observation.images.top"].permute(0, 3, 2, 1),
-                "observation.images.wrist": next_observations["observation.images.wrist"].permute(0, 3, 2, 1),
+                **{"observation.state": next_observations["observation.state"]},
+                **{
+                    k: v.permute(0, 3, 2, 1)
+                    for k, v in next_observations.items()
+                    if "observation.images" in k
+                },
             }
 
             check_nan_in_transition(
@@ -717,6 +723,41 @@ def add_actor_information_and_train(
             observations = batch["state"]
             next_observations = batch["next_state"]
             # done = batch["done"]
+
+            observations = preprocessor(
+                {
+                    **{"observation.state": observations["observation.state"]},
+                    **{
+                        k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k
+                    },
+                }
+            )
+
+            observations = {
+                **{"observation.state": observations["observation.state"]},
+                **{k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k},
+            }
+
+            next_observations = preprocessor(
+                {
+                    **{"observation.state": next_observations["observation.state"]},
+                    **{
+                        k: v.permute(0, 3, 2, 1)
+                        for k, v in next_observations.items()
+                        if "observation.images" in k
+                    },
+                }
+            )
+
+            next_observations = {
+                **{"observation.state": next_observations["observation.state"]},
+                **{
+                    k: v.permute(0, 3, 2, 1)
+                    for k, v in next_observations.items()
+                    if "observation.images" in k
+                },
+            }
+
             check_nan_in_transition(
                 observations=observations,
                 actions=actions.reshape(actions.shape[0], -1),
@@ -772,6 +813,34 @@ def add_actor_information_and_train(
         observations = batch["state"]
         next_observations = batch["next_state"]
         # done = batch["done"]
+
+        observations = preprocessor(
+            {
+                **{"observation.state": observations["observation.state"]},
+                **{k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k},
+            }
+        )
+
+        observations = {
+            **{"observation.state": observations["observation.state"]},
+            **{k: v.permute(0, 3, 2, 1) for k, v in observations.items() if "observation.images" in k},
+        }
+
+        next_observations = preprocessor(
+            {
+                **{"observation.state": next_observations["observation.state"]},
+                **{
+                    k: v.permute(0, 3, 2, 1)
+                    for k, v in next_observations.items()
+                    if "observation.images" in k
+                },
+            }
+        )
+
+        next_observations = {
+            **{"observation.state": next_observations["observation.state"]},
+            **{k: v.permute(0, 3, 2, 1) for k, v in next_observations.items() if "observation.images" in k},
+        }
 
         check_nan_in_transition(
             observations=observations,
@@ -928,6 +997,8 @@ def add_actor_information_and_train(
                 offline_replay_buffer=offline_replay_buffer,
                 dataset_repo_id=dataset_repo_id,
                 fps=fps,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
             )
 
 
@@ -1325,7 +1396,11 @@ def initialize_replay_buffer(
     Returns:
         ReplayBuffer: Initialized replay buffer
     """
-    if not cfg.resume:
+
+    dataset_path = os.path.join(cfg.output_dir, "dataset")
+
+    if not cfg.resume or not os.path.exists(dataset_path):
+        logging.info("Make an empty online replay buffer")
         return ReplayBuffer(
             capacity=cfg.policy.online_buffer_capacity,
             device=device,
@@ -1335,7 +1410,6 @@ def initialize_replay_buffer(
         )
 
     logging.info("Resume training load the online dataset")
-    dataset_path = os.path.join(cfg.output_dir, "dataset")
 
     # NOTE: In RL is possible to not have a dataset.
     repo_id = None

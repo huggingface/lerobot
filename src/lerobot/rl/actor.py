@@ -64,7 +64,7 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 
 # from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
@@ -260,6 +260,23 @@ def act_with_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
+
+    # Create processors - only provide dataset_stats if not resuming from saved processors
+    processor_kwargs = {}
+    postprocessor_kwargs = {}
+    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+        # Only provide dataset_stats when not resuming from saved processor state
+        # params = _convert_normalization_params_to_tensor(cfg.policy.dataset_stats)
+        processor_kwargs["dataset_stats"] = cfg.policy.dataset_stats
+        # TODO(jpizarrom): check if it is also needed to provide dataset_stats to postprocessor
+
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        pretrained_path=cfg.policy.pretrained_path,
+        **processor_kwargs,
+        **postprocessor_kwargs,
+    )
+
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
@@ -273,6 +290,7 @@ def act_with_policy(
     obs, info = online_env.reset()
     env_processor.reset()
     action_processor.reset()
+    # TODO(jpizarrom): align whether to reset teleop device here
     if hasattr(teleop_device, "reset"):
         teleop_device.reset()
 
@@ -300,10 +318,26 @@ def act_with_policy(
             k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
         }
 
+        observation_for_inference = preprocessor(
+            {
+                **{"observation.state": observation["observation.state"]},
+                **{k: v.permute(0, 3, 2, 1) for k, v in observation.items() if "observation.images" in k},
+            }
+        )
+
+        observation_for_inference = {
+            **{"observation.state": observation_for_inference["observation.state"]},
+            **{
+                k: v.permute(0, 3, 2, 1)
+                for k, v in observation_for_inference.items()
+                if "observation.images" in k
+            },
+        }
+
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
             # Extract observation from transition for policy
-            action = policy.select_action(batch=observation)
+            action = policy.select_action(batch=observation_for_inference)
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)

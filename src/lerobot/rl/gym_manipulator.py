@@ -208,6 +208,7 @@ class RobotEnv(gym.Env):
         self.observation_space = gym.spaces.Dict(observation_spaces)
 
         # Define the action space for joint positions along with setting an intervention flag.
+        # TODO(jpizarrom): This should be taken from the robot config
         action_dim = 6  # 3 for (x, y, z) and 3 for (wx, wy, wz) rotation
         bounds = {}
         bounds["min"] = -np.ones(action_dim)
@@ -215,6 +216,7 @@ class RobotEnv(gym.Env):
 
         if self.use_gripper:
             action_dim += 1
+            # TODO(jpizarrom): bounds should part of the config
             bounds["min"] = np.concatenate([bounds["min"], [-1]])
             bounds["max"] = np.concatenate([bounds["max"], [1]])
 
@@ -501,11 +503,11 @@ def make_processors(
             ),
             EEBoundsAndSafety(
                 end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
-                max_ee_step_m=0.10,  # TODO: make this configurable
+                max_ee_step_m=0.10,  # TODO(jpizarrom): make this configurable
             ),
             GripperVelocityToJoint(
                 clip_max=cfg.processor.max_gripper_pos,
-                speed_factor=0.075,  # TODO: make this configurable
+                speed_factor=0.075,  # TODO(jpizarrom): make this configurable
                 discrete_gripper=True,
             ),
             InverseKinematicsRLStep(
@@ -547,15 +549,11 @@ def step_env_and_process_transition(
     transition[TransitionKey.OBSERVATION] = (
         env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
     )
-    # start_time_action_processor = time.perf_counter()
     processed_action_transition = action_processor(transition)
-    # end_time_action_processor = time.perf_counter()
 
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
-    # start_time_env_step = time.perf_counter()
     obs, reward, terminated, truncated, info = env.step(processed_action)
-    # end_time_env_step = time.perf_counter()
 
     reward = reward + processed_action_transition[TransitionKey.REWARD]
     terminated = terminated or processed_action_transition[TransitionKey.DONE]
@@ -574,14 +572,7 @@ def step_env_and_process_transition(
         complementary_data=complementary_data,
     )
 
-    # start_time_env_processor = time.perf_counter()
     new_transition = env_processor(new_transition)
-    # end_time_env_processor = time.perf_counter()
-    # logging.info(
-    #     f"Action processor time: {end_time_action_processor - start_time_action_processor:.4f}s, "
-    #     f"Env step time: {end_time_env_step - start_time_env_step:.4f}s, "
-    #     f"Env processor time: {end_time_env_processor - start_time_env_processor:.4f}s  "
-    # )
 
     return new_transition
 
@@ -682,8 +673,10 @@ def control_loop(
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
+        # TODO(jpizarrom): This should depend on the action space
         neutral_action = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float32)
         if use_gripper:
+            # TODO(jpizarrom): define neutral gripper action should be defined in the config
             neutral_action = torch.cat([neutral_action, torch.tensor([0.0])])  # Gripper stay
 
         # Use the new step function
@@ -762,6 +755,7 @@ def control_loop(
         busy_wait(dt - (time.perf_counter() - step_start_time))
 
         if not episode_started:
+            # This is needed to track the fps correctly after reset
             episode_started = True
         else:
             fps_tracker.stop()

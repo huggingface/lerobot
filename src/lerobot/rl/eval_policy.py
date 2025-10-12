@@ -89,9 +89,6 @@ def eval_policy(
         transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
         transition = env_processor(data=transition)
 
-        # Determine if gripper is used
-        # use_gripper = cfg.env.processor.gripper.use_gripper if cfg.env.processor.gripper is not None else True
-
         episode_reward = 0.0
 
         start_time_for_episode = time.perf_counter()
@@ -106,28 +103,22 @@ def eval_policy(
                 if k in cfg.policy.input_features
             }
 
+            # Preprocess observation
+            # Change image from HWC to CHW
             observation = preprocessor(
                 {
-                    "observation.state": observation["observation.state"],
-                    "observation.images.top": observation["observation.images.top"].permute(0, 3, 2, 1),
-                    "observation.images.wrist": observation["observation.images.wrist"].permute(0, 3, 2, 1),
+                    **{"observation.state": observation["observation.state"]},
+                    **{k: v.permute(0, 3, 2, 1) for k, v in observation.items() if "observation.images" in k},
                 }
             )
-
+            # Change image from HWC to CHW
             observation = {
-                "observation.state": observation["observation.state"],
-                "observation.images.top": observation["observation.images.top"].permute(0, 3, 2, 1),
-                "observation.images.wrist": observation["observation.images.wrist"].permute(0, 3, 2, 1),
+                **{"observation.state": observation["observation.state"]},
+                **{k: v.permute(0, 3, 2, 1) for k, v in observation.items() if "observation.images" in k},
             }
 
-            # start_time_policy = time.perf_counter()
             action = policy.select_action(observation)
-            # end_time_policy = time.perf_counter()
 
-            # obs, reward, terminated, truncated, _ = env.step(action)
-            # Use the new step function
-
-            # start_time_env_step = time.perf_counter()
             transition = step_env_and_process_transition(
                 env=env,
                 transition=transition,
@@ -135,10 +126,7 @@ def eval_policy(
                 env_processor=env_processor,
                 action_processor=action_processor,
             )
-            # end_time_env_step = time.perf_counter()
-            # logging.info(
-            #     f"Times: policy {end_time_policy - start_time_policy:.4f}s, env step {end_time_env_step - start_time_env_step:.4f}s"
-            # )
+
             terminated = transition.get(TransitionKey.DONE, False)
             truncated = transition.get(TransitionKey.TRUNCATED, False)
             reward = transition.get(TransitionKey.REWARD, 0.0)
@@ -194,13 +182,6 @@ def main(cfg: TrainRLServerPipelineConfig):
     # dataset_cfg = cfg.dataset
     # dataset = LeRobotDataset(repo_id=dataset_cfg.repo_id)
     # dataset_meta = dataset.meta
-
-    # if env_cfg.pretrained_policy_name_or_path is not None:
-    #     cfg.policy.pretrained_path = env_cfg.pretrained_policy_name_or_path
-    # else:
-    # Construct path to the last checkpoint directory
-    # checkpoint_dir = os.path.join(cfg.output_dir, CHECKPOINTS_DIR, LAST_CHECKPOINT_LINK)
-    # logging.info(f"Loading training state from {checkpoint_dir}")
 
     # pretrained_policy_name_or_path = os.path.join(checkpoint_dir, PRETRAINED_MODEL_DIR)
     # cfg.policy.pretrained_path = pretrained_policy_name_or_path

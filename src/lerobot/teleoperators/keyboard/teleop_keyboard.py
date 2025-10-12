@@ -194,6 +194,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         gripper_action = 1.0
 
         # Check if any movement keys are currently pressed (indicates intervention)
+        # It should be done here before clearing current_pressed
         movement_keys = [
             keyboard.Key.up,
             keyboard.Key.down,
@@ -270,18 +271,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 TeleopEvents.RERECORD_EPISODE: False,
             }
 
-        # # Check if any movement keys are currently pressed (indicates intervention)
-        # movement_keys = [
-        #     keyboard.Key.up,
-        #     keyboard.Key.down,
-        #     keyboard.Key.left,
-        #     keyboard.Key.right,
-        #     keyboard.Key.shift,
-        #     keyboard.Key.shift_r,
-        #     keyboard.Key.ctrl_r,
-        #     keyboard.Key.ctrl_l,
-        # ]
-        # is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
         is_intervention = self.is_intervention
         print("Is intervention:", is_intervention)
 
