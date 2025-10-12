@@ -304,8 +304,11 @@ def act_with_policy(
     episode_total_steps = 0
 
     policy_timer = TimerManager("Policy inference", log=False)
+    fps_tracker = TimerManager("Episode FPS", log=False)
+    episode_started = True
 
     for interaction_step in range(cfg.policy.online_steps):
+        fps_tracker.start()
         start_time = time.perf_counter()
         if shutdown_event.is_set():
             logging.info("[ACTOR] Shutting down act_with_policy")
@@ -400,6 +403,9 @@ def act_with_policy(
 
             stats = get_frequency_stats(policy_timer)
 
+            stats = get_frequency_stats(fps_tracker)
+            logging.info(", ".join([f"{k} : {v:.2f}" for k, v in stats.items()]))
+
             if len(list_transition_to_send_to_learner) > 0:
                 push_transitions_to_transport_queue(
                     transitions=list_transition_to_send_to_learner,
@@ -428,6 +434,8 @@ def act_with_policy(
             )
 
             policy_timer.reset()
+            fps_tracker.reset()
+            episode_started = False
 
             # Reset intervention counters and environment
             sum_reward_episode = 0.0
@@ -449,6 +457,12 @@ def act_with_policy(
         if cfg.env.fps is not None:
             dt_time = time.perf_counter() - start_time
             busy_wait(1 / cfg.env.fps - dt_time)
+
+        if not episode_started:
+            # This is needed to track the fps correctly after reset
+            episode_started = True
+        else:
+            fps_tracker.stop()
 
 
 #  Communication Functions - Group all gRPC/messaging functions
