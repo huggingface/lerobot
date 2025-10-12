@@ -350,7 +350,7 @@ def add_actor_information_and_train(
     batch_size = cfg.batch_size
     offline_replay_buffer = None
 
-    if cfg.dataset is not None:
+    if cfg.dataset is not None and offline_steps > 0:
         offline_replay_buffer = initialize_offline_replay_buffer(
             cfg=cfg,
             device=device,
