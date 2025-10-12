@@ -44,18 +44,12 @@ def make_bimanual_koch_teleop_processors(teleop, display_data: bool) -> RobotPro
     left_teleop_kinematics_solver = RobotKinematics(
         urdf_path=URDF_PATH,
         target_frame_name="ee_frame",
-        entity_path_prefix="leader_left",
-        display_data=display_data,
         joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
-        offset=0.4,
     )
     right_teleop_kinematics_solver = RobotKinematics(
         urdf_path=URDF_PATH,
         target_frame_name="ee_frame",
-        entity_path_prefix="leader_right",
-        display_data=display_data,
         joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
-        offset=0.6,
     )
 
     teleop_motor_names = list(teleop.left_arm.bus.motors.keys())
@@ -68,11 +62,17 @@ def make_bimanual_koch_teleop_processors(teleop, display_data: bool) -> RobotPro
                 kinematics=left_teleop_kinematics_solver,
                 motor_names=left_teleop_motor_names,
                 gripper_name="left_gripper",
+                display_data=display_data,
+                entity_path_prefix="left_leader",
+                offset=0.4,
             ),
             ForwardKinematicsJointsToEE(
                 kinematics=right_teleop_kinematics_solver,
                 motor_names=right_teleop_motor_names,
                 gripper_name="right_gripper",
+                display_data=display_data,
+                entity_path_prefix="right_leader",
+                offset=0.6,
             ),
         ],
         to_transition=robot_action_observation_to_transition,

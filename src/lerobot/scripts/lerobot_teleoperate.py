@@ -95,8 +95,7 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, log_rerun_action_chunk
 
-from lerobot.teleoperators.bi_koch_leader.config_bi_koch_leader import make_bimanual_koch_teleop_processors
-from lerobot.robots.bi_koch_follower.config_bi_koch_follower import make_bimanual_koch_robot_processors
+from lerobot.processor.processor_factory import make_robot_action_processor, make_teleop_action_processor
 
 from lerobot.async_inference.bimanual_koch_utils import compute_current_ee
 
@@ -143,7 +142,12 @@ def teleop_loop(
     for _ in range(10):
         print("\n")
 
-    action_features = get_bimanual_action_features(robot, teleop_action_processor)
+    # Check if we're using FK/IK processors (koch-based systems)
+    # These processors convert joint angles to/from end-effector poses
+    uses_fk_ik = robot.robot_type in ["koch_follower", "bi_koch_follower"]
+
+    if uses_fk_ik:
+        action_features = get_bimanual_action_features(robot, teleop_action_processor)
 
     while True:
         loop_start = time.perf_counter()
@@ -169,11 +173,12 @@ def teleop_loop(
 
         # Process teleop action through pipeline
         teleop_action = teleop_action_processor((raw_action, obs))
-        teleop_action_tensor = action_dict_to_tensor(teleop_action, action_features)
-        # Process action for robot through pipeline
-        current_ee = compute_current_ee(obs, teleop_action_processor, action_features)
-        # log_rerun_action_chunk(teleop_action_tensor.unsqueeze(0))
-        log_rerun_action_chunk(current_ee.unsqueeze(0), name="current_ee_") # you will notice lag here, because this is using the true state of the robot. The URDF shows the solver state of the robot, which is slightly ahead.
+
+        # FK/IK-specific visualization (compute and log current EE state)
+        if uses_fk_ik:
+            # Compute current end-effector pose from robot observation
+            current_ee = compute_current_ee(obs, teleop_action_processor, action_features)
+            log_rerun_action_chunk(current_ee.unsqueeze(0), name="current_ee_")
 
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
@@ -270,8 +275,8 @@ def teleoperate(cfg: TeleoperateConfig):
             fps=cfg.fps,
             display_data=cfg.display_data,
             duration=cfg.teleop_time_s,
-            teleop_action_processor=make_bimanual_koch_teleop_processors(teleop, cfg.display_data),
-            robot_action_processor=make_bimanual_koch_robot_processors(robot, cfg.display_data),
+            teleop_action_processor=make_teleop_action_processor(cfg.teleop, teleop, cfg.display_data),
+            robot_action_processor=make_robot_action_processor(cfg.robot, robot, cfg.display_data),
             robot_observation_processor=robot_observation_processor,
         )
     except KeyboardInterrupt:

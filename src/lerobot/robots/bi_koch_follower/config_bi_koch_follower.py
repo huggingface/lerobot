@@ -72,18 +72,12 @@ def make_bimanual_koch_robot_processors(robot, display_data: bool) -> RobotProce
     left_robot_kinematics_solver = RobotKinematics(
         urdf_path=URDF_PATH,
         target_frame_name="ee_frame",
-        entity_path_prefix="follower_left",
-        display_data=display_data,
         joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
-        offset=0.0,
     )
     right_robot_kinematics_solver = RobotKinematics(
         urdf_path=URDF_PATH,
         target_frame_name="ee_frame",
-        entity_path_prefix="follower_right",
-        display_data=display_data,
         joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
-        offset=0.2,
     )
 
     robot_motor_names = list(robot.left_arm.bus.motors.keys())
@@ -110,12 +104,18 @@ def make_bimanual_koch_robot_processors(robot, display_data: bool) -> RobotProce
                 motor_names=left_robot_motor_names,
                 initial_guess_current_joints=False,
                 prefix="left_",
+                display_data=display_data,
+                entity_path_prefix="follower_left",
+                offset=0.0,
             ),
             InverseKinematicsEEToJoints(
                 kinematics=right_robot_kinematics_solver,
                 motor_names=right_robot_motor_names,
                 initial_guess_current_joints=False,
                 prefix="right_",
+                display_data=display_data,
+                entity_path_prefix="follower_right",
+                offset=0.2,
             ),
         ],
         to_transition=robot_action_observation_to_transition,

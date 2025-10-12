@@ -17,6 +17,13 @@
 from dataclasses import dataclass
 
 from ..config import TeleoperatorConfig
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.processor import RobotAction, RobotProcessorPipeline
+from lerobot.processor.converters import (
+    robot_action_observation_to_transition,
+    transition_to_robot_action,
+)
+from lerobot.robots.so100_follower.robot_kinematic_processor import ForwardKinematicsJointsToEE
 
 
 @TeleoperatorConfig.register_subclass("koch_leader")
@@ -31,3 +38,41 @@ class KochLeaderConfig(TeleoperatorConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset. Use degrees for FK / IK.
     use_degrees: bool = True
+
+
+def make_koch_teleop_processors(teleop, display_data: bool) -> RobotProcessorPipeline[RobotAction, RobotAction]:
+    """Create processor pipeline for single-arm Koch teleoperator.
+
+    Converts joint angles from teleoperator to end-effector pose using forward kinematics.
+
+    Args:
+        teleop: Koch leader teleoperator instance
+        display_data: Whether to enable visualization in rerun
+
+    Returns:
+        Pipeline that converts teleop joint angles to EE pose
+    """
+    URDF_PATH = "/home/steven/research/lerobot/assets/koch_follower.urdf"
+    teleop_kinematics_solver = RobotKinematics(
+        urdf_path=URDF_PATH,
+        target_frame_name="ee_frame",
+        joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
+    )
+
+    teleop_motor_names = list(teleop.bus.motors.keys())
+
+    teleop_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
+        steps=[
+            ForwardKinematicsJointsToEE(
+                kinematics=teleop_kinematics_solver,
+                motor_names=teleop_motor_names,
+                gripper_name="gripper",
+                display_data=display_data,
+                entity_path_prefix="leader",
+                offset=0.2,
+            ),
+        ],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
+    return teleop_to_ee

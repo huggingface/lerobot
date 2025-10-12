@@ -125,17 +125,49 @@ def transform_from_pose(p):
     return T
 
 
-def log_rerun_action_chunk(action_chunk: torch.Tensor, name="action_chunk_"):
+def log_rerun_action_chunk(action_chunk: torch.Tensor, name="action_chunk_", prefix="leader"):
+    """Log action chunk to rerun for visualization.
+
+    Supports both single-arm and bimanual setups:
+    - Single-arm: 7 elements (x, y, z, wx, wy, wz, gripper)
+    - Bimanual: 14 elements (left_x, left_y, left_z, left_wx, left_wy, left_wz, left_gripper,
+                              right_x, right_y, right_z, right_wx, right_wy, right_wz, right_gripper)
+
+    Args:
+        action_chunk: Tensor of shape (batch, action_dim) where action_dim is 7 or 14
+        name: Name prefix for the rerun log entries
+        prefix: Prefix for the rerun entity path (e.g., "leader" or "follower")
+    """
     action_chunk = action_chunk.cpu().numpy()
     for i, action in enumerate(action_chunk):
-        left_action = action[:6]
-        right_action = action[7:]
-        T_left = transform_from_pose(left_action)
-        T_right = transform_from_pose(right_action)
-        # rr.log(f"follower_left/robot/base_link/{name}{i}", rr.Transform3D(translation=T_left[:3, 3], mat3x3=T_left[:3, :3], axis_length=0.1))
-        # rr.log(f"follower_right/robot/base_link/{name}{i}", rr.Transform3D(translation=T_right[:3, 3], mat3x3=T_right[:3, :3], axis_length=0.1))
-        rr.log(f"leader_left/robot/base_link/{name}{i}", rr.Transform3D(translation=T_left[:3, 3], mat3x3=T_left[:3, :3], axis_length=0.1))
-        rr.log(f"leader_right/robot/base_link/{name}{i}", rr.Transform3D(translation=T_right[:3, 3], mat3x3=T_right[:3, :3], axis_length=0.1))
+        action_dim = len(action)
+
+        if action_dim == 14:
+            # Bimanual setup: split into left and right
+            left_action = action[:6]  # x, y, z, wx, wy, wz (skip gripper at index 6)
+            right_action = action[7:13]  # x, y, z, wx, wy, wz (skip gripper at index 13)
+
+            T_left = transform_from_pose(left_action)
+            T_right = transform_from_pose(right_action)
+
+            rr.log(f"{prefix}_left/robot/base_link/{name}{i}",
+                   rr.Transform3D(translation=T_left[:3, 3], mat3x3=T_left[:3, :3], axis_length=0.1))
+            rr.log(f"{prefix}_right/robot/base_link/{name}{i}",
+                   rr.Transform3D(translation=T_right[:3, 3], mat3x3=T_right[:3, :3], axis_length=0.1))
+
+        elif action_dim == 7:
+            # Single-arm setup: only one EE pose
+            single_action = action[:6]  # x, y, z, wx, wy, wz (skip gripper at index 6)
+            T = transform_from_pose(single_action)
+
+            rr.log(f"{prefix}/robot/base_link/{name}{i}",
+                   rr.Transform3D(translation=T[:3, 3], mat3x3=T[:3, :3], axis_length=0.1))
+
+        else:
+            # Unsupported action dimension, skip logging with a warning
+            import warnings
+            warnings.warn(f"Unsupported action dimension {action_dim} for log_rerun_action_chunk. Expected 7 or 14.")
+            break
 
 
 def parse_urdf_graph(urdf_path: str):

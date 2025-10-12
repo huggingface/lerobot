@@ -14,10 +14,6 @@
 
 import numpy as np
 
-import rerun as rr
-from lerobot.utils.visualization_utils import visualize_robot, parse_urdf_graph
-
-import time
 
 class RobotKinematics:
     """Robot kinematics using placo library for forward and inverse kinematics."""
@@ -27,9 +23,6 @@ class RobotKinematics:
         urdf_path: str,
         target_frame_name: str = "gripper_frame_link",
         joint_names: list[str] = None,
-        entity_path_prefix: str = "follower",
-        offset: float = 0.0,
-        display_data: bool = False,
     ):
         """
         Initialize placo-based kinematics solver.
@@ -47,6 +40,7 @@ class RobotKinematics:
                 "Please install the optional dependencies of `kinematics` in the package."
             ) from e
 
+        self.urdf_path = urdf_path
         self.robot = placo.RobotWrapper(urdf_path)
         self.solver = placo.KinematicsSolver(self.robot)
         self.solver.mask_fbase(True)  # Fix the base
@@ -58,14 +52,6 @@ class RobotKinematics:
 
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
-
-        self.entity_path_prefix = entity_path_prefix
-        self.display_data = display_data
-        self.offset = offset  # How much to shift the robot in the y direction
-        if self.display_data:
-            rr.log_file_from_path(urdf_path, entity_path_prefix=self.entity_path_prefix, static=True)
-
-        self.urdf_graph = parse_urdf_graph(urdf_path)
 
     def forward_kinematics(self, joint_pos_deg):
         """
@@ -87,17 +73,6 @@ class RobotKinematics:
 
         # Update kinematics
         self.robot.update_kinematics()
-
-        offset = np.eye(4)
-        offset[1, 3] = self.offset # shift in y direction
-        if self.display_data:
-            visualize_robot(
-                self.robot,
-                step=int(time.time()),
-                urdf_prefix=f"{self.entity_path_prefix}/robot",
-                urdf_graph=self.urdf_graph,
-                offset=offset,
-            )
 
         # Get the transformation matrix
         return self.robot.get_T_world_frame(self.target_frame_name)

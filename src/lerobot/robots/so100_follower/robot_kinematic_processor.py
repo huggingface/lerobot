@@ -278,6 +278,9 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         q_curr: Internal state storing the last joint positions, used as an initial guess for the IK solver.
         initial_guess_current_joints: If True, use the robot's current joint state as the IK guess.
             If False, use the solution from the previous step.
+        display_data: If True, visualize the robot in rerun.
+        entity_path_prefix: Prefix for the rerun entity path.
+        offset: Y-axis offset for visualization.
     """
 
     kinematics: RobotKinematics
@@ -286,7 +289,25 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     initial_guess_current_joints: bool = True
     prefix: str = ""
     threshold_deg: float = 90.0
-    _first_solve: bool = True
+    display_data: bool = False
+    entity_path_prefix: str = "follower"
+    offset: float = 0.0
+    _first_solve: bool = field(default=True, init=False, repr=False)
+    _rerun_initialized: bool = field(default=False, init=False, repr=False)
+    _urdf_graph: dict | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        """Initialize rerun logging if display_data is enabled."""
+        if self.display_data and not self._rerun_initialized:
+            import rerun as rr
+            rr.log_file_from_path(
+                self.kinematics.urdf_path,
+                entity_path_prefix=self.entity_path_prefix,
+                static=True
+            )
+            # Parse URDF graph for visualization
+            self._urdf_graph = parse_urdf_graph(self.kinematics.urdf_path)
+            self._rerun_initialized = True
 
     def action(self, action: RobotAction) -> RobotAction:
         x = action.pop(f"{self.prefix}ee.x")
@@ -353,16 +374,15 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
             if self.verify_solution_within_joint_limits(action, observation):
                 break
 
-
-        # Moving the function here, this is still really ugly
-        offset = np.eye(4)
-        offset[1, 3] = self.kinematics.offset
-        if self.kinematics.display_data:
+        # Visualize the robot if enabled
+        if self.display_data and self._urdf_graph is not None:
+            offset = np.eye(4)
+            offset[1, 3] = self.offset
             visualize_robot(
                 self.kinematics.robot,
                 step=int(time.time()),
-                urdf_prefix=f"{self.kinematics.entity_path_prefix}/robot",
-                urdf_graph=self.kinematics.urdf_graph,
+                urdf_prefix=f"{self.entity_path_prefix}/robot",
+                urdf_graph=self._urdf_graph,
                 offset=offset,
             )
 
@@ -543,14 +563,51 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
 
     Attributes:
         kinematics: The robot's kinematic model.
+        motor_names: A list of motor names for which to compute joint positions.
+        gripper_name: Name of the gripper motor.
+        display_data: If True, visualize the robot in rerun.
+        entity_path_prefix: Prefix for the rerun entity path.
+        offset: Y-axis offset for visualization.
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
     gripper_name: str
+    display_data: bool = False
+    entity_path_prefix: str = "follower"
+    offset: float = 0.0
+    _rerun_initialized: bool = field(default=False, init=False, repr=False)
+    _urdf_graph: dict | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        """Initialize rerun logging if display_data is enabled."""
+        if self.display_data and not self._rerun_initialized:
+            import rerun as rr
+            rr.log_file_from_path(
+                self.kinematics.urdf_path,
+                entity_path_prefix=self.entity_path_prefix,
+                static=True
+            )
+            # Parse URDF graph for visualization
+            self._urdf_graph = parse_urdf_graph(self.kinematics.urdf_path)
+            self._rerun_initialized = True
 
     def action(self, action: RobotAction) -> RobotAction:
-        return compute_forward_kinematics_joints_to_ee(action, self.kinematics, self.motor_names, self.gripper_name)
+        result = compute_forward_kinematics_joints_to_ee(action, self.kinematics, self.motor_names, self.gripper_name)
+
+        # Visualize the robot if enabled
+        if self.display_data and self._urdf_graph is not None:
+            offset_matrix = np.eye(4)
+            offset_matrix[1, 3] = self.offset
+            visualize_robot(
+                self.kinematics.robot,
+                step=int(time.time()),
+                urdf_prefix=f"{self.entity_path_prefix}/robot",
+                urdf_graph=self._urdf_graph,
+                offset=offset_matrix,
+            )
+
+        return result
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -579,10 +636,18 @@ class ForwardKinematicsJointsToEE(ProcessorStep):
     kinematics: RobotKinematics
     motor_names: list[str]
     gripper_name: str
+    display_data: bool = False
+    entity_path_prefix: str = "follower"
+    offset: float = 0.0
 
     def __post_init__(self):
         self.joints_to_ee_action_processor = ForwardKinematicsJointsToEEAction(
-            kinematics=self.kinematics, motor_names=self.motor_names, gripper_name=self.gripper_name
+            kinematics=self.kinematics,
+            motor_names=self.motor_names,
+            gripper_name=self.gripper_name,
+            display_data=self.display_data,
+            entity_path_prefix=self.entity_path_prefix,
+            offset=self.offset,
         )
         # self.joints_to_ee_observation_processor = ForwardKinematicsJointsToEEObservation(
         #     kinematics=self.kinematics, motor_names=self.motor_names, gripper_name=self.gripper_name

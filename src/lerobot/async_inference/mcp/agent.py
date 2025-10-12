@@ -289,7 +289,7 @@ async def main():
                        help="MCP server IP (or set MCP_SERVER_IP in .env)")
     parser.add_argument("--mcp-port", 
                        type=int, 
-                       default=int(os.getenv("MCP_PORT", "3001")), 
+                       default=int(os.getenv("MCP_PORT", "3765")), 
                        help="MCP server port (or set MCP_PORT in .env)")
     parser.add_argument("--thinking-budget", 
                        type=int, 
