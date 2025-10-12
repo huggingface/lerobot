@@ -563,7 +563,7 @@ init_rerun(session_name="recording")
 # Connect the robot
 robot.connect()
 
-preprocessor, postprocessor = make_pre_post_processor(
+preprocessor, postprocessor = make_pre_post_processors(
     policy_cfg=policy,
     pretrained_path=HF_MODEL_ID,
     dataset_stats=dataset.meta.stats,
