@@ -609,8 +609,6 @@ def control_loop(
     )
     env_processor.reset()
     action_processor.reset()
-    if hasattr(teleop_device, "reset"):
-        teleop_device.reset()
 
     # Process initial observation
     transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
@@ -740,8 +738,6 @@ def control_loop(
             obs, info = env.reset()
             env_processor.reset()
             action_processor.reset()
-            if hasattr(teleop_device, "reset"):
-                teleop_device.reset()
 
             fps_tracker.reset()
             episode_started = False

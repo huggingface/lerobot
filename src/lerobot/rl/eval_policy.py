@@ -82,8 +82,6 @@ def eval_policy(
         complementary_data = {}
         env_processor.reset()
         action_processor.reset()
-        if hasattr(teleop_device, "reset"):
-            teleop_device.reset()
 
         # Process initial observation
         transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)

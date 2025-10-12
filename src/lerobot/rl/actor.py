@@ -290,9 +290,6 @@ def act_with_policy(
     obs, info = online_env.reset()
     env_processor.reset()
     action_processor.reset()
-    # TODO(jpizarrom): align whether to reset teleop device here
-    if hasattr(teleop_device, "reset"):
-        teleop_device.reset()
 
     # Process initial observation
     transition = create_transition(observation=obs, info=info)
@@ -444,9 +441,6 @@ def act_with_policy(
             action_processor.reset()
 
             policy.reset()  # Reset policy state if needed
-
-            if hasattr(teleop_device, "reset"):
-                teleop_device.reset()
 
             # Process initial observation
             transition = create_transition(observation=obs, info=info)
