@@ -9,7 +9,7 @@ from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerCon
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 
 device = torch.device("mps")  # or "cuda" or "cpu"
-model_id = "fracapuano/robot_learning_tutorial_act_example_model"
+model_id = "fracapuano/robot_learning_tutorial_act"
 model = ACTPolicy.from_pretrained(model_id)
 
 dataset_id = "lerobot/svla_so101_pickplace"
