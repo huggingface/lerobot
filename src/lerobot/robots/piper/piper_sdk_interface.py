@@ -14,7 +14,10 @@ class PiperSDKInterface:
     def __init__(self, port: str = "can0"):
         if C_PiperInterface_V2 is None:
             raise ImportError("piper_sdk is not installed. Please install it with `pip install piper_sdk`.")
-        self.piper = C_PiperInterface_V2(port)
+        try:
+            self.piper = C_PiperInterface_V2(port)
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to Piper on port {port}: {e}")    
         self.piper.ConnectPort()
         time.sleep(0.1)  # wait for connection to establish
 
