@@ -249,7 +249,7 @@ class DSRLPolicy(PreTrainedPolicy):
         raise ValueError(f"Unknown model type: {model}")
 
     def update_target_networks(self):
-        """Update target networks with exponential moving average"""
+        """Update target networks of the action critic with exponential moving average"""
         for target_param, param in zip(
             self.action_critic_target.parameters(),
             self.action_critic_ensemble.parameters(),
