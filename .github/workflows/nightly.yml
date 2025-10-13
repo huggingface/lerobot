@@ -164,7 +164,7 @@ jobs:
     name: Nightly Multi-GPU Tests
     needs: [build-docker-gpu-nightly]
     runs-on:
-      group: aws-g6-12xlarge-plus  # Instance with 4 GPUs
+      group: aws-g4dn-12xlarge  # Instance with 4 GPUs
     env:
       HF_HOME: /home/user_lerobot/.cache/huggingface
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
