@@ -70,18 +70,10 @@ from lerobot.async_inference.helpers import (
     raw_observation_to_observation,
 )
 from lerobot.configs.types import PolicyFeature, FeatureType
-from lerobot.robots.bi_koch_follower.config_bi_koch_follower import make_bimanual_koch_robot_processors
-from lerobot.teleoperators.bi_koch_leader.config_bi_koch_leader import make_bimanual_koch_teleop_processors
+from lerobot.processor.processor_factory import make_robot_action_processor, make_fk_processor
 
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.async_inference.bimanual_koch_utils import (
-    INITIAL_EE_POSE,
-    action_dict_to_tensor,
-    action_tensor_to_dict,
-    compute_current_ee,
-    generate_linear_trajectory,
-    get_bimanual_action_features,
-)
+from lerobot.async_inference import koch_utils
 
 
 class RobotOpenpiClient:
@@ -100,13 +92,25 @@ class RobotOpenpiClient:
         self.robot.connect()
         init_rerun(session_name="openpi_client")
 
+        # Detect if using single or dual arm based on robot type
+        self.is_bimanual = config.robot.type == "bi_koch_follower"
+        self.uses_fk_ik = config.robot.type in ["koch_follower", "bi_koch_follower"]
+
+        # Select appropriate initial EE pose based on robot type
+        self.initial_ee_pose = (
+            koch_utils.INITIAL_EE_POSE_BIMANUAL if self.is_bimanual else koch_utils.INITIAL_EE_POSE_SINGLE
+        )
+
         self.lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
         # TODO: this needs to be consistent with the policy config
         self.policy_image_features = {
             "observation.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
             "observation.images.left_wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
-            "observation.images.right_wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
         }
+        if self.is_bimanual:
+            self.policy_image_features["observation.images.right_wrist"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(3, 224, 224)
+            )
 
         self.server_address = config.server_address
         self.host = self.server_address.split(":")[0]
@@ -115,11 +119,16 @@ class RobotOpenpiClient:
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
         self.client = websocket_client_policy.WebsocketClientPolicy(host=self.host, port=self.port)
-        self.robot_action_processor = make_bimanual_koch_robot_processors(self.robot, True)
-        self.teleop_action_processor = make_bimanual_koch_teleop_processors(self.robot, False)
 
-        # TODO(steven, pepijn): in future this should be come from teleop or policy
-        self.action_features = get_bimanual_action_features(self.robot, self.teleop_action_processor)
+        # Use factory functions to create processors based on robot type
+        self.robot_action_processor = make_robot_action_processor(config.robot, self.robot, True)
+
+        # Create FK processor for computing current EE from joint angles
+        self.fk_processor = make_fk_processor(config.robot, self.robot, display_data=False)
+
+        # Get action features using the utility module
+        self.action_features = koch_utils.get_action_features(self.robot, self.fk_processor)
+
 
     @property
     def running(self):
@@ -140,9 +149,18 @@ class RobotOpenpiClient:
 
         timestep_count = 0
 
-        # indices to exclude for gripper
-        gripper_exclude = [6, 13]
-        rotation_exclude = [3, 4, 5, 10, 11, 12]
+        # Get initial EE pose based on robot type
+        initial_EE = self.initial_ee_pose
+
+        # Set indices to exclude based on robot type
+        if self.is_bimanual:
+            # Bimanual: exclude both left and right grippers
+            gripper_exclude = [6, 13]
+            rotation_exclude = [3, 4, 5, 10, 11, 12]
+        else:
+            # Single arm: exclude single gripper
+            gripper_exclude = [6]
+            rotation_exclude = [3, 4, 5]
 
         # create a mask (True = add, False = keep original)
         non_gripper_mask = torch.ones_like(initial_EE, dtype=torch.bool)
@@ -154,9 +172,6 @@ class RobotOpenpiClient:
 
         while self.running:
             control_loop_start = time.perf_counter()
-            """Control loop: (1) Performing actions, when available"""
-
-            """Control loop: (2) Streaming observations to the remote policy server"""
             start_time = time.perf_counter()
             raw_observation: RawObservation = self.robot.get_observation()
             observation: Observation = raw_observation_to_observation(
@@ -190,8 +205,8 @@ class RobotOpenpiClient:
             assert action_chunk.ndim == 2, (
                 "Unexpected action chunk shape, should be (num_timesteps, action_dim)"
             )
-            base_action_world_tensor = compute_current_ee(
-                raw_observation, self.teleop_action_processor, self.action_features
+            base_action_world_tensor = koch_utils.compute_current_ee(
+                raw_observation, self.fk_processor, self.action_features
             )
             action_chunk_tensor = torch.tensor(
                 action_chunk[: self.config.actions_per_chunk, : base_action_world_tensor.shape[-1]]
@@ -203,8 +218,8 @@ class RobotOpenpiClient:
                 task_completed = False
                 # Generate linearly interpolated trajectory from current pose to initial EE
                 num_steps = action_chunk_tensor.shape[0]
-                action_chunk_world = generate_linear_trajectory(
-                    start=base_action_world_tensor, target=INITIAL_EE_POSE, num_steps=num_steps
+                action_chunk_world = koch_utils.generate_linear_trajectory(
+                    start=base_action_world_tensor, target=self.initial_ee_pose, num_steps=num_steps
                 )
 
             # log_rerun_action_chunk(action_chunk_world)
@@ -217,8 +232,10 @@ class RobotOpenpiClient:
 
                 action = action_chunk_world[action_idx]
                 log_rerun_action_chunk(action.unsqueeze(0))
-                action_tensor_world = action_tensor_to_dict(action, self.action_features)
-                if action_tensor_world["left_ee.y"] < -0.09:
+                action_tensor_world = koch_utils.action_tensor_to_dict(action, self.action_features)
+
+                # Bimanual-specific task completion check
+                if self.is_bimanual and action_tensor_world.get("left_ee.y", 0) < -0.09:
                     count += 1
 
                 processed_action = self.robot_action_processor((action_tensor_world, raw_observation))

@@ -70,7 +70,7 @@ def make_koch_robot_processors(robot, display_data: bool) -> RobotProcessorPipel
     ee_to_robot_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         [
             EEBoundsAndSafety(
-                end_effector_bounds={"min": [-0.25, -0.2, 0.0], "max": [0., 0.2, 0.17]},
+                end_effector_bounds={"min": [-0.25, -0.2, 0.0], "max": [0., 0.2, 0.4]},
                 max_ee_step_m=0.15,
                 max_ee_twist_step_rad=0.50,
             ),

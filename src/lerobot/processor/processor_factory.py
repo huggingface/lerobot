@@ -101,3 +101,41 @@ def make_robot_action_processor(
         return RobotProcessorPipeline(
             steps=[IdentityProcessor()],
         )
+
+
+def make_fk_processor(
+    robot_config: RobotConfig,
+    robot: Robot,
+    display_data: bool,
+) -> RobotProcessorPipeline[RobotAction, RobotAction]:
+    """Create forward kinematics processor for computing EE pose from joint angles.
+
+    This factory function selects the appropriate FK processor for converting
+    joint angles to end-effector poses. This is useful for computing the current
+    EE state from robot observations.
+
+    Args:
+        robot_config: Configuration for the robot
+        robot: Robot instance
+        display_data: Whether to enable visualization in rerun
+
+    Returns:
+        FK processor pipeline, or IdentityProcessor if FK is not needed for this robot
+    """
+    if robot_config.type == "koch_follower":
+        from lerobot.teleoperators.koch_leader.config_koch_leader import make_koch_teleop_processors
+
+        return make_koch_teleop_processors(robot, display_data)
+    elif robot_config.type == "bi_koch_follower":
+        from lerobot.teleoperators.bi_koch_leader.config_bi_koch_leader import (
+            make_bimanual_koch_teleop_processors,
+        )
+
+        return make_bimanual_koch_teleop_processors(robot, display_data)
+    else:
+        # For robots without FK processors, return identity processor
+        from lerobot.processor import IdentityProcessor
+
+        return RobotProcessorPipeline(
+            steps=[IdentityProcessor()],
+        )

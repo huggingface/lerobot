@@ -1,0 +1,16 @@
+lerobot-record \
+    --robot.type=koch_follower \
+    --robot.port=$FOLLOWER_LEFT_PORT \
+    --robot.id=follower \
+    --teleop.type=koch_leader \
+    --teleop.port=$LEADER_RIGHT_PORT \
+    --teleop.id=leader \
+    --robot.cameras="{ top: {type: opencv, index_or_path: $TOP_CAMERA_INDEX_OR_PATH, width: 640, height: 480, fps: 30}, left_wrist: {type: opencv, index_or_path: $LEFT_WRIST_CAMERA_INDEX_OR_PATH, width: 640, height: 480, fps: 30}}" \
+      --display_data=False \
+      --dataset.repo_id=${HF_USER}/robustness-koch-microcontroller-black-cup \
+      --dataset.num_episodes=20 \
+      --dataset.reset_time_s=4 \
+      --dataset.episode_time_s=15 \
+      --dataset.single_task="Pick up the microcontroller and put it in the black cup" \
+      --dataset.video_encoding_batch_size=20 \
+      --dataset.num_image_writer_processes=16
