@@ -33,8 +33,6 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 
-DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
-
 
 class ACFQLPolicy(
     PreTrainedPolicy,
@@ -806,6 +804,7 @@ class MLP(nn.Module):
             # 1) linear transform
             layers.append(nn.Linear(in_dim, out_dim))
 
+            # TODO(jpizarrom): custom initialization scheme was not used on lilkm's version
             if default_init is not None:
                 nn.init.uniform_(layers[-1].weight, -default_init, default_init)
                 nn.init.uniform_(layers[-1].bias, -default_init, default_init)
@@ -960,7 +959,7 @@ class ActorVectorFieldPolicy(nn.Module):
             nn.init.uniform_(self.output_layer.bias, -init_final, init_final)
         else:
             orthogonal_init()(self.output_layer.weight)
-            # nn.init.zeros_(self.output_layer.bias)
+            # nn.init.zeros_(self.output_layer.bias) # TODO(jpizarrom): This was used on lilkm's version
 
     def forward(
         self,

@@ -316,6 +316,7 @@ def add_actor_information_and_train(
         env_cfg=cfg.env,
     )
 
+    # TODO(jpizarrom): encapsulate this, add pretrain load and add postprocessor
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
@@ -396,6 +397,7 @@ def add_actor_information_and_train(
                 observations = batch["state"]
                 next_observations = batch["next_state"]
 
+                # TODO(jpizarrom): encapsulate this, find a better way to avoid permute many times
                 observations = preprocessor(
                     {
                         **{"observation.state": observations["observation.state"]},
@@ -1518,7 +1520,7 @@ def get_observation_features(
     with torch.no_grad():
         observation_features = policy.actor_onestep_flow.encoder.get_cached_image_features(
             observations, normalize=True
-        )
+        )  # TODO(jpizarrom): normalization is not done any more in the encoder, it's being done in a preprocessor
         next_observation_features = policy.actor_onestep_flow.encoder.get_cached_image_features(
             next_observations, normalize=True
         )
@@ -1645,6 +1647,8 @@ def process_transitions(
             replay_buffer.add(**transition)
 
             # Add to offline buffer if it's an intervention
+            # TODO(jpizarrom): Interventions should not be added to offline buffer when using action chunks
+            # TODO(jpizarrom): Review if the enum or the str value is available in the complementary info
             if dataset_repo_id is not None and transition.get("complementary_info", {}).get(
                 TeleopEvents.IS_INTERVENTION
             ):
