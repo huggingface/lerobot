@@ -89,6 +89,46 @@ When you launch training with accelerate:
 
 For faster training, you can enable mixed precision (fp16 or bf16). This is configured during `accelerate config` or by passing `--mixed_precision=fp16` to `accelerate launch`. LeRobot's `use_amp` setting is automatically handled when using accelerate.
 
+## Learning Rate and Training Steps Scaling
+
+**Important:** LeRobot does **NOT** automatically scale learning rates or training steps based on the number of GPUs. This gives you full control over your training hyperparameters.
+
+### Why No Automatic Scaling?
+
+Many distributed training frameworks automatically scale the learning rate by the number of GPUs (e.g., `lr = base_lr × num_gpus`). 
+However, LeRobot keeps the learning rate exactly as you specify it.
+
+### When and How to Scale
+
+If you want to scale your hyperparameters when using multiple GPUs, you should do it manually:
+
+**Learning Rate Scaling:**
+
+```bash
+# Example: 2 GPUs with linear LR scaling
+# Base LR: 1e-4, with 2 GPUs -> 2e-4
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --optimizer.lr=2e-4 \
+  --dataset.repo_id=lerobot/pusht \
+  --policy=act
+```
+
+**Training Steps Scaling:**
+
+Since the effective batch size `bs` increases with multiple GPUs (batch_size × num_gpus), you may want to reduce the number of training steps proportionally:
+
+#TODO(pepijn): verify this (bs scaling)
+```bash
+# Example: 2 GPUs with effective batch size 2x larger
+# Original: batch_size=8, steps=100000  
+# With 2 GPUs: batch_size=8 (16 in total), steps=50000 
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --batch_size=8 \
+  --steps=50000 \
+  --dataset.repo_id=lerobot/pusht \
+  --policy=act
+```
+
 ## Notes
 
 - The `--policy.use_amp` flag in `lerobot-train` is only used when **not** running with accelerate. When using accelerate, mixed precision is controlled by accelerate's configuration.
@@ -98,4 +138,4 @@ For faster training, you can enable mixed precision (fp16 or bf16). This is conf
 - When saving or pushing models, LeRobot automatically unwraps the model from accelerate's distributed wrapper to ensure compatibility.
 - WandB integration automatically initializes only on the main process, preventing multiple runs from being created.
 
-For more advanced configurations and troubleshooting, see the [Accelerate documentation](https://huggingface.co/docs/accelerate).
+For more advanced configurations and troubleshooting, see the [Accelerate documentation](https://huggingface.co/docs/accelerate). If you want to learn more about how to train on a large number of GPUs, checkout this awesome guide: [Ultrascale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook).
