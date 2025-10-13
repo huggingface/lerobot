@@ -138,7 +138,6 @@ We then evaluate the finetuned model using the LeRobot LIBERO implementation, by
 
 ```bash
 python src/lerobot/scripts/eval.py \
-  --output_dir=/logs/ \
   --env.type=libero \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
   --eval.batch_size=1 \
