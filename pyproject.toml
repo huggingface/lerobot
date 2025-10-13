@@ -121,7 +121,7 @@ phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0"]
 # Policies
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
-hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.12,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
@@ -132,9 +132,8 @@ test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
-# aloha = ["gym-aloha>=0.1.2,<0.2.0"]
-aloha = ["gym-aloha @ git+https://github.com/huggingface/gym-aloha.git@upgrade-dep-v2"]
-pusht = ["gym-pusht @ git+https://github.com/huggingface/gym-pusht.git@fix/seed-reproducible", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
+aloha = ["gym-aloha>=0.1.2,<0.2.0"]
+pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@upgrade-dep#egg=libero"]
 metaworld = ["metaworld>=3.0.0"]
 
