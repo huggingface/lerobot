@@ -407,8 +407,11 @@ def add_actor_information_and_train(
                             for k, v in observations.items()
                             if "observation.images" in k
                         },
+                        **{"action": actions},
                     }
                 )
+
+                actions = observations["action"]
 
                 observations = {
                     **{"observation.state": observations["observation.state"]},
@@ -460,7 +463,7 @@ def add_actor_information_and_train(
                     "terminal": batch.get("terminals"),
                     "mask": batch.get("masks"),
                     "valid": batch.get("valid"),
-                    "next_state": batch["next_state"],
+                    "next_state": next_observations,
                     "observation_feature": observation_features,
                     "next_observation_feature": next_observation_features,
                     "complementary_info": batch.get("complementary_info"),
@@ -496,8 +499,11 @@ def add_actor_information_and_train(
                     **{
                         k: v.permute(0, 2, 3, 1) for k, v in observations.items() if "observation.images" in k
                     },
+                    **{"action": actions},
                 }
             )
+
+            actions = observations["action"]
 
             observations = {
                 **{"observation.state": observations["observation.state"]},
@@ -547,7 +553,7 @@ def add_actor_information_and_train(
                 "terminal": batch.get("terminals"),
                 "mask": batch.get("masks"),
                 "valid": batch.get("valid"),
-                "next_state": batch["next_state"],
+                "next_state": next_observations,
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
                 "complementary_info": batch.get("complementary_info"),
@@ -741,8 +747,10 @@ def add_actor_information_and_train(
                     **{
                         k: v.permute(0, 2, 3, 1) for k, v in observations.items() if "observation.images" in k
                     },
+                    **{"action": actions},
                 }
             )
+            actions = observations["action"]
 
             observations = {
                 **{"observation.state": observations["observation.state"]},
@@ -833,8 +841,10 @@ def add_actor_information_and_train(
                 **{"observation.state": observations["observation.state"]},
                 # [B, C, H, W] -> [B, H, W, C]
                 **{k: v.permute(0, 2, 3, 1) for k, v in observations.items() if "observation.images" in k},
+                **{"action": actions},
             }
         )
+        actions = observations["action"]
 
         observations = {
             **{"observation.state": observations["observation.state"]},
@@ -864,6 +874,10 @@ def add_actor_information_and_train(
             observations=observations,
             actions=actions.reshape(actions.shape[0], -1),
             next_state=next_observations,
+        )
+
+        observation_features, next_observation_features = get_observation_features(
+            policy=policy, observations=observations, next_observations=next_observations
         )
 
         # Create a batch dictionary with all required elements for the forward method
