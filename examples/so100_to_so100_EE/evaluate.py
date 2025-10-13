@@ -195,4 +195,6 @@ for episode_idx in range(NUM_EPISODES):
 log_say("Stop recording")
 robot.disconnect()
 listener.stop()
+
+dataset.finalize()
 dataset.push_to_hub()
