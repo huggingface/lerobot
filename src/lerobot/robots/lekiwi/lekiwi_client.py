@@ -344,3 +344,41 @@ class LeKiwiClient(Robot):
         self.zmq_cmd_socket.close()
         self.zmq_context.term()
         self._is_connected = False
+
+    @staticmethod
+    def check_robot_pose_difference(self, obs1, obs2, threshold=15.0):
+        """
+        检查主从机械臂姿态的差异是否过大
+        参数:
+        obs1: leader
+        obs2: follower
+        threshold: 允许的最大差异评分（度）
+
+        返回:
+        布尔值: 两次姿态是否差异过大
+        差异评分: 加权后的总差异值
+        详细差异: 各关节的差异情况
+        """
+        # 定义需要检查的关节及其权重（根据重要性调整）
+        joints_to_check = {
+            'arm_shoulder_pan.pos': 1.0,  # 肩部水平旋转
+            'arm_shoulder_lift.pos': 1.0,  # 肩部垂直旋转
+            'arm_elbow_flex.pos': 1.0,  # 肘部弯曲
+            'arm_wrist_flex.pos': 1.0,  # 腕部弯曲
+            'arm_wrist_roll.pos': 1.5,  # 腕部旋转
+            'arm_gripper.pos': 1.5  # 夹爪（通常更重要）
+        }
+
+        # 计算各关节的差异
+        differences = {}
+        for joint, weight in joints_to_check.items():
+            value1 = obs1.get(joint, 0)
+            value2 = obs2.get(joint, 0)
+            diff = abs(value1 - value2) * weight
+            differences[joint] = diff
+
+        # 计算总差异评分（加权和）
+        total_difference = sum(differences.values())
+        # 判断是否超过阈值
+        is_different = total_difference > threshold
+        return is_different, total_difference, differences
