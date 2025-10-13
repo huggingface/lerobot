@@ -1148,7 +1148,7 @@ class PI0Policy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
@@ -1158,7 +1158,7 @@ class PI0Policy(PreTrainedPolicy):
         state = self.prepare_state(batch)
 
         # Sample actions using the model
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state)
+        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise)
 
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
