@@ -42,6 +42,7 @@ from lerobot.datasets.utils import (
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
     get_parquet_file_size_in_mb,
+    load_episodes,
     to_parquet_with_hf_images,
     update_chunk_file_indices,
     write_info,
@@ -436,6 +437,9 @@ def _copy_and_reindex_data(
     Returns:
         dict mapping episode index to its data file metadata (chunk_index, file_index, etc.)
     """
+    if src_dataset.meta.episodes is None:
+        src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
+
     file_to_episodes: dict[Path, set[int]] = {}
     for old_idx in episode_mapping:
         file_path = src_dataset.meta.get_data_file_path(old_idx)
@@ -645,6 +649,8 @@ def _copy_and_reindex_videos(
     Returns:
         dict mapping episode index to its video metadata (chunk_index, file_index, timestamps)
     """
+    if src_dataset.meta.episodes is None:
+        src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
 
     episodes_video_metadata: dict[int, dict] = {new_idx: {} for new_idx in episode_mapping.values()}
 
@@ -770,6 +776,9 @@ def _copy_and_reindex_episodes_metadata(
     """
     from lerobot.datasets.utils import flatten_dict
 
+    if src_dataset.meta.episodes is None:
+        src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
+
     all_stats = []
     total_frames = 0
 
@@ -830,6 +839,8 @@ def _copy_and_reindex_episodes_metadata(
         dst_meta._save_episode_metadata(episode_dict)
 
         total_frames += src_episode["length"]
+
+    dst_meta._close_writer()
 
     dst_meta.info.update(
         {
