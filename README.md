@@ -1,3 +1,13 @@
+> **Fork Highlights**
+> - Supports bimanual SO-101 configurations out-of-the-box  
+> - Uses dataset schema v2.1 (downshifted from upstream v3.0 for compatibility)  
+>   - If you need to convert to v2.0 for GR00T, check out a fork of [any4lerobot](https://github.com/bingogome/any4lerobot/commit/a375348f55b18537aac0cf4812ab2bb749419156) where I have an implementation for v2.1 to v2.0
+> - Enables fast MJPEG capture via camera `fourcc=mjpeg`  
+> - Verified with the [AR teleoperation controller](https://github.com/SMSL-Project/unity-so101) 
+> - Verified with Nintendo Switch Joy-Con controller integration  
+
+---
+
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/lerobot-logo-thumbnail.png" width="100%">
   <br/>
