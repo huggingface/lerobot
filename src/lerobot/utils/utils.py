@@ -177,21 +177,6 @@ def format_big_number(num, precision=0):
 
     return num
 
-
-def is_launched_with_accelerate() -> bool:
-    """Check if the script was launched in a distributed training context.
-    
-    This checks for standard distributed training environment variables that are set
-    by accelerate launch, torchrun, or torch.distributed.launch.
-    
-    Returns:
-        True if running in a distributed context, False otherwise.
-    """
-    # Check for LOCAL_RANK which is the standard way to detect distributed training
-    # This is set by accelerate, torchrun, and torch.distributed.launch
-    return "LOCAL_RANK" in os.environ
-
-
 def say(text: str, blocking: bool = False):
     system = platform.system()
 
