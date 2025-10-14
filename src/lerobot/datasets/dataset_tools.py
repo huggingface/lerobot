@@ -268,6 +268,121 @@ def merge_datasets(
     return merged_dataset
 
 
+def modify_features(
+    dataset: LeRobotDataset,
+    add_features: dict[str, tuple[np.ndarray | torch.Tensor | Callable, dict]] | None = None,
+    remove_features: str | list[str] | None = None,
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+) -> LeRobotDataset:
+    """Modify a LeRobotDataset by adding and/or removing features in a single pass.
+
+    This is the most efficient way to modify features, as it only copies the dataset once
+    regardless of how many features are being added or removed.
+
+    Args:
+        dataset: The source LeRobotDataset.
+        add_features: Optional dict mapping feature names to (feature_values, feature_info) tuples.
+        remove_features: Optional feature name(s) to remove. Can be a single string or list.
+        output_dir: Directory to save the new dataset. If None, uses default location.
+        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+
+    Returns:
+        New dataset with features modified.
+
+    Example:
+        # Add and remove features simultaneously
+        new_dataset = modify_features(
+            dataset,
+            add_features={
+                "reward": (reward_array, {"dtype": "float32", "shape": [1], "names": None}),
+            },
+            remove_features=["old_feature"],
+            output_dir="./output",
+        )
+    """
+    if add_features is None and remove_features is None:
+        raise ValueError("Must specify at least one of add_features or remove_features")
+
+    # Normalize remove_features to list
+    remove_features_list: list[str] = []
+    if remove_features is not None:
+        if isinstance(remove_features, str):
+            remove_features_list = [remove_features]
+        else:
+            remove_features_list = remove_features
+
+    # Validate add_features
+    if add_features:
+        required_keys = {"dtype", "shape"}
+        for feature_name, (_, feature_info) in add_features.items():
+            if feature_name in dataset.meta.features:
+                raise ValueError(f"Feature '{feature_name}' already exists in dataset")
+
+            if not required_keys.issubset(feature_info.keys()):
+                raise ValueError(f"feature_info for '{feature_name}' must contain keys: {required_keys}")
+
+    # Validate remove_features
+    if remove_features_list:
+        for name in remove_features_list:
+            if name not in dataset.meta.features:
+                raise ValueError(f"Feature '{name}' not found in dataset")
+
+        required_features = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
+        if any(name in required_features for name in remove_features_list):
+            raise ValueError(f"Cannot remove required features: {required_features}")
+
+    if repo_id is None:
+        repo_id = f"{dataset.repo_id}_modified"
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
+
+    # Build new features dict
+    new_features = dataset.meta.features.copy()
+
+    # Remove features
+    if remove_features_list:
+        for name in remove_features_list:
+            new_features.pop(name, None)
+
+    # Add features
+    if add_features:
+        for feature_name, (_, feature_info) in add_features.items():
+            new_features[feature_name] = feature_info
+
+    # Determine video keys to exclude
+    video_keys_to_remove = [name for name in remove_features_list if name in dataset.meta.video_keys]
+    remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
+
+    new_meta = LeRobotDatasetMetadata.create(
+        repo_id=repo_id,
+        fps=dataset.meta.fps,
+        features=new_features,
+        robot_type=dataset.meta.robot_type,
+        root=output_dir,
+        use_videos=len(remaining_video_keys) > 0,
+    )
+
+    _copy_data_with_feature_changes(
+        dataset=dataset,
+        new_meta=new_meta,
+        add_features=add_features,
+        remove_features=remove_features_list if remove_features_list else None,
+    )
+
+    if new_meta.video_keys:
+        _copy_videos(dataset, new_meta, exclude_keys=video_keys_to_remove if video_keys_to_remove else None)
+
+    new_dataset = LeRobotDataset(
+        repo_id=repo_id,
+        root=output_dir,
+        image_transforms=dataset.image_transforms,
+        delta_timestamps=dataset.delta_timestamps,
+        tolerance_s=dataset.tolerance_s,
+    )
+
+    return new_dataset
+
+
 def add_features(
     dataset: LeRobotDataset,
     features: dict[str, tuple[np.ndarray | torch.Tensor | Callable, dict]],
@@ -299,49 +414,13 @@ def add_features(
     if not features:
         raise ValueError("No features provided")
 
-    required_keys = {"dtype", "shape"}
-    for feature_name, (_, feature_info) in features.items():
-        if feature_name in dataset.meta.features:
-            raise ValueError(f"Feature '{feature_name}' already exists in dataset")
-
-        if not required_keys.issubset(feature_info.keys()):
-            raise ValueError(f"feature_info for '{feature_name}' must contain keys: {required_keys}")
-
-    if repo_id is None:
-        repo_id = f"{dataset.repo_id}_modified"
-    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
-
-    new_features = dataset.meta.features.copy()
-    for feature_name, (_, feature_info) in features.items():
-        new_features[feature_name] = feature_info
-
-    new_meta = LeRobotDatasetMetadata.create(
-        repo_id=repo_id,
-        fps=dataset.meta.fps,
-        features=new_features,
-        robot_type=dataset.meta.robot_type,
-        root=output_dir,
-        use_videos=len(dataset.meta.video_keys) > 0,
-    )
-
-    _copy_data_with_feature_changes(
+    return modify_features(
         dataset=dataset,
-        new_meta=new_meta,
         add_features=features,
-    )
-
-    if dataset.meta.video_keys:
-        _copy_videos(dataset, new_meta)
-
-    new_dataset = LeRobotDataset(
+        remove_features=None,
+        output_dir=output_dir,
         repo_id=repo_id,
-        root=output_dir,
-        image_transforms=dataset.image_transforms,
-        delta_timestamps=dataset.delta_timestamps,
-        tolerance_s=dataset.tolerance_s,
     )
-
-    return new_dataset
 
 
 def remove_feature(
@@ -358,55 +437,16 @@ def remove_feature(
         output_dir: Directory to save the new dataset. If None, uses default location.
         repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
 
+    Returns:
+        New dataset with features removed.
     """
-    if isinstance(feature_names, str):
-        feature_names = [feature_names]
-
-    for name in feature_names:
-        if name not in dataset.meta.features:
-            raise ValueError(f"Feature '{name}' not found in dataset")
-
-    required_features = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
-    if any(name in required_features for name in feature_names):
-        raise ValueError(f"Cannot remove required features: {required_features}")
-
-    if repo_id is None:
-        repo_id = f"{dataset.repo_id}_modified"
-    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
-
-    new_features = {k: v for k, v in dataset.meta.features.items() if k not in feature_names}
-
-    video_keys_to_remove = [name for name in feature_names if name in dataset.meta.video_keys]
-
-    remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
-
-    new_meta = LeRobotDatasetMetadata.create(
-        repo_id=repo_id,
-        fps=dataset.meta.fps,
-        features=new_features,
-        robot_type=dataset.meta.robot_type,
-        root=output_dir,
-        use_videos=len(remaining_video_keys) > 0,
-    )
-
-    _copy_data_with_feature_changes(
+    return modify_features(
         dataset=dataset,
-        new_meta=new_meta,
+        add_features=None,
         remove_features=feature_names,
-    )
-
-    if new_meta.video_keys:
-        _copy_videos(dataset, new_meta, exclude_keys=video_keys_to_remove)
-
-    new_dataset = LeRobotDataset(
+        output_dir=output_dir,
         repo_id=repo_id,
-        root=output_dir,
-        image_transforms=dataset.image_transforms,
-        delta_timestamps=dataset.delta_timestamps,
-        tolerance_s=dataset.tolerance_s,
     )
-
-    return new_dataset
 
 
 def _fractions_to_episode_indices(
