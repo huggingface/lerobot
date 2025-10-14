@@ -61,3 +61,7 @@ class BiJoyconConfig(TeleoperatorConfig):
     right_gripper_buttons: Tuple[str, str] = ("r", "zr")  # (open, close)
     orientation_map: OrientationMatrix | None = None
     right_orientation_map: OrientationMatrix | None = None
+    discovery_timeout: float = 6.0
+    discovery_poll_interval: float = 0.4
+    left_serial_hint: str | None = None
+    right_serial_hint: str | None = None

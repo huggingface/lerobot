@@ -8,6 +8,11 @@ from typing import Dict, Sequence
 
 import numpy as np
 
+try:  # pragma: no cover - optional runtime dependency
+    import hid
+except ImportError:  # pragma: no cover - handled at runtime
+    hid = None  # type: ignore[assignment]
+
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
@@ -96,8 +101,9 @@ class BiJoycon(Teleoperator):
         left_joycon: GyroTrackingJoyCon | None = None
         right_joycon: GyroTrackingJoyCon | None = None
         try:
-            left_joycon = self._connect_joycon(get_L_id, "left")
-            right_joycon = self._connect_joycon(get_R_id, "right")
+            right_joycon = self._connect_joycon(get_R_id, "right", self.config.right_serial_hint)
+            left_joycon = self._connect_joycon(get_L_id, "left", self.config.left_serial_hint)
+            
         except Exception:
             # Clean up partially created connections.
             if left_joycon is not None:
@@ -304,14 +310,87 @@ class BiJoycon(Teleoperator):
             self._prev_relative_quats[1] = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
             self._capture_stick_center(1)
 
-    @staticmethod
-    def _connect_joycon(id_getter, label: str) -> GyroTrackingJoyCon:
-        joycon_id = id_getter()
+    def _connect_joycon(self, id_getter, label: str, serial_hint: str | None) -> GyroTrackingJoyCon:
+        deadline = time.perf_counter() + max(0.0, self.config.discovery_timeout)
+        poll_interval = max(0.1, self.config.discovery_poll_interval)
+        joycon_id = (None, None, None)
+
+        while time.perf_counter() <= deadline:
+            joycon_id = id_getter()
+            if joycon_id and joycon_id[0] is not None:
+                break
+
+            if serial_hint:
+                joycon_id = self._find_joycon_by_serial(serial_hint, label)
+                if joycon_id[0] is not None:
+                    break
+
+            time.sleep(poll_interval)
+
         if joycon_id[0] is None:
-            raise RuntimeError(f"Could not find {label} JoyCon. Ensure it is paired and connected via Bluetooth.")
+            detected = self._format_detected_joycons()
+            hint_msg = f" with serial '{serial_hint}'" if serial_hint else ""
+            if detected:
+                msg_suffix = f" Detected JoyCons: {detected}. Ensure the desired controller is paired, not claimed by another process, and listed separately as Joy-Con (L) / Joy-Con (R) in your Bluetooth settings."
+            else:
+                msg_suffix = " Ensure it is paired, powered on, and connected via Bluetooth."
+            raise RuntimeError(f"Could not find {label} JoyCon{hint_msg}.{msg_suffix}")
+
         joycon = GyroTrackingJoyCon(*joycon_id)
         joycon.calibrate(seconds=1.0)
         return joycon
+
+    def _find_joycon_by_serial(self, serial_hint: str, label: str) -> tuple[int | None, int | None, str | None]:
+        for device in self._enumerate_joycon_devices():
+            serial = device.get("serial_number")
+            if serial is None:
+                continue
+            if serial.lower() != serial_hint.lower():
+                continue
+            if not self._hid_matches_label(device, label):
+                continue
+            return device["vendor_id"], device["product_id"], serial
+        return (None, None, None)
+
+    def _format_detected_joycons(self) -> str:
+        devices = []
+        for device in self._enumerate_joycon_devices():
+            product = device.get("product_string") or "Joy-Con"
+            serial = device.get("serial_number") or "unknown"
+            devices.append(f"{product} (serial {serial})")
+        return ", ".join(devices)
+
+    def _enumerate_joycon_devices(self) -> list[dict]:
+        if hid is None:  # pragma: no cover - hidapi optional at runtime
+            return []
+        try:
+            all_devices = hid.enumerate()  # type: ignore[no-untyped-call]
+        except Exception:  # pragma: no cover - best effort diagnostics
+            logger.debug("Failed to enumerate HID devices while searching for JoyCons.", exc_info=True)
+            return []
+        joycons: list[dict] = []
+        for device in all_devices:
+            if not isinstance(device, dict):
+                continue
+            if not self._is_joycon_device(device):
+                continue
+            joycons.append(device)
+        return joycons
+
+    @staticmethod
+    def _is_joycon_device(device: dict) -> bool:
+        product = (device.get("product_string") or "").lower()
+        vendor = device.get("vendor_id")
+        return vendor == 0x057E and "joy-con" in product
+
+    @staticmethod
+    def _hid_matches_label(device: dict, label: str) -> bool:
+        product = (device.get("product_string") or "").lower()
+        if label == "left":
+            return "joy-con (l" in product or "joy-con (left" in product
+        if label == "right":
+            return "joy-con (r" in product or "joy-con (right" in product
+        return True
 
     def _expand_axis_directions(self, dirs: Sequence[float]) -> tuple[float, float]:
         values = tuple(float(v) for v in dirs)
