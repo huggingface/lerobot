@@ -463,7 +463,17 @@ def main():
 
 
 if __name__ == "__main__":
+    import os
+    distributed_env_vars = {
+        "LOCAL_RANK": os.environ.get("LOCAL_RANK", "NOT SET"),
+        "WORLD_SIZE": os.environ.get("WORLD_SIZE", "NOT SET"),
+        "RANK": os.environ.get("RANK", "NOT SET"),
+        "ACCELERATE_MIXED_PRECISION": os.environ.get("ACCELERATE_MIXED_PRECISION", "NOT SET"),
+    }
+    print(f"[PID {os.getpid()}] Distributed env vars: {distributed_env_vars}")
+    
     if is_launched_with_accelerate():
+        print(f"[PID {os.getpid()}] Detected distributed training mode")
         import accelerate
 
         # We set step_scheduler_with_optimizer False to prevent accelerate from
