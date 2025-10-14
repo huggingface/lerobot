@@ -397,21 +397,21 @@ def test_add_feature_invalid_info(sample_dataset, tmp_path):
 def test_modify_features_add_and_remove(sample_dataset, tmp_path):
     """Test modifying features by adding and removing simultaneously."""
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
-    
+
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
         patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "modified")
-        
+
         # First add a feature we'll later remove
         dataset_with_reward = add_features(
             sample_dataset,
             features={"reward": (np.random.randn(50, 1).astype(np.float32), feature_info)},
             output_dir=tmp_path / "with_reward",
         )
-        
+
         # Now use modify_features to add "success" and remove "reward" in one pass
         modified_dataset = modify_features(
             dataset_with_reward,
@@ -421,7 +421,7 @@ def test_modify_features_add_and_remove(sample_dataset, tmp_path):
             remove_features="reward",
             output_dir=tmp_path / "modified",
         )
-    
+
     assert "success" in modified_dataset.meta.features
     assert "reward" not in modified_dataset.meta.features
     assert len(modified_dataset) == 50
@@ -430,14 +430,14 @@ def test_modify_features_add_and_remove(sample_dataset, tmp_path):
 def test_modify_features_only_add(sample_dataset, tmp_path):
     """Test that modify_features works with only add_features."""
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
-    
+
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
         patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "modified")
-        
+
         modified_dataset = modify_features(
             sample_dataset,
             add_features={
@@ -445,7 +445,7 @@ def test_modify_features_only_add(sample_dataset, tmp_path):
             },
             output_dir=tmp_path / "modified",
         )
-    
+
     assert "reward" in modified_dataset.meta.features
     assert len(modified_dataset) == 50
 
@@ -453,26 +453,26 @@ def test_modify_features_only_add(sample_dataset, tmp_path):
 def test_modify_features_only_remove(sample_dataset, tmp_path):
     """Test that modify_features works with only remove_features."""
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
-    
+
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
         patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
-        
+
         dataset_with_reward = add_features(
             sample_dataset,
             features={"reward": (np.random.randn(50, 1).astype(np.float32), feature_info)},
             output_dir=tmp_path / "with_reward",
         )
-        
+
         modified_dataset = modify_features(
             dataset_with_reward,
             remove_features="reward",
             output_dir=tmp_path / "modified",
         )
-    
+
     assert "reward" not in modified_dataset.meta.features
 
 
@@ -483,6 +483,7 @@ def test_modify_features_no_changes(sample_dataset, tmp_path):
             sample_dataset,
             output_dir=tmp_path / "modified",
         )
+
 
 def test_remove_single_feature(sample_dataset, tmp_path):
     """Test removing a single feature."""
@@ -528,10 +529,17 @@ def test_remove_multiple_features(sample_dataset, tmp_path):
         features = {}
         for feature_name in ["reward", "success"]:
             feature_info = {"dtype": "float32", "shape": (1,), "names": None}
-            features[feature_name] = (np.random.randn(dataset.meta.total_frames, 1).astype(np.float32), feature_info)
+            features[feature_name] = (
+                np.random.randn(dataset.meta.total_frames, 1).astype(np.float32),
+                feature_info,
+            )
 
-        dataset_with_features = add_features(dataset, features=features, output_dir=tmp_path / "with_features")
-        dataset_clean = remove_feature(dataset_with_features, feature_names=["reward", "success"], output_dir=tmp_path / "clean")
+        dataset_with_features = add_features(
+            dataset, features=features, output_dir=tmp_path / "with_features"
+        )
+        dataset_clean = remove_feature(
+            dataset_with_features, feature_names=["reward", "success"], output_dir=tmp_path / "clean"
+        )
 
     assert "reward" not in dataset_clean.meta.features
     assert "success" not in dataset_clean.meta.features
@@ -596,7 +604,12 @@ def test_complex_workflow_integration(sample_dataset, tmp_path):
 
         dataset = add_features(
             sample_dataset,
-            features={"reward": (np.random.randn(50, 1).astype(np.float32), {"dtype": "float32", "shape": (1,), "names": None})},
+            features={
+                "reward": (
+                    np.random.randn(50, 1).astype(np.float32),
+                    {"dtype": "float32", "shape": (1,), "names": None},
+                )
+            },
             output_dir=tmp_path / "step1",
         )
 

@@ -291,7 +291,6 @@ def modify_features(
         New dataset with features modified.
 
     Example:
-        # Add and remove features simultaneously
         new_dataset = modify_features(
             dataset,
             add_features={
@@ -304,15 +303,10 @@ def modify_features(
     if add_features is None and remove_features is None:
         raise ValueError("Must specify at least one of add_features or remove_features")
 
-    # Normalize remove_features to list
     remove_features_list: list[str] = []
     if remove_features is not None:
-        if isinstance(remove_features, str):
-            remove_features_list = [remove_features]
-        else:
-            remove_features_list = remove_features
+        remove_features_list = [remove_features] if isinstance(remove_features, str) else remove_features
 
-    # Validate add_features
     if add_features:
         required_keys = {"dtype", "shape"}
         for feature_name, (_, feature_info) in add_features.items():
@@ -322,7 +316,6 @@ def modify_features(
             if not required_keys.issubset(feature_info.keys()):
                 raise ValueError(f"feature_info for '{feature_name}' must contain keys: {required_keys}")
 
-    # Validate remove_features
     if remove_features_list:
         for name in remove_features_list:
             if name not in dataset.meta.features:
@@ -336,20 +329,16 @@ def modify_features(
         repo_id = f"{dataset.repo_id}_modified"
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
-    # Build new features dict
     new_features = dataset.meta.features.copy()
 
-    # Remove features
     if remove_features_list:
         for name in remove_features_list:
             new_features.pop(name, None)
 
-    # Add features
     if add_features:
         for feature_name, (_, feature_info) in add_features.items():
             new_features[feature_name] = feature_info
 
-    # Determine video keys to exclude
     video_keys_to_remove = [name for name in remove_features_list if name in dataset.meta.video_keys]
     remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
 

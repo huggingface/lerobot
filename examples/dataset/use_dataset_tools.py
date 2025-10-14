@@ -66,7 +66,6 @@ def main():
         episode_length = 10
         return float(frame_index >= episode_length - 10)
 
-    # Add multiple features at once using add_features
     dataset_with_features = add_features(
         dataset,
         features={
@@ -91,7 +90,6 @@ def main():
     print(f"Features after removal: {list(dataset_cleaned.meta.features.keys())}")
 
     print("\n5. Using modify_features to add and remove features simultaneously...")
-    # This is more efficient than calling add_features and remove_feature separately
     dataset_modified = modify_features(
         dataset_with_features,
         add_features={
