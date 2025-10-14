@@ -51,7 +51,6 @@ def robot_client():
         policy_type="test",
         pretrained_name_or_path="test",
         actions_per_chunk=20,
-        verify_robot_cameras=False,
     )
 
     client = RobotClient(test_config)

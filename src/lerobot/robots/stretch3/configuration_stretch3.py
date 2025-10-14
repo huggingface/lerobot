@@ -49,5 +49,3 @@ class Stretch3RobotConfig(RobotConfig):
             ),
         }
     )
-
-    mock: bool = False

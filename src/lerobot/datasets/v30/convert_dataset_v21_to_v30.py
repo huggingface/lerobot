@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import logging
 import shutil
 import time
 import threading
@@ -66,9 +67,9 @@ from lerobot.datasets.utils import (
     LEGACY_TASKS_PATH,
     cast_stats_to_numpy,
     flatten_dict,
+    get_file_size_in_mb,
     get_parquet_file_size_in_mb,
     get_parquet_num_frames,
-    get_video_size_in_mb,
     load_info,
     update_chunk_file_indices,
     write_episodes,
@@ -78,12 +79,14 @@ from lerobot.datasets.utils import (
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.utils import init_logging
 
 V21 = "v2.1"
 
 # --------------------------------------------------------------------------------
 # Legacy helpers (unaltered behavior; reused by all modes)
 # --------------------------------------------------------------------------------
+V30 = "v3.0"
 
 def load_jsonlines(fpath: Path) -> List[Any]:
     with jsonlines.open(fpath, "r") as reader:
@@ -794,6 +797,11 @@ def _orchestrate(
         ]
         for _ in tqdm.tqdm(as_completed(futs), total=len(futs), desc="workers"):
             pass
+def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_metadata=None):
+    logging.info(f"Converting episodes metadata from {root} to {new_root}")
+
+    episodes_legacy_metadata = legacy_load_episodes(root)
+    episodes_stats = legacy_load_episodes_stats(root)
 
 
     # workers done; stop writer after it flushes
@@ -873,12 +881,13 @@ def convert_dataset(
     if new_root.is_dir():
         shutil.rmtree(new_root)
 
-    snapshot_download(
-        repo_id,
-        repo_type="dataset",
-        revision=V21,
-        local_dir=root,
-    )
+    if not use_local_dataset:
+        snapshot_download(
+            repo_id,
+            repo_type="dataset",
+            revision=V21,
+            local_dir=root,
+        )
 
     convert_info(root, new_root, int(data_file_size_in_mb), int(video_file_size_in_mb))
     convert_tasks(root, new_root)
@@ -978,6 +987,23 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Working directory for manifest/temp/state. Defaults to ~/.cache/huggingface/lerobot/<repo_id>/_work.",
+    )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Local directory to use for downloading/writing the dataset.",
+    )
+    parser.add_argument(
+        "--push-to-hub",
+        type=lambda input: input.lower() == "true",
+        default=True,
+        help="Push the converted dataset to the hub.",
+    )
+    parser.add_argument(
+        "--force-conversion",
+        action="store_true",
+        help="Force conversion even if the dataset already has a v3.0 version.",
     )
 
     args = p.parse_args()
