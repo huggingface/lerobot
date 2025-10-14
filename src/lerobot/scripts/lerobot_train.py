@@ -431,6 +431,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             unwrapped_policy.push_model_to_hub(cfg)
             preprocessor.push_to_hub(cfg.policy.repo_id)
             postprocessor.push_to_hub(cfg.policy.repo_id)
+    
+    # Properly clean up the distributed process group
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
 
 
 def main():

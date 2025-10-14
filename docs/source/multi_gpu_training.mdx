@@ -102,7 +102,6 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
 
 Since the effective batch size `bs` increases with multiple GPUs (batch_size × num_gpus), you may want to reduce the number of training steps proportionally:
 
-#TODO(pepijn): verify this (bs scaling)
 ```bash
 # Example: 2 GPUs with effective batch size 2x larger
 # Original: batch_size=8, steps=100000  
