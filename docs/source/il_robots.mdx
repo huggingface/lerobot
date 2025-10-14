@@ -513,13 +513,14 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.factory import make_pre_post_processors
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.scripts.lerobot_record import record_loop
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
-from lerobot.record import record_loop
-from lerobot.policies.factory import make_processor
+
 
 NUM_EPISODES = 5
 FPS = 30
@@ -562,7 +563,7 @@ init_rerun(session_name="recording")
 # Connect the robot
 robot.connect()
 
-preprocessor, postprocessor = make_processor(
+preprocessor, postprocessor = make_pre_post_processors(
     policy_cfg=policy,
     pretrained_path=HF_MODEL_ID,
     dataset_stats=dataset.meta.stats,
