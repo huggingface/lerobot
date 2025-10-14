@@ -48,6 +48,15 @@ Notes:
 
 - `--env.task` accepts explicit task lists (comma separated) or difficulty groups (e.g., `env.task="hard"`).
 - Adjust `batch_size`, `steps`, and `eval_freq` to match your compute budget.
+- **Gymnasium Assertion Error**: if you encounter an error like
+  `AssertionError: ['human', 'rgb_array', 'depth_array']` when running MetaWorld environments, this comes from a mismatch between MetaWorld and your Gymnasium version.
+  We recommend using:
+
+```bash
+  pip install "gymnasium==1.1.0"
+```
+
+to ensure proper compatibility.
 
 ## Quick start — evaluate a trained policy
 

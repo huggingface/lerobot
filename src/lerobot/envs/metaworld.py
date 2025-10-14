@@ -16,6 +16,7 @@
 import json
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
 import gymnasium as gym
@@ -25,8 +26,9 @@ import numpy as np
 from gymnasium import spaces
 
 # ---- Load configuration data from the external JSON file ----
+CONFIG_PATH = Path(__file__).parent / "metaworld_config.json"
 try:
-    with open("metaworld_config.json") as f:
+    with open(CONFIG_PATH) as f:
         data = json.load(f)
 except FileNotFoundError as err:
     raise FileNotFoundError(
@@ -193,6 +195,7 @@ class MetaworldEnv(gym.Env):
     def reset(
         self,
         seed: int | None = None,
+        **kwargs,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """
         Reset the environment to its initial state.
@@ -232,15 +235,28 @@ class MetaworldEnv(gym.Env):
                 f"Expected action to be 1-D (shape (action_dim,)), "
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
-        raw_obs, reward, _done, truncated, info = self._env.step(action)
+        raw_obs, reward, done, truncated, info = self._env.step(action)
 
         # Determine whether the task was successful
         is_success = bool(info.get("success", 0))
-        terminated = is_success
-        info["is_success"] = is_success
+        terminated = done or is_success
+        info.update(
+            {
+                "task": self.task,
+                "done": done,
+                "is_success": is_success,
+            }
+        )
 
         # Format the raw observation into the expected structure
         observation = self._format_raw_obs(raw_obs)
+        if terminated:
+            info["final_info"] = {
+                "task": self.task,
+                "done": bool(done),
+                "is_success": bool(is_success),
+            }
+            self.reset()
 
         return observation, reward, terminated, truncated, info
 
