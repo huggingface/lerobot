@@ -42,8 +42,9 @@ from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+from lerobot.cameras.zed.camera_zed import ZedCamera
 
-from cameras.zed import ZedCamera
+from lerobot.cameras.zed.camera_zed import ZedCameraConfig
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +200,12 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
                 color_mode=ColorMode.RGB,
             )
             instance = RealSenseCamera(rs_config)
+        elif cam_type == "ZED":
+            zed_config = ZedCameraConfig(
+                serial_number_or_name=cam_id,
+                color_mode=ColorMode.RGB,
+            )
+            instance = ZedCamera(zed_config)
         else:
             logger.warning(f"Unknown camera type: {cam_type} for ID {cam_id}. Skipping.")
             return None
@@ -238,6 +245,7 @@ def process_camera_image(
         )
     except Exception as e:
         logger.error(f"Error reading from {cam_type_str} camera {cam_id_str}: {e}")
+        raise e
     return None
 
 

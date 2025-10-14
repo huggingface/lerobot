@@ -10,10 +10,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-try:
-    import pyzed.sl as sl
-except Exception as e:
-    logging.info(f"Could not import ZED SDK: {e}")
+import pyzed.sl as sl
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -173,7 +170,6 @@ class ZedCamera(Camera):
 
         # Configure runtime parameters
         self.runtime_params = sl.RuntimeParameters()
-        self.runtime_params.sensing_mode = sl.SENSING_MODE.STANDARD
 
         # Set mat resolution based on configuration
         self._configure_mat_resolution()
@@ -222,37 +218,52 @@ class ZedCamera(Camera):
     def find_cameras() -> list[dict[str, Any]]:
         """
         Detects available ZED cameras connected to the system.
-
-        Returns:
-            List[Dict[str, Any]]: A list of dictionaries,
-            where each dictionary contains 'type', 'id' (serial number), 'name',
-            model, firmware version, and other available specs.
-
-        Raises:
-            OSError: If pyzed.sl is not installed.
-            ImportError: If pyzed.sl is not installed.
         """
         found_cameras_info = []
 
-        # Get list of connected devices
-        device_list = sl.Camera.get_device_list()
+        try:
+            # Get list of connected devices
+            device_list = sl.Camera.get_device_list()
 
-        for device in device_list:
-            resolution = device.camera_configuration.resolution
-            camera_info = {
-                "name": "ZED Camera",
-                "type": "ZED",
-                "id": str(device.serial_number),
-                "model": "ZED 2i" if device.camera_model == sl.MODEL.ZED2i else str(device.camera_model),
-                "firmware_version": str(device.firmware_version),
-                "usb_type": str(device.usb_type),
-                "state": str(device.state),
-                "camera_configuration": {
-                    "resolution": f"{resolution.width}x{resolution.height}",
-                    "fps": device.camera_configuration.fps,
+            for device in device_list:
+                # Create camera information dictionary with available attributes
+                camera_info = {
+                    "name": str(device.camera_name),
+                    "type": "ZED",
+                    "id": str(device.serial_number),
+                    "model": str(device.camera_model),
+                    "state": str(device.camera_state),
                 }
-            }
-            found_cameras_info.append(camera_info)
+
+                # Get resolution and FPS through camera initialization
+                try:
+                    zed = sl.Camera()
+                    init_params = sl.InitParameters()
+                    init_params.set_from_serial_number(device.serial_number)
+
+                    # Open camera briefly to read configuration
+                    if zed.open(init_params) == sl.ERROR_CODE.SUCCESS:
+                        camera_config = (
+                            zed.get_camera_information().camera_configuration
+                        )
+                        camera_info["resolution"] = (
+                            f"{camera_config.resolution.width}x{camera_config.resolution.height}"
+                        )
+                        camera_info["fps"] = camera_config.fps
+                        camera_info["firmware"] = camera_config.firmware_version
+                        zed.close()
+                except Exception as e:
+                    logger.warning(
+                        f"Could not read full configuration for ZED {device.serial_number}: {e}"
+                    )
+                    # Set default values if camera initialization fails
+                    camera_info["resolution"] = "1920x1080"  # Default resolution
+                    camera_info["fps"] = 30  # Default FPS
+
+                found_cameras_info.append(camera_info)
+
+        except Exception as e:
+            logger.error(f"Error enumerating ZED devices: {e}")
 
         return found_cameras_info
 
@@ -309,7 +320,7 @@ class ZedCamera(Camera):
             raise RuntimeError(f"{self} read_depth failed to grab frame.")
 
         # Retrieve depth map
-        self.zed_camera.retrieve_measure(self.depth_mat, sl.MEASURE.DEPTH, self.mat_resolution)
+        self.zed_camera.retrieve_measure(py_mat=self.depth_mat, measure=sl.MEASURE.DEPTH, resolution=self.mat_resolution)
         depth_map = self.depth_mat.get_data()
 
         depth_map_processed = self._postprocess_image(depth_map, depth_frame=True)
@@ -347,7 +358,7 @@ class ZedCamera(Camera):
             raise RuntimeError(f"{self} read failed to grab frame.")
 
         # Retrieve left image (RGB by default in ZED SDK)
-        self.zed_camera.retrieve_image(self.image_mat, sl.VIEW.LEFT, self.mat_resolution)
+        self.zed_camera.retrieve_image(py_mat=self.image_mat,view= sl.VIEW.LEFT, resolution=self.mat_resolution)
         color_image_raw = self.image_mat.get_data()
 
         color_image_processed = self._postprocess_image(color_image_raw, color_mode)
@@ -386,6 +397,11 @@ class ZedCamera(Camera):
             h, w = image.shape
         else:
             h, w, c = image.shape
+            # If the image has 4 channels, convert it to 3 channels (e.g., BGRA to BGR)
+            if c == 4:
+                image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+                # Update the channel count after conversion
+                c = 3
 
             if c != 3:
                 raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
