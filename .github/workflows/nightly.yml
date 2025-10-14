@@ -186,7 +186,7 @@ jobs:
         run: |
           nvidia-smi
           python -c "import torch; print(f'PyTorch CUDA available: {torch.cuda.is_available()}'); print(f'Number of GPUs: {torch.cuda.device_count()}')"
-      
+
       - name: Run multi-GPU training tests
         run: pytest tests/training/test_multi_gpu.py -vv --maxfail=3
         timeout-minutes: 10

@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
-import os
 import time
 from contextlib import nullcontext
 from pprint import pformat
@@ -86,7 +85,7 @@ def update_policy(
     """
     start_time = time.perf_counter()
     policy.train()
-    
+
     # Let accelerator handle mixed precision
     with accelerator.autocast():
         loss, output_dict = policy.forward(batch)
@@ -94,17 +93,17 @@ def update_policy(
 
     # Use accelerator's backward method
     accelerator.backward(loss)
-    
+
     # Clip gradients if specified
     if grad_clip_norm > 0:
         grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
     else:
         grad_norm = torch.tensor(0.0, device=accelerator.device)
-    
+
     # Optimizer step
     with lock if lock is not None else nullcontext():
         optimizer.step()
-    
+
     optimizer.zero_grad()
 
     # Step through pytorch scheduler at every batch instead of epoch
@@ -143,16 +142,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     # Create Accelerator if not provided
     # It will automatically detect if running in distributed mode or single-process mode
-    # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting
-    # the lr_scheduler steps based on the num_processes
-    # We set find_unused_parameters=True to handle models with conditional computation paths
+    # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
+    # We set find_unused_parameters=True to handle models with conditional computation
     if accelerator is None:
         from accelerate.utils import DistributedDataParallelKwargs
+
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        accelerator = Accelerator(
-            step_scheduler_with_optimizer=False,
-            kwargs_handlers=[ddp_kwargs]
-        )
+        accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs])
 
     # Determine if this is the main process (for logging and checkpointing)
     # When using accelerate, only the main process should log to avoid duplicate outputs
@@ -182,10 +178,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("Creating dataset")
         dataset = make_dataset(cfg)
-    
-    # Wait for main process to finish downloading/caching dataset
+
     accelerator.wait_for_everyone()
-    
+
     # Now all other processes can safely load the dataset
     if not is_main_process:
         dataset = make_dataset(cfg)
@@ -205,7 +200,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
-    
+
     # Wait for all processes to finish policy creation before continuing
     accelerator.wait_for_everyone()
 
@@ -288,7 +283,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         drop_last=False,
         prefetch_factor=2 if cfg.num_workers > 0 else None,
     )
-    
+
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
@@ -341,7 +336,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         step += 1
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
-        is_saving_step = (step % cfg.save_freq == 0 or step == cfg.steps)
+        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
         if is_log_step:
@@ -431,7 +426,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             unwrapped_policy.push_model_to_hub(cfg)
             preprocessor.push_to_hub(cfg.policy.repo_id)
             postprocessor.push_to_hub(cfg.policy.repo_id)
-    
+
     # Properly clean up the distributed process group
     accelerator.wait_for_everyone()
     accelerator.end_training()

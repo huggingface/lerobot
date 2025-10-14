@@ -21,7 +21,6 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from accelerate import Accelerator
 from copy import copy, deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +28,7 @@ from statistics import mean
 
 import numpy as np
 import torch
+from accelerate import Accelerator
 from datasets.utils.logging import disable_progress_bar, enable_progress_bar
 
 
@@ -117,10 +117,10 @@ def init_logging(
     accelerator: Accelerator | None = None,
 ):
     """Initialize logging configuration for LeRobot.
-    
+
     In multi-GPU training, only the main process logs to console to avoid duplicate output.
     Non-main processes have console logging suppressed but can still log to file.
-    
+
     Args:
         log_file: Optional file path to write logs to
         display_pid: Include process ID in log messages (useful for debugging multi-process)
@@ -128,6 +128,7 @@ def init_logging(
         file_level: Logging level for file output
         accelerator: Optional Accelerator instance (for multi-GPU detection)
     """
+
     def custom_format(record: logging.LogRecord) -> str:
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
@@ -139,7 +140,7 @@ def init_logging(
 
     logger = logging.getLogger()
     logger.setLevel(logging.NOTSET)
-    
+
     # Clear any existing handlers
     logger.handlers.clear()
 
@@ -159,7 +160,6 @@ def init_logging(
         logger.addHandler(logging.NullHandler())
         logger.setLevel(logging.ERROR)
 
-    # File logging (optional, all processes)
     if log_file is not None:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
@@ -177,6 +177,7 @@ def format_big_number(num, precision=0):
         num /= divisor
 
     return num
+
 
 def say(text: str, blocking: bool = False):
     system = platform.system()

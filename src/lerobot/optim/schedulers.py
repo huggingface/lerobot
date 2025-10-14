@@ -81,7 +81,7 @@ class VQBeTSchedulerConfig(LRSchedulerConfig):
 @dataclass
 class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
     """Used by Physical Intelligence to train Pi0.
-    
+
     Automatically scales warmup and decay steps if num_training_steps < num_decay_steps.
     This ensures the learning rate schedule completes properly even with shorter training runs.
     """
@@ -95,13 +95,13 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
         # Auto-scale scheduler parameters if training steps are shorter than configured decay steps
         actual_warmup_steps = self.num_warmup_steps
         actual_decay_steps = self.num_decay_steps
-        
+
         if num_training_steps < self.num_decay_steps:
             # Calculate scaling factor to fit the schedule into the available training steps
             scale_factor = num_training_steps / self.num_decay_steps
             actual_warmup_steps = int(self.num_warmup_steps * scale_factor)
             actual_decay_steps = num_training_steps
-            
+
             logging.info(
                 f"Auto-scaling LR scheduler: "
                 f"num_training_steps ({num_training_steps}) < num_decay_steps ({self.num_decay_steps}). "

@@ -80,7 +80,7 @@ When you launch training with accelerate:
 
 ### Why No Automatic Scaling?
 
-Many distributed training frameworks automatically scale the learning rate by the number of GPUs (e.g., `lr = base_lr × num_gpus`). 
+Many distributed training frameworks automatically scale the learning rate by the number of GPUs (e.g., `lr = base_lr × num_gpus`).
 However, LeRobot keeps the learning rate exactly as you specify it.
 
 ### When and How to Scale
@@ -104,8 +104,8 @@ Since the effective batch size `bs` increases with multiple GPUs (batch_size × 
 
 ```bash
 # Example: 2 GPUs with effective batch size 2x larger
-# Original: batch_size=8, steps=100000  
-# With 2 GPUs: batch_size=8 (16 in total), steps=50000 
+# Original: batch_size=8, steps=100000
+# With 2 GPUs: batch_size=8 (16 in total), steps=50000
 accelerate launch --num_processes=2 $(which lerobot-train) \
   --batch_size=8 \
   --steps=50000 \
