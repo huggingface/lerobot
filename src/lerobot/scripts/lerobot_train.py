@@ -247,7 +247,7 @@ def train(cfg: TrainPipelineConfig):
         ds_meta=dataset.meta,
     )
 
-    if cfg.use_peft:
+    if cfg.peft is not None:
         logging.info("Using PEFT! Wrapping model.")
         policy = wrap_policy_in_peft_model(cfg, policy)
 
