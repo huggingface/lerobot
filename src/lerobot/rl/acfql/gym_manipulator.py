@@ -426,7 +426,7 @@ def make_processors(
             joint_names=motor_names,
         )
 
-    env_pipeline_steps = [VanillaObservationProcessorStep()]
+    env_pipeline_steps = [VanillaObservationProcessorStep(device=device)]
 
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
@@ -487,6 +487,7 @@ def make_processors(
         AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
         InterventionActionProcessorStep(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+            use_rotation=True,  # TODO(jpizarrom): make this configurable
             terminate_on_success=terminate_on_success,
         ),
     ]
@@ -496,9 +497,10 @@ def make_processors(
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
             MapTensorToDeltaActionDictStep(
-                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False
+                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+                use_rotation=True,  # TODO(jpizarrom): make this configurable
             ),
-            MapDeltaActionToRobotActionStep(),
+            MapDeltaActionToRobotActionStep(use_rotation=True),  # TODO(jpizarrom): make this configurable
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
                 end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
