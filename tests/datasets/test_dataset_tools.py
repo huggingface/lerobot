@@ -55,6 +55,7 @@ def sample_dataset(tmp_path, empty_lerobot_dataset_factory):
             dataset.add_frame(frame)
         dataset.save_episode()
 
+    dataset.finalize()
     return dataset
 
 
@@ -263,6 +264,7 @@ def test_merge_two_datasets(sample_dataset, tmp_path, empty_lerobot_dataset_fact
             }
             dataset2.add_frame(frame)
         dataset2.save_episode()
+    dataset2.finalize()
 
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
@@ -685,6 +687,7 @@ def test_merge_three_datasets(sample_dataset, tmp_path, empty_lerobot_dataset_fa
                 }
                 dataset.add_frame(frame)
             dataset.save_episode()
+        dataset.finalize()
 
         datasets.append(dataset)
 
@@ -728,6 +731,7 @@ def test_merge_preserves_stats(sample_dataset, tmp_path, empty_lerobot_dataset_f
             }
             dataset2.add_frame(frame)
         dataset2.save_episode()
+    dataset2.finalize()
 
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,

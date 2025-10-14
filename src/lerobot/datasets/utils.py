@@ -94,12 +94,6 @@ def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
     return hf_ds.data.nbytes // (1024**2)
 
 
-def get_hf_dataset_cache_dir(hf_ds: Dataset) -> Path | None:
-    if hf_ds.cache_files is None or len(hf_ds.cache_files) == 0:
-        return None
-    return Path(hf_ds.cache_files[0]["filename"]).parents[2]
-
-
 def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -> tuple[int, int]:
     if file_idx == chunks_size - 1:
         file_idx = 0
@@ -133,10 +127,14 @@ def get_parquet_num_frames(parquet_path: str | Path) -> int:
     return metadata.num_rows
 
 
-def get_video_size_in_mb(mp4_path: Path) -> float:
-    file_size_bytes = mp4_path.stat().st_size
-    file_size_mb = file_size_bytes / (1024**2)
-    return file_size_mb
+def get_file_size_in_mb(file_path: Path) -> float:
+    """Get file size on disk in megabytes.
+
+    Args:
+        file_path (Path): Path to the file.
+    """
+    file_size_bytes = file_path.stat().st_size
+    return file_size_bytes / (1024**2)
 
 
 def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
