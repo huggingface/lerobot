@@ -362,6 +362,7 @@ def add_actor_information_and_train(
     logging.info("Starting learner thread")
     interaction_message = None
     optimization_step = resume_optimization_step if resume_optimization_step is not None else 0
+    offline_step = min(offline_steps, optimization_step) if resume_optimization_step is not None else 0
     interaction_step_shift = resume_interaction_step if resume_interaction_step is not None else 0
 
     dataset_repo_id = None
@@ -383,7 +384,7 @@ def add_actor_information_and_train(
             queue_size=2,
         )
 
-        for offline_step in range(offline_steps):
+        for _ in range(offline_step, offline_steps):
             if shutdown_event is not None and shutdown_event.is_set():
                 logging.info("[LEARNER] Shutdown signal received during offline training. Exiting...")
                 return
@@ -646,6 +647,7 @@ def add_actor_information_and_train(
                 )
 
             optimization_step += 1
+            offline_step += 1
 
             # Save checkpoint
             if saving_checkpoint and (
