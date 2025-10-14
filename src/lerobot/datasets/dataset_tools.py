@@ -28,8 +28,10 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 
+import datasets
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
@@ -43,7 +45,6 @@ from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     get_parquet_file_size_in_mb,
     load_episodes,
-    to_parquet_with_hf_images,
     update_chunk_file_indices,
     write_info,
     write_stats,
@@ -268,39 +269,79 @@ def merge_datasets(
     return merged_dataset
 
 
-def add_feature(
+def modify_features(
     dataset: LeRobotDataset,
-    feature_name: str,
-    feature_values: np.ndarray | torch.Tensor | Callable,
-    feature_info: dict,
+    add_features: dict[str, tuple[np.ndarray | torch.Tensor | Callable, dict]] | None = None,
+    remove_features: str | list[str] | None = None,
     output_dir: str | Path | None = None,
     repo_id: str | None = None,
 ) -> LeRobotDataset:
-    """Add a new feature to a LeRobotDataset.
+    """Modify a LeRobotDataset by adding and/or removing features in a single pass.
+
+    This is the most efficient way to modify features, as it only copies the dataset once
+    regardless of how many features are being added or removed.
 
     Args:
         dataset: The source LeRobotDataset.
-        feature_name: Name of the new feature.
-        feature_values: Either:
-            - Array/tensor of shape (num_frames, ...) with values for each frame
-            - Callable that takes (frame_dict, episode_index, frame_index) and returns feature value
-        feature_info: Dictionary with feature metadata (dtype, shape, names).
+        add_features: Optional dict mapping feature names to (feature_values, feature_info) tuples.
+        remove_features: Optional feature name(s) to remove. Can be a single string or list.
         output_dir: Directory to save the new dataset. If None, uses default location.
         repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+
+    Returns:
+        New dataset with features modified.
+
+    Example:
+        new_dataset = modify_features(
+            dataset,
+            add_features={
+                "reward": (reward_array, {"dtype": "float32", "shape": [1], "names": None}),
+            },
+            remove_features=["old_feature"],
+            output_dir="./output",
+        )
     """
-    if feature_name in dataset.meta.features:
-        raise ValueError(f"Feature '{feature_name}' already exists in dataset")
+    if add_features is None and remove_features is None:
+        raise ValueError("Must specify at least one of add_features or remove_features")
+
+    remove_features_list: list[str] = []
+    if remove_features is not None:
+        remove_features_list = [remove_features] if isinstance(remove_features, str) else remove_features
+
+    if add_features:
+        required_keys = {"dtype", "shape"}
+        for feature_name, (_, feature_info) in add_features.items():
+            if feature_name in dataset.meta.features:
+                raise ValueError(f"Feature '{feature_name}' already exists in dataset")
+
+            if not required_keys.issubset(feature_info.keys()):
+                raise ValueError(f"feature_info for '{feature_name}' must contain keys: {required_keys}")
+
+    if remove_features_list:
+        for name in remove_features_list:
+            if name not in dataset.meta.features:
+                raise ValueError(f"Feature '{name}' not found in dataset")
+
+        required_features = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
+        if any(name in required_features for name in remove_features_list):
+            raise ValueError(f"Cannot remove required features: {required_features}")
 
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_modified"
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
-    required_keys = {"dtype", "shape"}
-    if not required_keys.issubset(feature_info.keys()):
-        raise ValueError(f"feature_info must contain keys: {required_keys}")
-
     new_features = dataset.meta.features.copy()
-    new_features[feature_name] = feature_info
+
+    if remove_features_list:
+        for name in remove_features_list:
+            new_features.pop(name, None)
+
+    if add_features:
+        for feature_name, (_, feature_info) in add_features.items():
+            new_features[feature_name] = feature_info
+
+    video_keys_to_remove = [name for name in remove_features_list if name in dataset.meta.video_keys]
+    remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
 
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
@@ -308,17 +349,18 @@ def add_feature(
         features=new_features,
         robot_type=dataset.meta.robot_type,
         root=output_dir,
-        use_videos=len(dataset.meta.video_keys) > 0,
+        use_videos=len(remaining_video_keys) > 0,
     )
 
     _copy_data_with_feature_changes(
         dataset=dataset,
         new_meta=new_meta,
-        add_features={feature_name: (feature_values, feature_info)},
+        add_features=add_features,
+        remove_features=remove_features_list if remove_features_list else None,
     )
 
-    if dataset.meta.video_keys:
-        _copy_videos(dataset, new_meta)
+    if new_meta.video_keys:
+        _copy_videos(dataset, new_meta, exclude_keys=video_keys_to_remove if video_keys_to_remove else None)
 
     new_dataset = LeRobotDataset(
         repo_id=repo_id,
@@ -329,6 +371,46 @@ def add_feature(
     )
 
     return new_dataset
+
+
+def add_features(
+    dataset: LeRobotDataset,
+    features: dict[str, tuple[np.ndarray | torch.Tensor | Callable, dict]],
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+) -> LeRobotDataset:
+    """Add multiple features to a LeRobotDataset in a single pass.
+
+    This is more efficient than calling add_feature() multiple times, as it only
+    copies the dataset once regardless of how many features are being added.
+
+    Args:
+        dataset: The source LeRobotDataset.
+        features: Dictionary mapping feature names to (feature_values, feature_info) tuples.
+        output_dir: Directory to save the new dataset. If None, uses default location.
+        repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+
+    Returns:
+        New dataset with all features added.
+
+    Example:
+        features = {
+            "task_embedding": (task_emb_array, {"dtype": "float32", "shape": [384], "names": None}),
+            "cam1_embedding": (cam1_emb_array, {"dtype": "float32", "shape": [768], "names": None}),
+            "cam2_embedding": (cam2_emb_array, {"dtype": "float32", "shape": [768], "names": None}),
+        }
+        new_dataset = add_features(dataset, features, output_dir="./output", repo_id="my_dataset")
+    """
+    if not features:
+        raise ValueError("No features provided")
+
+    return modify_features(
+        dataset=dataset,
+        add_features=features,
+        remove_features=None,
+        output_dir=output_dir,
+        repo_id=repo_id,
+    )
 
 
 def remove_feature(
@@ -345,55 +427,16 @@ def remove_feature(
         output_dir: Directory to save the new dataset. If None, uses default location.
         repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
 
+    Returns:
+        New dataset with features removed.
     """
-    if isinstance(feature_names, str):
-        feature_names = [feature_names]
-
-    for name in feature_names:
-        if name not in dataset.meta.features:
-            raise ValueError(f"Feature '{name}' not found in dataset")
-
-    required_features = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
-    if any(name in required_features for name in feature_names):
-        raise ValueError(f"Cannot remove required features: {required_features}")
-
-    if repo_id is None:
-        repo_id = f"{dataset.repo_id}_modified"
-    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
-
-    new_features = {k: v for k, v in dataset.meta.features.items() if k not in feature_names}
-
-    video_keys_to_remove = [name for name in feature_names if name in dataset.meta.video_keys]
-
-    remaining_video_keys = [k for k in dataset.meta.video_keys if k not in video_keys_to_remove]
-
-    new_meta = LeRobotDatasetMetadata.create(
-        repo_id=repo_id,
-        fps=dataset.meta.fps,
-        features=new_features,
-        robot_type=dataset.meta.robot_type,
-        root=output_dir,
-        use_videos=len(remaining_video_keys) > 0,
-    )
-
-    _copy_data_with_feature_changes(
+    return modify_features(
         dataset=dataset,
-        new_meta=new_meta,
+        add_features=None,
         remove_features=feature_names,
-    )
-
-    if new_meta.video_keys:
-        _copy_videos(dataset, new_meta, exclude_keys=video_keys_to_remove)
-
-    new_dataset = LeRobotDataset(
+        output_dir=output_dir,
         repo_id=repo_id,
-        root=output_dir,
-        image_transforms=dataset.image_transforms,
-        delta_timestamps=dataset.delta_timestamps,
-        tolerance_s=dataset.tolerance_s,
     )
-
-    return new_dataset
 
 
 def _fractions_to_episode_indices(
@@ -501,10 +544,7 @@ def _copy_and_reindex_data(
         dst_path = dst_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         dst_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if len(dst_meta.image_keys) > 0:
-            to_parquet_with_hf_images(df, dst_path)
-        else:
-            df.to_parquet(dst_path, index=False)
+        _write_parquet(df, dst_path, dst_meta)
 
         for ep_old_idx in episodes_to_keep:
             ep_new_idx = episode_mapping[ep_old_idx]
@@ -862,6 +902,25 @@ def _copy_and_reindex_episodes_metadata(
     write_stats(filtered_stats, dst_meta.root)
 
 
+def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -> None:
+    """Write DataFrame to parquet
+
+    This ensures images are properly embedded and the file can be loaded correctly by HF datasets.
+    """
+    from lerobot.datasets.utils import embed_images, get_hf_features_from_features
+
+    hf_features = get_hf_features_from_features(meta.features)
+    ep_dataset = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=hf_features, split="train")
+
+    if len(meta.image_keys) > 0:
+        ep_dataset = embed_images(ep_dataset)
+
+    table = ep_dataset.with_format("arrow")[:]
+    writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
+    writer.write_table(table)
+    writer.close()
+
+
 def _save_data_chunk(
     df: pd.DataFrame,
     meta: LeRobotDatasetMetadata,
@@ -877,10 +936,7 @@ def _save_data_chunk(
     path = meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if len(meta.image_keys) > 0:
-        to_parquet_with_hf_images(df, path)
-    else:
-        df.to_parquet(path, index=False)
+    _write_parquet(df, path, meta)
 
     episode_metadata = {}
     for ep_idx in df["episode_index"].unique():
@@ -906,19 +962,34 @@ def _copy_data_with_feature_changes(
     remove_features: list[str] | None = None,
 ) -> None:
     """Copy data while adding or removing features."""
-    file_paths = set()
+    if dataset.meta.episodes is None:
+        dataset.meta.episodes = load_episodes(dataset.meta.root)
+
+    # Map file paths to episode indices to extract chunk/file indices
+    file_to_episodes: dict[Path, set[int]] = {}
     for ep_idx in range(dataset.meta.total_episodes):
-        file_paths.add(dataset.meta.get_data_file_path(ep_idx))
+        file_path = dataset.meta.get_data_file_path(ep_idx)
+        if file_path not in file_to_episodes:
+            file_to_episodes[file_path] = set()
+        file_to_episodes[file_path].add(ep_idx)
 
     frame_idx = 0
 
-    for src_path in tqdm(sorted(file_paths), desc="Processing data files"):
+    for src_path in tqdm(sorted(file_to_episodes.keys()), desc="Processing data files"):
         df = pd.read_parquet(dataset.root / src_path).reset_index(drop=True)
+
+        # Get chunk_idx and file_idx from the source file's first episode
+        episodes_in_file = file_to_episodes[src_path]
+        first_ep_idx = min(episodes_in_file)
+        src_ep = dataset.meta.episodes[first_ep_idx]
+        chunk_idx = src_ep["data/chunk_index"]
+        file_idx = src_ep["data/file_index"]
 
         if remove_features:
             df = df.drop(columns=remove_features, errors="ignore")
 
         if add_features:
+            end_idx = frame_idx + len(df)
             for feature_name, (values, _) in add_features.items():
                 if callable(values):
                     feature_values = []
@@ -931,15 +1002,18 @@ def _copy_data_with_feature_changes(
                         feature_values.append(value)
                     df[feature_name] = feature_values
                 else:
-                    end_idx = frame_idx + len(df)
                     feature_slice = values[frame_idx:end_idx]
                     if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
                         df[feature_name] = feature_slice.flatten()
                     else:
                         df[feature_name] = feature_slice
-                    frame_idx = end_idx
+            frame_idx = end_idx
 
-        _save_data_chunk(df, new_meta)
+        # Write using the preserved chunk_idx and file_idx from source
+        dst_path = new_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        _write_parquet(df, dst_path, new_meta)
 
     _copy_episodes_metadata_and_stats(dataset, new_meta)
 
