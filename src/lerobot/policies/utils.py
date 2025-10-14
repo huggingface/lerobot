@@ -20,6 +20,10 @@ from collections import deque
 import torch
 from torch import nn
 
+from lerobot.datasets.utils import build_dataset_frame
+from lerobot.processor import RobotAction
+from lerobot.utils.constants import ACTION, OBS_STR
+
 
 def populate_queues(
     queues: dict[str, deque], batch: dict[str, torch.Tensor], exclude_keys: list[str] | None = None
@@ -85,3 +89,53 @@ def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) 
         logging.warning(f"Missing key(s) when loading model: {missing_keys}")
     if unexpected_keys:
         logging.warning(f"Unexpected key(s) when loading model: {unexpected_keys}")
+
+
+def prepare_observation_for_inference(
+    observation: dict[str, torch.Tensor],
+    device: torch.device,
+    task: str | None = None,
+    robot_type: str | None = None,
+) -> dict[str, torch.Tensor]:
+    """Prepares an observation for inference by making Pytorch tensors and adding the relevant batch dimension."""
+    for name in observation:
+        observation[name] = torch.from_numpy(observation[name])
+        if "image" in name:
+            observation[name] = observation[name].type(torch.float32) / 255
+            observation[name] = observation[name].permute(2, 0, 1).contiguous()
+        observation[name] = observation[name].unsqueeze(0)
+        observation[name] = observation[name].to(device)
+
+    observation["task"] = task if task else ""
+    observation["robot_type"] = robot_type if robot_type else ""
+
+    return observation
+
+
+def build_inference_frame(
+    observation: dict[str, torch.Tensor],
+    device: torch.device,
+    ds_features: dict[str, dict],
+    task: str | None = None,
+    robot_type: str | None = None,
+) -> dict[str, torch.Tensor]:
+    """Build a inference frame from a raw observation."""
+    # Extracts the correct keys from the incoming raw observation
+    observation = build_dataset_frame(ds_features, observation, prefix=OBS_STR)
+
+    # Performs the necessary conversions to the observation
+    observation = prepare_observation_for_inference(observation, device, task, robot_type)
+
+    return observation
+
+
+def make_robot_action(action_tensor: torch.Tensor, ds_features: dict[str, dict]) -> dict[str, float]:
+    """Turns a tensor action into a RobotAction, a dictionary of named motor positions."""
+    action_tensor = action_tensor.squeeze(0)
+    action_tensor = action_tensor.to("cpu")
+
+    action_names = ds_features[ACTION]["names"]
+    act_processed_policy: RobotAction = {
+        f"{name}": float(action_tensor[i]) for i, name in enumerate(action_names)
+    }
+    return act_processed_policy
