@@ -74,8 +74,15 @@ from lerobot.teleoperators import (
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
+from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
-from lerobot.utils.utils import log_say
+from lerobot.utils.utils import (
+    TimerManager,
+    init_logging,
+    log_say,
+)
+
+from .utils import get_frequency_stats
 
 logging.basicConfig(level=logging.INFO)
 
@@ -201,15 +208,17 @@ class RobotEnv(gym.Env):
         self.observation_space = gym.spaces.Dict(observation_spaces)
 
         # Define the action space for joint positions along with setting an intervention flag.
-        action_dim = 3
+        # TODO(jpizarrom): This should be taken from the robot config
+        action_dim = 6  # 3 for (x, y, z) and 3 for (wx, wy, wz) rotation
         bounds = {}
         bounds["min"] = -np.ones(action_dim)
         bounds["max"] = np.ones(action_dim)
 
         if self.use_gripper:
             action_dim += 1
-            bounds["min"] = np.concatenate([bounds["min"], [0]])
-            bounds["max"] = np.concatenate([bounds["max"], [2]])
+            # TODO(jpizarrom): bounds should part of the config
+            bounds["min"] = np.concatenate([bounds["min"], [-1]])
+            bounds["max"] = np.concatenate([bounds["max"], [1]])
 
         self.action_space = gym.spaces.Box(
             low=bounds["min"],
@@ -260,7 +269,8 @@ class RobotEnv(gym.Env):
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
 
         if self.display_cameras:
-            self.render()
+            # render_observation is used to avoid getting observation again
+            self.render_observation(obs)
 
         self.current_step += 1
 
@@ -278,14 +288,27 @@ class RobotEnv(gym.Env):
 
     def render(self) -> None:
         """Display robot camera feeds."""
+        current_observation = self._get_observation()
+        self.render_observation(current_observation)
+
+    def render_observation(self, observation: dict[str, Any]) -> None:
+        """Display robot camera feeds."""
         import cv2
 
-        current_observation = self._get_observation()
-        if current_observation is not None:
-            image_keys = [key for key in current_observation if "image" in key]
+        if observation is not None:
+            pixels = observation.get("pixels")
+            if pixels is None:
+                return
+            image_keys = pixels.keys()
 
             for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(current_observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                cv2.imshow(
+                    key,
+                    cv2.cvtColor(
+                        pixels[key] if isinstance(pixels[key], np.ndarray) else pixels[key].numpy(),
+                        cv2.COLOR_RGB2BGR,
+                    ),
+                )
                 cv2.waitKey(1)
 
     def close(self) -> None:
@@ -485,11 +508,13 @@ def make_processors(
             ),
             EEBoundsAndSafety(
                 end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
+                max_ee_step_m=0.10,  # TODO(jpizarrom): make this configurable
             ),
             GripperVelocityToJoint(
                 clip_max=cfg.processor.max_gripper_pos,
-                speed_factor=1.0,
-                discrete_gripper=True,
+                speed_factor=0.075,  # TODO(jpizarrom): make this configurable
+                discrete_gripper=False,  # TODO(jpizarrom): make this configurable
+                scale_velocity=True,  # TODO(jpizarrom): make this configurable
             ),
             InverseKinematicsRLStep(
                 kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=False
@@ -525,13 +550,13 @@ def step_env_and_process_transition(
     Returns:
         Processed transition with updated state.
     """
-
     # Create action transition
     transition[TransitionKey.ACTION] = action
     transition[TransitionKey.OBSERVATION] = (
         env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
     )
     processed_action_transition = action_processor(transition)
+
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
     obs, reward, terminated, truncated, info = env.step(processed_action)
@@ -552,6 +577,7 @@ def step_env_and_process_transition(
         info=new_info,
         complementary_data=complementary_data,
     )
+
     new_transition = env_processor(new_transition)
 
     return new_transition
@@ -641,13 +667,21 @@ def control_loop(
     episode_step = 0
     episode_start_time = time.perf_counter()
 
+    log_say(f"Recording episode {episode_idx}", play_sounds=True)
+
+    fps_tracker = TimerManager("Episode FPS", log=False)
+    episode_started = True
+
     while episode_idx < cfg.dataset.num_episodes_to_record:
+        fps_tracker.start()
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
-        neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
+        # TODO(jpizarrom): This should depend on the action space
+        neutral_action = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float32)
         if use_gripper:
-            neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
+            # TODO(jpizarrom): define neutral gripper action should be defined in the config
+            neutral_action = torch.cat([neutral_action, torch.tensor([0.0])])  # Gripper stay
 
         # Use the new step function
         transition = step_env_and_process_transition(
@@ -692,6 +726,8 @@ def control_loop(
             logging.info(
                 f"Episode ended after {episode_step} steps in {episode_time:.1f}s with reward {transition[TransitionKey.REWARD]}"
             )
+            stats = get_frequency_stats(fps_tracker)
+            logging.info(", ".join([f"{k} : {v:.2f}" for k, v in stats.items()]))
             episode_step = 0
             episode_idx += 1
 
@@ -709,11 +745,22 @@ def control_loop(
             env_processor.reset()
             action_processor.reset()
 
+            fps_tracker.reset()
+            episode_started = False
+
+            log_say(f"Recording episode {episode_idx}", play_sounds=True)
+
             transition = create_transition(observation=obs, info=info)
             transition = env_processor(transition)
 
         # Maintain fps timing
         busy_wait(dt - (time.perf_counter() - step_start_time))
+
+        if not episode_started:
+            # This is needed to track the fps correctly after reset
+            episode_started = True
+        else:
+            fps_tracker.stop()
 
     if dataset is not None and cfg.dataset.push_to_hub:
         logging.info("Pushing dataset to hub")
@@ -751,6 +798,8 @@ def replay_trajectory(
 @parser.wrap()
 def main(cfg: GymManipulatorConfig) -> None:
     """Main entry point for gym manipulator script."""
+    init_logging()
+
     env, teleop_device = make_robot_env(cfg.env)
     env_processor, action_processor = make_processors(env, teleop_device, cfg.env, cfg.device)
 
@@ -767,4 +816,5 @@ def main(cfg: GymManipulatorConfig) -> None:
 
 
 if __name__ == "__main__":
+    register_third_party_devices()
     main()

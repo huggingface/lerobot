@@ -50,6 +50,7 @@ import logging
 import os
 import time
 from functools import lru_cache
+from pprint import pformat
 from queue import Empty
 
 import grpc
@@ -60,8 +61,10 @@ from torch.multiprocessing import Event, Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.policies.factory import make_policy
-from lerobot.policies.sac.modeling_sac import SACPolicy
+
+# from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
@@ -77,6 +80,7 @@ from lerobot.transport.utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
+from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.transition import (
@@ -96,6 +100,7 @@ from .gym_manipulator import (
     make_robot_env,
     step_env_and_process_transition,
 )
+from .utils import get_frequency_stats
 
 # Main entry point
 
@@ -235,6 +240,7 @@ def act_with_policy(
         init_logging(log_file=log_file, display_pid=True)
         logging.info("Actor policy process logging initialized")
 
+    logging.info(pformat(cfg.to_dict()))
     logging.info("make_env online")
 
     online_env, teleop_device = make_robot_env(cfg=cfg.env)
@@ -251,12 +257,36 @@ def act_with_policy(
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
-    policy: SACPolicy = make_policy(
+    policy: ACFQLPolicy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
+
+    # Create processors - only provide dataset_stats if not resuming from saved processors
+    processor_kwargs = {}
+    postprocessor_kwargs = {}
+    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+        # Only provide dataset_stats when not resuming from saved processor state
+        # params = _convert_normalization_params_to_tensor(cfg.policy.dataset_stats)
+        processor_kwargs["dataset_stats"] = cfg.policy.dataset_stats
+        # TODO(jpizarrom): check if it is also needed to provide dataset_stats to postprocessor
+
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        pretrained_path=cfg.policy.pretrained_path,
+        **processor_kwargs,
+        **postprocessor_kwargs,
+    )
+
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
+
+    # get the initial policy parameters from the learner
+    if cfg.policy.offline_steps > 0:
+        logging.info("[ACTOR] Waiting for initial policy parameters from learner")
+        update_policy_parameters(
+            policy=policy, parameters_queue=parameters_queue, device=device, wait_for_update=True
+        )
 
     obs, info = online_env.reset()
     env_processor.reset()
@@ -275,8 +305,12 @@ def act_with_policy(
     episode_total_steps = 0
 
     policy_timer = TimerManager("Policy inference", log=False)
+    fps_tracker = TimerManager("Episode FPS", log=False)
+    episode_started = True
+    episode_start_time = time.perf_counter()
 
     for interaction_step in range(cfg.policy.online_steps):
+        fps_tracker.start()
         start_time = time.perf_counter()
         if shutdown_event.is_set():
             logging.info("[ACTOR] Shutting down act_with_policy")
@@ -286,10 +320,28 @@ def act_with_policy(
             k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
         }
 
+        observation_for_inference = preprocessor(
+            {
+                **{"observation.state": observation["observation.state"]},
+                # [B, C, H, W] -> [B, H, W, C]
+                **{k: v.permute(0, 2, 3, 1) for k, v in observation.items() if "observation.images" in k},
+            }
+        )
+
+        observation_for_inference = {
+            **{"observation.state": observation_for_inference["observation.state"]},
+            # [B, H, W, C] -> [B, C, H, W]
+            **{
+                k: v.permute(0, 3, 1, 2)
+                for k, v in observation_for_inference.items()
+                if "observation.images" in k
+            },
+        }
+
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
             # Extract observation from transition for policy
-            action = policy.select_action(batch=observation)
+            action = policy.select_action(batch=observation_for_inference)
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
@@ -326,6 +378,8 @@ def act_with_policy(
         if intervention_info.get(TeleopEvents.IS_INTERVENTION, False):
             episode_intervention = True
             episode_intervention_steps += 1
+            # TODO: The policy state should be reset when an intervention occurs when chunking is enabled, to clear the action queue
+            policy.reset()  # Reset policy state if needed
 
         complementary_info = {
             "discrete_penalty": torch.tensor(
@@ -349,9 +403,15 @@ def act_with_policy(
         transition = new_transition
 
         if done or truncated:
-            logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
+            episode_time = time.perf_counter() - episode_start_time
+            logging.info(
+                f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}, Episode time: {episode_time:.2f}s"
+            )
 
-            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
+            stats = get_frequency_stats(policy_timer)
+
+            stats = get_frequency_stats(fps_tracker)
+            logging.info(", ".join([f"{k} : {v:.2f}" for k, v in stats.items()]))
 
             if len(list_transition_to_send_to_learner) > 0:
                 push_transitions_to_transport_queue(
@@ -359,9 +419,6 @@ def act_with_policy(
                     transitions_queue=transitions_queue,
                 )
                 list_transition_to_send_to_learner = []
-
-            stats = get_frequency_stats(policy_timer)
-            policy_timer.reset()
 
             # Calculate intervention rate
             intervention_rate = 0.0
@@ -381,6 +438,12 @@ def act_with_policy(
                 )
             )
 
+            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
+
+            policy_timer.reset()
+            fps_tracker.reset()
+            episode_started = False
+
             # Reset intervention counters and environment
             sum_reward_episode = 0.0
             episode_intervention = False
@@ -392,6 +455,10 @@ def act_with_policy(
             env_processor.reset()
             action_processor.reset()
 
+            policy.reset()  # Reset policy state if needed
+
+            episode_start_time = time.perf_counter()
+
             # Process initial observation
             transition = create_transition(observation=obs, info=info)
             transition = env_processor(transition)
@@ -399,6 +466,12 @@ def act_with_policy(
         if cfg.env.fps is not None:
             dt_time = time.perf_counter() - start_time
             busy_wait(1 / cfg.env.fps - dt_time)
+
+        if not episode_started:
+            # This is needed to track the fps correctly after reset
+            episode_started = True
+        else:
+            fps_tracker.stop()
 
 
 #  Communication Functions - Group all gRPC/messaging functions
@@ -626,7 +699,7 @@ def transitions_stream(shutdown_event: Event, transitions_queue: Queue, timeout:
 
 
 def interactions_stream(
-    shutdown_event: Event,
+    shutdown_event: Event,  # type: ignore
     interactions_queue: Queue,
     timeout: float,  # type: ignore
 ) -> services_pb2.Empty:
@@ -649,8 +722,15 @@ def interactions_stream(
 #  Policy functions
 
 
-def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
+def update_policy_parameters(
+    policy: ACFQLPolicy, parameters_queue: Queue, device, wait_for_update: bool = False
+):
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
+
+    while bytes_state_dict is None and wait_for_update:
+        # logging.info("[ACTOR] Waiting for updated policy parameters from Learner...")
+        bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
+        time.sleep(2)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
         state_dicts = bytes_to_state_dict(bytes_state_dict)
@@ -667,15 +747,15 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
 
         # Load actor state dict
         actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
-        policy.actor.load_state_dict(actor_state_dict)
+        policy.actor_onestep_flow.load_state_dict(actor_state_dict, strict=True)
 
-        # Load discrete critic if present
-        if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
-            discrete_critic_state_dict = move_state_dict_to_device(
-                state_dicts["discrete_critic"], device=device
-            )
-            policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
-            logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
+        # # Load discrete critic if present
+        # if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
+        #     discrete_critic_state_dict = move_state_dict_to_device(
+        #         state_dicts["discrete_critic"], device=device
+        #     )
+        #     policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
+        #     logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
 
 
 #  Utilities functions
@@ -701,28 +781,6 @@ def push_transitions_to_transport_queue(transitions: list, transitions_queue):
     transitions_queue.put(transitions_to_bytes(transition_to_send_to_learner))
 
 
-def get_frequency_stats(timer: TimerManager) -> dict[str, float]:
-    """Get the frequency statistics of the policy.
-
-    Args:
-        timer (TimerManager): The timer with collected metrics.
-
-    Returns:
-        dict[str, float]: The frequency statistics of the policy.
-    """
-    stats = {}
-    if timer.count > 1:
-        avg_fps = timer.fps_avg
-        p90_fps = timer.fps_percentile(90)
-        logging.debug(f"[ACTOR] Average policy frame rate: {avg_fps}")
-        logging.debug(f"[ACTOR] Policy frame rate 90th percentile: {p90_fps}")
-        stats = {
-            "Policy frequency [Hz]": avg_fps,
-            "Policy frequency 90th-p [Hz]": p90_fps,
-        }
-    return stats
-
-
 def log_policy_frequency_issue(policy_fps: float, cfg: TrainRLServerPipelineConfig, interaction_step: int):
     if policy_fps < cfg.env.fps:
         logging.warning(
@@ -735,4 +793,5 @@ def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
 
 
 if __name__ == "__main__":
+    register_third_party_devices()
     actor_cli()
