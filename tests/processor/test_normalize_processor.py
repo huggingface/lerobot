@@ -191,10 +191,10 @@ def test_quantile_normalization():
     normalized_transition = normalizer(transition)
     normalized_obs = normalized_transition[TransitionKey.OBSERVATION]
 
-    # Check quantile normalization to [0, 1]
-    # For state[0]: (0.5 - 0.1) / (0.9 - 0.1) = 0.4 / 0.8 = 0.5
-    # For state[1]: (0.0 - (-0.8)) / (0.8 - (-0.8)) = 0.8 / 1.6 = 0.5
-    expected_state = torch.tensor([0.5, 0.5])
+    # Check quantile normalization to [-1, 1]
+    # For state[0]: 2 * (0.5 - 0.1) / (0.9 - 0.1) - 1 = 2 * 0.4 / 0.8 - 1 = 0.0
+    # For state[1]: 2 * (0.0 - (-0.8)) / (0.8 - (-0.8)) - 1 = 2 * 0.8 / 1.6 - 1 = 0.0
+    expected_state = torch.tensor([0.0, 0.0])
     assert torch.allclose(normalized_obs["observation.state"], expected_state, atol=1e-6)
 
 
@@ -223,10 +223,10 @@ def test_quantile10_normalization():
     normalized_transition = normalizer(transition)
     normalized_obs = normalized_transition[TransitionKey.OBSERVATION]
 
-    # Check quantile normalization to [0, 1]
-    # For state[0]: (0.5 - 0.2) / (0.8 - 0.2) = 0.3 / 0.6 = 0.5
-    # For state[1]: (0.0 - (-0.6)) / (0.6 - (-0.6)) = 0.6 / 1.2 = 0.5
-    expected_state = torch.tensor([0.5, 0.5])
+    # Check quantile normalization to [-1, 1]
+    # For state[0]: 2 * (0.5 - 0.2) / (0.8 - 0.2) - 1 = 2 * 0.3 / 0.6 - 1 = 0.0
+    # For state[1]: 2 * (0.0 - (-0.6)) / (0.6 - (-0.6)) - 1 = 2 * 0.6 / 1.2 - 1 = 0.0
+    expected_state = torch.tensor([0.0, 0.0])
     assert torch.allclose(normalized_obs["observation.state"], expected_state, atol=1e-6)
 
 
@@ -353,12 +353,12 @@ def test_quantile_mixed_with_other_modes():
     expected_image = (torch.tensor([0.7, 0.5, 0.3]) - 0.5) / 0.2
     assert torch.allclose(normalized_obs["observation.image"], expected_image)
 
-    # State should be quantile normalized: (0.5 - 0.1) / (0.9 - 0.1) = 0.5, etc.
-    expected_state = torch.tensor([0.5, 0.5])
+    # State should be quantile normalized: 2 * (0.5 - 0.1) / (0.9 - 0.1) - 1 = 0.0, etc.
+    expected_state = torch.tensor([0.0, 0.0])
     assert torch.allclose(normalized_obs["observation.state"], expected_state, atol=1e-6)
 
-    # Action should be quantile10 normalized: (0.5 - 0.2) / (0.8 - 0.2) = 0.5, etc.
-    expected_action = torch.tensor([0.5, 0.5])
+    # Action should be quantile10 normalized: 2 * (0.5 - 0.2) / (0.8 - 0.2) - 1 = 0.0, etc.
+    expected_action = torch.tensor([0.0, 0.0])
     assert torch.allclose(normalized_action, expected_action, atol=1e-6)
 
 

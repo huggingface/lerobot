@@ -42,12 +42,19 @@ else:
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE, OPENPI_ATTENTION_MASK_VALUE
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+    OPENPI_ATTENTION_MASK_VALUE,
+)
 
 
-# Helper functions
-def get_safe_dtype(target_dtype, device_type):  # see openpi `get_safe_dtype` (exact copy)
+def get_safe_dtype(target_dtype, device_type):
     """Get a safe dtype for the given device type."""
+    if device_type == "mps" and target_dtype == torch.float64:
+        return torch.float32
     if device_type == "cpu":
         # CPU doesn't support bfloat16, use float32 instead
         if target_dtype == torch.bfloat16:
@@ -118,7 +125,7 @@ def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (
 
 def pad_vector(vector, new_dim):
     """Pad the last dimension of a vector to new_dim with zeros.
-    
+
     Can be (batch_size x sequence_length x features_dimension)
     or (batch_size x features_dimension)
     """
@@ -200,8 +207,11 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
 
     return padded_images
 
+
 # Define the complete layer computation function for gradient checkpointing
-def compute_layer_complete(layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond, paligemma, gemma_expert):
+def compute_layer_complete(
+    layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond, paligemma, gemma_expert
+):
     models = [paligemma.language_model, gemma_expert.model]
     query_states = []
     key_states = []
@@ -270,6 +280,7 @@ def compute_layer_complete(layer_idx, inputs_embeds, attention_mask, position_id
         outputs_embeds.append(out_emb)
         start_pos = end_pos
     return outputs_embeds
+
 
 class GemmaConfig:  # see openpi `gemma.py: Config`
     """Configuration for Gemma model variants."""
@@ -453,7 +464,13 @@ class PaliGemmaWithExpertModel(
                     )
                 else:
                     inputs_embeds = compute_layer_complete(
-                        layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond, paligemma=self.paligemma, gemma_expert=self.gemma_expert,
+                        layer_idx,
+                        inputs_embeds,
+                        attention_mask,
+                        position_ids,
+                        adarms_cond,
+                        paligemma=self.paligemma,
+                        gemma_expert=self.gemma_expert,
                     )
 
             # final norm
@@ -569,7 +586,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         time_beta = sample_beta(
             self.config.time_sampling_beta_alpha, self.config.time_sampling_beta_beta, bsize, device
         )
-        time = time_beta * 0.999 + 0.001
+        time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
         return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
@@ -668,6 +685,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
         pad_masks.append(action_time_mask)
 
+        # Set attention masks so that image, language and state inputs do not attend to action tokens
         att_masks += [1] + ([0] * (self.config.chunk_size - 1))
 
         embs = torch.cat(embs, dim=1)
@@ -860,7 +878,6 @@ class PI0Policy(PreTrainedPolicy):
         self.model.to(config.device)
 
         self.reset()
-        self.model.to(config.device)
 
     @classmethod
     def from_pretrained(
@@ -880,7 +897,7 @@ class PI0Policy(PreTrainedPolicy):
     ) -> T:
         """Override the from_pretrained method to handle key remapping and display important disclaimer."""
         print(
-            "The PI05 model is a direct port of the OpenPI implementation. \n"
+            "The PI0 model is a direct port of the OpenPI implementation. \n"
             "This implementation follows the original OpenPI structure for compatibility. \n"
             "Original implementation: https://github.com/Physical-Intelligence/openpi"
         )
@@ -1042,9 +1059,7 @@ class PI0Policy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
-    def _preprocess_images(
-        self, batch: dict[str, Tensor]
-    ) -> tuple[list[Tensor], list[Tensor]]:
+    def _preprocess_images(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], list[Tensor]]:
         """Preprocess images for the model.
 
         Images from LeRobot are typically in [B, C, H, W] format and normalized to [0, 1].
@@ -1133,7 +1148,7 @@ class PI0Policy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor: 
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
 

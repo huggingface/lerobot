@@ -303,14 +303,7 @@ class _NormalizationMixin:
             ValueError: If an unsupported normalization mode is encountered.
         """
         norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        if norm_mode == NormalizationMode.IDENTITY:
-            import logging
-            logging.debug(f"🔍 Normalization SKIPPED for '{key}': norm_mode is IDENTITY")
-            return tensor
-        
-        if key not in self._tensor_stats:
-            import logging
-            logging.warning(f"⚠️  Normalization SKIPPED for '{key}': No stats found! Available stats keys: {list(self._tensor_stats.keys())}")
+        if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
             return tensor
 
         if norm_mode not in (
@@ -380,7 +373,7 @@ class _NormalizationMixin:
                 denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
             )
             if inverse:
-                return tensor * denom + q01
+                return (tensor + 1.0) * denom / 2.0 + q01
             return 2.0 * (tensor - q01) / denom - 1.0
 
         if norm_mode == NormalizationMode.QUANTILE10:
@@ -397,7 +390,7 @@ class _NormalizationMixin:
                 denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
             )
             if inverse:
-                return tensor * denom + q10
+                return (tensor + 1.0) * denom / 2.0 + q10
             return 2.0 * (tensor - q10) / denom - 1.0
 
         # If necessary stats are missing, return input unchanged.

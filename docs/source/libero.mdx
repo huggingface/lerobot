@@ -126,16 +126,15 @@ LeRobot uses MuJoCo for simulation. You need to set the rendering backend before
 
 - `export MUJOCO_GL=egl` → for headless servers (e.g. HPC, cloud)
 
-## Reproducing π₀ and π₀.₅ results
+## Reproducing π₀.₅ results
 
-We reproduce the results of π₀ and π₀.₅ on the LIBERO benchmark using the LeRobot implementation. We take the Physical Intelligence LIBERO base models (`pi0_libero` and `pi05_libero`) and finetune them for an additional 6k steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).
+We reproduce the results of π₀.₅ on the LIBERO benchmark using the LeRobot implementation. We take the Physical Intelligence LIBERO base model (`pi05_libero`) and finetune for an additional 6k steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).
 
-The finetuned models can be found here:
+The finetuned model can be found here:
 
-- **π₀ LIBERO**: [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero)
-- **π₀.₅ LIBERO**: [lerobot/pi05_libero](https://huggingface.co/lerobot/pi05_libero)
+- **π₀.₅ LIBERO**: [lerobot/pi05_libero_finetuned](https://huggingface.co/lerobot/pi05_libero_finetuned)
 
-We then evaluate the finetuned models using the LeRobot LIBERO implementation, by running the following command:
+We then evaluate the finetuned model using the LeRobot LIBERO implementation, by running the following command:
 
 ```bash
 python src/lerobot/scripts/eval.py \
@@ -143,8 +142,8 @@ python src/lerobot/scripts/eval.py \
   --env.type=libero \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
   --eval.batch_size=1 \
-  --eval.n_episodes=5 \
-  --policy.path=lerobot/pi05_libero \
+  --eval.n_episodes=10 \
+  --policy.path=pi05_libero_finetuned \
   --policy.n_action_steps=10 \
   --output_dir=./eval_logs/ \
   --env.max_parallel_tasks=1
@@ -156,14 +155,12 @@ python src/lerobot/scripts/eval.py \
 
 We obtain the following results on the LIBERO benchmark:
 
-| Model    | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average |
-| -------- | -------------- | ------------- | ----------- | --------- | ------- |
-| **π₀**   | x              | x             | x           | x         | **x**   |
-| **π₀.₅** | 97.0           | 99.0          | 98.0        | 96.0      | **x**   |
+| Model    | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average  |
+| -------- | -------------- | ------------- | ----------- | --------- | -------- |
+| **π₀.₅** | 97.0           | 99.0          | 98.0        | 96.0      | **97.5** |
 
-These results are consistent with the original results reported by Physical Intelligence:
+These results are consistent with the original [results](https://github.com/Physical-Intelligence/openpi/tree/main/examples/libero#results) reported by Physical Intelligence:
 
 | Model    | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average   |
 | -------- | -------------- | ------------- | ----------- | --------- | --------- |
-| **π₀**   | 96.8           | 98.8          | 95.8        | 85.2      | **94.15** |
 | **π₀.₅** | 98.8           | 98.2          | 98.0        | 92.4      | **96.85** |

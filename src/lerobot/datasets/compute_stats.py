@@ -104,6 +104,7 @@ class RunningQuantileStats:
             raise ValueError("Cannot compute statistics for less than 2 vectors.")
 
         variance = self._mean_of_squares - self._mean**2
+
         stddev = np.sqrt(np.maximum(0, variance))
 
         stats = {
@@ -375,10 +376,9 @@ def _prepare_array_for_stats(array: np.ndarray, axis: int | tuple[int, ...] | No
         return reshaped, batch_size
 
     if axis == 0 or axis == (0,):  # Vector data
+        reshaped = array
         if array.ndim == 1:
             reshaped = array.reshape(-1, 1)
-        else:
-            reshaped = array
         return reshaped, array.shape[0]
 
     if axis == (1,):  # Feature-wise statistics
@@ -591,7 +591,7 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
     }
 
     if stats_ft_list:
-        quantile_keys = [k for k in stats_ft_list[0].keys() if k.startswith("q") and k[1:].isdigit()]
+        quantile_keys = [k for k in stats_ft_list[0] if k.startswith("q") and k[1:].isdigit()]
 
         for q_key in quantile_keys:
             if all(q_key in s for s in stats_ft_list):

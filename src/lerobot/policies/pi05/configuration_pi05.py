@@ -34,7 +34,7 @@ class PI05Config(PreTrainedConfig):
     n_action_steps: int = 50  # Number of action steps to execute
 
     # Shorter state and action vectors will be padded to these dimensions
-    max_state_dim: int = 32 
+    max_state_dim: int = 32
     max_action_dim: int = 32
 
     # Flow matching parameters: see openpi `PI0Pytorch`
@@ -42,7 +42,7 @@ class PI05Config(PreTrainedConfig):
     time_sampling_beta_alpha: float = 1.5
     time_sampling_beta_beta: float = 1.0
     time_sampling_scale: float = 0.999
-    time_sampling_offset: float = 0.001 
+    time_sampling_offset: float = 0.001
     min_period: float = 4e-3
     max_period: float = 4.0
 
@@ -55,7 +55,7 @@ class PI05Config(PreTrainedConfig):
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for images
+            "VISUAL": NormalizationMode.IDENTITY,
             "STATE": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for state
             "ACTION": NormalizationMode.QUANTILES,  # Pi0.5 uses quantiles for action
         }
