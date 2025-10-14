@@ -948,16 +948,28 @@ def _copy_data_with_feature_changes(
     remove_features: list[str] | None = None,
 ) -> None:
     """Copy data while adding or removing features."""
-    file_paths = set()
+    if dataset.meta.episodes is None:
+        dataset.meta.episodes = load_episodes(dataset.meta.root)
+
+    # Map file paths to episode indices to extract chunk/file indices
+    file_to_episodes: dict[Path, set[int]] = {}
     for ep_idx in range(dataset.meta.total_episodes):
-        file_paths.add(dataset.meta.get_data_file_path(ep_idx))
+        file_path = dataset.meta.get_data_file_path(ep_idx)
+        if file_path not in file_to_episodes:
+            file_to_episodes[file_path] = set()
+        file_to_episodes[file_path].add(ep_idx)
 
     frame_idx = 0
-    chunk_idx = 0
-    file_idx = 0
 
-    for src_path in tqdm(sorted(file_paths), desc="Processing data files"):
+    for src_path in tqdm(sorted(file_to_episodes.keys()), desc="Processing data files"):
         df = pd.read_parquet(dataset.root / src_path).reset_index(drop=True)
+
+        # Get chunk_idx and file_idx from the source file's first episode
+        episodes_in_file = file_to_episodes[src_path]
+        first_ep_idx = min(episodes_in_file)
+        src_ep = dataset.meta.episodes[first_ep_idx]
+        chunk_idx = src_ep["data/chunk_index"]
+        file_idx = src_ep["data/file_index"]
 
         if remove_features:
             df = df.drop(columns=remove_features, errors="ignore")
@@ -983,7 +995,14 @@ def _copy_data_with_feature_changes(
                         df[feature_name] = feature_slice
             frame_idx = end_idx
 
-        chunk_idx, file_idx, _ = _save_data_chunk(df, new_meta, chunk_idx, file_idx)
+        # Write using the preserved chunk_idx and file_idx from source
+        dst_path = new_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if len(new_meta.image_keys) > 0:
+            to_parquet_with_hf_images(df, dst_path)
+        else:
+            df.to_parquet(dst_path, index=False)
 
     _copy_episodes_metadata_and_stats(dataset, new_meta)
 

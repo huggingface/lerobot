@@ -990,3 +990,60 @@ def test_split_all_episodes_assigned(sample_dataset, tmp_path):
 
     total_episodes = sum(ds.meta.total_episodes for ds in result.values())
     assert total_episodes == sample_dataset.meta.total_episodes
+
+
+def test_modify_features_preserves_file_structure(sample_dataset, tmp_path):
+    """Test that modifying features preserves chunk_idx and file_idx from source dataset."""
+    feature_info = {"dtype": "float32", "shape": (1,), "names": None}
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+
+        def mock_snapshot(repo_id, **kwargs):
+            return str(kwargs.get("local_dir", tmp_path / repo_id.split("/")[-1]))
+
+        mock_snapshot_download.side_effect = mock_snapshot
+
+        # First split the dataset to create a non-zero starting chunk/file structure
+        splits = split_dataset(
+            sample_dataset,
+            splits={"train": [0, 1, 2], "val": [3, 4]},
+            output_dir=tmp_path / "splits",
+        )
+
+        train_dataset = splits["train"]
+
+        # Get original chunk/file indices from first episode
+        if train_dataset.meta.episodes is None:
+            from lerobot.datasets.utils import load_episodes
+
+            train_dataset.meta.episodes = load_episodes(train_dataset.meta.root)
+        original_chunk_indices = [ep["data/chunk_index"] for ep in train_dataset.meta.episodes]
+        original_file_indices = [ep["data/file_index"] for ep in train_dataset.meta.episodes]
+
+        # Now add a feature to the split dataset
+        modified_dataset = add_features(
+            train_dataset,
+            features={
+                "reward": (
+                    np.random.randn(train_dataset.meta.total_frames, 1).astype(np.float32),
+                    feature_info,
+                ),
+            },
+            output_dir=tmp_path / "modified",
+        )
+
+        # Check that chunk/file indices are preserved
+        if modified_dataset.meta.episodes is None:
+            from lerobot.datasets.utils import load_episodes
+
+            modified_dataset.meta.episodes = load_episodes(modified_dataset.meta.root)
+        new_chunk_indices = [ep["data/chunk_index"] for ep in modified_dataset.meta.episodes]
+        new_file_indices = [ep["data/file_index"] for ep in modified_dataset.meta.episodes]
+
+        assert new_chunk_indices == original_chunk_indices, "Chunk indices should be preserved"
+        assert new_file_indices == original_file_indices, "File indices should be preserved"
+        assert "reward" in modified_dataset.meta.features
