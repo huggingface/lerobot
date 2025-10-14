@@ -182,10 +182,6 @@ def rollout(
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available if none of the envs finished.
         if "final_info" in info:
-            # NOTE: In Gymnasium >= 1.0, `final_info` is now a dict of arrays instead of a list of dicts.
-            # This block assumes the new format. If it's not a dict, you are probably using an old version
-            # of Gymnasium (< 1.0), which is no longer supported. Upgrade with:
-            #   pip install --upgrade gymnasium
             final_info = info["final_info"]
             if not isinstance(final_info, dict):
                 raise RuntimeError(
