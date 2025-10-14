@@ -145,8 +145,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # It will automatically detect if running in distributed mode or single-process mode
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting
     # the lr_scheduler steps based on the num_processes
+    # We set find_unused_parameters=True to handle models with conditional computation paths
     if accelerator is None:
-        accelerator = Accelerator(step_scheduler_with_optimizer=False)
+        from accelerate.utils import DistributedDataParallelKwargs
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        accelerator = Accelerator(
+            step_scheduler_with_optimizer=False,
+            kwargs_handlers=[ddp_kwargs]
+        )
 
     # Determine if this is the main process (for logging and checkpointing)
     # When using accelerate, only the main process should log to avoid duplicate outputs

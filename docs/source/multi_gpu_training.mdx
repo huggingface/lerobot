@@ -22,7 +22,6 @@ You can specify all parameters directly in the command without running `accelera
 accelerate launch \
   --multi_gpu \
   --num_processes=2 \
-  --mixed_precision=fp16 \
   $(which lerobot-train) \
   --dataset.repo_id=${HF_USER}/my_dataset \
   --policy.type=act \
@@ -74,10 +73,6 @@ When you launch training with accelerate:
 2. **Data distribution**: Your batch is automatically split across GPUs
 3. **Gradient synchronization**: Gradients are synchronized across GPUs during backpropagation
 4. **Single process logging**: Only the main process logs to wandb and saves checkpoints
-
-## Mixed Precision Training
-
-For faster training, you can enable mixed precision (fp16 or bf16). This is configured during `accelerate config` or by passing `--mixed_precision=fp16` to `accelerate launch`. LeRobot's `use_amp` setting is automatically handled when using accelerate.
 
 ## Learning Rate and Training Steps Scaling
 
