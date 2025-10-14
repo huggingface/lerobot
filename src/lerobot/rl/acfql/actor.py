@@ -60,7 +60,6 @@ from torch.multiprocessing import Event, Queue
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
-from lerobot.configs.train import TrainRLServerPipelineConfig
 
 # from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
@@ -94,6 +93,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
+from .configs import ACFQLTrainRLServerPipelineConfig as TrainRLServerPipelineConfig
 from .gym_manipulator import (
     create_transition,
     make_processors,

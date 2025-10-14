@@ -24,7 +24,6 @@ from torch import nn
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
-from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor import (
     DataProcessorPipeline,
@@ -51,6 +50,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
+from .configs import ACFQLTrainRLServerPipelineConfig as TrainRLServerPipelineConfig
 from .gym_manipulator import (
     make_processors,
     make_robot_env,

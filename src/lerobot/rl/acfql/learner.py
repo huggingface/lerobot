@@ -61,7 +61,6 @@ from torch.optim.optimizer import Optimizer
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
-from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -105,6 +104,7 @@ from lerobot.utils.utils import (
 )
 
 from ..learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
+from .configs import ACFQLTrainRLServerPipelineConfig as TrainRLServerPipelineConfig
 
 
 @parser.wrap()
