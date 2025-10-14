@@ -216,7 +216,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
-    policy.to(device)
+    
+    # Only move to device if not using accelerator (accelerator.prepare will handle device placement)
+    if not accelerator:
+        policy.to(device)
 
     # Wait for all processes to finish policy creation before continuing
     if accelerator:
