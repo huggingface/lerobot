@@ -71,7 +71,7 @@ from lerobot.datasets.utils import (
     flatten_dict,
     get_parquet_file_size_in_mb,
     get_parquet_num_frames,
-    get_video_size_in_mb,
+    get_file_size_in_mb,
     load_info,
     update_chunk_file_indices,
     write_episodes,
@@ -310,7 +310,7 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
     episodes_metadata = []
 
     for ep_path in tqdm.tqdm(ep_paths, desc=f"convert videos of {video_key}"):
-        ep_size_in_mb = get_video_size_in_mb(ep_path)
+        ep_size_in_mb = get_file_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
         # Check if adding this episode would exceed the limit
