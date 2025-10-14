@@ -28,8 +28,10 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 
+import datasets
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
@@ -43,7 +45,6 @@ from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     get_parquet_file_size_in_mb,
     load_episodes,
-    to_parquet_with_hf_images,
     update_chunk_file_indices,
     write_info,
     write_stats,
@@ -543,10 +544,7 @@ def _copy_and_reindex_data(
         dst_path = dst_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         dst_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if len(dst_meta.image_keys) > 0:
-            to_parquet_with_hf_images(df, dst_path)
-        else:
-            df.to_parquet(dst_path, index=False)
+        _write_parquet(df, dst_path, dst_meta)
 
         for ep_old_idx in episodes_to_keep:
             ep_new_idx = episode_mapping[ep_old_idx]
@@ -904,6 +902,25 @@ def _copy_and_reindex_episodes_metadata(
     write_stats(filtered_stats, dst_meta.root)
 
 
+def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -> None:
+    """Write DataFrame to parquet
+    
+    This ensures images are properly embedded and the file can be loaded correctly by HF datasets.
+    """
+    from lerobot.datasets.utils import embed_images, get_hf_features_from_features
+    
+    hf_features = get_hf_features_from_features(meta.features)
+    ep_dataset = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=hf_features, split="train")
+    
+    if len(meta.image_keys) > 0:
+        ep_dataset = embed_images(ep_dataset)
+    
+    table = ep_dataset.with_format("arrow")[:]
+    writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
+    writer.write_table(table)
+    writer.close()
+
+
 def _save_data_chunk(
     df: pd.DataFrame,
     meta: LeRobotDatasetMetadata,
@@ -919,10 +936,7 @@ def _save_data_chunk(
     path = meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if len(meta.image_keys) > 0:
-        to_parquet_with_hf_images(df, path)
-    else:
-        df.to_parquet(path, index=False)
+    _write_parquet(df, path, meta)
 
     episode_metadata = {}
     for ep_idx in df["episode_index"].unique():
@@ -999,10 +1013,7 @@ def _copy_data_with_feature_changes(
         dst_path = new_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         dst_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if len(new_meta.image_keys) > 0:
-            to_parquet_with_hf_images(df, dst_path)
-        else:
-            df.to_parquet(dst_path, index=False)
+        _write_parquet(df, dst_path, new_meta)
 
     _copy_episodes_metadata_and_stats(dataset, new_meta)
 
