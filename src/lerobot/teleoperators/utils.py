@@ -85,6 +85,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .bi_so101_leader import BiSO101Leader
 
         return BiSO101Leader(config)
+    elif config.type == "bi_gamepad":
+        from .bi_gamepad import BiGamepad
+
+        return BiGamepad(config)
     elif config.type == "reachy2_teleoperator":
         from .reachy2_teleoperator import Reachy2Teleoperator
 
