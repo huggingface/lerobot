@@ -1431,16 +1431,7 @@ def initialize_replay_buffer(
 
     dataset_path = os.path.join(cfg.output_dir, "dataset")
 
-    if not cfg.resume and cfg.online_dataset is None:
-        logging.info("Make an empty online replay buffer")
-        return ReplayBuffer(
-            capacity=cfg.policy.online_buffer_capacity,
-            device=device,
-            state_keys=cfg.policy.input_features.keys(),
-            storage_device=storage_device,
-            optimize_memory=True,
-        )
-    elif cfg.resume and os.path.exists(dataset_path):
+    if cfg.resume and os.path.exists(dataset_path):
         logging.info("Resume training load the online dataset")
 
         # NOTE: In RL is possible to not have a dataset.
@@ -1458,7 +1449,14 @@ def initialize_replay_buffer(
             # root=cfg.online_dataset.path,
         )
     else:
-        raise RuntimeError(f"Dataset path {dataset_path} does not exist")
+        logging.info("Make an empty online replay buffer")
+        return ReplayBuffer(
+            capacity=cfg.policy.online_buffer_capacity,
+            device=device,
+            state_keys=cfg.policy.input_features.keys(),
+            storage_device=storage_device,
+            optimize_memory=True,
+        )
 
     return ReplayBuffer.from_lerobot_dataset(
         lerobot_dataset=dataset,
