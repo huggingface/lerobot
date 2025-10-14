@@ -68,7 +68,6 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor.pipeline import PolicyProcessorPipeline
-from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.robots import so100_follower  # noqa: F401
@@ -104,6 +103,7 @@ from lerobot.utils.utils import (
 )
 
 from ..learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
+from .buffer import ReplayBufferNSteps as ReplayBuffer
 from .configs import ACFQLTrainRLServerPipelineConfig as TrainRLServerPipelineConfig
 
 
