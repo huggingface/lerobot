@@ -179,7 +179,19 @@ def format_big_number(num, precision=0):
 
 
 def is_launched_with_accelerate() -> bool:
-    return "ACCELERATE_MIXED_PRECISION" in os.environ
+    """Check if the script was launched using accelerate.
+    
+    Accelerate sets several environment variables when launching distributed training.
+    We check for variables that are always set regardless of the configuration.
+    """
+    # Check for environment variables that accelerate always sets
+    accelerate_env_vars = [
+        "ACCELERATE_MIXED_PRECISION",  # Set when mixed precision is configured
+        "LOCAL_RANK",                   # Always set in distributed training
+        "WORLD_SIZE",                   # Always set in distributed training
+        "ACCELERATE_USE_CPU",           # Set by accelerate
+    ]
+    return any(var in os.environ for var in accelerate_env_vars)
 
 
 def say(text: str, blocking: bool = False):
