@@ -19,6 +19,7 @@ from pprint import pformat
 from typing import Any
 
 import gymnasium as gym
+import torch
 from termcolor import colored
 from torch import nn
 
@@ -101,21 +102,24 @@ def eval_policy(
                 if k in cfg.policy.input_features
             }
 
-            # Preprocess observation
+            # TODO: Refactor pre/post processors to avoid permutations
             # Change image from CHW to HWC
             observation = preprocessor(
                 {
-                    **{"observation.state": observation["observation.state"]},
-                    **{k: v.permute(0, 2, 3, 1) for k, v in observation.items() if "observation.images" in k},
+                    k: v.permute(0, 2, 3, 1) if ("image" in k) and len(v.shape) == 4 else v
+                    for k, v in observation.items()
                 }
             )
+
             # Change image from HWC to CHW
             observation = {
-                **{"observation.state": observation["observation.state"]},
-                **{k: v.permute(0, 3, 1, 2) for k, v in observation.items() if "observation.images" in k},
+                k: v.permute(0, 3, 1, 2) if ("image" in k) and len(v.shape) == 4 else v
+                for k, v in observation.items()
             }
 
-            action = policy.select_action(observation)
+            with torch.inference_mode():
+                action = policy.select_action(observation)
+            action = postprocessor(action)
 
             transition = step_env_and_process_transition(
                 env=env,
@@ -192,24 +196,16 @@ def main(cfg: TrainRLServerPipelineConfig):
         # ds_meta=dataset_meta,
     )
 
-    # Create processors - only provide dataset_stats if not resuming from saved processors
-    processor_kwargs = {}
-    postprocessor_kwargs = {}
-    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
-        # Only provide dataset_stats when not resuming from saved processor state
-        # params = _convert_normalization_params_to_tensor(cfg.policy.dataset_stats)
-        processor_kwargs["dataset_stats"] = cfg.policy.dataset_stats
+    # policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
+    policy.eval()
+    assert isinstance(policy, nn.Module)
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
-        **processor_kwargs,
-        **postprocessor_kwargs,
+        # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
+        preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
     )
-
-    # policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
-    policy.eval()
-    assert isinstance(policy, nn.Module)
 
     assert env_cfg.fps is not None, "env_cfg.fps must be set for eval_policy"
     eval_policy(

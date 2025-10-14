@@ -262,14 +262,32 @@ def act_with_policy(
         env_cfg=cfg.env,
     )
 
+    policy = policy.eval()
+    assert isinstance(policy, nn.Module)
+
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
     if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
-        # params = _convert_normalization_params_to_tensor(cfg.policy.dataset_stats)
         processor_kwargs["dataset_stats"] = cfg.policy.dataset_stats
-        # TODO(jpizarrom): check if it is also needed to provide dataset_stats to postprocessor
+
+    if cfg.policy.pretrained_path is not None:
+        processor_kwargs["preprocessor_overrides"] = {
+            "device_processor": {"device": device.type},
+            "normalizer_processor": {
+                "stats": cfg.policy.dataset_stats,
+                "features": {**policy.config.input_features, **policy.config.output_features},
+                "norm_map": policy.config.normalization_mapping,
+            },
+        }
+        postprocessor_kwargs["postprocessor_overrides"] = {
+            "unnormalizer_processor": {
+                "stats": cfg.policy.dataset_stats,
+                "features": policy.config.output_features,
+                "norm_map": policy.config.normalization_mapping,
+            },
+        }
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
@@ -277,9 +295,6 @@ def act_with_policy(
         **processor_kwargs,
         **postprocessor_kwargs,
     )
-
-    policy = policy.eval()
-    assert isinstance(policy, nn.Module)
 
     # get the initial policy parameters from the learner
     if cfg.policy.offline_steps > 0:
@@ -343,6 +358,8 @@ def act_with_policy(
             # Extract observation from transition for policy
             action = policy.select_action(batch=observation_for_inference)
         policy_fps = policy_timer.fps_last
+
+        action = postprocessor(action)
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 

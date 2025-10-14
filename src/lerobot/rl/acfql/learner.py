@@ -316,14 +316,33 @@ def add_actor_information_and_train(
         env_cfg=cfg.env,
     )
 
-    # TODO(jpizarrom): encapsulate this, add pretrain load and add postprocessor
+    assert isinstance(policy, nn.Module)
+
+    policy.train()
+
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
     if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
-        # params = _convert_normalization_params_to_tensor(cfg.policy.dataset_stats)
         processor_kwargs["dataset_stats"] = cfg.policy.dataset_stats
+
+    if cfg.policy.pretrained_path is not None:
+        processor_kwargs["preprocessor_overrides"] = {
+            "device_processor": {"device": device.type},
+            "normalizer_processor": {
+                "stats": cfg.policy.dataset_stats,
+                "features": {**policy.config.input_features, **policy.config.output_features},
+                "norm_map": policy.config.normalization_mapping,
+            },
+        }
+        postprocessor_kwargs["postprocessor_overrides"] = {
+            "unnormalizer_processor": {
+                "stats": cfg.policy.dataset_stats,
+                "features": policy.config.output_features,
+                "norm_map": policy.config.normalization_mapping,
+            },
+        }
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
@@ -332,9 +351,6 @@ def add_actor_information_and_train(
         **postprocessor_kwargs,
     )
 
-    assert isinstance(policy, nn.Module)
-
-    policy.train()
     # This was commented because the policy will be sent to the actor when the online phase starts
     # push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
 
@@ -412,7 +428,7 @@ def add_actor_information_and_train(
                     }
                 )
 
-                actions = observations["action"]
+                actions = observations.pop("action")
 
                 observations = {
                     **{"observation.state": observations["observation.state"]},
@@ -504,7 +520,7 @@ def add_actor_information_and_train(
                 }
             )
 
-            actions = observations["action"]
+            actions = observations.pop("action")
 
             observations = {
                 **{"observation.state": observations["observation.state"]},
@@ -752,7 +768,8 @@ def add_actor_information_and_train(
                     **{"action": actions},
                 }
             )
-            actions = observations["action"]
+
+            actions = observations.pop("action")
 
             observations = {
                 **{"observation.state": observations["observation.state"]},
@@ -846,7 +863,7 @@ def add_actor_information_and_train(
                 **{"action": actions},
             }
         )
-        actions = observations["action"]
+        actions = observations.pop("action")
 
         observations = {
             **{"observation.state": observations["observation.state"]},
@@ -859,7 +876,7 @@ def add_actor_information_and_train(
                 **{"observation.state": next_observations["observation.state"]},
                 # [B, C, H, W] -> [B, H, W, C]
                 **{
-                    k: v.permute(0, 3, 1, 2)
+                    k: v.permute(0, 2, 3, 1)
                     for k, v in next_observations.items()
                     if "observation.images" in k
                 },
