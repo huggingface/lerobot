@@ -101,12 +101,10 @@ def update_policy(
 
     if accelerator:
         accelerator.backward(loss)
-        accelerator.unscale_gradients(optimizer=optimizer)
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(),
-            grad_clip_norm,
-            error_if_nonfinite=False,
-        )
+        if grad_clip_norm > 0:
+            grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+        else:
+            grad_norm = torch.tensor(0.0, device=policy.device)
         optimizer.step()
     else:
         grad_scaler.scale(loss).backward()
@@ -198,9 +196,18 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
+    # Dataset loading synchronization: main process downloads first to avoid race conditions
     if is_main_process:
         logging.info("Creating dataset")
-    dataset = make_dataset(cfg)
+        dataset = make_dataset(cfg)
+    
+    # Wait for main process to finish downloading/caching dataset
+    if accelerator:
+        accelerator.wait_for_everyone()
+    
+    # Now all other processes can safely load the dataset
+    if not is_main_process:
+        dataset = make_dataset(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -270,6 +277,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
+        if accelerator:
+            num_processes = accelerator.num_processes
+            effective_bs = cfg.batch_size * num_processes
+            logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -312,8 +323,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable | None = None):
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
 
+    # Use effective batch size for proper epoch calculation in distributed training
+    effective_batch_size = cfg.batch_size * (accelerator.num_processes if accelerator else 1)
     train_tracker = MetricsTracker(
-        cfg.batch_size,
+        effective_batch_size,
         dataset.num_frames,
         dataset.num_episodes,
         train_metrics,

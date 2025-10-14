@@ -13,26 +13,8 @@ pip install accelerate
 Or install it with the LeRobot accelerate extra:
 
 ```bash
-pip install lerobot[accelerate]
+pip install -e ".[accelerate]"
 ```
-
-## Configuration (Optional)
-
-You can optionally configure accelerate for your hardware setup by running:
-
-```bash
-accelerate config
-```
-
-This interactive setup will ask you questions about your training environment (number of GPUs, mixed precision settings, etc.) and saves the configuration for future use. For a simple multi-GPU setup on a single machine, you can use these recommended settings:
-
-- Compute environment: This machine
-- Number of machines: 1
-- Number of processes: (number of GPUs you want to use)
-- GPU ids to use: (leave empty to use all)
-- Mixed precision: fp16 or bf16 (recommended for faster training)
-
-**Note:** You can skip this step and specify parameters directly in the launch command (see Option 1 below).
 
 ## Training with Multiple GPUs
 
@@ -64,7 +46,21 @@ accelerate launch \
 
 ### Option 2: Using accelerate config
 
-If you prefer to save your configuration, run `accelerate config` once and then simply launch with:
+If you prefer to save your configuration, you can optionally configure accelerate for your hardware setup by running:
+
+```bash
+accelerate config
+```
+
+This interactive setup will ask you questions about your training environment (number of GPUs, mixed precision settings, etc.) and saves the configuration for future use. For a simple multi-GPU setup on a single machine, you can use these recommended settings:
+
+- Compute environment: This machine
+- Number of machines: 1
+- Number of processes: (number of GPUs you want to use)
+- GPU ids to use: (leave empty to use all)
+- Mixed precision: fp16 or bf16 (recommended for faster training)
+
+Then launch training with:
 
 ```bash
 accelerate launch $(which lerobot-train) \
