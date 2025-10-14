@@ -607,6 +607,7 @@ class ReplayBuffer:
             lerobot_dataset.save_episode()
 
         lerobot_dataset.stop_image_writer()
+        lerobot_dataset.finalize()
 
         return lerobot_dataset
 
