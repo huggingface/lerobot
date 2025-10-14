@@ -904,17 +904,17 @@ def _copy_and_reindex_episodes_metadata(
 
 def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -> None:
     """Write DataFrame to parquet
-    
+
     This ensures images are properly embedded and the file can be loaded correctly by HF datasets.
     """
     from lerobot.datasets.utils import embed_images, get_hf_features_from_features
-    
+
     hf_features = get_hf_features_from_features(meta.features)
     ep_dataset = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=hf_features, split="train")
-    
+
     if len(meta.image_keys) > 0:
         ep_dataset = embed_images(ep_dataset)
-    
+
     table = ep_dataset.with_format("arrow")[:]
     writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
     writer.write_table(table)
