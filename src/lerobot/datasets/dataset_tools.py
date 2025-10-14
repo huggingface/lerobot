@@ -268,39 +268,52 @@ def merge_datasets(
     return merged_dataset
 
 
-def add_feature(
+def add_features(
     dataset: LeRobotDataset,
-    feature_name: str,
-    feature_values: np.ndarray | torch.Tensor | Callable,
-    feature_info: dict,
+    features: dict[str, tuple[np.ndarray | torch.Tensor | Callable, dict]],
     output_dir: str | Path | None = None,
     repo_id: str | None = None,
 ) -> LeRobotDataset:
-    """Add a new feature to a LeRobotDataset.
+    """Add multiple features to a LeRobotDataset in a single pass.
+
+    This is more efficient than calling add_feature() multiple times, as it only
+    copies the dataset once regardless of how many features are being added.
 
     Args:
         dataset: The source LeRobotDataset.
-        feature_name: Name of the new feature.
-        feature_values: Either:
-            - Array/tensor of shape (num_frames, ...) with values for each frame
-            - Callable that takes (frame_dict, episode_index, frame_index) and returns feature value
-        feature_info: Dictionary with feature metadata (dtype, shape, names).
+        features: Dictionary mapping feature names to (feature_values, feature_info) tuples.
         output_dir: Directory to save the new dataset. If None, uses default location.
         repo_id: Repository ID for the new dataset. If None, appends "_modified" to original.
+
+    Returns:
+        New dataset with all features added.
+
+    Example:
+        features = {
+            "task_embedding": (task_emb_array, {"dtype": "float32", "shape": [384], "names": None}),
+            "cam1_embedding": (cam1_emb_array, {"dtype": "float32", "shape": [768], "names": None}),
+            "cam2_embedding": (cam2_emb_array, {"dtype": "float32", "shape": [768], "names": None}),
+        }
+        new_dataset = add_features(dataset, features, output_dir="./output", repo_id="my_dataset")
     """
-    if feature_name in dataset.meta.features:
-        raise ValueError(f"Feature '{feature_name}' already exists in dataset")
+    if not features:
+        raise ValueError("No features provided")
+
+    required_keys = {"dtype", "shape"}
+    for feature_name, (_, feature_info) in features.items():
+        if feature_name in dataset.meta.features:
+            raise ValueError(f"Feature '{feature_name}' already exists in dataset")
+
+        if not required_keys.issubset(feature_info.keys()):
+            raise ValueError(f"feature_info for '{feature_name}' must contain keys: {required_keys}")
 
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_modified"
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
-    required_keys = {"dtype", "shape"}
-    if not required_keys.issubset(feature_info.keys()):
-        raise ValueError(f"feature_info must contain keys: {required_keys}")
-
     new_features = dataset.meta.features.copy()
-    new_features[feature_name] = feature_info
+    for feature_name, (_, feature_info) in features.items():
+        new_features[feature_name] = feature_info
 
     new_meta = LeRobotDatasetMetadata.create(
         repo_id=repo_id,
@@ -314,7 +327,7 @@ def add_feature(
     _copy_data_with_feature_changes(
         dataset=dataset,
         new_meta=new_meta,
-        add_features={feature_name: (feature_values, feature_info)},
+        add_features=features,
     )
 
     if dataset.meta.video_keys:
@@ -911,6 +924,8 @@ def _copy_data_with_feature_changes(
         file_paths.add(dataset.meta.get_data_file_path(ep_idx))
 
     frame_idx = 0
+    chunk_idx = 0
+    file_idx = 0
 
     for src_path in tqdm(sorted(file_paths), desc="Processing data files"):
         df = pd.read_parquet(dataset.root / src_path).reset_index(drop=True)
@@ -919,6 +934,7 @@ def _copy_data_with_feature_changes(
             df = df.drop(columns=remove_features, errors="ignore")
 
         if add_features:
+            end_idx = frame_idx + len(df)
             for feature_name, (values, _) in add_features.items():
                 if callable(values):
                     feature_values = []
@@ -931,15 +947,14 @@ def _copy_data_with_feature_changes(
                         feature_values.append(value)
                     df[feature_name] = feature_values
                 else:
-                    end_idx = frame_idx + len(df)
                     feature_slice = values[frame_idx:end_idx]
                     if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
                         df[feature_name] = feature_slice.flatten()
                     else:
                         df[feature_name] = feature_slice
-                    frame_idx = end_idx
+            frame_idx = end_idx
 
-        _save_data_chunk(df, new_meta)
+        chunk_idx, file_idx, _ = _save_data_chunk(df, new_meta, chunk_idx, file_idx)
 
     _copy_episodes_metadata_and_stats(dataset, new_meta)
 

@@ -30,7 +30,7 @@ Usage:
 import numpy as np
 
 from lerobot.datasets.dataset_tools import (
-    add_feature,
+    add_features,
     delete_episodes,
     merge_datasets,
     remove_feature,
@@ -60,7 +60,7 @@ def main():
     print("\n3. Adding a reward feature...")
 
     reward_values = np.random.randn(dataset.meta.total_frames).astype(np.float32)
-    dataset_with_reward = add_feature(
+    dataset_with_reward = add_features(
         dataset,
         feature_name="reward",
         feature_values=reward_values,
@@ -76,7 +76,7 @@ def main():
         episode_length = 10
         return float(frame_index >= episode_length - 10)
 
-    dataset_with_success = add_feature(
+    dataset_with_success = add_features(
         dataset_with_reward,
         feature_name="success",
         feature_values=compute_success,

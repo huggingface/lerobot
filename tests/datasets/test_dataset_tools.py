@@ -22,7 +22,7 @@ import pytest
 import torch
 
 from lerobot.datasets.dataset_tools import (
-    add_feature,
+    add_features,
     delete_episodes,
     merge_datasets,
     remove_feature,
@@ -292,7 +292,7 @@ def test_merge_empty_list(tmp_path):
         merge_datasets([], output_repo_id="merged", output_dir=tmp_path)
 
 
-def test_add_feature_with_values(sample_dataset, tmp_path):
+def test_add_features_with_values(sample_dataset, tmp_path):
     """Test adding a feature with pre-computed values."""
     num_frames = sample_dataset.meta.total_frames
     reward_values = np.random.randn(num_frames, 1).astype(np.float32)
@@ -302,6 +302,9 @@ def test_add_feature_with_values(sample_dataset, tmp_path):
         "shape": (1,),
         "names": None,
     }
+    features = {
+        "reward": (reward_values, feature_info),
+    }
 
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
@@ -310,11 +313,9 @@ def test_add_feature_with_values(sample_dataset, tmp_path):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "with_reward")
 
-        new_dataset = add_feature(
-            sample_dataset,
-            feature_name="reward",
-            feature_values=reward_values,
-            feature_info=feature_info,
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
             output_dir=tmp_path / "with_reward",
         )
 
@@ -327,7 +328,7 @@ def test_add_feature_with_values(sample_dataset, tmp_path):
     assert isinstance(sample_item["reward"], torch.Tensor)
 
 
-def test_add_feature_with_callable(sample_dataset, tmp_path):
+def test_add_features_with_callable(sample_dataset, tmp_path):
     """Test adding a feature with a callable."""
 
     def compute_reward(frame_dict, episode_idx, frame_idx):
@@ -338,7 +339,9 @@ def test_add_feature_with_callable(sample_dataset, tmp_path):
         "shape": (1,),
         "names": None,
     }
-
+    features = {
+        "reward": (compute_reward, feature_info),
+    }
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
         patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
@@ -346,11 +349,9 @@ def test_add_feature_with_callable(sample_dataset, tmp_path):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "with_reward")
 
-        new_dataset = add_feature(
-            sample_dataset,
-            feature_name="reward",
-            feature_values=compute_reward,
-            feature_info=feature_info,
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
             output_dir=tmp_path / "with_reward",
         )
 
@@ -368,33 +369,35 @@ def test_add_feature_with_callable(sample_dataset, tmp_path):
 def test_add_existing_feature(sample_dataset, tmp_path):
     """Test error when adding an existing feature."""
     feature_info = {"dtype": "float32", "shape": (1,)}
+    features = {
+        "action": (np.zeros(50), feature_info),
+    }
 
     with pytest.raises(ValueError, match="Feature 'action' already exists"):
-        add_feature(
-            sample_dataset,
-            feature_name="action",
-            feature_values=np.zeros(50),
-            feature_info=feature_info,
+        add_features(
+            dataset=sample_dataset,
+            features=features,
             output_dir=tmp_path / "modified",
         )
 
 
 def test_add_feature_invalid_info(sample_dataset, tmp_path):
     """Test error with invalid feature info."""
-    with pytest.raises(ValueError, match="feature_info must contain keys"):
-        add_feature(
-            sample_dataset,
-            feature_name="reward",
-            feature_values=np.zeros(50),
-            feature_info={"dtype": "float32"},
+    with pytest.raises(ValueError, match="feature_info for 'reward' must contain keys"):
+        add_features(
+            dataset=sample_dataset,
+            features={
+                "reward": (np.zeros(50), {"dtype": "float32"}),
+            },
             output_dir=tmp_path / "modified",
         )
-
 
 def test_remove_single_feature(sample_dataset, tmp_path):
     """Test removing a single feature."""
     feature_info = {"dtype": "float32", "shape": (1,), "names": None}
-
+    features = {
+        "reward": (np.random.randn(50, 1).astype(np.float32), feature_info),
+    }
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
         patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
@@ -402,11 +405,9 @@ def test_remove_single_feature(sample_dataset, tmp_path):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
 
-        dataset_with_reward = add_feature(
-            sample_dataset,
-            feature_name="reward",
-            feature_values=np.random.randn(50, 1).astype(np.float32),
-            feature_info=feature_info,
+        dataset_with_reward = add_features(
+            dataset=sample_dataset,
+            features=features,
             output_dir=tmp_path / "with_reward",
         )
 
@@ -432,21 +433,13 @@ def test_remove_multiple_features(sample_dataset, tmp_path):
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
 
         dataset = sample_dataset
+        features = {}
         for feature_name in ["reward", "success"]:
             feature_info = {"dtype": "float32", "shape": (1,), "names": None}
-            dataset = add_feature(
-                dataset,
-                feature_name=feature_name,
-                feature_values=np.random.randn(dataset.meta.total_frames, 1).astype(np.float32),
-                feature_info=feature_info,
-                output_dir=tmp_path / f"with_{feature_name}",
-            )
+            features[feature_name] = (np.random.randn(dataset.meta.total_frames, 1).astype(np.float32), feature_info)
 
-        dataset_clean = remove_feature(
-            dataset,
-            feature_names=["reward", "success"],
-            output_dir=tmp_path / "clean",
-        )
+        dataset_with_features = add_features(dataset, features=features, output_dir=tmp_path / "with_features")
+        dataset_clean = remove_feature(dataset_with_features, feature_names=["reward", "success"], output_dir=tmp_path / "clean")
 
     assert "reward" not in dataset_clean.meta.features
     assert "success" not in dataset_clean.meta.features
@@ -509,11 +502,9 @@ def test_complex_workflow_integration(sample_dataset, tmp_path):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
 
-        dataset = add_feature(
+        dataset = add_features(
             sample_dataset,
-            feature_name="reward",
-            feature_values=np.random.randn(50, 1).astype(np.float32),
-            feature_info={"dtype": "float32", "shape": (1,), "names": None},
+            features={"reward": (np.random.randn(50, 1).astype(np.float32), {"dtype": "float32", "shape": (1,), "names": None})},
             output_dir=tmp_path / "step1",
         )
 
@@ -753,7 +744,7 @@ def test_merge_preserves_stats(sample_dataset, tmp_path, empty_lerobot_dataset_f
         assert "std" in merged.meta.stats[feature]
 
 
-def test_add_feature_preserves_existing_stats(sample_dataset, tmp_path):
+def test_add_features_preserves_existing_stats(sample_dataset, tmp_path):
     """Test that adding a feature preserves existing stats."""
     num_frames = sample_dataset.meta.total_frames
     reward_values = np.random.randn(num_frames, 1).astype(np.float32)
@@ -763,6 +754,9 @@ def test_add_feature_preserves_existing_stats(sample_dataset, tmp_path):
         "shape": (1,),
         "names": None,
     }
+    features = {
+        "reward": (reward_values, feature_info),
+    }
 
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
@@ -771,11 +765,9 @@ def test_add_feature_preserves_existing_stats(sample_dataset, tmp_path):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(tmp_path / "with_reward")
 
-        new_dataset = add_feature(
-            sample_dataset,
-            feature_name="reward",
-            feature_values=reward_values,
-            feature_info=feature_info,
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features=features,
             output_dir=tmp_path / "with_reward",
         )
 
@@ -797,11 +789,11 @@ def test_remove_feature_updates_stats(sample_dataset, tmp_path):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
 
-        dataset_with_reward = add_feature(
+        dataset_with_reward = add_features(
             sample_dataset,
-            feature_name="reward",
-            feature_values=np.random.randn(50, 1).astype(np.float32),
-            feature_info=feature_info,
+            features={
+                "reward": (np.random.randn(50, 1).astype(np.float32), feature_info),
+            },
             output_dir=tmp_path / "with_reward",
         )
 
