@@ -100,7 +100,14 @@ class RTCProcessor:
             https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
 
+        # In the original implementation, the time goes from 0 to 1 and 
+        # In our implementation, the time goes from 1 to 0
+        # So we need to invert the time
+        tau = 1 - time
+
         x_t = x_t.clone().detach().requires_grad_(True)
+
+        print("X_t", x_t)
 
         if prev_chunk_left_over is None:
             # First step, no guidance
@@ -150,19 +157,25 @@ class RTCProcessor:
 
             # In the original implementation, the time goes from 0 to 1 and x_1t calculates
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
-            # Here is the logic is inverted
-            x1_t = x_t + time * v_t
+            # Our integration runs from time=1 -> 0, so we still want the step magnitude
+            # to scale with (1 - time) to avoid overly large corrections at the start.
+            x1_t = x_t + tau * v_t
 
             error = (prev_chunk_left_over - x1_t) * weights
+            print("Error", error)
             correction = torch.autograd.grad(x1_t, x_t, error, retain_graph=False)[0]
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
 
-        squared_time = time**2
-        inv_r2 = (squared_time + (1 - time) ** 2) / (squared_time)
-        c = torch.nan_to_num(time / (1 - time), posinf=max_guidance_weight)
+        squared_one_minus_tau = (1 - tau)**2
+        inv_r2 = (squared_one_minus_tau + tau ** 2) / (squared_one_minus_tau)
+        c = torch.nan_to_num((1 - tau) / tau, posinf=max_guidance_weight)
         guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
         guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
+
+        print("Original v_t", v_t)
+        print("Guidance weight", guidance_weight)
+        print("Correction", correction)
 
         result = v_t + guidance_weight * correction
 

@@ -18,6 +18,17 @@ Usage:
 
     # With config file
     python rtc_demo.py --config_path=path/to/config.json
+
+    # With policy compilation for faster inference (recommended for production)
+    python rtc_demo.py --policy.path=lerobot/smolvla_base --robot.type=so100 --compile_policy=true
+
+    # With aggressive compilation for maximum speed
+    python rtc_demo.py --policy.path=lerobot/smolvla_base --robot.type=so100 --compile_policy=true --compile_mode=max-autotune
+
+Performance Notes:
+    - torch.compile() is NOT supported on MPS (Apple Silicon) due to attention operation limitations
+    - For MPS optimization, reduce num_steps in the policy config (biggest speedup)
+    - CUDA devices will see 2-5x speedup with compilation enabled
 """
 
 import logging
@@ -39,7 +50,7 @@ from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
-from lerobot.processor.factory import make_default_robot_observation_processor
+from lerobot.processor.factory import make_default_robot_observation_processor, make_default_robot_action_processor
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -48,6 +59,8 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
+from lerobot.utils.robot_utils import busy_wait
+
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.hub import HubMixin
@@ -97,24 +110,24 @@ class ActionQueue:
             return action.clone()
 
     def qsize(self) -> int:
-        with self.lock:
-            if self.queue is None:
-                return 0
-            length = len(self.queue)
+        # with self.lock:
+        if self.queue is None:
+            return 0
+        length = len(self.queue)
 
-            return length - self.last_index + 1
+        return length - self.last_index
 
     def empty(self) -> bool:
-        with self.lock:
-            if self.queue is None:
-                return True
+        # with self.lock:
+        if self.queue is None:
+            return True
 
-            length = len(self.queue)
-            return length - self.last_index + 1 <= 0
+        length = len(self.queue)
+        return length - self.last_index + 1 <= 0
 
     def get_action_index(self) -> int:
-        with self.lock:
-            return self.last_index
+        # with self.lock:
+        return self.last_index
 
     def get_left_over(self) -> Tensor:
         """Get left over ORIGINAL actions for RTC prev_chunk_left_over."""
@@ -140,16 +153,13 @@ class ActionQueue:
             self._append_actions_queue(original_actions, processed_actions)
 
     def _replace_actions_queue(self, original_actions: Tensor, processed_actions: Tensor, real_delay: int):
-        self.original_queue = original_actions.clone()
-        self.queue = processed_actions.clone()
+        self.original_queue = original_actions[real_delay:].clone()
+        self.queue = processed_actions[real_delay:].clone()
 
-        logger.info(f"original_actions shape: {original_actions.shape}")
-        logger.info(f"processed_actions shape: {processed_actions.shape}")
+        logger.info(f"original_actions shape: {self.original_queue.shape}")
+        logger.info(f"processed_actions shape: {self.queue.shape}")
         logger.info(f"real_delay: {real_delay}")
 
-        # First real_delay actions are already executed
-        self.original_queue = self.original_queue[real_delay:]
-        self.queue = self.queue[real_delay:]
         self.last_index = 0
 
     def _append_actions_queue(self, original_actions: Tensor, processed_actions: Tensor):
@@ -170,7 +180,7 @@ class ActionQueue:
         if action_index_before_inference is None:
             return
 
-        indexes_diff = action_index_before_inference - self.last_index
+        indexes_diff = self.last_index - action_index_before_inference
         if indexes_diff != real_delay:
             # Let's check that action index difference (real delay calculated based on action queue)
             # is the same as dealy calculated based on inference latency
@@ -205,9 +215,17 @@ class RTCDemoConfig(HubMixin):
     # Compute device
     device: str | None = None  # Device to run on (cuda, cpu, auto)
 
+    # Compilation options
+    compile_policy: bool = False  # Compile policy with torch.compile() for faster inference (not supported on MPS)
+    compile_mode: str = "default"  # Compilation mode: default, reduce-overhead, max-autotune
+
+    # Alternative optimization options (work on all devices including MPS)
+    use_channels_last: bool = False  # Use channels_last memory format for images (faster on some devices)
+    enable_cudnn_benchmark: bool = True  # Enable cuDNN benchmarking (CUDA only)
+
     # Get new actions horizon. The amount of executed steps after which will be requested new actions.
     # It should be higher than inference delay + execution horizon.
-    action_queue_size_to_get_new_actions: int = 40
+    action_queue_size_to_get_new_actions: int = 30
 
     # Task to execute
     task: str = field(default="", metadata={"help": "Task to execute"})
@@ -267,9 +285,14 @@ def get_actions(
                 "device_processor": {"device": cfg.policy.device},
             },
         )
+        
+        get_actions_threashold = cfg.action_queue_size_to_get_new_actions
+
+        if not cfg.rtc.enabled:
+            get_actions_threashold = 0
 
         while not shutdown_event.is_set():
-            if action_queue.qsize() < cfg.action_queue_size_to_get_new_actions:
+            if action_queue.qsize() <= get_actions_threashold:
                 current_time = time.perf_counter()
                 action_index_before_inference = action_queue.get_action_index()
                 prev_actions = action_queue.get_left_over()
@@ -312,15 +335,47 @@ def get_actions(
 
                 preproceseded_obs = preprocessor(obs_with_policy_features)
 
+                noise_size = (1, policy.config.chunk_size, policy.config.max_action_dim)
+                noise = policy.model.sample_noise(noise_size, policy_device)
+                noise_clone = noise.clone()
+                print("--------------------------------")
+                print("not_rtc_actions")
+                policy.config.rtc_config.enabled = False
+
+                not_rtc_actions = policy.predict_action_chunk(
+                    preproceseded_obs,
+                    noise=noise,
+                    inference_delay=inference_delay,
+                    prev_chunk_left_over=prev_actions,
+                )
+                print(not_rtc_actions)
+
+
+                policy.config.rtc_config.enabled = True
+
+                print("actions")
+
                 actions = policy.predict_action_chunk(
                     preproceseded_obs,
-                    noise=None,
+                    noise=noise_clone,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_actions,
                 )
 
+
+
+
+
+
+
+                print(actions)
+                print("prev actions")
+                print(prev_actions)
+                print("--------------------------------")
                 # Store original actions (before postprocessing) for RTC
                 original_actions = actions.squeeze(0).clone()
+
+                print(original_actions)
 
                 postprocessed_actions = postprocessor(actions)
 
@@ -345,7 +400,7 @@ def get_actions(
                 )
             else:
                 # Small sleep to prevent busy waiting
-                time.sleep(0.01)
+                time.sleep(0.1)
 
         logger.info("[GET_ACTIONS] get actions thread shutting down")
     except Exception as e:
@@ -356,6 +411,7 @@ def get_actions(
 
 def actor_control(
     robot: RobotWrapper,
+    robot_action_processor,
     action_queue: ActionQueue,
     shutdown_event: Event,
     cfg: RTCDemoConfig,
@@ -371,8 +427,8 @@ def actor_control(
     try:
         logger.info("[ACTOR] Starting actor thread")
 
-        action_interval = 1.0 / cfg.fps
         action_count = 0
+        action_interval = 1.0 / cfg.fps
 
         while not shutdown_event.is_set():
             start_time = time.perf_counter()
@@ -383,14 +439,13 @@ def actor_control(
             if action is not None:
                 action = action.cpu()
                 action = {key: action[i].item() for i, key in enumerate(robot.action_features())}
+                action = robot_action_processor((action, None))
                 robot.send_action(action)
 
                 action_count += 1
 
-            # Wait for the next action time
-            elapsed = time.perf_counter() - start_time
-            if elapsed < action_interval:
-                time.sleep(action_interval - elapsed)
+            dt_s = time.perf_counter() - start_time
+            time.sleep((action_interval - dt_s) - 0.001)
 
         logger.info(f"[ACTOR] Actor thread shutting down. Total actions executed: {action_count}")
     except Exception as e:
@@ -438,6 +493,48 @@ def demo_cli(cfg: RTCDemoConfig):
     policy = policy.to(cfg.device)
     policy.eval()
 
+    # Apply memory format optimizations
+    if cfg.use_channels_last:
+        logger.info("Converting model to channels_last memory format")
+        try:
+            # Convert vision encoder to channels_last for better performance
+            if hasattr(policy, 'vision_encoder'):
+                policy.vision_encoder = policy.vision_encoder.to(memory_format=torch.channels_last)
+            logger.info("Successfully converted to channels_last format")
+        except Exception as e:
+            logger.warning(f"Failed to convert to channels_last: {e}")
+
+    # Enable cuDNN benchmarking for CUDA
+    if cfg.enable_cudnn_benchmark and cfg.device == "cuda":
+        torch.backends.cudnn.benchmark = True
+        logger.info("Enabled cuDNN benchmarking")
+
+    # Compile policy if requested
+    if cfg.compile_policy:
+        # Check if device is MPS - torch.compile has issues with MPS backend
+        if cfg.device == "mps":
+            logger.warning("torch.compile() is not stable with MPS backend (Apple Silicon)")
+            logger.warning("Skipping compilation. For better performance on MPS:")
+            logger.warning("  1. Use torch.float32 instead of bfloat16")
+            logger.warning("  2. Ensure model uses contiguous memory layouts")
+            logger.warning("  3. Consider using CUDA if available")
+        else:
+            logger.info(f"Compiling policy with mode: {cfg.compile_mode}")
+            logger.info("First inference will be slower due to compilation, subsequent calls will be faster")
+
+            try:
+                # Compile the predict_action_chunk method
+                policy.predict_action_chunk = torch.compile(
+                    policy.predict_action_chunk,
+                    mode=cfg.compile_mode,
+                    fullgraph=False,  # Allow graph breaks for flexibility
+                    backend="inductor",  # Use inductor backend
+                )
+                logger.info("Policy compiled successfully")
+            except Exception as e:
+                logger.warning(f"Failed to compile policy: {e}")
+                logger.warning("Continuing without compilation")
+
     # Create robot
     logger.info(f"Initializing robot: {cfg.robot.type}")
     robot = make_robot_from_config(cfg.robot)
@@ -447,6 +544,7 @@ def demo_cli(cfg: RTCDemoConfig):
 
     # Create robot observation processor
     robot_observation_processor = make_default_robot_observation_processor()
+    robot_action_processor = make_default_robot_action_processor()
 
     # Create action queue for communication between threads
     action_queue = ActionQueue(cfg.rtc)
@@ -464,17 +562,13 @@ def demo_cli(cfg: RTCDemoConfig):
     # Start action executor thread
     actor_thread = Thread(
         target=actor_control,
-        args=(robot_wrapper, action_queue, shutdown_event, cfg),
+        args=(robot_wrapper, robot_action_processor, action_queue, shutdown_event, cfg),
         daemon=True,
         name="Actor",
     )
     actor_thread.start()
     logger.info("Started actor thread")
 
-    stop_thread = Thread(
-        target=stop_by_duration, args=(shutdown_event, cfg), daemon=True, name="StopByDuration"
-    )
-    stop_thread.start()
     logger.info("Started stop by duration thread")
 
     # Main thread monitors for duration or shutdown
@@ -482,11 +576,14 @@ def demo_cli(cfg: RTCDemoConfig):
     start_time = time.time()
 
     while not shutdown_event.is_set() and (time.time() - start_time) < cfg.duration:
-        time.sleep(0.5)
+        time.sleep(10)
 
         # Log queue status periodically
         if int(time.time() - start_time) % 5 == 0:
             logger.info(f"[MAIN] Action queue size: {action_queue.qsize()}")
+
+        if time.time() - start_time > cfg.duration:
+            break
 
     logger.info("Demo duration reached or shutdown requested")
 
@@ -501,10 +598,6 @@ def demo_cli(cfg: RTCDemoConfig):
     if actor_thread and actor_thread.is_alive():
         logger.info("Waiting for action executor thread to finish...")
         actor_thread.join()
-
-    if stop_thread and stop_thread.is_alive():
-        logger.info("Waiting for stop by duration thread to finish...")
-        stop_thread.join()
 
     # Cleanup robot
     if robot:
