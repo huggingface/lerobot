@@ -52,15 +52,13 @@ def auto_select_torch_device() -> torch.device:
 
 
 # TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
-def get_safe_torch_device(
-    try_device: str, log: bool = False, accelerator: Callable | None = None
-) -> torch.device:
+def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
     try_device = str(try_device)
     match try_device:
         case "cuda":
             assert torch.cuda.is_available()
-            device = accelerator.device if accelerator else torch.device("cuda")
+            device = torch.device("cuda")
         case "mps":
             assert torch.backends.mps.is_available()
             device = torch.device("mps")

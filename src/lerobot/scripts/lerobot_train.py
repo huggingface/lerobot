@@ -98,7 +98,9 @@ def update_policy(
     if grad_clip_norm > 0:
         grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
     else:
-        grad_norm = torch.tensor(0.0, device=accelerator.device)
+       grad_norm = torch.nn.utils.clip_grad_norm_(
+            policy.parameters(), float('inf'), error_if_nonfinite=False
+        )
 
     # Optimizer step
     with lock if lock is not None else nullcontext():
