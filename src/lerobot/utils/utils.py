@@ -143,9 +143,8 @@ def init_logging(
     logger.handlers.clear()
 
     # Determine if this is a non-main process in distributed training
-    # Check LOCAL_RANK env var (set by accelerate/torchrun)
-    local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    is_main_process = local_rank <= 0  # -1 means not distributed, 0 means main process
+    if accelerator is not None:
+        is_main_process = accelerator.is_main_process
 
     # Console logging (main process only)
     if is_main_process:

@@ -151,6 +151,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs])
+    
+    init_logging(accelerator=accelerator)
 
     # Determine if this is the main process (for logging and checkpointing)
     # When using accelerate, only the main process should log to avoid duplicate outputs
@@ -435,7 +437,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
 
 def main():
-    init_logging()
     train()
 
 
