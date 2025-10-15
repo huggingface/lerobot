@@ -97,6 +97,14 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .ar_controller import ARController
 
         return ARController(config)
+    elif config.type == "lekiwi_base_gamepad":
+        from .lekiwi_base_gamepad import LeKiwiBaseTeleop
+
+        return LeKiwiBaseTeleop(config)
+    elif config.type == "lekiwi_base_joycon":
+        from .lekiwi_base_joycon import LeKiwiBaseJoycon
+
+        return LeKiwiBaseJoycon(config)
     else:
         try:
             return cast(Teleoperator, make_device_from_device_class(config))

@@ -1,0 +1,56 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from ..bi_so101_follower.config_bi_so101_follower import BiSO101FollowerConfig
+from ..config import RobotConfig
+from ..lekiwi_base.config import LeKiwiBaseConfig
+
+
+@RobotConfig.register_subclass("xlerobot")
+@dataclass
+class XLerobotConfig(RobotConfig):
+    arms: dict[str, Any] = field(default_factory=dict)
+    base: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        if isinstance(self.arms, BiSO101FollowerConfig):
+            arms_cfg = self.arms
+        else:
+            arms_cfg = BiSO101FollowerConfig(**self.arms)
+        if isinstance(self.base, LeKiwiBaseConfig):
+            base_cfg = self.base
+        else:
+            base_cfg = LeKiwiBaseConfig(**self.base)
+
+        self.arms = arms_cfg
+        self.base = base_cfg
+        self.arms_config: BiSO101FollowerConfig = arms_cfg
+        self.base_config: LeKiwiBaseConfig = base_cfg
+
+        if self.id:
+            if arms_cfg.id is None:
+                arms_cfg.id = f"{self.id}_arms"
+            if base_cfg.id is None:
+                base_cfg.id = f"{self.id}_base"
+
+        if self.calibration_dir:
+            if arms_cfg.calibration_dir is None:
+                arms_cfg.calibration_dir = self.calibration_dir
+            if base_cfg.calibration_dir is None:
+                base_cfg.calibration_dir = self.calibration_dir
