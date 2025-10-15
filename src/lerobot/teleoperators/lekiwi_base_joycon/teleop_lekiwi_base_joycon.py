@@ -173,15 +173,18 @@ class LeKiwiBaseJoycon(Teleoperator):
         if joycon is None:
             return
         attr = self._STICK_ATTR[self.config.which.lower()]
-        axes = getattr(joycon, attr, None)
-        if axes is None:
-            self._stick_center = np.zeros(2, dtype=np.float32)
-            return
-        values = np.asarray(axes, dtype=np.float32)
-        if values.shape[0] < 2:
-            self._stick_center = np.zeros(2, dtype=np.float32)
+        samples: list[np.ndarray] = []
+        for _ in range(20):
+            axes = getattr(joycon, attr, None)
+            if axes is not None:
+                values = np.asarray(axes, dtype=np.float32)
+                if values.shape[0] >= 2:
+                    samples.append(values[:2])
+            time.sleep(0.01)
+        if samples:
+            self._stick_center = np.mean(samples, axis=0)
         else:
-            self._stick_center = values[:2]
+            self._stick_center = np.zeros(2, dtype=np.float32)
 
     def _read_stick(self) -> tuple[float, float]:
         joycon = self._joycon

@@ -464,13 +464,18 @@ class BiJoycon(Teleoperator):
         if joycon is None:
             return
 
-        axes = getattr(joycon, attr, None)
-        if axes is None:
-            return
-        center = np.asarray(axes, dtype=np.float32)
-        if center.shape[0] < 2:
-            center = np.zeros(2, dtype=np.float32)
-        self._stick_centers[arm_idx] = center
+        samples: list[np.ndarray] = []
+        for _ in range(20):
+            axes = getattr(joycon, attr, None)
+            if axes is not None:
+                values = np.asarray(axes, dtype=np.float32)
+                if values.shape[0] >= 2:
+                    samples.append(values[:2])
+            time.sleep(0.01)
+        if samples:
+            self._stick_centers[arm_idx] = np.mean(samples, axis=0)
+        else:
+            self._stick_centers[arm_idx] = np.zeros(2, dtype=np.float32)
 
     def _apply_deadzone(self, value: float) -> float:
         return 0.0 if abs(value) < self.config.deadzone else value
