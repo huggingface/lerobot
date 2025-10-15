@@ -119,6 +119,7 @@ jobs:
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
     container:
       image: ${{ needs.build-docker-cpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      options: --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
         password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
