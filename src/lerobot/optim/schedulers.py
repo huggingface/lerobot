@@ -111,6 +111,41 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
         return LambdaLR(optimizer, lr_lambda, -1)
 
 
+@LRSchedulerConfig.register_subclass("cosine_with_min_lr")
+@dataclass
+class CosineWithMinLRSchedulerConfig(LRSchedulerConfig):
+    """Cosine learning rate scheduler with minimum learning rate floor.
+    
+    Used by ReWiND for reward model training. Includes linear warmup phase
+    followed by cosine annealing with a minimum learning rate.
+    """
+
+    num_warmup_steps: int
+    min_lr: float = 0.0
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        def lr_lambda(current_step):
+            # Get base learning rate from optimizer
+            base_lr = optimizer.param_groups[0]['lr']
+            
+            if current_step <= self.num_warmup_steps:
+                # Linear warmup
+                if self.num_warmup_steps == 0:
+                    return 1.0
+                return float(current_step) / float(max(1, self.num_warmup_steps))
+            else:
+                # Cosine annealing with minimum learning rate
+                progress = (current_step - self.num_warmup_steps) / float(
+                    max(1, num_training_steps - self.num_warmup_steps)
+                )
+                cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
+                # Scale between min_lr and base_lr
+                min_factor = self.min_lr / base_lr if base_lr > 0 else 0.0
+                return min_factor + (1.0 - min_factor) * cosine_factor
+
+        return LambdaLR(optimizer, lr_lambda, -1)
+
+
 def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:
     state_dict = scheduler.state_dict()
     write_json(state_dict, save_dir / SCHEDULER_STATE)
