@@ -48,11 +48,8 @@ import logging
 import os
 import shutil
 import time
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from pprint import pformat
 
-import grpc
 import torch
 from termcolor import colored
 from torch import nn
@@ -68,15 +65,20 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor.pipeline import PolicyProcessorPipeline
+from lerobot.rl.learner import (
+    check_nan_in_transition,
+    load_training_state,
+    log_training_info,
+    process_interaction_messages,
+    start_learner,
+    use_threads,
+)
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.robots import so100_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
-from lerobot.transport import services_pb2_grpc
 from lerobot.transport.utils import (
-    MAX_MESSAGE_SIZE,
-    bytes_to_python_object,
     bytes_to_transitions,
     state_to_bytes,
 )
@@ -91,18 +93,15 @@ from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
-    load_training_state as utils_load_training_state,
     save_checkpoint,
     update_last_checkpoint,
 )
 from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
 from lerobot.utils.utils import (
-    format_big_number,
     get_safe_torch_device,
     init_logging,
 )
 
-from ..learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
 from .buffer import ReplayBufferNSteps as ReplayBuffer
 from .configs import ACFQLTrainRLServerPipelineConfig as TrainRLServerPipelineConfig
 
@@ -1053,76 +1052,6 @@ def add_actor_information_and_train(
             )
 
 
-def start_learner(
-    parameters_queue: Queue,
-    transition_queue: Queue,
-    interaction_message_queue: Queue,
-    shutdown_event: any,  # Event,
-    cfg: TrainRLServerPipelineConfig,
-):
-    """
-    Start the learner server for training.
-    It will receive transitions and interaction messages from the actor server,
-    and send policy parameters to the actor server.
-
-    Args:
-        parameters_queue: Queue for sending policy parameters to the actor
-        transition_queue: Queue for receiving transitions from the actor
-        interaction_message_queue: Queue for receiving interaction messages from the actor
-        shutdown_event: Event to signal shutdown
-        cfg: Training configuration
-    """
-    if not use_threads(cfg):
-        # Create a process-specific log file
-        log_dir = os.path.join(cfg.output_dir, "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"learner_process_{os.getpid()}.log")
-
-        # Initialize logging with explicit log file
-        init_logging(log_file=log_file, display_pid=True)
-        logging.info("Learner server process logging initialized")
-
-        # Setup process handlers to handle shutdown signal
-        # But use shutdown event from the main process
-        # Return back for MP
-        # TODO: Check if its useful
-        _ = ProcessSignalHandler(False, display_pid=True)
-
-    service = LearnerService(
-        shutdown_event=shutdown_event,
-        parameters_queue=parameters_queue,
-        seconds_between_pushes=cfg.policy.actor_learner_config.policy_parameters_push_frequency,
-        transition_queue=transition_queue,
-        interaction_message_queue=interaction_message_queue,
-        queue_get_timeout=cfg.policy.actor_learner_config.queue_get_timeout,
-    )
-
-    server = grpc.server(
-        ThreadPoolExecutor(max_workers=MAX_WORKERS),
-        options=[
-            ("grpc.max_receive_message_length", MAX_MESSAGE_SIZE),
-            ("grpc.max_send_message_length", MAX_MESSAGE_SIZE),
-        ],
-    )
-
-    services_pb2_grpc.add_LearnerServiceServicer_to_server(
-        service,
-        server,
-    )
-
-    host = cfg.policy.actor_learner_config.learner_host
-    port = cfg.policy.actor_learner_config.learner_port
-
-    server.add_insecure_port(f"{host}:{port}")
-    server.start()
-    logging.info("[LEARNER] gRPC server started")
-
-    shutdown_event.wait()
-    logging.info("[LEARNER] Stopping gRPC server...")
-    server.stop(SHUTDOWN_TIMEOUT)
-    logging.info("[LEARNER] gRPC server stopped")
-
-
 def save_training_checkpoint(
     cfg: TrainRLServerPipelineConfig,
     optimization_step: int,
@@ -1374,65 +1303,6 @@ def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipeli
     return checkpoint_cfg
 
 
-def load_training_state(
-    cfg: TrainRLServerPipelineConfig,
-    optimizers: Optimizer | dict[str, Optimizer],
-):
-    """
-    Loads the training state (optimizers, step count, etc.) from a checkpoint.
-
-    Args:
-        cfg (TrainRLServerPipelineConfig): Training configuration
-        optimizers (Optimizer | dict): Optimizers to load state into
-
-    Returns:
-        tuple: (optimization_step, interaction_step) or (None, None) if not resuming
-    """
-    if not cfg.resume:
-        return None, None
-
-    # Construct path to the last checkpoint directory
-    checkpoint_dir = os.path.join(cfg.output_dir, CHECKPOINTS_DIR, LAST_CHECKPOINT_LINK)
-
-    logging.info(f"Loading training state from {checkpoint_dir}")
-
-    try:
-        # Use the utility function from train_utils which loads the optimizer state
-        step, optimizers, _ = utils_load_training_state(Path(checkpoint_dir), optimizers, None)
-
-        # Load interaction step separately from training_state.pt
-        training_state_path = os.path.join(checkpoint_dir, TRAINING_STATE_DIR, "training_state.pt")
-        interaction_step = 0
-        if os.path.exists(training_state_path):
-            training_state = torch.load(training_state_path, weights_only=False)  # nosec B614: Safe usage of torch.load
-            interaction_step = training_state.get("interaction_step", 0)
-
-        logging.info(f"Resuming from step {step}, interaction step {interaction_step}")
-        return step, interaction_step
-
-    except Exception as e:
-        logging.error(f"Failed to load training state: {e}")
-        return None, None
-
-
-def log_training_info(cfg: TrainRLServerPipelineConfig, policy: nn.Module) -> None:
-    """
-    Log information about the training process.
-
-    Args:
-        cfg (TrainRLServerPipelineConfig): Training configuration
-        policy (nn.Module): Policy model
-    """
-    num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
-    num_total_params = sum(p.numel() for p in policy.parameters())
-
-    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
-    logging.info(f"{cfg.env.task=}")
-    logging.info(f"{cfg.policy.online_steps=}")
-    logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
-    logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
-
-
 def initialize_replay_buffer(
     cfg: TrainRLServerPipelineConfig, device: str, storage_device: str
 ) -> ReplayBuffer:
@@ -1559,56 +1429,6 @@ def get_observation_features(
     return observation_features, next_observation_features
 
 
-def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
-    return cfg.policy.concurrency.learner == "threads"
-
-
-def check_nan_in_transition(
-    observations: torch.Tensor,
-    actions: torch.Tensor,
-    next_state: torch.Tensor,
-    raise_error: bool = False,
-) -> bool:
-    """
-    Check for NaN values in transition data.
-
-    Args:
-        observations: Dictionary of observation tensors
-        actions: Action tensor
-        next_state: Dictionary of next state tensors
-        raise_error: If True, raises ValueError when NaN is detected
-
-    Returns:
-        bool: True if NaN values were detected, False otherwise
-    """
-    nan_detected = False
-
-    # Check observations
-    for key, tensor in observations.items():
-        if torch.isnan(tensor).any():
-            logging.error(f"observations[{key}] contains NaN values")
-            nan_detected = True
-            if raise_error:
-                raise ValueError(f"NaN detected in observations[{key}]")
-
-    # Check next state
-    for key, tensor in next_state.items():
-        if torch.isnan(tensor).any():
-            logging.error(f"next_state[{key}] contains NaN values")
-            nan_detected = True
-            if raise_error:
-                raise ValueError(f"NaN detected in next_state[{key}]")
-
-    # Check actions
-    if torch.isnan(actions).any():
-        logging.error("actions contains NaN values")
-        nan_detected = True
-        if raise_error:
-            raise ValueError("NaN detected in actions")
-
-    return nan_detected
-
-
 def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
     logging.debug("[LEARNER] Pushing actor policy to the queue")
 
@@ -1624,21 +1444,6 @@ def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
 
     state_bytes = state_to_bytes(state_dicts)
     parameters_queue.put(state_bytes)
-
-
-def process_interaction_message(
-    message, interaction_step_shift: int, wandb_logger: WandBLogger | None = None
-):
-    """Process a single interaction message with consistent handling."""
-    message = bytes_to_python_object(message)
-    # Shift interaction step for consistency with checkpointed state
-    message["Interaction step"] += interaction_step_shift
-
-    # Log if logger available
-    if wandb_logger:
-        wandb_logger.log_dict(d=message, mode="train", custom_step_key="Interaction step")
-
-    return message
 
 
 def process_transitions(
@@ -1684,35 +1489,6 @@ def process_transitions(
                 TeleopEvents.IS_INTERVENTION
             ):
                 offline_replay_buffer.add(**transition)
-
-
-def process_interaction_messages(
-    interaction_message_queue: Queue,
-    interaction_step_shift: int,
-    wandb_logger: WandBLogger | None,
-    shutdown_event: any,
-) -> dict | None:
-    """Process all available interaction messages from the queue.
-
-    Args:
-        interaction_message_queue: Queue for receiving interaction messages
-        interaction_step_shift: Amount to shift interaction step by
-        wandb_logger: Logger for tracking progress
-        shutdown_event: Event to signal shutdown
-
-    Returns:
-        dict | None: The last interaction message processed, or None if none were processed
-    """
-    last_message = None
-    while not interaction_message_queue.empty() and not shutdown_event.is_set():
-        message = interaction_message_queue.get()
-        last_message = process_interaction_message(
-            message=message,
-            interaction_step_shift=interaction_step_shift,
-            wandb_logger=wandb_logger,
-        )
-
-    return last_message
 
 
 if __name__ == "__main__":
