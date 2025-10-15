@@ -14,16 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
+import numpy as np
+import threading
 import time
 from datetime import datetime
-import json
-import numpy as np
-import time
-import threading
+from pathlib import Path
+
 import zmq
 
-from pathlib import Path
 import lerobot
 from lerobot.model.kinematics import RobotKinematics
 
@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 lerobot_path = Path(lerobot.__file__).parent
 urdf_path = str(lerobot_path / "model" / "SO101" / "so101_new_calib.urdf")
 ROBOT_JOINT_NAMES = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
+ARM_LABELS = ("left", "right")
+
 
 class ARController(Teleoperator):
 
@@ -46,40 +48,63 @@ class ARController(Teleoperator):
     def __init__(self, config: ARControllerConfig):
         super().__init__(config)
         self.config = config
+        self._active_arms = ARM_LABELS if self.config.bi_controller else ("right",)
 
-        print("bi_controller:", self.config.bi_controller)
+        self.context = zmq.Context()
 
-        if not self.config.bi_controller:
-            self.context = zmq.Context()
+        self.rep_socket = self.context.socket(zmq.REP)
+        self.rep_socket.linger = 0
+        self.rep_socket.bind("tcp://*:1111")
 
-            self.rep_socket = self.context.socket(zmq.REP)
-            self.rep_socket.linger = 0
-            self.rep_socket.bind("tcp://*:1111")
+        self.sub_socket = self.context.socket(zmq.SUB)
+        self.sub_socket.linger = 0
+        self.sub_socket.bind("tcp://*:1112")
+        self.sub_socket.subscribe("hand_data")
 
-            self.sub_socket = self.context.socket(zmq.SUB)
-            self.sub_socket.linger = 0
-            self.sub_socket.bind(f"tcp://*:1112")
-            self.sub_socket.subscribe("hand_data")
+        self.pub_socket = self.context.socket(zmq.PUB)
+        self.pub_socket.linger = 0
+        self.pub_socket.bind("tcp://*:1113")
 
-            self.pub_socket = self.context.socket(zmq.PUB)
-            self.pub_socket.linger = 0
-            self.pub_socket.bind("tcp://*:1113")
+        self.running = False
+        self.robot_data: dict = {}
 
-            self.running = False
-            self.robot_data = {}
+        self._kinematics: dict[str, RobotKinematics] = {}
+        self._state_lock = threading.Lock()
+        default_joint_state = [0.0] * (len(ROBOT_JOINT_NAMES) - 1)
+        self._arm_state = {
+            "left": {
+                "joints": default_joint_state.copy(),
+                "jaw": 0.0,
+            },
+            "right": {
+                "joints": default_joint_state.copy(),
+                "jaw": 0.0,
+            },
+        }
 
-            self.kinematics = RobotKinematics(
+        # Pre-initialize kinematics for active arms.
+        for arm in self._active_arms:
+            self._kinematics[arm] = RobotKinematics(
                 urdf_path=urdf_path,
                 target_frame_name="gripper_frame_link",
-                joint_names=ROBOT_JOINT_NAMES[:-1]
+                joint_names=ROBOT_JOINT_NAMES[:-1],
             )
 
-        self.joint_positions = [0.0] * (len(ROBOT_JOINT_NAMES) - 1)
-        self.jaw_position = 0.0
+        self.server_thread: threading.Thread | None = None
 
     @property
     def action_features(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.bus.motors}
+        if self.config.bi_controller:
+            return {
+                **{f"left_{joint}.pos": float for joint in ROBOT_JOINT_NAMES[:-1]},
+                "left_gripper.pos": float,
+                **{f"right_{joint}.pos": float for joint in ROBOT_JOINT_NAMES[:-1]},
+                "right_gripper.pos": float,
+            }
+        return {
+            **{f"{joint}.pos": float for joint in ROBOT_JOINT_NAMES[:-1]},
+            "gripper.pos": float,
+        }
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -87,35 +112,37 @@ class ARController(Teleoperator):
     
     @property
     def is_connected(self) -> bool:
-        return True
+        return self.running
     
     def connect(self, calibrate: bool = True) -> None:
         """Start the server in a separate thread"""
+        if self.running:
+            logger.info("ARController already connected.")
+            return
+
         self.running = True
 
-        self.server_thread = threading.Thread(target=self._run_server)
-        self.server_thread.daemon = True
+        self.server_thread = threading.Thread(target=self._run_server, name="ARControllerServer", daemon=True)
         self.server_thread.start()
 
-        print(f"[ARController] Connected and started sockets")
+        logger.info("ARController connected and started sockets.")
 
     def disconnect(self) -> None:
-        print(f"[ARController] Stopping...")
+        logger.info("ARController stopping...")
         self.running = False
-        # Close all sockets gracefully
-        try:
-            self.sub_socket.close()
-            self.pub_socket.close()
-            self.rep_socket.close()
-        except Exception as e:
-            print(f"[ARController] Error closing sockets: {e}")
-        
-        # Wait for server thread to finish
-        if hasattr(self, 'server_thread') and self.server_thread.is_alive():
+
+        if self.server_thread and self.server_thread.is_alive():
             self.server_thread.join(timeout=2.0)
-        
+
+        # Close all sockets gracefully
+        for socket in (self.sub_socket, self.pub_socket, self.rep_socket):
+            try:
+                socket.close()
+            except Exception as exc:  # pragma: no cover - cleanup best effort
+                logger.debug("Error closing socket: %s", exc, exc_info=True)
+
         self.context.term()
-        print("[ARController] stopped.")
+        logger.info("ARController stopped.")
 
     def _run_server(self):
         """Main server loop"""
@@ -138,7 +165,7 @@ class ARController(Teleoperator):
             except zmq.ContextTerminated:
                 break
             except Exception as e:
-                print(f"[ARController] Server error: {e}")
+                logger.exception("ARController server error: %s", e)
                 break
 
     def _handle_handshake(self):
@@ -149,25 +176,32 @@ class ARController(Teleoperator):
 
         if request == "HELLO":
             self.rep_socket.send_string("READY")
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Handshake acknowledged")
+            logger.info("[%s] Handshake acknowledged", datetime.now().strftime('%H:%M:%S'))
         else:
             self.rep_socket.send_string("UNKNOWN")
 
     def _handle_message(self, topic, message):
         """Handle incoming message from Unity"""
         try:
-            print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Received from topic '{topic}':")
+            logger.debug("[%s] Received from topic '%s'", datetime.now().strftime('%H:%M:%S'), topic)
             
             hand_data = json.loads(message)
 
             right_hand = hand_data.get("rightHand")
-            self._process_hand(right_hand)
+            if right_hand:
+                self._process_hand(right_hand, "right")
+
+            if self.config.bi_controller:
+                left_hand = hand_data.get("leftHand")
+                if left_hand:
+                    self._process_hand(left_hand, "left")
+
             self._send_robot_data()
 
         except json.JSONDecodeError:
-            print(f"Invalid JSON received: {message}")
+            logger.warning("Invalid JSON received: %s", message)
         except Exception as e:
-            print(f"Error handling message: {e}")
+            logger.exception("Error handling message: %s", e)
 
     def _pose_matrix(self, position, quaternion):
         """Create a 4x4 pose matrix from position and quaternion"""
@@ -194,7 +228,7 @@ class ARController(Teleoperator):
 
         return pos_robot, quat_robot
 
-    def _process_hand(self, hand_payload):
+    def _process_hand(self, hand_payload, arm: str):
         if not hand_payload:
             return
         try:
@@ -221,10 +255,21 @@ class ARController(Teleoperator):
                 quaternion=quat_robot.tolist()
             )
 
+            solver = self._kinematics.get(arm)
+            if solver is None:
+                solver = RobotKinematics(
+                    urdf_path=urdf_path,
+                    target_frame_name="gripper_frame_link",
+                    joint_names=ROBOT_JOINT_NAMES[:-1],
+                )
+                self._kinematics[arm] = solver
+
+            with self._state_lock:
+                current = np.array(self._arm_state[arm]["joints"], dtype=float)
+
             try:
-                seed = np.array(self.joint_positions, dtype=float)
-                joint_targets = self.kinematics.inverse_kinematics(
-                    current_joint_pos=seed,
+                joint_targets = solver.inverse_kinematics(
+                    current_joint_pos=current,
                     desired_ee_pose=ee_pose,
                     position_weight=1.0,
                     orientation_weight=0.1
@@ -232,46 +277,54 @@ class ARController(Teleoperator):
                 jt = np.array(joint_targets, dtype=float)
 
             except Exception as exc:
-                print(f"IK failed: {exc}")
+                logger.warning("IK failed for %s arm: %s", arm, exc)
                 return
 
             jaw_angle = float(hand_payload.get("jawAngle", 0.0))
 
-            self.joint_positions = jt.tolist()
-            self.jaw_position = jaw_angle
+            with self._state_lock:
+                self._arm_state[arm]["joints"] = jt.tolist()
+                self._arm_state[arm]["jaw"] = jaw_angle
 
         except Exception as exc:
-            print(f"Failed to process hand data: {exc}")
+            logger.exception("Failed to process %s hand data: %s", arm, exc)
             return
     
     def _send_robot_data(self):
         try:
+            with self._state_lock:
+                left_joints = list(self._arm_state["left"]["joints"])
+                left_jaw = float(self._arm_state["left"]["jaw"])
+                right_joints = list(self._arm_state["right"]["joints"])
+                right_jaw = float(self._arm_state["right"]["jaw"])
+
+            now = time.time()
             self.robot_data = {
                 "robots": {
                     "left_robot": {
                         "id": "SO101_left",
                         "type": "SO-101",
                         "joints": {
-                            "position": [0.0] * (len(ROBOT_JOINT_NAMES) - 1)
+                            "position": left_joints,
                         },
                         "jaw": {
-                            "position": [0.0]
+                            "position": [left_jaw],
                         }
                     },
                     "right_robot": {
                         "id": "SO101_right",
                         "type": "SO-101",
                         "joints": {
-                            "position": self.joint_positions
+                            "position": right_joints
                         },
                         "jaw": {
-                            "position": [self.jaw_position]
+                            "position": [right_jaw]
                         }
                     }
                 },
                 "timestamp": {
-                    "secs": int(time.time()),
-                    "nsecs": int((time.time() % 1) * 1e9)
+                    "secs": int(now),
+                    "nsecs": int((now % 1) * 1e9)
                 },
                 "session_id": "test_session_001"
             }
@@ -281,7 +334,7 @@ class ARController(Teleoperator):
             self.pub_socket.send_string(robot_json)
 
         except Exception as e:
-            print(f"Error preparing robot data: {e}")
+            logger.exception("Error preparing robot data: %s", e)
             return
         
     @property
@@ -298,8 +351,28 @@ class ARController(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, float]:
-        action = {f"{motor}.pos": val for motor, val in zip(ROBOT_JOINT_NAMES[:-1], self.joint_positions)}
-        action["gripper.pos"] = self.jaw_position
+        with self._state_lock:
+            if self.config.bi_controller:
+                left = self._arm_state["left"]
+                right = self._arm_state["right"]
+                action = {
+                    **{
+                        f"left_{joint}.pos": value
+                        for joint, value in zip(ROBOT_JOINT_NAMES[:-1], left["joints"])
+                    },
+                    "left_gripper.pos": left["jaw"],
+                    **{
+                        f"right_{joint}.pos": value
+                        for joint, value in zip(ROBOT_JOINT_NAMES[:-1], right["joints"])
+                    },
+                    "right_gripper.pos": right["jaw"],
+                }
+            else:
+                right = self._arm_state["right"]
+                action = {
+                    **{f"{joint}.pos": value for joint, value in zip(ROBOT_JOINT_NAMES[:-1], right["joints"])},
+                    "gripper.pos": right["jaw"],
+                }
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
