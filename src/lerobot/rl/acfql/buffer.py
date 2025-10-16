@@ -14,10 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
+from collections.abc import Callable, Generator, Sequence
 from contextlib import suppress
 from typing import TypedDict
 
 import torch
+from tqdm import tqdm
+
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import ACTION, DONE, REWARD
+from lerobot.utils.transition import Transition
 
 from ..buffer import ReplayBuffer
 
@@ -281,3 +288,222 @@ class ReplayBufferNSteps(ReplayBuffer):
                 _ = data_queue.get_nowait()
             # Give the producer thread a bit of time to finish.
             producer_thread.join(timeout=1.0)
+
+    @classmethod
+    def from_lerobot_dataset(
+        cls,
+        lerobot_dataset: LeRobotDataset,
+        device: str = "cuda:0",
+        state_keys: Sequence[str] | None = None,
+        capacity: int | None = None,
+        image_augmentation_function: Callable | None = None,
+        use_drq: bool = True,
+        storage_device: str = "cpu",
+        optimize_memory: bool = False,
+    ) -> "ReplayBuffer":
+        """
+        Convert a LeRobotDataset into a ReplayBuffer.
+
+        Args:
+            lerobot_dataset (LeRobotDataset): The dataset to convert.
+            device (str): The device for sampling tensors. Defaults to "cuda:0".
+            state_keys (Sequence[str] | None): The list of keys that appear in `state` and `next_state`.
+            capacity (int | None): Buffer capacity. If None, uses dataset length.
+            action_mask (Sequence[int] | None): Indices of action dimensions to keep.
+            image_augmentation_function (Callable | None): Function for image augmentation.
+                If None, uses default random shift with pad=4.
+            use_drq (bool): Whether to use DrQ image augmentation when sampling.
+            storage_device (str): Device for storing tensor data. Using "cpu" saves GPU memory.
+            optimize_memory (bool): If True, reduces memory usage by not duplicating state data.
+
+        Returns:
+            ReplayBuffer: The replay buffer with dataset transitions.
+        """
+        if capacity is None:
+            capacity = len(lerobot_dataset)
+
+        if capacity < len(lerobot_dataset):
+            raise ValueError(
+                "The capacity of the ReplayBuffer must be greater than or equal to the length of the LeRobotDataset."
+            )
+
+        # Create replay buffer with image augmentation and DrQ settings
+        replay_buffer = cls(
+            capacity=capacity,
+            device=device,
+            state_keys=state_keys,
+            image_augmentation_function=image_augmentation_function,
+            use_drq=use_drq,
+            storage_device=storage_device,
+            optimize_memory=optimize_memory,
+        )
+
+        # Convert dataset to transitions generator
+        list_transition = cls._lerobotdataset_to_transitions(dataset=lerobot_dataset, state_keys=state_keys)
+
+        # TODO: handle empty dataset case
+        first_transition = next(list_transition, None)
+
+        # Initialize the buffer with the first transition to set up storage tensors
+        if first_transition is not None:
+            first_state = {k: v.to(device) for k, v in first_transition["state"].items()}
+            first_action = first_transition["action"].to(device)
+
+            # Get complementary info if available
+            first_complementary_info = None
+            if (
+                "complementary_info" in first_transition
+                and first_transition["complementary_info"] is not None
+            ):
+                first_complementary_info = {
+                    k: v.to(device) for k, v in first_transition["complementary_info"].items()
+                }
+
+            replay_buffer._initialize_storage(
+                state=first_state, action=first_action, complementary_info=first_complementary_info
+            )
+
+        # Merge first transition with remaining transitions using itertools.chain
+
+        for data in itertools.chain([first_transition], list_transition):
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    for key, tensor in v.items():
+                        v[key] = tensor.to(storage_device)
+                elif isinstance(v, torch.Tensor):
+                    data[k] = v.to(storage_device)
+
+            action = data["action"]
+
+            replay_buffer.add(
+                state=data["state"],
+                action=action,
+                reward=data["reward"],
+                next_state=data["next_state"],
+                done=data["done"],
+                truncated=data["truncated"],  # NOTE: Truncation are not supported yet in lerobot dataset
+                complementary_info=data.get("complementary_info", None),
+            )
+
+        return replay_buffer
+
+    @staticmethod
+    def _lerobotdataset_to_transitions(
+        dataset: LeRobotDataset,
+        state_keys: Sequence[str] | None = None,
+    ) -> Generator[Transition]:
+        """
+        Convert a LeRobotDataset into a list of RL (s, a, r, s', done) transitions.
+
+        Args:
+            dataset (LeRobotDataset):
+                The dataset to convert. Each item in the dataset is expected to have
+                at least the following keys:
+                {
+                    "action": ...
+                    "next.reward": ...
+                    "next.done": ...
+                    "episode_index": ...
+                }
+                plus whatever your 'state_keys' specify.
+
+            state_keys (Sequence[str] | None):
+                The dataset keys to include in 'state' and 'next_state'. Their names
+                will be kept as-is in the output transitions. E.g.
+                ["observation.state", "observation.environment_state"].
+                If None, you must handle or define default keys.
+
+        Returns:
+            transitions (List[Transition]):
+                A list of Transition dictionaries with the same length as `dataset`.
+        """
+        if state_keys is None:
+            raise ValueError("State keys must be provided when converting LeRobotDataset to Transitions.")
+
+        num_frames = len(dataset)
+
+        # Check if the dataset has "next.done" key
+        sample = dataset[0]
+        has_done_key = DONE in sample
+
+        # Check for complementary_info keys
+        complementary_info_keys = [key for key in sample if key.startswith("complementary_info.")]
+        has_complementary_info = len(complementary_info_keys) > 0
+
+        # If not, we need to infer it from episode boundaries
+        if not has_done_key:
+            print("'next.done' key not found in dataset. Inferring from episode boundaries...")
+
+        for i in tqdm(range(num_frames)):
+            current_sample = dataset[i]
+
+            # ----- 1) Current state -----
+            current_state: dict[str, torch.Tensor] = {}
+            for key in state_keys:
+                val = current_sample[key]
+                current_state[key] = val.unsqueeze(0)  # Add batch dimension
+
+            # ----- 2) Action -----
+            action = current_sample[ACTION].unsqueeze(0)  # Add batch dimension
+
+            # ----- 3) Reward and done -----
+            reward = float(current_sample[REWARD].item())  # ensure float
+
+            # Determine done flag - use next.done if available, otherwise infer from episode boundaries
+            if has_done_key:
+                done = bool(current_sample[DONE].item())  # ensure bool
+            else:
+                # If this is the last frame or if next frame is in a different episode, mark as done
+                done = False
+                if i == num_frames - 1:
+                    done = True
+                elif i < num_frames - 1:
+                    next_sample = dataset[i + 1]
+                    if next_sample["episode_index"] != current_sample["episode_index"]:
+                        done = True
+
+            # TODO: (azouitine) Handle truncation (using the same value as done for now)
+            truncated = done
+
+            # ----- 4) Next state -----
+            # If not done and the next sample is in the same episode, we pull the next sample's state.
+            # Otherwise (done=True or next sample crosses to a new episode), next_state = current_state.
+            next_state = current_state  # default
+            if not done and (i < num_frames - 1):
+                next_sample = dataset[i + 1]
+                if next_sample["episode_index"] == current_sample["episode_index"]:
+                    # Build next_state from the same keys
+                    next_state_data: dict[str, torch.Tensor] = {}
+                    for key in state_keys:
+                        val = next_sample[key]
+                        next_state_data[key] = val.unsqueeze(0)  # Add batch dimension
+                    next_state = next_state_data
+
+            # ----- 5) Complementary info (if available) -----
+            complementary_info = None
+            if has_complementary_info:
+                complementary_info = {}
+                for key in complementary_info_keys:
+                    # Strip the "complementary_info." prefix to get the actual key
+                    clean_key = key[len("complementary_info.") :]
+                    val = current_sample[key]
+                    # Handle tensor and non-tensor values differently
+                    if isinstance(val, torch.Tensor):
+                        complementary_info[clean_key] = val.unsqueeze(0)  # Add batch dimension
+                    else:
+                        # TODO: (azouitine) Check if it's necessary to convert to tensor
+                        # For non-tensor values, use directly
+                        complementary_info[clean_key] = val
+
+            # ----- Construct the Transition -----
+            transition = Transition(
+                state=current_state,
+                action=action,
+                reward=reward,
+                next_state=next_state,
+                done=done,
+                truncated=truncated,
+                complementary_info=complementary_info,
+            )
+
+            yield transition
