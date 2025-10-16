@@ -15,6 +15,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from lerobot.cameras import CameraConfig
+
 from ..bi_so101_follower.config_bi_so101_follower import BiSO101FollowerConfig
 from ..config import RobotConfig
 from ..lekiwi_base.config import LeKiwiBaseConfig
@@ -27,6 +29,7 @@ class XLerobotConfig(RobotConfig):
     arms: dict[str, Any] = field(default_factory=dict)
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         super().__post_init__()

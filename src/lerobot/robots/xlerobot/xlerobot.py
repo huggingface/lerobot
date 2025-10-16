@@ -19,6 +19,7 @@ from dataclasses import replace
 from functools import cached_property
 from typing import Any
 
+from lerobot.cameras.utils import make_cameras_from_configs
 from ..bi_so101_follower.bi_so101_follower import BiSO101Follower
 from ..lekiwi_base.lekiwi_base import LeKiwiBase
 from ..robot import Robot
@@ -42,6 +43,7 @@ class XLerobot(Robot):
         self.arms = BiSO101Follower(replace(config.arms_config))
         self.base = LeKiwiBase(replace(config.base_config))
         self.mount = XLeRobotMount(replace(config.mount_config))
+        self.cameras = make_cameras_from_configs(config.cameras)
 
     @cached_property
     def observation_features(self) -> dict[str, Any]:
@@ -100,6 +102,11 @@ class XLerobot(Robot):
         obs.update(self.arms.get_observation())
         obs.update(self.base.get_observation())
         obs.update(self.mount.get_observation())
+        for name, cam in self.cameras.items():
+            try:
+                obs[name] = cam.async_read()
+            except Exception:
+                logger.warning("Failed to read camera %s", name, exc_info=True)
         return obs
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -139,3 +146,8 @@ class XLerobot(Robot):
             self.mount.disconnect()
         if self.arms.is_connected:
             self.arms.disconnect()
+        for cam in self.cameras.values():
+            try:
+                cam.disconnect()
+            except Exception:
+                logger.warning("Failed to disconnect camera", exc_info=True)
