@@ -130,6 +130,12 @@ def update_policy(
 
 
 def get_default_peft_configuration(policy_type):
+    """Build a PEFT configuration for the given policy type assuming that we train a policy from scratch
+    (i.e. only parts of it are pre-trained) and not from a checkpoint. This means that some layers are targeted for
+    full fine-tuning via `modules_to_save`, e.g. `state_proj` for SmolVLA which would otherwise be randomly initialized.
+
+    Users can still override the full fine-tuning of these layers by passing `--peft.full_training_modules=[]`.
+    """
     if policy_type == "smolvla":
         return {
             "target_modules": r"(model\.vlm_with_expert\.lm_expert\..*\.(q_proj|v_proj)|model\.action_.*|model\.state_proj.*)",
@@ -164,6 +170,7 @@ def wrap_policy_in_peft_model(cfg, policy):
 
     peft_config_policy = get_default_peft_configuration(cfg.policy.type)
     peft_config_cli = dataclasses.asdict(cfg.peft) if cfg.peft else {}
+    peft_config_cli['modules_to_save'] = peft_config_cli['full_training_modules']  # compatibility with PEFT
     peft_method_type = PeftType[peft_config_cli["method_type"].upper()]
     peft_config_cls = PEFT_TYPE_TO_CONFIG_MAPPING[peft_method_type]
 
