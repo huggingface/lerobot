@@ -151,13 +151,13 @@ class ZedCamera(Camera):
         init_params.camera_resolution = sl.RESOLUTION.HD720  # Default, can be overridden
         init_params.camera_fps = self.fps or 30
         init_params.depth_mode = self._get_zed_depth_mode()
-        init_params.coordinate_units = sl.UNIT.MILLIMETER
+        init_params.coordinate_units = sl.UNIT.METER
         init_params.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Y_UP
         init_params.set_from_serial_number(int(self.serial_number))
 
         # Set depth minimum and maximum range in meters:cite[4]
-        init_params.depth_minimum_distance = 0.2
-        init_params.depth_maximum_distance = 1.5
+        init_params.depth_minimum_distance = 0.3
+        init_params.depth_maximum_distance = 20
 
         # Open the camera
         err = self.zed_camera.open(init_params)
@@ -169,7 +169,7 @@ class ZedCamera(Camera):
             )
 
         # Configure runtime parameters
-        self.runtime_params = sl.RuntimeParameters()
+        self.runtime_params = sl.RuntimeParameters(enable_depth=True)
 
         # Set mat resolution based on configuration
         self._configure_mat_resolution()
@@ -194,7 +194,7 @@ class ZedCamera(Camera):
             "ULTRA": sl.DEPTH_MODE.ULTRA,
             "NEURAL": sl.DEPTH_MODE.NEURAL
         }
-        return mode_map.get(self.depth_mode, sl.DEPTH_MODE.QUALITY)
+        return mode_map.get(self.depth_mode, sl.DEPTH_MODE.NEURAL)
 
     def _configure_mat_resolution(self) -> None:
         """Configures the matrix resolution based on camera settings."""

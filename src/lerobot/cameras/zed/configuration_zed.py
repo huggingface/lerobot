@@ -40,10 +40,10 @@ class ZedCameraConfig(CameraConfig):
         - For `fps`, `width` and `height`, either all of them need to be set, or none of them.
     """
 
-    serial_number_or_name: str
+    serial_number_or_name: str = "" # Default to the unique ZED camera
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
-    rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
+    rotation: Cv2Rotation = Cv2Rotation.ROTATE_180
     warmup_s: int = 3  # ZED cameras need longer warmup time
     depth_mode: str = "QUALITY"
 

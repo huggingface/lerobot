@@ -183,6 +183,7 @@ available_robots = [
 available_cameras = [
     "opencv",
     "intelrealsense",
+    "zed",
 ]
 
 # lists all available motors from `lerobot/motors`

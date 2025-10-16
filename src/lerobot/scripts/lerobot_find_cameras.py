@@ -117,7 +117,7 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
     Finds available cameras based on an optional filter and prints their information.
 
     Args:
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type_filter: Optional string to filter cameras ("realsense", "zed" or "opencv").
                             If None, lists all cameras.
 
     Returns:
@@ -160,23 +160,47 @@ def save_image(
     camera_identifier: str | int,
     images_dir: Path,
     camera_type: str,
+    is_depth: bool = False,
 ):
     """
     Saves a single image to disk using Pillow. Handles color conversion if necessary.
+    Supports both RGB and depth images.
     """
     try:
-        img = Image.fromarray(img_array, mode="RGB")
+        if is_depth:
+            # Depth image processing
+            # ZED depth maps are uint16 type, range 0-65535, unit in millimeters
+            # Ensure data is 16-bit unsigned integer
+            if img_array.dtype != np.uint16:
+                img_array = img_array.astype(np.uint16)
 
-        safe_identifier = str(camera_identifier).replace("/", "_").replace("\\", "_")
-        filename_prefix = f"{camera_type.lower()}_{safe_identifier}"
-        filename = f"{filename_prefix}.png"
+            # Use PIL's "I;16" mode for 16-bit grayscale images
+            img = Image.fromarray(img_array, mode="I;16")
+
+            safe_identifier = (
+                str(camera_identifier).replace("/", "_").replace("\\", "_")
+            )
+            filename_prefix = f"{camera_type.lower()}_{safe_identifier}_depth"
+            filename = f"{filename_prefix}.png"
+
+        else:
+            img = Image.fromarray(img_array, mode="RGB")
+
+            safe_identifier = (
+                str(camera_identifier).replace("/", "_").replace("\\", "_")
+            )
+            filename_prefix = f"{camera_type.lower()}_{safe_identifier}"
+            filename = f"{filename_prefix}.png"
 
         path = images_dir / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         img.save(str(path))
         logger.info(f"Saved image: {path}")
+
     except Exception as e:
-        logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
+        logger.error(
+            f"Failed to save image for camera {camera_identifier} (type {camera_type}, depth={is_depth}): {e}"
+        )
 
 
 def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
@@ -229,15 +253,52 @@ def process_camera_image(
     meta = cam_dict["meta"]
     cam_type_str = str(meta.get("type", "unknown"))
     cam_id_str = str(meta.get("id", "unknown"))
-
+    logger.info(f"{cam=}\n{meta=}")
     try:
         image_data = cam.read()
-
         return save_image(
             image_data,
             cam_id_str,
             output_dir,
             cam_type_str,
+        )
+
+    except TimeoutError:
+        logger.warning(
+            f"Timeout reading from {cam_type_str} camera {cam_id_str} at time {current_time:.2f}s."
+        )
+    except Exception as e:
+        logger.error(f"Error reading from {cam_type_str} camera {cam_id_str}: {e}")
+        raise e
+    return None
+
+
+def process_camera_depth_image(
+    cam_dict: dict[str, Any], output_dir: Path, current_time: float
+) -> concurrent.futures.Future | None:
+    """Capture and process a depth image from a single camera."""
+    cam = cam_dict["instance"]
+    meta = cam_dict["meta"]
+    cam_type_str = str(meta.get("type", "unknown"))
+    cam_id_str = str(meta.get("id", "unknown"))
+
+    if not getattr(cam, "use_depth", False):
+        logger.warning(
+            f"Depth stream not enabled for {cam_type_str} camera {cam_id_str}"
+        )
+        return None
+    print(f"{cam=}\n{meta=}")
+    try:
+        image_data = cam.read_depth()
+        print(f"Depth map shape: {image_data.shape}")
+        print(f"Depth map dtype: {image_data.dtype}")
+        print(f"Depth value range: [{image_data.min()}, {image_data.max()}]")
+        return save_image(
+            image_data,
+            cam_id_str,
+            output_dir,
+            cam_type_str,
+            is_depth=True,
         )
     except TimeoutError:
         logger.warning(
@@ -278,11 +339,10 @@ def save_images_from_all_cameras(
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Saving images to {output_dir}")
     all_camera_metadata = find_and_print_cameras(camera_type_filter=camera_type)
-
+    print(f"{all_camera_metadata=}")
     if not all_camera_metadata:
         logger.warning("No cameras detected matching the criteria. Cannot save images.")
         return
-
     cameras_to_use = []
     for cam_meta in all_camera_metadata:
         camera_instance = create_camera_instance(cam_meta)
@@ -304,6 +364,9 @@ def save_images_from_all_cameras(
 
                 for cam_dict in cameras_to_use:
                     future = process_camera_image(cam_dict, output_dir, current_capture_time)
+                    if future:
+                        futures.append(future)
+                    future = process_camera_depth_image(cam_dict, output_dir, current_capture_time)
                     if future:
                         futures.append(future)
 
