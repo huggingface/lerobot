@@ -62,6 +62,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # automatic gradient scaling is used.
     use_amp: bool = False
 
+    # Whether the policy employed PEFT for training.
+    use_peft: bool = False
+
     push_to_hub: bool = True
     repo_id: str | None = None
 

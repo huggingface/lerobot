@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import dataclasses
 import logging
 import time
 from contextlib import nullcontext
@@ -128,6 +129,85 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def get_default_peft_configuration(policy_type):
+    """Build a PEFT configuration for the given policy type assuming that we train a policy from scratch
+    (i.e. only parts of it are pre-trained) and not from a checkpoint. This means that some layers are targeted for
+    full fine-tuning via `modules_to_save`, e.g. `state_proj` for SmolVLA which would otherwise be randomly initialized.
+
+    Users can still override the full fine-tuning of these layers by passing `--peft.full_training_modules=[]`.
+    """
+    if policy_type == "smolvla":
+        return {
+            "target_modules": r"(model\.vlm_with_expert\.lm_expert\..*\.(q_proj|v_proj))",
+            "modules_to_save": [
+                # these are initialized randomly and need full-finetuning
+                "state_proj",
+                "action_in_proj",
+                "action_out_proj",
+                "action_time_mlp_in",
+                "action_time_mlp_out",
+            ],
+        }
+    elif policy_type in ("pi0", "pi05"):
+        return {
+            "target_modules": r".*\.gemma_expert\..*\.self_attn.(q_proj|v_proj)",
+            "modules_to_save": [
+                # these are initialized randomly and need full-finetuning
+                "state_proj",
+                "action_in_proj",
+                "action_out_proj",
+                "action_time_mlp_in",
+                "action_time_mlp_out",
+            ],
+        }
+
+    return {"modules_to_save": None}
+
+
+def wrap_policy_in_peft_model(cfg, policy):
+    from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
+
+    # Disable all gradients because we'll only train the parameters selected by the PEFT method.
+    # Layers that should receive gradients anyway need to be listed in `modules_to_save`.
+    for p in policy.parameters():
+        p.requires_grad_(False)
+
+    peft_config_policy = get_default_peft_configuration(cfg.policy.type)
+    peft_config_cli = dataclasses.asdict(cfg.peft) if cfg.peft else {}
+    peft_config_cli["modules_to_save"] = peft_config_cli["full_training_modules"]  # compatibility with PEFT
+    peft_method_type = PeftType[peft_config_cli["method_type"].upper()]
+    peft_config_cls = PEFT_TYPE_TO_CONFIG_MAPPING[peft_method_type]
+
+    # Handle specific CLI overrides
+    for key in ["target_modules", "modules_to_save", "r"]:
+        if peft_config_cli[key] is not None:
+            peft_config_policy[key] = peft_config_cli[key]
+
+    if "target_modules" not in peft_config_policy:
+        raise ValueError(
+            f"There is no default `target_modules` value for policy {cfg.policy.type}. Please pass it manually."
+        )
+
+    # Init method depends on the used PEFT method, your specific PEFT method
+    # might not be considered here, in that case an error is raised.
+    if peft_config_cli["init_type"] is not None:
+        if peft_method_type == "LORA":
+            peft_config_policy["init_lora_weights"] = peft_config_cli["init_type"]
+        elif peft_method_type == "BONE":
+            peft_config_policy["init_weights"] = peft_config_cli["init_type"]
+        else:
+            raise ValueError(
+                f"Init type {peft_config_cli['init_type']} unknown for PEFT method {peft_method_type}."
+            )
+
+    policy = get_peft_model(
+        policy,
+        peft_config_cls(**peft_config_policy),
+    )
+
+    return policy
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     """
@@ -177,6 +257,10 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
+
+    if cfg.peft is not None:
+        logging.info("Using PEFT! Wrapping model.")
+        policy = wrap_policy_in_peft_model(cfg, policy)
 
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
