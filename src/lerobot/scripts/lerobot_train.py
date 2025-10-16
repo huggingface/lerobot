@@ -98,8 +98,8 @@ def update_policy(
     if grad_clip_norm > 0:
         grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
     else:
-       grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), float('inf'), error_if_nonfinite=False
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            policy.parameters(), float("inf"), error_if_nonfinite=False
         )
 
     # Optimizer step
@@ -151,7 +151,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs])
-    
+
     init_logging(accelerator=accelerator)
 
     # Determine if this is the main process (for logging and checkpointing)

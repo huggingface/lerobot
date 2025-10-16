@@ -20,7 +20,6 @@ import select
 import subprocess
 import sys
 import time
-from collections.abc import Callable
 from copy import copy, deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -143,8 +142,7 @@ def init_logging(
     logger.handlers.clear()
 
     # Determine if this is a non-main process in distributed training
-    if accelerator is not None:
-        is_main_process = accelerator.is_main_process
+    is_main_process = accelerator.is_main_process if accelerator is not None else True
 
     # Console logging (main process only)
     if is_main_process:
