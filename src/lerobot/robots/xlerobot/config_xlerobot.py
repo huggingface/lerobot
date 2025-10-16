@@ -18,6 +18,7 @@ from typing import Any
 from ..bi_so101_follower.config_bi_so101_follower import BiSO101FollowerConfig
 from ..config import RobotConfig
 from ..lekiwi_base.config import LeKiwiBaseConfig
+from ..xlerobot_mount.config import XLeRobotMountConfig
 
 
 @RobotConfig.register_subclass("xlerobot")
@@ -25,6 +26,7 @@ from ..lekiwi_base.config import LeKiwiBaseConfig
 class XLerobotConfig(RobotConfig):
     arms: dict[str, Any] = field(default_factory=dict)
     base: dict[str, Any] = field(default_factory=dict)
+    mount: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -37,20 +39,30 @@ class XLerobotConfig(RobotConfig):
             base_cfg = self.base
         else:
             base_cfg = LeKiwiBaseConfig(**self.base)
+        if isinstance(self.mount, XLeRobotMountConfig):
+            mount_cfg = self.mount
+        else:
+            mount_cfg = XLeRobotMountConfig(**self.mount)
 
         self.arms = arms_cfg
         self.base = base_cfg
+        self.mount = mount_cfg
         self.arms_config: BiSO101FollowerConfig = arms_cfg
         self.base_config: LeKiwiBaseConfig = base_cfg
+        self.mount_config: XLeRobotMountConfig = mount_cfg
 
         if self.id:
             if arms_cfg.id is None:
                 arms_cfg.id = f"{self.id}_arms"
             if base_cfg.id is None:
                 base_cfg.id = f"{self.id}_base"
+            if mount_cfg.id is None:
+                mount_cfg.id = f"{self.id}_mount"
 
         if self.calibration_dir:
             if arms_cfg.calibration_dir is None:
                 arms_cfg.calibration_dir = self.calibration_dir
             if base_cfg.calibration_dir is None:
                 base_cfg.calibration_dir = self.calibration_dir
+            if mount_cfg.calibration_dir is None:
+                mount_cfg.calibration_dir = self.calibration_dir

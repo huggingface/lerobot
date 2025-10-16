@@ -72,25 +72,29 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_so100_follower,
     bi_so101_follower,
-    lekiwi_base,
     hope_jr,
     koch_follower,
+    lekiwi_base,
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xlerobot,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_so100_leader,
     bi_so101_leader,
-    lekiwi_base_joycon,
     gamepad,
     homunculus,
     koch_leader,
+    lekiwi_base_gamepad,
+    lekiwi_base_joycon,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    xlerobot_joycon_gamepad,
+    xlerobot_leader_gamepad,
 )
 from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait

@@ -22,6 +22,7 @@ from typing import Any
 from ..bi_so101_follower.bi_so101_follower import BiSO101Follower
 from ..lekiwi_base.lekiwi_base import LeKiwiBase
 from ..robot import Robot
+from ..xlerobot_mount.xlerobot_mount import XLeRobotMount
 from .config_xlerobot import XLerobotConfig
 from lerobot.utils.errors import DeviceNotConnectedError
 
@@ -40,12 +41,14 @@ class XLerobot(Robot):
 
         self.arms = BiSO101Follower(replace(config.arms_config))
         self.base = LeKiwiBase(replace(config.base_config))
+        self.mount = XLeRobotMount(replace(config.mount_config))
 
     @cached_property
     def observation_features(self) -> dict[str, Any]:
         features: dict[str, Any] = {}
         features.update(self.arms.observation_features)
         features.update(self.base.observation_features)
+        features.update(self.mount.observation_features)
         return features
 
     @cached_property
@@ -53,35 +56,41 @@ class XLerobot(Robot):
         features: dict[str, Any] = {}
         features.update(self.arms.action_features)
         features.update(self.base.action_features)
+        features.update(self.mount.action_features)
         return features
 
     @property
     def is_connected(self) -> bool:
-        return self.arms.is_connected and self.base.is_connected
+        return self.arms.is_connected and self.base.is_connected and self.mount.is_connected
 
     def connect(self, calibrate: bool = True) -> None:
+        self.mount.connect(calibrate=calibrate)
         handshake = getattr(self.base.config, "handshake_on_connect", True)
         self.base.connect(calibrate=calibrate, handshake=handshake)
         self.arms.connect(calibrate=calibrate)
 
     @property
     def is_calibrated(self) -> bool:
-        return self.arms.is_calibrated and self.base.is_calibrated
+        return self.arms.is_calibrated and self.base.is_calibrated and self.mount.is_calibrated
 
     def calibrate(self) -> None:
         logger.info("Calibrating XLerobot components")
         self.base.calibrate()
         self.arms.calibrate()
+        self.mount.calibrate()
 
     def configure(self) -> None:
         self.base.configure()
         self.arms.configure()
+        self.mount.configure()
 
     def setup_motors(self) -> None:
         if hasattr(self.arms, "setup_motors"):
             self.arms.setup_motors()
         if hasattr(self.base, "setup_motors"):
             self.base.setup_motors()
+        if hasattr(self.mount, "setup_motors"):
+            self.mount.setup_motors()
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -90,6 +99,7 @@ class XLerobot(Robot):
         obs = {}
         obs.update(self.arms.get_observation())
         obs.update(self.base.get_observation())
+        obs.update(self.mount.get_observation())
         return obs
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -109,14 +119,23 @@ class XLerobot(Robot):
                 if prefixed in action:
                     base_action[key] = action[prefixed]
 
+        mount_action: dict[str, float] = {}
+        mount_keys = set(self.mount.action_features.keys())
+        for key in mount_keys:
+            if key in action:
+                mount_action[key] = action[key]
+
         sent_arm = self.arms.send_action(arm_action)
         sent_base = self.base.send_action(base_action)
-        return {**sent_arm, **sent_base}
+        sent_mount = self.mount.send_action(mount_action) if mount_action else {}
+        return {**sent_arm, **sent_base, **sent_mount}
 
     def disconnect(self) -> None:
         if self.base.is_connected:
             if hasattr(self.base, "stop_base"):
                 self.base.stop_base()
             self.base.disconnect()
+        if self.mount.is_connected:
+            self.mount.disconnect()
         if self.arms.is_connected:
             self.arms.disconnect()

@@ -80,6 +80,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .lekiwi_base import LeKiwiBase
 
         return LeKiwiBase(config)
+    elif config.type == "xlerobot_mount":
+        from .xlerobot_mount import XLeRobotMount
+
+        return XLeRobotMount(config)
     else:
         try:
             return cast(Robot, make_device_from_device_class(config))
