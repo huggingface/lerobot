@@ -381,6 +381,19 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
+    # Connect robot early to get actual camera dimensions
+    robot.connect()
+    if teleop is not None:
+        teleop.connect()
+
+    # Update config with actual camera dimensions after connection
+    if hasattr(robot, "cameras") and robot.cameras:
+        for cam_name, cam in robot.cameras.items():
+            if cam_name in cfg.robot.cameras:
+                # Update config with actual camera dimensions for dataset creation
+                cfg.robot.cameras[cam_name].width = cam.width
+                cfg.robot.cameras[cam_name].height = cam.height
+
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     dataset_features = combine_feature_dicts(
@@ -440,10 +453,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
             },
         )
-
-    robot.connect()
-    if teleop is not None:
-        teleop.connect()
 
     listener, events = init_keyboard_listener()
 
