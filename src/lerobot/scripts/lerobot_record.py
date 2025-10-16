@@ -446,10 +446,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         policy = make_policy(cfg.policy, ds_meta=dataset.meta)
         policy = PeftModel.from_pretrained(policy, peft_path)
 
-        # it is not necessary to merge and unload but for methods that support merging,
-        # it brings inference performance benefits.
-        policy = policy.merge_and_unload()
-
     else:
         policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
