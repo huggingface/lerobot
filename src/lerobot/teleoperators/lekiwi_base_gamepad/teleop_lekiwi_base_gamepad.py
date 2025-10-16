@@ -158,4 +158,4 @@ class LeKiwiBaseTeleop(Teleoperator):
             hx = -1 if left else 0
             hx += 1 if right else 0
 
-        return self.config.yaw_speed_deg * hx
+        return -self.config.yaw_speed_deg * hx

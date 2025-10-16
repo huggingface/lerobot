@@ -19,6 +19,8 @@ from dataclasses import replace
 from functools import cached_property
 from typing import Any
 
+import numpy as np
+
 from lerobot.cameras.utils import make_cameras_from_configs
 from ..bi_so101_follower.bi_so101_follower import BiSO101Follower
 from ..lekiwi_base.lekiwi_base import LeKiwiBase
@@ -43,7 +45,17 @@ class XLerobot(Robot):
         self.arms = BiSO101Follower(replace(config.arms_config))
         self.base = LeKiwiBase(replace(config.base_config))
         self.mount = XLeRobotMount(replace(config.mount_config))
-        self.cameras = make_cameras_from_configs(config.cameras)
+        self.camera_configs = dict(config.cameras)
+        self.cameras = make_cameras_from_configs(self.camera_configs)
+        self._last_camera_obs: dict[str, np.ndarray] = {
+            name: self._make_blank_camera_obs(name) for name in self.cameras
+        }
+
+    def _make_blank_camera_obs(self, cam_key: str) -> np.ndarray:
+        cam_config = self.camera_configs.get(cam_key)
+        height = getattr(cam_config, "height", None) or 1
+        width = getattr(cam_config, "width", None) or 1
+        return np.zeros((height, width, 3), dtype=np.uint8)
 
     @cached_property
     def observation_features(self) -> dict[str, Any]:
@@ -63,13 +75,20 @@ class XLerobot(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.arms.is_connected and self.base.is_connected and self.mount.is_connected
+        return (
+            self.arms.is_connected
+            and self.base.is_connected
+            and self.mount.is_connected
+            and all(cam.is_connected for cam in self.cameras.values())
+        )
 
     def connect(self, calibrate: bool = True) -> None:
         self.mount.connect(calibrate=calibrate)
         handshake = getattr(self.base.config, "handshake_on_connect", True)
         self.base.connect(calibrate=calibrate, handshake=handshake)
         self.arms.connect(calibrate=calibrate)
+        for cam in self.cameras.values():
+            cam.connect()
 
     @property
     def is_calibrated(self) -> bool:
@@ -104,9 +123,16 @@ class XLerobot(Robot):
         obs.update(self.mount.get_observation())
         for name, cam in self.cameras.items():
             try:
-                obs[name] = cam.async_read()
-            except Exception:
-                logger.warning("Failed to read camera %s", name, exc_info=True)
+                frame = cam.async_read()
+            except Exception as exc:
+                logger.warning("Failed to read camera %s (%s); using cached frame", name, exc)
+                frame = self._last_camera_obs.get(name)
+                if frame is None:
+                    frame = self._make_blank_camera_obs(name)
+                    self._last_camera_obs[name] = frame
+            else:
+                self._last_camera_obs[name] = frame
+            obs[name] = frame
         return obs
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -146,6 +172,11 @@ class XLerobot(Robot):
             self.mount.disconnect()
         if self.arms.is_connected:
             self.arms.disconnect()
+        for cam in self.cameras.values():
+            try:
+                cam.disconnect()
+            except Exception:
+                logger.warning("Failed to disconnect camera", exc_info=True)
         for cam in self.cameras.values():
             try:
                 cam.disconnect()

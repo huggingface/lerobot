@@ -14,8 +14,8 @@ echo "Using HF_USER=${HF_USER}"
 lerobot-record \
   --robot.type=xlerobot \
   --robot.arms='{
-      "left_arm_port": "/dev/ttyACM0",
-      "right_arm_port": "/dev/ttyACM1",
+      "left_arm_port": "/dev/ttyACM2",
+      "right_arm_port": "/dev/ttyACM3",
       "id": "follower"
   }' \
   --robot.base='{
@@ -24,10 +24,15 @@ lerobot-record \
       "base_radius_m": 0.125
   }' \
   --robot.mount='{}' \
+  --robot.cameras='{
+      "left":  {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 15},
+      "right": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 15},
+      "top":   {"type": "opencv", "index_or_path": 8, "width": 640, "height": 480, "fps": 15}
+  }' \
   --teleop.type=xlerobot_leader_gamepad \
   --teleop.arms='{
-      "left_arm_port": "/dev/ttyACM2",
-      "right_arm_port": "/dev/ttyACM3",
+      "left_arm_port": "/dev/ttyACM0",
+      "right_arm_port": "/dev/ttyACM1",
       "id": "leader"
   }' \
   --teleop.base='{
@@ -37,10 +42,9 @@ lerobot-record \
       "yaw_speed_deg": 45
   }' \
   --teleop.mount='{}' \
-  --display_data=false \
   --dataset.repo_id="${HF_USER}/xlerobot-dataset" \
   --dataset.num_episodes=1 \
   --dataset.single_task="xlerobot run" \
-  --display_data=true \
+  --display_data=true
 
 echo "Recording complete."
