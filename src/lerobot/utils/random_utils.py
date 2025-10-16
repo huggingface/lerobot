@@ -174,9 +174,9 @@ def set_seed(seed, accelerator: Callable | None = None) -> None:
         torch.cuda.manual_seed_all(seed)
 
     if accelerator:
-        from accelerate.utils import set_seed
+        from accelerate.utils import set_seed as _accelerate_set_seed
 
-        set_seed(seed)
+        _accelerate_set_seed(seed)
 
 
 @contextmanager
