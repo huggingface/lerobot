@@ -208,33 +208,35 @@ LeRobot supports saving and loading calibration data automatically. This is usef
 
 <!-- prettier-ignore-start -->
 ```python
-> @property
-> def is_calibrated(self) -> bool:
->    return True
->
-> def calibrate(self) -> None:
->    pass
-> ```
+@property
+def is_calibrated(self) -> bool:
+    return True
+
+def calibrate(self) -> None:
+    pass
+```
+<!-- prettier-ignore-end -->
 
 ### `is_calibrated`
 
 This should reflect whether your robot has the required calibration loaded.
 
-```
-<!-- prettier-ignore-end -->python
+<!-- prettier-ignore-start -->
+```python
 @property
 def is_calibrated(self) -> bool:
     return self.bus.is_calibrated
 ```
+<!-- prettier-ignore-end -->
 
 ### `calibrate()`
 
 The goal of the calibration is twofold:
-    - Know the physical range of motion of each motors in order to only send commands within this range.
-    - Normalize raw motors positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete value dependant on the specific motor used that will not replicate elsewhere.
+
+- Know the physical range of motion of each motors in order to only send commands within this range.
+- Normalize raw motors positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete value dependant on the specific motor used that will not replicate elsewhere.
 
 It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, our bus interfaces already include methods to help with this.
-
 
 <!-- prettier-ignore-start -->
 ```python
