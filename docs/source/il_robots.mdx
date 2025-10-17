@@ -165,7 +165,7 @@ huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 Then store your Hugging Face repository name in a variable:
 
 ```bash
-HF_USER=$(huggingface-cli whoami | head -n 1)
+HF_USER=$(hf auth whoami | head -n 1)
 echo $HF_USER
 ```
 
