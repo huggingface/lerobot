@@ -99,6 +99,7 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
                 f"Device {device} capability check failed. Assuming no support for float64, using float32 instead."
             )
             return torch.float32
+        return dtype
     else:
         return dtype
 
