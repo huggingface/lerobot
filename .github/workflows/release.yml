@@ -138,7 +138,7 @@ jobs:
       - name: Setup uv and Python
         uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
         with:
-          enable-cache: true
+          enable-cache: true # zizmor: ignore[cache-poisoning]
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Create uv virtual environment
