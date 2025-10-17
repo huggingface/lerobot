@@ -88,24 +88,20 @@ def make_env(
 
     if cfg.gym_id not in gym_registry:
         print(
-            f"Gym id {cfg.gym_id} not found in gym registry. Attempting to import package {cfg.package_name}..."
+            f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'..."
         )
         try:
             importlib.import_module(cfg.package_name)
         except ModuleNotFoundError as e:
             raise ModuleNotFoundError(
-                f"Required package '{cfg.package_name}' not found for environment '{cfg.type}'. "
-                f"Is it installed and discoverable?"
+                f"Package '{cfg.package_name}' required for env '{cfg.type}' not found. "
+                f"Please install it or check PYTHONPATH."
             ) from e
 
         if cfg.gym_id not in gym_registry:
             raise gym.error.NameNotFound(
-                f"Environment '{cfg.gym_id}' not found. "
-                f"Package '{cfg.package_name}' was imported, but the environment ID "
-                f"was still not registered. Check the `gym.register()` call within the package."
+                f"Environment '{cfg.gym_id}' not registered even after importing '{cfg.package_name}'."
             )
-        else:
-            print(f"Successfully imported package {cfg.package_name} and registered gym id {cfg.gym_id}.")
 
     def _make_one():
         return gym.make(cfg.gym_id, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
