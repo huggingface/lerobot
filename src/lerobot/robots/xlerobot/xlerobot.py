@@ -57,12 +57,22 @@ class XLerobot(Robot):
         width = getattr(cam_config, "width", None) or 1
         return np.zeros((height, width, 3), dtype=np.uint8)
 
+    @property
+    def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
+        camera_features: dict[str, tuple[int, int, int]] = {}
+        for cam_key, cam_config in self.camera_configs.items():
+            height = getattr(cam_config, "height", None) or 1
+            width = getattr(cam_config, "width", None) or 1
+            camera_features[cam_key] = (height, width, 3)
+        return camera_features
+
     @cached_property
     def observation_features(self) -> dict[str, Any]:
         features: dict[str, Any] = {}
         features.update(self.arms.observation_features)
         features.update(self.base.observation_features)
         features.update(self.mount.observation_features)
+        features.update(self._cameras_ft)
         return features
 
     @cached_property

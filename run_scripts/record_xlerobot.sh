@@ -42,9 +42,15 @@ lerobot-record \
       "yaw_speed_deg": 45
   }' \
   --teleop.mount='{}' \
-  --dataset.repo_id="${HF_USER}/xlerobot-dataset" \
-  --dataset.num_episodes=1 \
-  --dataset.single_task="xlerobot run" \
-  --display_data=true
+  --dataset.video=true \
+  --dataset.repo_id="${HF_USER}/xlerobot-get-water" \
+  --dataset.num_episodes=50 \
+  --dataset.single_task="Move towards the table, align the right arm, grab the drink, and place it in the robot's basket." \
+  --dataset.episode_time_s=300 \
+  --dataset.reset_time_s=300 \
+  --dataset.push_to_hub=true\
+  --dataset.root="/home/yihao/.cache/huggingface/lerobot/yihao-brain-bot/xlerobot-get-water/" \
+  --display_data=true \
+  --resume=true
 
 echo "Recording complete."
