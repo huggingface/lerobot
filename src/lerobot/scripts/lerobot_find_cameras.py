@@ -180,7 +180,7 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
 
         if instance:
             logger.info(f"Connecting to {cam_type} camera: {cam_id}...")
-            instance.connect(warmup=False)
+            instance.connect(warmup=True)
             return {"instance": instance, "meta": cam_meta}
     except Exception as e:
         logger.error(f"Failed to connect or configure {cam_type} camera {cam_id}: {e}")
