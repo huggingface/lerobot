@@ -456,8 +456,7 @@ class OpenCVCamera(Camera):
         if frame is None:
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
-        image_modality_key = get_image_modality_key(image=frame)
-        return {image_modality_key: frame}
+        return frame
 
     def disconnect(self):
         """

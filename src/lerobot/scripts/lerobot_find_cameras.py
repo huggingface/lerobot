@@ -37,12 +37,12 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from cameras.utils import get_image_modality_key
 from lerobot.cameras.configs import ColorMode
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+from lerobot.cameras.utils import get_image_modality_key
 from lerobot.cameras.zed.camera_zed import ZedCamera
 
 from lerobot.cameras.zed.camera_zed import ZedCameraConfig

@@ -66,9 +66,22 @@ class SO101Follower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
+        """Generate camera features with multi-modal support."""
+        features = {}
+
+        for cam_name, camera_config in self.config.cameras.items():
+            # Depth feature if enabled
+            if hasattr(camera_config, "use_depth") and camera_config.use_depth:
+                features[f"{cam_name}_depth"] = (
+                    camera_config.height,
+                    camera_config.width,
+                )
+                features[f"{cam_name}_rgb"] = (camera_config.height, camera_config.width, 3)
+            else:
+                # RGB only
+                features[cam_name] = (camera_config.height, camera_config.width, 3)
+
+        return features
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -190,7 +203,7 @@ class SO101Follower(Robot):
                 obs_dict[cam_key] = image
             elif len(images) > 1:
                 for modality, image in images.items():
-                    obs_dict[f"{cam_key}.{modality}"] = image
+                    obs_dict[f"{cam_key}_{modality}"] = image
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 

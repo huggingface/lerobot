@@ -653,6 +653,40 @@ def hw_to_dataset_features(
     return features
 
 
+def _find_image_keys(feature_key: str, values: dict[str, Any]) -> list[str]:
+    """Find all matching image keys in values for a given feature key.
+
+    Args:
+        feature_key: Camera name from dataset feature (e.g., "head")
+        values: Dictionary containing image data
+
+    Returns:
+        list[str]: List of matching keys from values dictionary
+
+    Raises:
+        KeyError: If no matching image key found
+    """
+    # Direct camera name match (backward compatibility)
+    if feature_key in values:
+        return [feature_key]
+
+    # Look for valid camera_modality format keys
+    valid_modalities = ["rgb", "gray", "depth", "rgba", "ir"]
+    valid_keys = [
+        k
+        for k in values.keys()
+        if any(k == f"{feature_key}_{mod}" for mod in valid_modalities)
+    ]
+
+    if not valid_keys:
+        available_keys = [k for k in values.keys() if "_" in k]
+        raise KeyError(
+            f"No valid image key found for '{feature_key}'. Available: {available_keys}"
+        )
+
+    return valid_keys
+
+
 def build_dataset_frame(
     ds_features: dict[str, dict], values: dict[str, Any], prefix: str
 ) -> dict[str, np.ndarray]:
@@ -677,7 +711,14 @@ def build_dataset_frame(
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
-            frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+            feature_key = key.removeprefix(f"{prefix}.images.")
+            if feature_key in values:
+                frame[key] = values[feature_key]
+            else:
+                matched_keys = _find_image_keys(feature_key, values)
+                print(f"{matched_keys=}")
+                for matched_key in matched_keys:
+                    frame[f"{prefix}.images.{matched_key}"] = values[matched_key]
 
     return frame
 
@@ -1083,7 +1124,7 @@ def validate_feature_image_or_video(
 
     Args:
         name (str): The name of the feature.
-        expected_shape (list[str]): The expected shape (C, H, W).
+        expected_shape (list[str]): The expected shape (C, H, W), (H, W).
         value: The image data to validate.
 
     Returns:
@@ -1093,9 +1134,23 @@ def validate_feature_image_or_video(
     error_message = ""
     if isinstance(value, np.ndarray):
         actual_shape = value.shape
-        c, h, w = expected_shape
-        if len(actual_shape) != 3 or (actual_shape != (c, h, w) and actual_shape != (h, w, c)):
-            error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c, h, w)}' or '{(h, w, c)}'.\n"
+        # Depth or gray image.
+        if len(expected_shape) == 2:
+            if len(actual_shape) != 2:
+                error_message += f"Feature '{name}': expected 2D array, got {len(actual_shape)}D shape {actual_shape}\n"
+            elif actual_shape != tuple(expected_shape):
+                error_message += f"Feature '{name}': shape {actual_shape} != expected {tuple(expected_shape)}\n"
+
+        # RGB image.
+        elif len(expected_shape) == 3:
+            c, h, w = expected_shape
+            if len(actual_shape) != 3:
+                error_message += f"Feature '{name}': expected 3D array, got {len(actual_shape)}D shape {actual_shape}\n"
+            elif actual_shape not in [(c, h, w), (h, w, c)]:
+                error_message += f"Feature '{name}': shape {actual_shape} not in expected {[(c, h, w), (h, w, c)]}\n"
+
+        else:
+            error_message += f"Feature '{name}': invalid expected shape {expected_shape}\n"
     elif isinstance(value, PILImage.Image):
         pass
     else:

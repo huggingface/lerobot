@@ -362,8 +362,8 @@ class ZedCamera(Camera):
         color_image_raw = self.image_mat.get_data()
         color_image_processed = self._postprocess_image(color_image_raw, color_mode)
 
-        depth_key = None
-        depth_map_processed = None
+        depth_key: str | None = None
+        depth_map_processed: np.ndarray | None = None
         if self.use_depth:
             # Retrieve depth map
             self.zed_camera.retrieve_measure(py_mat=self.depth_mat, measure=sl.MEASURE.DEPTH, resolution=self.mat_resolution)
@@ -376,7 +376,7 @@ class ZedCamera(Camera):
 
         rgb_key = get_image_modality_key(image=color_image_processed)
         images = {rgb_key: color_image_processed}
-        if depth_key and depth_map_processed:
+        if depth_key is not None and depth_map_processed is not None:
             images[depth_key] = depth_map_processed
         return images
 
