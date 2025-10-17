@@ -273,7 +273,7 @@ def add_actor_information_and_train(
 
     NOTE: This function doesn't have a single responsibility, it should be split into multiple functions
     in the future. The reason why we did that is the  GIL in Python. It's super slow the performance
-    are divided by 200. So we need to have a single thread that does all the work.
+    is divided by 200. So we need to have a single thread that does all the work.
 
     Args:
         cfg (TrainRLServerPipelineConfig): Configuration object containing hyperparameters.

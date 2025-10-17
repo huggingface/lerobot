@@ -41,7 +41,7 @@ def make_acfql_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """
-    Constructs pre-processor and post-processor pipelines for the SAC policy.
+    Constructs pre-processor and post-processor pipelines for the ACFQL policy.
 
     The pre-processing pipeline prepares input data for the model by:
     1. Renaming features to match pretrained configurations.
@@ -54,7 +54,7 @@ def make_acfql_pre_post_processors(
     2. Unnormalizing the output features to their original scale.
 
     Args:
-        config: The configuration object for the SAC policy.
+        config: The configuration object for the ACFQL policy.
         dataset_stats: A dictionary of statistics for normalization.
 
     Returns:

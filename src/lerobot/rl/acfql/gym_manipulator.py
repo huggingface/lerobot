@@ -125,7 +125,6 @@ class RobotEnv(gym.Env):
         self.current_step = 0
         self.episode_data = None
 
-        self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors]
         self._image_keys = self.robot.cameras.keys()
 
         self.reset_pose = reset_pose
@@ -542,6 +541,7 @@ def control_loop(
 
     # Determine if gripper is used
     use_gripper = cfg.env.processor.gripper.use_gripper if cfg.env.processor.gripper is not None else True
+    action_dim_without_gripper = teleop_device.action_features["shape"][0] - (1 if use_gripper else 0)
 
     dataset = None
     if cfg.mode == "record":
@@ -597,10 +597,8 @@ def control_loop(
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
-        # TODO(jpizarrom): This should depend on the action space
-        neutral_action = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float32)
+        neutral_action = torch.tensor([0.0] * action_dim_without_gripper, dtype=torch.float32)
         if use_gripper:
-            # TODO(jpizarrom): define neutral gripper action should be defined in the config
             neutral_action = torch.cat([neutral_action, torch.tensor([0.0])])  # Gripper stay
 
         # Use the new step function

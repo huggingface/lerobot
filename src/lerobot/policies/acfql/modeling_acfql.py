@@ -81,7 +81,7 @@ class ACFQLPolicy(
     @torch.no_grad
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
-        raise NotImplementedError("SACPolicy does not support action chunking. It returns single actions!")
+        raise NotImplementedError("ACFQLPolicy does not support action chunking. It returns single actions!")
 
     @torch.no_grad()
     def compute_flow_actions(self, observations, observations_features, noises: Tensor) -> Tensor:
