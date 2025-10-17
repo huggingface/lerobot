@@ -87,9 +87,7 @@ def make_env(
         )
 
     if cfg.gym_id not in gym_registry:
-        print(
-            f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'..."
-        )
+        print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")
         try:
             importlib.import_module(cfg.package_name)
         except ModuleNotFoundError as e:
