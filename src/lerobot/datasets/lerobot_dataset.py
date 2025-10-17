@@ -66,6 +66,7 @@ from lerobot.datasets.utils import (
     write_tasks,
 )
 from lerobot.datasets.video_utils import (
+    VideoEncodingManager,
     VideoFrame,
     concatenate_video_files,
     decode_video_frames,
@@ -1136,8 +1137,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         use_batched_encoding = self.batch_encoding_size > 1
 
         if has_video_keys and not use_batched_encoding:
-            for video_key in self.meta.video_keys:
-                ep_metadata.update(self._save_episode_video(video_key, episode_index))
+            with VideoEncodingManager(self):
+                for video_key in self.meta.video_keys:
+                    ep_metadata.update(self._save_episode_video(video_key, episode_index))
 
         # `meta.save_episode` need to be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
@@ -1148,7 +1150,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if self.episodes_since_last_encoding == self.batch_encoding_size:
                 start_ep = self.num_episodes - self.batch_encoding_size
                 end_ep = self.num_episodes
-                self._batch_save_episode_video(start_ep, end_ep)
+                with VideoEncodingManager(self):
+                    self._batch_save_episode_video(start_ep, end_ep)
                 self.episodes_since_last_encoding = 0
 
         if not episode_data:
