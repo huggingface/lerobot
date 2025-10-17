@@ -16,7 +16,7 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from ..camera import Camera
 from ..configs import ColorMode
-from ..utils import get_cv2_rotation
+from ..utils import get_cv2_rotation, get_image_modality_key
 from .configuration_zed import ZedCameraConfig
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ class ZedCamera(Camera):
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
-        self.latest_frame: np.ndarray | None = None
+        self.latest_frame: dict[str, np.ndarray] | None = None
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
@@ -330,7 +330,7 @@ class ZedCamera(Camera):
 
         return depth_map_processed
 
-    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> dict[str, np.ndarray]:
         """
         Reads a single frame (color) synchronously from the camera.
 
@@ -340,7 +340,7 @@ class ZedCamera(Camera):
             timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 200ms.
 
         Returns:
-            np.ndarray: The captured color frame as a NumPy array
+            dict[str, np.ndarray]: A map of the captured color frame as a NumPy array
               (height, width, channels), processed according to `color_mode` and rotation.
 
         Raises:
@@ -358,15 +358,27 @@ class ZedCamera(Camera):
             raise RuntimeError(f"{self} read failed to grab frame.")
 
         # Retrieve left image (RGB by default in ZED SDK)
-        self.zed_camera.retrieve_image(py_mat=self.image_mat,view= sl.VIEW.LEFT, resolution=self.mat_resolution)
+        self.zed_camera.retrieve_image(py_mat=self.image_mat,view= self.config.camera_view, resolution=self.mat_resolution)
         color_image_raw = self.image_mat.get_data()
-
         color_image_processed = self._postprocess_image(color_image_raw, color_mode)
+
+        depth_key = None
+        depth_map_processed = None
+        if self.use_depth:
+            # Retrieve depth map
+            self.zed_camera.retrieve_measure(py_mat=self.depth_mat, measure=sl.MEASURE.DEPTH, resolution=self.mat_resolution)
+            depth_map = self.depth_mat.get_data()
+            depth_map_processed = self._postprocess_image(depth_map, depth_frame=True)
+            depth_key = get_image_modality_key(image=depth_map_processed, is_depth=True)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
-        return color_image_processed
+        rgb_key = get_image_modality_key(image=color_image_processed)
+        images = {rgb_key: color_image_processed}
+        if depth_key and depth_map_processed:
+            images[depth_key] = depth_map_processed
+        return images
 
     def _postprocess_image(
             self, image: np.ndarray, color_mode: ColorMode | None = None, depth_frame: bool = False
@@ -469,7 +481,7 @@ class ZedCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 200) -> dict[str, np.ndarray]:
         """
         Reads the latest available frame data (color) asynchronously.
 
@@ -481,7 +493,7 @@ class ZedCamera(Camera):
                 to become available. Defaults to 200ms.
 
         Returns:
-            np.ndarray: The latest captured frame data (color image).
+            dict[str, np.ndarray]: A map of the latest captured frame data (color and depth image).
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.

@@ -1,3 +1,5 @@
+import pyzed.sl as sl
+
 from dataclasses import dataclass
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
@@ -42,10 +44,11 @@ class ZedCameraConfig(CameraConfig):
 
     serial_number_or_name: str = "" # Default to the unique ZED camera
     color_mode: ColorMode = ColorMode.RGB
-    use_depth: bool = False
+    use_depth: bool = True
     rotation: Cv2Rotation = Cv2Rotation.ROTATE_180
     warmup_s: int = 3  # ZED cameras need longer warmup time
     depth_mode: str = "QUALITY"
+    camera_view: sl.VIEW = sl.VIEW.LEFT
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):

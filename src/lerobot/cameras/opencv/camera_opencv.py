@@ -34,7 +34,7 @@ import numpy as np
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
-from ..utils import get_cv2_backend, get_cv2_rotation
+from ..utils import get_cv2_backend, get_cv2_rotation, get_image_modality_key
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
 # NOTE(Steven): The maximum opencv device index depends on your operating system. For instance,
@@ -289,7 +289,7 @@ class OpenCVCamera(Camera):
 
         return found_cameras_info
 
-    def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None) -> dict[str, np.ndarray]:
         """
         Reads a single frame synchronously from the camera.
 
@@ -300,11 +300,6 @@ class OpenCVCamera(Camera):
             color_mode (Optional[ColorMode]): If specified, overrides the default
                 color mode (`self.color_mode`) for this read operation (e.g.,
                 request RGB even if default is BGR).
-
-        Returns:
-            np.ndarray: The captured frame as a NumPy array in the format
-                       (height, width, channels), using the specified or default
-                       color mode and applying any configured rotation.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
@@ -327,7 +322,8 @@ class OpenCVCamera(Camera):
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
-        return processed_frame
+        image_modality_key = get_image_modality_key(image=processed_frame)
+        return {image_modality_key: processed_frame}
 
     def _postprocess_image(self, image: np.ndarray, color_mode: ColorMode | None = None) -> np.ndarray:
         """
@@ -419,7 +415,7 @@ class OpenCVCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 200) -> dict[str, np.ndarray]:
         """
         Reads the latest available frame asynchronously.
 
@@ -432,7 +428,7 @@ class OpenCVCamera(Camera):
                 to become available. Defaults to 200ms (0.2 seconds).
 
         Returns:
-            np.ndarray: The latest captured frame as a NumPy array in the format
+            dict[str, np.ndarray]: A map of the latest captured frames as a NumPy array in the format
                        (height, width, channels), processed according to configuration.
 
         Raises:
@@ -460,7 +456,8 @@ class OpenCVCamera(Camera):
         if frame is None:
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
-        return frame
+        image_modality_key = get_image_modality_key(image=frame)
+        return {image_modality_key: frame}
 
     def disconnect(self):
         """

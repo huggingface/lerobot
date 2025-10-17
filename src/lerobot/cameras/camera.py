@@ -89,28 +89,34 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None) -> dict[str, np.ndarray]:
         """Capture and return a single frame from the camera.
 
         Args:
-            color_mode: Desired color mode for the output frame. If None,
-                        uses the camera's default color mode.
+            color_mode: Desired color mode for the output frame. If None, uses the camera's default color mode.
 
         Returns:
-            np.ndarray: Captured frame as a numpy array.
+            dict[str, np.ndarray]: Dictionary with modality keys and image data.
+                The keys are automatically determined based on array shape:
+                - 'image': For 2D arrays (H, W) - grayscale images
+                - 'image': For 3D arrays (H, W, 1) - grayscale images
+                - 'image': For 3D arrays (H, W, 3) - RGB/BGR images
+                - 'image': For 3D arrays (H, W, 4) - RGBA images
+                - 'depth': For depth maps (H, W)
+                Additional modality-specific keys may be provided by specific cameras.
         """
         pass
 
     @abc.abstractmethod
-    def async_read(self, timeout_ms: float = ...) -> np.ndarray:
+    def async_read(self, timeout_ms: float = ...) -> dict[str, np.ndarray]:
         """Asynchronously capture and return a single frame from the camera.
 
         Args:
-            timeout_ms: Maximum time to wait for a frame in milliseconds.
-                        Defaults to implementation-specific timeout.
+            timeout_ms: Maximum time to wait for a frame in milliseconds. Defaults to implementation-specific timeout.
 
         Returns:
-            np.ndarray: Captured frame as a numpy array.
+            dict[str, np.ndarray]: Dictionary mapping modality keys to image data.
+                See the read() method for detailed documentation on modality keys and image formats.
         """
         pass
 

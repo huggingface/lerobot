@@ -33,7 +33,7 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from ..camera import Camera
 from ..configs import ColorMode
-from ..utils import get_cv2_rotation
+from ..utils import get_cv2_rotation, get_image_modality_key
 from .configuration_realsense import RealSenseCameraConfig
 
 logger = logging.getLogger(__name__)
@@ -351,7 +351,7 @@ class RealSenseCamera(Camera):
 
         return depth_map_processed
 
-    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> dict[str, np.ndarray]:
         """
         Reads a single frame (color) synchronously from the camera.
 
@@ -362,7 +362,7 @@ class RealSenseCamera(Camera):
             timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 200ms.
 
         Returns:
-            np.ndarray: The captured color frame as a NumPy array
+            dict[str, np.ndarray]: A map of the captured color frame as a NumPy array
               (height, width, channels), processed according to `color_mode` and rotation.
 
         Raises:
@@ -389,7 +389,8 @@ class RealSenseCamera(Camera):
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
-        return color_image_processed
+        image_modality_key = get_image_modality_key(image=frame)
+        return {image_modality_key: frame}
 
     def _postprocess_image(
         self, image: np.ndarray, color_mode: ColorMode | None = None, depth_frame: bool = False
@@ -486,7 +487,7 @@ class RealSenseCamera(Camera):
         self.stop_event = None
 
     # NOTE(Steven): Missing implementation for depth for now
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 200) -> dict[str, np.ndarray]:
         """
         Reads the latest available frame data (color) asynchronously.
 
@@ -499,8 +500,8 @@ class RealSenseCamera(Camera):
                 to become available. Defaults to 200ms (0.2 seconds).
 
         Returns:
-            np.ndarray:
-            The latest captured frame data (color image), processed according to configuration.
+            dict[str, np.ndarray]:
+            A map of the latest captured frame data (color image), processed according to configuration.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
@@ -527,7 +528,8 @@ class RealSenseCamera(Camera):
         if frame is None:
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
-        return frame
+        image_modality_key = get_image_modality_key(image=frame)
+        return {image_modality_key: frame}
 
     def disconnect(self):
         """

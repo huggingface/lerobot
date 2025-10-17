@@ -23,6 +23,8 @@ import time
 from threading import Event, Lock, Thread
 from typing import Any
 
+from ..utils import get_image_modality_key
+
 # Fix MSMF hardware transform compatibility for Windows before importing cv2
 if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
@@ -131,7 +133,7 @@ class Reachy2Camera(Camera):
         camera_manager.disconnect()
         return initialized_cameras
 
-    def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None) -> dict[str, np.ndarray]:
         """
         Reads a single frame synchronously from the camera.
 
@@ -143,7 +145,7 @@ class Reachy2Camera(Camera):
                 request RGB even if default is BGR).
 
         Returns:
-            np.ndarray: The captured frame as a NumPy array in the format
+            dict[str, np.ndarray]: The captured frame as a NumPy array in the format
                        (height, width, channels), using the specified or default
                        color mode and applying any configured rotation.
         """
@@ -177,7 +179,8 @@ class Reachy2Camera(Camera):
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
-        return frame
+        image_modality_key = get_image_modality_key(image=frame)
+        return {image_modality_key: frame}
 
     def _read_loop(self):
         """
@@ -226,7 +229,7 @@ class Reachy2Camera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 200) -> dict[str, np.ndarray]:
         """
         Reads the latest available frame asynchronously.
 
@@ -239,7 +242,7 @@ class Reachy2Camera(Camera):
                 to become available. Defaults to 200ms (0.2 seconds).
 
         Returns:
-            np.ndarray: The latest captured frame as a NumPy array in the format
+            dict[str, np.ndarray]: A map of the latest captured frames as a NumPy array in the format
                        (height, width, channels), processed according to configuration.
 
         Raises:
@@ -267,7 +270,8 @@ class Reachy2Camera(Camera):
         if frame is None:
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
-        return frame
+        image_modality_key = get_image_modality_key(image=frame)
+        return {image_modality_key: frame}
 
     def disconnect(self):
         """

@@ -37,6 +37,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from cameras.utils import get_image_modality_key
 from lerobot.cameras.configs import ColorMode
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
@@ -156,50 +157,110 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
 
 
 def save_image(
-    img_array: np.ndarray,
+    image_data: np.ndarray | dict[str, np.ndarray],
     camera_identifier: str | int,
     images_dir: Path,
     camera_type: str,
-    is_depth: bool = False,
+    modality: str | None = None,
 ):
     """
-    Saves a single image to disk using Pillow. Handles color conversion if necessary.
-    Supports both RGB and depth images.
+    Saves image data to disk using Pillow. Supports multiple modalities.
+
+    Args:
+        image_data: Single image array or dictionary of modality-keyed images
+        camera_identifier: Unique identifier for the camera
+        images_dir: Directory where images will be saved
+        camera_type: Type of camera (e.g., 'zed', 'opencv')
+        modality: Explicit modality type. If None and image_data is a dict,
+                 saves all modalities with automatic key detection.
+
+    Note:
+        Supported modalities and their handling:
+        - 'gray': Grayscale images, saved as 8-bit PNG
+        - 'rgb': RGB images, saved as standard PNG
+        - 'rgba': RGBA images, saved as PNG with alpha
+        - 'depth': Depth maps, saved as 16-bit PNG
+        - 'ir': Infrared images, saved as 8-bit PNG
     """
     try:
-        if is_depth:
+        # Handle dictionary input (multiple modalities)
+        if isinstance(image_data, dict):
+            futures = []
+            for mod, img_array in image_data.items():
+                # Recursively call save_image for each modality
+                future = save_image(
+                    img_array, camera_identifier, images_dir, camera_type, mod
+                )
+                if future:
+                    futures.append(future)
+            return futures
+
+        # Handle single image array
+        img_array = image_data
+        safe_identifier = str(camera_identifier).replace("/", "_").replace("\\", "_")
+
+        # Auto-detect modality if not explicitly provided
+        if modality is None:
+            modality = get_image_modality_key(img_array)
+
+        # Process based on modality
+        if modality == "depth":
             # Depth image processing
-            # ZED depth maps are uint16 type, range 0-65535, unit in millimeters
-            # Ensure data is 16-bit unsigned integer
             if img_array.dtype != np.uint16:
                 img_array = img_array.astype(np.uint16)
-
-            # Use PIL's "I;16" mode for 16-bit grayscale images
             img = Image.fromarray(img_array, mode="I;16")
-
-            safe_identifier = (
-                str(camera_identifier).replace("/", "_").replace("\\", "_")
-            )
             filename_prefix = f"{camera_type.lower()}_{safe_identifier}_depth"
-            filename = f"{filename_prefix}.png"
+
+        elif modality == "gray":
+            # Grayscale image processing
+            if img_array.dtype != np.uint8:
+                # Normalize to 0-255 range for 8-bit grayscale
+                if img_array.dtype in [np.float32, np.float64]:
+                    img_array = (img_array * 255).astype(np.uint8)
+                else:
+                    img_array = img_array.astype(np.uint8)
+            img = Image.fromarray(img_array, mode="L")
+            filename_prefix = f"{camera_type.lower()}_{safe_identifier}_gray"
+
+        elif modality == "rgb":
+            # RGB image processing
+            if img_array.dtype != np.uint8:
+                img_array = img_array.astype(np.uint8)
+            img = Image.fromarray(img_array, mode="RGB")
+            filename_prefix = f"{camera_type.lower()}_{safe_identifier}_rgb"
+
+        elif modality == "rgba":
+            # RGBA image processing
+            if img_array.dtype != np.uint8:
+                img_array = img_array.astype(np.uint8)
+            img = Image.fromarray(img_array, mode="RGBA")
+            filename_prefix = f"{camera_type.lower()}_{safe_identifier}_rgba"
+
+        elif modality == "ir":
+            # Infrared image processing (similar to grayscale)
+            if img_array.dtype != np.uint8:
+                img_array = img_array.astype(np.uint8)
+            img = Image.fromarray(img_array, mode="L")
+            filename_prefix = f"{camera_type.lower()}_{safe_identifier}_ir"
 
         else:
+            # Fallback for unknown modalities
+            logger.warning(f"Unknown modality '{modality}', saving as RGB")
+            if img_array.dtype != np.uint8:
+                img_array = img_array.astype(np.uint8)
             img = Image.fromarray(img_array, mode="RGB")
+            filename_prefix = f"{camera_type.lower()}_{safe_identifier}_{modality}"
 
-            safe_identifier = (
-                str(camera_identifier).replace("/", "_").replace("\\", "_")
-            )
-            filename_prefix = f"{camera_type.lower()}_{safe_identifier}"
-            filename = f"{filename_prefix}.png"
-
+        filename = f"{filename_prefix}.png"
         path = images_dir / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         img.save(str(path))
-        logger.info(f"Saved image: {path}")
+        logger.info(f"Saved {modality} image: {path}")
 
     except Exception as e:
         logger.error(
-            f"Failed to save image for camera {camera_identifier} (type {camera_type}, depth={is_depth}): {e}"
+            f"Failed to save image for camera {camera_identifier} "
+            f"(type {camera_type}, modality={modality}): {e}"
         )
 
 
@@ -272,44 +333,6 @@ def process_camera_image(
         raise e
     return None
 
-
-def process_camera_depth_image(
-    cam_dict: dict[str, Any], output_dir: Path, current_time: float
-) -> concurrent.futures.Future | None:
-    """Capture and process a depth image from a single camera."""
-    cam = cam_dict["instance"]
-    meta = cam_dict["meta"]
-    cam_type_str = str(meta.get("type", "unknown"))
-    cam_id_str = str(meta.get("id", "unknown"))
-
-    if not getattr(cam, "use_depth", False):
-        logger.warning(
-            f"Depth stream not enabled for {cam_type_str} camera {cam_id_str}"
-        )
-        return None
-    print(f"{cam=}\n{meta=}")
-    try:
-        image_data = cam.read_depth()
-        print(f"Depth map shape: {image_data.shape}")
-        print(f"Depth map dtype: {image_data.dtype}")
-        print(f"Depth value range: [{image_data.min()}, {image_data.max()}]")
-        return save_image(
-            image_data,
-            cam_id_str,
-            output_dir,
-            cam_type_str,
-            is_depth=True,
-        )
-    except TimeoutError:
-        logger.warning(
-            f"Timeout reading from {cam_type_str} camera {cam_id_str} at time {current_time:.2f}s."
-        )
-    except Exception as e:
-        logger.error(f"Error reading from {cam_type_str} camera {cam_id_str}: {e}")
-        raise e
-    return None
-
-
 def cleanup_cameras(cameras_to_use: list[dict[str, Any]]):
     """Disconnect all cameras."""
     logger.info(f"Disconnecting {len(cameras_to_use)} cameras...")
@@ -364,9 +387,6 @@ def save_images_from_all_cameras(
 
                 for cam_dict in cameras_to_use:
                     future = process_camera_image(cam_dict, output_dir, current_capture_time)
-                    if future:
-                        futures.append(future)
-                    future = process_camera_depth_image(cam_dict, output_dir, current_capture_time)
                     if future:
                         futures.append(future)
 

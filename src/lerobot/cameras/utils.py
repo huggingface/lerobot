@@ -17,6 +17,8 @@
 import platform
 from typing import cast
 
+import numpy as np
+
 from lerobot.utils.import_utils import make_device_from_device_class
 
 from .camera import Camera
@@ -79,3 +81,47 @@ def get_cv2_backend() -> int:
     #     return cv2.CAP_AVFOUNDATION
     else:  # Linux and others
         return cv2.CAP_ANY
+
+
+def get_image_modality_key(image: np.ndarray, is_depth: bool = False) -> str:
+    """
+    Determine the modality key based on image array shape.
+
+    Args:
+        image: Image array from the camera. Should be a numpy array.
+        is_depth: If True, explicitly treat as depth modality regardless of shape.
+
+    Returns:
+        str: Modality key indicating the image type:
+            - 'depth': Depth maps
+            - 'gray': Grayscale images (H, W) or (H, W, 1)
+            - 'rgb': RGB images (H, W, 3)
+            - 'rgba': RGBA images (H, W, 4)
+            - 'unknown': For unsupported array shapes
+
+    Raises:
+        ValueError: If image is not a numpy array
+
+    Example:
+        >>> get_image_modality_key(np.zeros((480, 640)))  # 'gray'
+        >>> get_image_modality_key(np.zeros((480, 640, 3)))  # 'rgb'
+        >>> get_image_modality_key(np.zeros((480, 640)), is_depth=True)  # 'depth'
+    """
+    if not isinstance(image, np.ndarray):
+        raise ValueError(f"Expected numpy array, got {type(image)}")
+
+    if is_depth:
+        return "depth"
+
+    if len(image.shape) == 2:
+        return "gray"
+    elif len(image.shape) == 3:
+        channels = image.shape[2]
+        if channels == 1:
+            return "gray"
+        elif channels == 3:
+            return "rgb"
+        elif channels == 4:
+            return "rgba"
+
+    return "unknown"
