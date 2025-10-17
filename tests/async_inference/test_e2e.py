@@ -139,7 +139,6 @@ def test_async_inference_e2e(monkeypatch):
         policy_type="test",
         pretrained_name_or_path="test",
         actions_per_chunk=20,
-        verify_robot_cameras=False,
     )
 
     client = RobotClient(client_config)
