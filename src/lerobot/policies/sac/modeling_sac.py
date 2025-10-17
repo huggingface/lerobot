@@ -31,6 +31,7 @@ from torch.distributions import MultivariateNormal, TanhTransform, Transform, Tr
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig, is_image_feature
 from lerobot.policies.utils import get_device_from_parameters
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 
 DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 
@@ -50,7 +51,7 @@ class SACPolicy(
         self.config = config
 
         # Determine action dimension and initialize all components
-        continuous_action_dim = config.output_features["action"].shape[0]
+        continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
         self._init_critics(continuous_action_dim)
         self._init_actor(continuous_action_dim)
@@ -157,7 +158,7 @@ class SACPolicy(
             The computed loss tensor
         """
         # Extract common components from batch
-        actions: Tensor = batch["action"]
+        actions: Tensor = batch[ACTION]
         observations: dict[str, Tensor] = batch["state"]
         observation_features: Tensor = batch.get("observation_feature")
 
@@ -513,17 +514,17 @@ class SACObservationEncoder(nn.Module):
             )
 
     def _init_state_layers(self) -> None:
-        self.has_env = "observation.environment_state" in self.config.input_features
-        self.has_state = "observation.state" in self.config.input_features
+        self.has_env = OBS_ENV_STATE in self.config.input_features
+        self.has_state = OBS_STATE in self.config.input_features
         if self.has_env:
-            dim = self.config.input_features["observation.environment_state"].shape[0]
+            dim = self.config.input_features[OBS_ENV_STATE].shape[0]
             self.env_encoder = nn.Sequential(
                 nn.Linear(dim, self.config.latent_dim),
                 nn.LayerNorm(self.config.latent_dim),
                 nn.Tanh(),
             )
         if self.has_state:
-            dim = self.config.input_features["observation.state"].shape[0]
+            dim = self.config.input_features[OBS_STATE].shape[0]
             self.state_encoder = nn.Sequential(
                 nn.Linear(dim, self.config.latent_dim),
                 nn.LayerNorm(self.config.latent_dim),
@@ -549,9 +550,9 @@ class SACObservationEncoder(nn.Module):
                 cache = self.get_cached_image_features(obs)
             parts.append(self._encode_images(cache, detach))
         if self.has_env:
-            parts.append(self.env_encoder(obs["observation.environment_state"]))
+            parts.append(self.env_encoder(obs[OBS_ENV_STATE]))
         if self.has_state:
-            parts.append(self.state_encoder(obs["observation.state"]))
+            parts.append(self.state_encoder(obs[OBS_STATE]))
         if parts:
             return torch.cat(parts, dim=-1)
 
@@ -1060,15 +1061,3 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
             x = transform(x)
 
         return x
-
-
-def _convert_normalization_params_to_tensor(normalization_params: dict) -> dict:
-    converted_params = {}
-    for outer_key, inner_dict in normalization_params.items():
-        converted_params[outer_key] = {}
-        for key, value in inner_dict.items():
-            converted_params[outer_key][key] = torch.tensor(value)
-            if "image" in outer_key:
-                converted_params[outer_key][key] = converted_params[outer_key][key].view(3, 1, 1)
-
-    return converted_params

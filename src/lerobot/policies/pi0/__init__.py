@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,12 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from .configuration_pi0 import PI0Config
+from .modeling_pi0 import PI0Policy
+from .processor_pi0 import make_pi0_pre_post_processors
 
-from ..config import TeleoperatorConfig
-
-
-@TeleoperatorConfig.register_subclass("widowx")
-@dataclass
-class WidowXConfig(TeleoperatorConfig):
-    port: str  # Port to connect to the arm
+__all__ = ["PI0Config", "PI0Policy", "make_pi0_pre_post_processors"]

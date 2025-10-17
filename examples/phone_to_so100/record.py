@@ -84,7 +84,6 @@ phone_to_robot_ee_pose_processor = RobotProcessorPipeline[tuple[RobotAction, Rob
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.20,
-            max_ee_twist_step_rad=0.50,
         ),
         GripperVelocityToJoint(speed_factor=20.0),
     ],
@@ -201,4 +200,6 @@ log_say("Stop recording")
 robot.disconnect()
 phone.disconnect()
 listener.stop()
+
+dataset.finalize()
 dataset.push_to_hub()

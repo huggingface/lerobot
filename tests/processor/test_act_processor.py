@@ -342,7 +342,7 @@ def test_act_processor_batch_consistency():
     batch = transition_to_batch(transition)
 
     processed = preprocessor(batch)
-    assert processed["observation.state"].shape[0] == 1  # Batched
+    assert processed[OBS_STATE].shape[0] == 1  # Batched
 
     # Test already batched data
     observation_batched = {OBS_STATE: torch.randn(8, 7)}  # Batch of 8

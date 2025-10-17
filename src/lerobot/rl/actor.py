@@ -97,8 +97,6 @@ from .gym_manipulator import (
     step_env_and_process_transition,
 )
 
-ACTOR_SHUTDOWN_TIMEOUT = 30
-
 # Main entry point
 
 

@@ -142,11 +142,6 @@ class RobotClientConfig:
         default=False, metadata={"help": "Visualize the action queue size"}
     )
 
-    # Verification configuration
-    verify_robot_cameras: bool = field(
-        default=True, metadata={"help": "Verify that the robot cameras match the policy cameras"}
-    )
-
     @property
     def environment_dt(self) -> float:
         """Environment time step, in seconds"""
