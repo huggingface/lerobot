@@ -344,6 +344,11 @@ def act_with_policy(
             }
         )
 
+        # The preprocessor may add extra keys, filter them out
+        observation_for_inference = {
+            k: v for k, v in observation_for_inference.items() if k in cfg.policy.input_features
+        }
+
         observation_for_inference = {
             **{"observation.state": observation_for_inference["observation.state"]},
             # [B, H, W, C] -> [B, C, H, W]

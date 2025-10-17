@@ -111,6 +111,9 @@ def eval_policy(
                 }
             )
 
+            # The preprocessor may add extra keys, filter them out
+            observation = {k: v for k, v in observation.items() if k in cfg.policy.input_features}
+
             # Change image from HWC to CHW
             observation = {
                 k: v.permute(0, 3, 1, 2) if ("image" in k) and len(v.shape) == 4 else v

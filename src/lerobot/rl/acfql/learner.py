@@ -429,6 +429,9 @@ def add_actor_information_and_train(
 
                 actions = observations.pop("action")
 
+                # The preprocessor may add extra keys, filter them out
+                observations = {k: v for k, v in observations.items() if k in cfg.policy.input_features}
+
                 observations = {
                     **{"observation.state": observations["observation.state"]},
                     # [B, H, W, C] -> [B, C, H, W]
@@ -448,7 +451,10 @@ def add_actor_information_and_train(
                         },
                     }
                 )
-
+                # The preprocessor may add extra keys, filter them out
+                next_observations = {
+                    k: v for k, v in next_observations.items() if k in cfg.policy.input_features
+                }
                 next_observations = {
                     **{"observation.state": next_observations["observation.state"]},
                     # [B, H, W, C] -> [B, C, H, W]
@@ -521,6 +527,9 @@ def add_actor_information_and_train(
 
             actions = observations.pop("action")
 
+            # The preprocessor may add extra keys, filter them out
+            observations = {k: v for k, v in observations.items() if k in cfg.policy.input_features}
+
             observations = {
                 **{"observation.state": observations["observation.state"]},
                 # [B, H, W, C] -> [B, C, H, W]
@@ -538,7 +547,8 @@ def add_actor_information_and_train(
                     },
                 }
             )
-
+            # The preprocessor may add extra keys, filter them out
+            next_observations = {k: v for k, v in next_observations.items() if k in cfg.policy.input_features}
             next_observations = {
                 **{"observation.state": next_observations["observation.state"]},
                 # [B, H, W, C] -> [B, C, H, W]
@@ -770,6 +780,9 @@ def add_actor_information_and_train(
 
             actions = observations.pop("action")
 
+            # The preprocessor may add extra keys, filter them out
+            observations = {k: v for k, v in observations.items() if k in cfg.policy.input_features}
+
             observations = {
                 **{"observation.state": observations["observation.state"]},
                 # [B, H, W, C] -> [B, C, H, W]
@@ -787,7 +800,8 @@ def add_actor_information_and_train(
                     },
                 }
             )
-
+            # The preprocessor may add extra keys, filter them out
+            next_observations = {k: v for k, v in next_observations.items() if k in cfg.policy.input_features}
             next_observations = {
                 **{"observation.state": next_observations["observation.state"]},
                 # [B, H, W, C] -> [B, C, H, W]
@@ -864,6 +878,9 @@ def add_actor_information_and_train(
         )
         actions = observations.pop("action")
 
+        # The preprocessor may add extra keys, filter them out
+        observations = {k: v for k, v in observations.items() if k in cfg.policy.input_features}
+
         observations = {
             **{"observation.state": observations["observation.state"]},
             # [B, H, W, C] -> [B, C, H, W]
@@ -881,7 +898,8 @@ def add_actor_information_and_train(
                 },
             }
         )
-
+        # The preprocessor may add extra keys, filter them out
+        next_observations = {k: v for k, v in next_observations.items() if k in cfg.policy.input_features}
         next_observations = {
             **{"observation.state": next_observations["observation.state"]},
             # [B, H, W, C] -> [B, C, H, W]
