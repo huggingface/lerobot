@@ -36,12 +36,12 @@ authors = [
     { name = "Alexander Soare", email = "alexander.soare159@gmail.com" },
     { name = "Quentin Gallouédec", email = "quentin.gallouedec@ec-lyon.fr" },
     { name = "Steven Palma", email = "imstevenpmwork@ieee.org" },
-    { name = "Pepijn Kooijmans", email = "pepijnkooijmans@outlook.com" },
-    { name = "Michel Aractingi", email = "michel.aractingi@gmail.com" },
+    { name = "Pepijn Kooijmans", email = "pepijnkooijmans@outlook.com"},
+    { name = "Michel Aractingi", email = "michel.aractingi@gmail.com"},
     { name = "Adil Zouitine", email = "adilzouitinegm@gmail.com" },
-    { name = "Dana Aubakirova", email = "danaaubakirova17@gmail.com" },
-    { name = "Caroline Pascal", email = "caroline8.pascal@gmail.com" },
-    { name = "Martino Russi", email = "nopyeps@gmail.com" },
+    { name = "Dana Aubakirova", email = "danaaubakirova17@gmail.com"},
+    { name = "Caroline Pascal", email = "caroline8.pascal@gmail.com"},
+    { name = "Martino Russi", email = "nopyeps@gmail.com"},
     { name = "Thomas Wolf", email = "thomaswolfcontact@gmail.com" },
 ]
 classifiers = [
@@ -54,13 +54,7 @@ classifiers = [
     "Topic :: Software Development :: Build Tools",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-keywords = [
-    "lerobot",
-    "huggingface",
-    "robotics",
-    "machine learning",
-    "artificial intelligence",
-]
+keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artificial intelligence"]
 
 dependencies = [
 
@@ -80,13 +74,13 @@ dependencies = [
     "packaging>=24.2,<26.0",
     "pynput>=1.7.7,<1.9.0",
     "pyserial>=3.5,<4.0",
-    "wandb>=0.20.0,<0.22.0",                 # TODO: Bumb dependency (compatible with protobuf)
+    "wandb>=0.20.0,<0.22.0", # TODO: Bumb dependency (compatible with protobuf)
 
-    "torch>=2.2.1,<2.8.0",                                                                                                                                                                                                                                # TODO: Bumb dependency
+    "torch>=2.2.1,<2.8.0", # TODO: Bumb dependency
     "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bumb dependency
-    "torchvision>=0.21.0,<0.23.0",                                                                                                                                                                                                                        # TODO: Bumb dependency
+    "torchvision>=0.21.0,<0.23.0", # TODO: Bumb dependency
 
-    "draccus==0.10.0",           # TODO: Remove ==
+    "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=1.0.0",
     "rerun-sdk>=0.21.0,<0.23.0", # TODO: Bumb dependency
 
@@ -103,10 +97,7 @@ dependencies = [
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
 transformers-dep = ["transformers>=4.53.0,<5.0.0"]
-grpcio-dep = [
-    "grpcio==1.73.1",
-    "protobuf==6.31.0",
-] # TODO: Bumb dependency (compatible with wandb)
+grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"] # TODO: Bumb dependency (compatible with wandb)
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
@@ -125,50 +116,22 @@ intelrealsense = [
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0"]
 
 # Policies
-pi = [
-    "transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi",
-]
-smolvla = [
-    "lerobot[transformers-dep]",
-    "num2words>=0.5.14,<0.6.0",
-    "accelerate>=1.7.0,<2.0.0",
-    "safetensors>=0.4.3,<1.0.0",
-]
-hilserl = [
-    "lerobot[transformers-dep]",
-    "gym-hil>=0.1.11,<0.2.0",
-    "lerobot[grpcio-dep]",
-    "lerobot[placo-dep]",
-]
+pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
+smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
 
 # Development
-dev = [
-    "pre-commit>=3.7.0,<5.0.0",
-    "debugpy>=1.8.1,<1.9.0",
-    "lerobot[grpcio-dep]",
-    "grpcio-tools==1.73.1",
-]
-test = [
-    "pytest>=8.1.0,<9.0.0",
-    "pytest-timeout>=2.4.0,<3.0.0",
-    "pytest-cov>=5.0.0,<8.0.0",
-    "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'",
-]
+dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
+test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
 aloha = ["gym-aloha>=0.1.2,<0.2.0"]
-pusht = [
-    "gym-pusht>=0.1.5,<0.2.0",
-    "pymunk>=6.6.0,<7.0.0",
-] # TODO: Fix pymunk version in gym-pusht instead
-libero = [
-    "lerobot[transformers-dep]",
-    "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero",
-]
+pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
+libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
 metaworld = ["metaworld>=3.0.0"]
 
 # All
@@ -195,20 +158,20 @@ all = [
 ]
 
 [project.scripts]
-lerobot-calibrate = "lerobot.scripts.lerobot_calibrate:main"
-lerobot-find-cameras = "lerobot.scripts.lerobot_find_cameras:main"
-lerobot-find-port = "lerobot.scripts.lerobot_find_port:main"
-lerobot-record = "lerobot.scripts.lerobot_record:main"
-lerobot-replay = "lerobot.scripts.lerobot_replay:main"
-lerobot-setup-motors = "lerobot.scripts.lerobot_setup_motors:main"
-lerobot-teleoperate = "lerobot.scripts.lerobot_teleoperate:main"
-lerobot-eval = "lerobot.scripts.lerobot_eval:main"
-lerobot-train = "lerobot.scripts.lerobot_train:main"
-lerobot-dataset-viz = "lerobot.scripts.lerobot_dataset_viz:main"
-lerobot-info = "lerobot.scripts.lerobot_info:main"
-lerobot-find-joint-limits = "lerobot.scripts.lerobot_find_joint_limits:main"
-lerobot-imgtransform-viz = "lerobot.scripts.lerobot_imgtransform_viz:main"
-lerobot-edit-dataset = "lerobot.scripts.lerobot_edit_dataset:main"
+lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
+lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
+lerobot-find-port="lerobot.scripts.lerobot_find_port:main"
+lerobot-record="lerobot.scripts.lerobot_record:main"
+lerobot-replay="lerobot.scripts.lerobot_replay:main"
+lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
+lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
+lerobot-eval="lerobot.scripts.lerobot_eval:main"
+lerobot-train="lerobot.scripts.lerobot_train:main"
+lerobot-dataset-viz="lerobot.scripts.lerobot_dataset_viz:main"
+lerobot-info="lerobot.scripts.lerobot_info:main"
+lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
+lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
+lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
@@ -235,16 +198,7 @@ exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
 # N: pep8-naming
 # TODO: Uncomment rules when ready to use
 select = [
-    "E",
-    "W",
-    "F",
-    "I",
-    "B",
-    "C4",
-    "T20",
-    "N",
-    "UP",
-    "SIM", #, "A", "S", "D", "RUF"
+    "E", "W", "F", "I", "B", "C4", "T20", "N", "UP", "SIM" #, "A", "S", "D", "RUF"
 ]
 ignore = [
     "E501", # Line too long
@@ -323,7 +277,6 @@ follow_imports = "skip"
 # disallow_untyped_defs = true
 # disallow_incomplete_defs = true
 # check_untyped_defs = true
-
 
 [[tool.mypy.overrides]]
 module = "lerobot.*"

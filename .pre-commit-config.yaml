@@ -13,7 +13,7 @@
 # limitations under the License.
 
 default_language_version:
-  python: python3.10
+    python: python3.10
 
 exclude: "tests/artifacts/.*\\.safetensors$"
 
@@ -24,12 +24,12 @@ repos:
       - id: check-useless-excludes
       - id: check-hooks-apply
 
-    ##### General Code Quality & Formatting #####
+   ##### General Code Quality & Formatting #####
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: check-added-large-files
-        args: ["--maxkb=1024"]
+        args: ['--maxkb=1024']
       - id: debug-statements
       - id: check-merge-conflict
       - id: check-case-conflict
@@ -54,7 +54,7 @@ repos:
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.20.0
     hooks:
-      - id: pyupgrade
+    -   id: pyupgrade
         args: [--py310-plus]
 
   ##### Markdown Quality #####
@@ -80,9 +80,9 @@ repos:
   - repo: https://github.com/PyCQA/bandit
     rev: 1.8.6
     hooks:
-      - id: bandit
-        args: ["-c", "pyproject.toml"]
-        additional_dependencies: ["bandit[toml]"]
+    - id: bandit
+      args: ["-c", "pyproject.toml"]
+      additional_dependencies: ["bandit[toml]"]
 
   # TODO(Steven): Uncomment when ready to use
   ##### Static Analysis & Typing #####
