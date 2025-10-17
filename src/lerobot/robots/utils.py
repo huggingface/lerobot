@@ -14,13 +14,16 @@
 
 import logging
 from pprint import pformat
+from typing import cast
 
-from lerobot.robots import RobotConfig
+from lerobot.utils.import_utils import make_device_from_device_class
 
+from .config import RobotConfig
 from .robot import Robot
 
 
 def make_robot_from_config(config: RobotConfig) -> Robot:
+    # TODO(Steven): Consider just using the make_device_from_device_class for all types
     if config.type == "koch_follower":
         from .koch_follower import KochFollower
 
@@ -66,7 +69,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
         return MockRobot(config)
     else:
-        raise ValueError(config.type)
+        try:
+            return cast(Robot, make_device_from_device_class(config))
+        except Exception as e:
+            raise ValueError(f"Error creating robot with config {config}: {e}") from e
 
 
 # TODO(pepijn): Move to pipeline step to make sure we don't have to do this in the robot code and send action to robot is clean for use in dataset
