@@ -200,7 +200,7 @@ from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderCo
 from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
+from lerobot.utils.visualization_utils import init_rerun
 from lerobot.record import record_loop
 
 NUM_EPISODES = 5
@@ -237,7 +237,7 @@ dataset = LeRobotDataset.create(
 
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
-_init_rerun(session_name="recording")
+init_rerun(session_name="recording")
 
 # Connect the robot and teleoperator
 robot.connect()
@@ -513,17 +513,21 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.factory import make_pre_post_processors
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.scripts.lerobot_record import record_loop
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
-from lerobot.record import record_loop
+from lerobot.utils.visualization_utils import init_rerun
+
 
 NUM_EPISODES = 5
 FPS = 30
 EPISODE_TIME_SEC = 60
 TASK_DESCRIPTION = "My task description"
+HF_MODEL_ID = "<hf_username>/<model_repo_id>"
+HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
 
 # Create the robot configuration
 camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=FPS)}
@@ -535,7 +539,7 @@ robot_config = SO100FollowerConfig(
 robot = SO100Follower(robot_config)
 
 # Initialize the policy
-policy = ACTPolicy.from_pretrained("<hf_username>/<my_policy_repo_id>")
+policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 
 # Configure the dataset features
 action_features = hw_to_dataset_features(robot.action_features, "action")
@@ -544,7 +548,7 @@ dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
 dataset = LeRobotDataset.create(
-    repo_id="<hf_username>/eval_<dataset_repo_id>",
+    repo_id=HF_DATASET_ID,
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,
@@ -554,10 +558,16 @@ dataset = LeRobotDataset.create(
 
 # Initialize the keyboard listener and rerun visualization
 _, events = init_keyboard_listener()
-_init_rerun(session_name="recording")
+init_rerun(session_name="recording")
 
 # Connect the robot
 robot.connect()
+
+preprocessor, postprocessor = make_pre_post_processors(
+    policy_cfg=policy,
+    pretrained_path=HF_MODEL_ID,
+    dataset_stats=dataset.meta.stats,
+)
 
 for episode_idx in range(NUM_EPISODES):
     log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
@@ -568,6 +578,8 @@ for episode_idx in range(NUM_EPISODES):
         events=events,
         fps=FPS,
         policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
