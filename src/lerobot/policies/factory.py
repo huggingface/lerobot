@@ -31,7 +31,6 @@ from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
-from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
@@ -58,7 +57,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-              "vqbet", "pi0", "pi0fast", "sac", "reward_classifier", "smolvla".
+              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla".
 
     Returns:
         The policy class corresponding to the given name.
@@ -82,10 +81,6 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy
-    elif name == "pi0fast":
-        from lerobot.policies.pi0fast.modeling_pi0fast import PI0FASTPolicy
-
-        return PI0FASTPolicy
     elif name == "pi0":
         from lerobot.policies.pi0.modeling_pi0 import PI0Policy
 
@@ -119,7 +114,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
-                     "diffusion", "act", "vqbet", "pi0", "pi0fast", "sac", "smolvla",
+                     "diffusion", "act", "vqbet", "pi0", "pi05", "sac", "smolvla",
                      "reward_classifier".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
@@ -137,8 +132,6 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return ACTConfig(**kwargs)
     elif policy_type == "vqbet":
         return VQBeTConfig(**kwargs)
-    elif policy_type == "pi0fast":
-        return PI0FASTConfig(**kwargs)
     elif policy_type == "pi0":
         return PI0Config(**kwargs)
     elif policy_type == "pi05":
@@ -256,14 +249,6 @@ def make_pre_post_processors(
         from lerobot.policies.vqbet.processor_vqbet import make_vqbet_pre_post_processors
 
         processors = make_vqbet_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
-    elif isinstance(policy_cfg, PI0FASTConfig):
-        from lerobot.policies.pi0fast.processor_pi0fast import make_pi0fast_pre_post_processors
-
-        processors = make_pi0fast_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
