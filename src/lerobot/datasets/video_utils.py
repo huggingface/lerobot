@@ -452,6 +452,9 @@ def concatenate_video_files(
                 template=input_stream, opaque=True
             )
 
+            # set the time base to the input stream time base (missing in the codec context)
+            stream_map[input_stream.index].time_base = input_stream.time_base
+
     # Demux + remux packets (no re-encode)
     for packet in input_container.demux():
         # Skip packets from un-mapped streams
@@ -638,6 +641,9 @@ class VideoEncodingManager:
                 f"from episode {start_ep} to {end_ep - 1}"
             )
             self.dataset._batch_save_episode_video(start_ep, end_ep)
+
+        # Finalize the dataset to properly close all writers
+        self.dataset.finalize()
 
         # Clean up episode images if recording was interrupted
         if exc_type is not None:
