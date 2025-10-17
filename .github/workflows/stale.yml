@@ -27,15 +27,17 @@ env:
     This issue was closed because it has been stalled for 14 days with no activity.
     Feel free to reopen if is still relevant, or to ping a collaborator if you have any questions.
   CLOSE_PR_MESSAGE: >
-    This PR was closed because it has been stalled for 14 days with no activity.
+    This PR was closed because it has been stalled for 21 days with no activity.
     Feel free to reopen if is still relevant, or to ping a collaborator if you have any questions.
   WARN_ISSUE_MESSAGE: >
     This issue has been automatically marked as stale because it has not had
     recent activity (6 months). It will be closed if no further activity occurs.
+    Any change, comment or update to this issue will reset this count.
     Thank you for your contributions.
   WARN_PR_MESSAGE: >
     This PR has been automatically marked as stale because it has not had
-    recent activity (6 months). It will be closed if no further activity occurs.
+    recent activity (1 year). It will be closed if no further activity occurs.
+    Any change, comment or update to this PR will reset this count.
     Thank you for your contributions.
 
 jobs:
@@ -56,10 +58,10 @@ jobs:
           stale-pr-label: stale
           exempt-issue-labels: never-stale
           exempt-pr-labels: never-stale
-          days-before-issue-stale: 180 # TODO(Steven): Will modify this to 90 after initial cleanup
+          days-before-issue-stale: 180
           days-before-issue-close: 14
-          days-before-pr-stale: 180
-          days-before-pr-close: 14
+          days-before-pr-stale: 365
+          days-before-pr-close: 21
           delete-branch: true
           close-issue-message: ${{ env.CLOSE_ISSUE_MESSAGE }}
           close-pr-message: ${{ env.CLOSE_PR_MESSAGE }}

@@ -72,7 +72,6 @@ post it.
 
 Look at our implementations for [datasets](./src/lerobot/datasets/), [policies](./src/lerobot/policies/),
 environments ([aloha](https://github.com/huggingface/gym-aloha),
-[xarm](https://github.com/huggingface/gym-xarm),
 [pusht](https://github.com/huggingface/gym-pusht))
 and follow the same api design.
 
