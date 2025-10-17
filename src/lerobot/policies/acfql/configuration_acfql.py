@@ -158,11 +158,6 @@ class ACFQLConfig(PreTrainedConfig):
     # Frequency of policy updates
     policy_update_freq: int = 1
 
-    # TODO(lilkm): Check this
-    force_full_n_steps: bool = True
-    use_terminal_for_next_state: bool = True
-    mask_truncated_td_loss: bool = False
-
     # SAC algorithm parameters
     # Discount factor for the SAC algorithm
     discount: float = 0.99
