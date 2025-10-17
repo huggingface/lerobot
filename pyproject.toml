@@ -246,6 +246,7 @@ default.extend-ignore-identifiers-re = [
     "pn",
     "ser",
     "ein",
+    "inpt",
 ]
 
 # TODO: Uncomment when ready to use
