@@ -229,16 +229,29 @@ leader.disconnect()
 To teleoperate, SSH into your Raspberry Pi, and run `conda activate lerobot` and this command:
 
 ```bash
-python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
+python -m lerobot.robots.lekiwi.lekiwi_host \
+            --port=/dev/tty.usbmodem58FA1027991 \ # <- The port of your robot
+            --id=lekiwi_follower \
+            --connection_time_s=300 \
+            --cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist.right: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+            --id=my_awesome_lekiwi
 ```
 
 Then on your laptop, also run `conda activate lerobot` and run the API example, make sure you set the correct `remote_ip` and `port` in `examples/lekiwi/teleoperate.py`.
 
 ```bash
-python examples/lekiwi/teleoperate.py
+python -m lerobot.teleoperate \
+        --robot.type=lekiwi_client \
+        --robot.remote_ip="127.0.0.1" \# <- The IP address of your machine which running host.
+        --robot.id=lekiwi_follower \
+        --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist.right: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+        --teleop.type=lekiwi_leader \
+        --teleop.port=/dev/tty.usbserial-15140 \ # <- The port of your leader arm.
+        --teleop.id=lekiwi_leader \
+        --display_data=true
 ```
 
-You should see on your laptop something like this: `[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
+You should see on your laptop something like this: `INFO 2025-08-31 10:04:20 eoperate.py:137 {'display_data': True,` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
 | ---------- | ------------------ | ---------------------- |
@@ -258,7 +271,7 @@ You should see on your laptop something like this: `[INFO] Connected to remote r
 | F   | Decrease speed |
 
 > [!TIP]
-> If you use a different keyboard, you can change the keys for each command in the [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py).
+> If you use a different keyboard, you can change the keys for each command with `--teleop.teleop_keys`.
 
 ### Wired version
 
@@ -283,10 +296,25 @@ HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
 ```
 
-Now you can record a dataset. To record episodes and upload your dataset to the hub, execute this API example tailored for LeKiwi. Make sure to first adapt the `remote_ip`, `repo_id`, `port` and `task` in the script. If you would like to run the script for longer you can increase `NB_CYCLES_CLIENT_CONNECTION`.
+Now you can record a dataset. To record episodes and upload your dataset to the hub, execute below command on your client after running host command on LeKiwi. Make sure to first adapt the `remote_ip`, `repo_id`, `port` and `task` in the options. If you would like to run the script for longer you can increase `NB_CYCLES_CLIENT_CONNECTION`.
 
 ```bash
-python examples/lekiwi/record.py
+python -m lerobot.record \
+    --robot.type=lekiwi_client \
+    --robot.remote_ip="127.0.0.1" \ # <-The IP address of your machine which running host.
+    --robot.id=lekiwi_follower \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist.right: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=lekiwi_leader \
+    --teleop.port=/dev/tty.usbserial-15140 \ # <- The port of your leader arm.
+    --teleop.id=lekiwi_leader \
+    --dataset.push_to_hub=true \
+    --dataset.num_episodes=5 \
+    --dataset.episode_time_s=90 \
+    --dataset.reset_time_s=30 \
+    --dataset.single_task="Move to front of block and pick up it." \
+    --dataset.repo_id=${HF_USER}/lekiwi_data \
+    --display_data=true \
+    --resume=false
 ```
 
 #### Dataset upload
@@ -317,20 +345,41 @@ If you want to dive deeper into this important topic, you can check out the [blo
 
 ## Replay an episode
 
-To replay an episode run the API example below, make sure to change `remote_ip`, `port`, LeRobotDatasetId and episode index.
+To replay an episode run the command example below, make sure to change `remote_ip`, `port`, LeRobotDatasetId and episode index.
 
 ```bash
-python examples/lekiwi/replay.py
+python -m lerobot.replay \
+    --robot.type=lekiwi_client \
+    --robot.remote_ip="127.0.0.1" \
+    --robot.id=lekkiw_follower \
+    --dataset.repo_id=${HF_USER}/record-test \
+    --dataset.episode=0 # choose the episode you want to replay
 ```
 
 Congrats 🎉, your robot is all set to learn a task on its own. Start training it by the training part of this tutorial: [Getting started with real-world robots](./il_robots)
 
 ## Evaluate your policy
 
-To evaluate your policy run the `evaluate.py` API example, make sure to change `remote_ip`, `port`, model..
+To evaluate your policy run the `record` command example, make sure to change `remote_ip`, `port`, model..
 
 ```bash
-python examples/lekiwi/evaluate.py
+python -m lerobot.record \
+   --robot.type=lekiwi_client \
+    --robot.remote_ip="127.0.0.1" \ # <-The IP address of your machine which running host.
+    --robot.id=lekiwi_follower \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist.right: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=lekiwi_leader \
+    --teleop.port=/dev/tty.usbserial-15140 \ # <- The port of your leader arm.
+    --teleop.id=lekiwi_leader \
+    --policy.path=${HF_USER}/act_lekiwi \ # <- Your own policy path.
+    --dataset.push_to_hub=true \
+    --dataset.num_episodes=5 \
+    --dataset.episode_time_s=90 \
+    --dataset.reset_time_s=30 \
+    --dataset.single_task="Move to front of block and pick up it." \
+    --dataset.repo_id=${HF_USER}/eval_lekiwi_data \
+    --display_data=true \
+    --resume=false
 ```
 
 > [!TIP]

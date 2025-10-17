@@ -49,8 +49,9 @@ class LeKiwiConfig(RobotConfig):
     use_degrees: bool = False
 
 
+@RobotConfig.register_subclass("lekiwi_host")
 @dataclass
-class LeKiwiHostConfig:
+class LeKiwiHostConfig(LeKiwiConfig):
     # Network Configuration
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
@@ -67,9 +68,9 @@ class LeKiwiHostConfig:
 
 @RobotConfig.register_subclass("lekiwi_client")
 @dataclass
-class LeKiwiClientConfig(RobotConfig):
+class LeKiwiClientConfig(LeKiwiConfig):
     # Network Configuration
-    remote_ip: str
+    remote_ip: str = "127.0.0.1"
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
 
@@ -89,8 +90,6 @@ class LeKiwiClientConfig(RobotConfig):
             "quit": "q",
         }
     )
-
-    cameras: dict[str, CameraConfig] = field(default_factory=lekiwi_cameras_config)
 
     polling_timeout_ms: int = 15
     connect_timeout_s: int = 5
