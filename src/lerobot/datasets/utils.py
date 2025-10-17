@@ -21,7 +21,7 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Deque, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 import datasets
 import numpy as np
@@ -30,7 +30,7 @@ import pandas
 import pandas as pd
 import pyarrow.parquet as pq
 import torch
-from datasets import Dataset, concatenate_datasets
+from datasets import Dataset
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
@@ -43,7 +43,8 @@ from lerobot.datasets.backward_compatibility import (
     BackwardCompatibilityError,
     ForwardCompatibilityError,
 )
-from lerobot.utils.utils import is_valid_numpy_dtype_string
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STR
+from lerobot.utils.utils import SuppressProgressBars, is_valid_numpy_dtype_string
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
@@ -66,18 +67,6 @@ DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{fram
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 LEGACY_TASKS_PATH = "meta/tasks.jsonl"
-LEGACY_DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-LEGACY_DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
-
-DATASET_CARD_TEMPLATE = """
----
-# Metadata will go there
----
-This dataset was created using [LeRobot](https://github.com/huggingface/lerobot).
-
-## {}
-
-"""
 
 DEFAULT_FEATURES = {
     "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
@@ -105,12 +94,6 @@ def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
     return hf_ds.data.nbytes // (1024**2)
 
 
-def get_hf_dataset_cache_dir(hf_ds: Dataset) -> Path | None:
-    if hf_ds.cache_files is None or len(hf_ds.cache_files) == 0:
-        return None
-    return Path(hf_ds.cache_files[0]["filename"]).parents[2]
-
-
 def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -> tuple[int, int]:
     if file_idx == chunks_size - 1:
         file_idx = 0
@@ -134,8 +117,9 @@ def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None)
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
     # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
-    datasets = [Dataset.from_parquet(str(path), features=features) for path in paths]
-    return concatenate_datasets(datasets)
+    with SuppressProgressBars():
+        datasets = Dataset.from_parquet([str(path) for path in paths], features=features)
+    return datasets
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
@@ -143,21 +127,31 @@ def get_parquet_num_frames(parquet_path: str | Path) -> int:
     return metadata.num_rows
 
 
-def get_video_size_in_mb(mp4_path: Path) -> float:
-    file_size_bytes = mp4_path.stat().st_size
-    file_size_mb = file_size_bytes / (1024**2)
-    return file_size_mb
+def get_file_size_in_mb(file_path: Path) -> float:
+    """Get file size on disk in megabytes.
+
+    Args:
+        file_path (Path): Path to the file.
+    """
+    file_size_bytes = file_path.stat().st_size
+    return file_size_bytes / (1024**2)
 
 
 def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
-    """Flatten a nested dictionary structure by collapsing nested keys into one key with a separator.
+    """Flatten a nested dictionary by joining keys with a separator.
 
-    For example:
-    ```
-    >>> dct = {"a": {"b": 1, "c": {"d": 2}}, "e": 3}`
-    >>> print(flatten_dict(dct))
-    {"a/b": 1, "a/c/d": 2, "e": 3}
-    ```
+    Example:
+        >>> dct = {"a": {"b": 1, "c": {"d": 2}}, "e": 3}
+        >>> print(flatten_dict(dct))
+        {'a/b': 1, 'a/c/d': 2, 'e': 3}
+
+    Args:
+        d (dict): The dictionary to flatten.
+        parent_key (str): The base key to prepend to the keys in this level.
+        sep (str): The separator to use between keys.
+
+    Returns:
+        dict: A flattened dictionary.
     """
     items = []
     for k, v in d.items():
@@ -170,6 +164,20 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
 
 
 def unflatten_dict(d: dict, sep: str = "/") -> dict:
+    """Unflatten a dictionary with delimited keys into a nested dictionary.
+
+    Example:
+        >>> flat_dct = {"a/b": 1, "a/c/d": 2, "e": 3}
+        >>> print(unflatten_dict(flat_dct))
+        {'a': {'b': 1, 'c': {'d': 2}}, 'e': 3}
+
+    Args:
+        d (dict): A dictionary with flattened keys.
+        sep (str): The separator used in the keys.
+
+    Returns:
+        dict: A nested dictionary.
+    """
     outdict = {}
     for key, value in d.items():
         parts = key.split(sep)
@@ -183,15 +191,28 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
 
 
 def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
+    """Serialize a dictionary containing tensors or numpy arrays to be JSON-compatible.
+
+    Converts torch.Tensor, np.ndarray, and np.generic types to lists or native Python types.
+
+    Args:
+        stats (dict): A dictionary that may contain non-serializable numeric types.
+
+    Returns:
+        dict: A dictionary with all values converted to JSON-serializable types.
+
+    Raises:
+        NotImplementedError: If a value has an unsupported type.
+    """
     serialized_dict = {}
     for key, value in flatten_dict(stats).items():
-        if isinstance(value, (torch.Tensor, np.ndarray)):
+        if isinstance(value, (torch.Tensor | np.ndarray)):
             serialized_dict[key] = value.tolist()
-        elif isinstance(value, list) and isinstance(value[0], (int, float, list)):
+        elif isinstance(value, list) and isinstance(value[0], (int | float | list)):
             serialized_dict[key] = value
         elif isinstance(value, np.generic):
             serialized_dict[key] = value.item()
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, (int | float)):
             serialized_dict[key] = value
         else:
             raise NotImplementedError(f"The value '{value}' of type '{type(value)}' is not supported.")
@@ -199,6 +220,17 @@ def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
 
 
 def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
+    """Embed image bytes into the dataset table before saving to Parquet.
+
+    This function prepares a Hugging Face dataset for serialization by converting
+    image objects into an embedded format that can be stored in Arrow/Parquet.
+
+    Args:
+        dataset (datasets.Dataset): The input dataset, possibly containing image features.
+
+    Returns:
+        datasets.Dataset: The dataset with images embedded in the table storage.
+    """
     # Embed image bytes into the table before saving to parquet
     format = dataset.format
     dataset = dataset.with_format("arrow")
@@ -208,11 +240,27 @@ def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
 
 
 def load_json(fpath: Path) -> Any:
+    """Load data from a JSON file.
+
+    Args:
+        fpath (Path): Path to the JSON file.
+
+    Returns:
+        Any: The data loaded from the JSON file.
+    """
     with open(fpath) as f:
         return json.load(f)
 
 
 def write_json(data: dict, fpath: Path) -> None:
+    """Write data to a JSON file.
+
+    Creates parent directories if they don't exist.
+
+    Args:
+        data (dict): The dictionary to write.
+        fpath (Path): The path to the output JSON file.
+    """
     fpath.parent.mkdir(exist_ok=True, parents=True)
     with open(fpath, "w") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
@@ -223,6 +271,16 @@ def write_info(info: dict, local_dir: Path) -> None:
 
 
 def load_info(local_dir: Path) -> dict:
+    """Load dataset info metadata from its standard file path.
+
+    Also converts shape lists to tuples for consistency.
+
+    Args:
+        local_dir (Path): The root directory of the dataset.
+
+    Returns:
+        dict: The dataset information dictionary.
+    """
     info = load_json(local_dir / INFO_PATH)
     for ft in info["features"].values():
         ft["shape"] = tuple(ft["shape"])
@@ -230,16 +288,40 @@ def load_info(local_dir: Path) -> dict:
 
 
 def write_stats(stats: dict, local_dir: Path) -> None:
+    """Serialize and write dataset statistics to their standard file path.
+
+    Args:
+        stats (dict): The statistics dictionary (can contain tensors/numpy arrays).
+        local_dir (Path): The root directory of the dataset.
+    """
     serialized_stats = serialize_dict(stats)
     write_json(serialized_stats, local_dir / STATS_PATH)
 
 
 def cast_stats_to_numpy(stats: dict) -> dict[str, dict[str, np.ndarray]]:
+    """Recursively cast numerical values in a stats dictionary to numpy arrays.
+
+    Args:
+        stats (dict): The statistics dictionary.
+
+    Returns:
+        dict: The statistics dictionary with values cast to numpy arrays.
+    """
     stats = {key: np.array(value) for key, value in flatten_dict(stats).items()}
     return unflatten_dict(stats)
 
 
 def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]] | None:
+    """Load dataset statistics and cast numerical values to numpy arrays.
+
+    Returns None if the stats file doesn't exist.
+
+    Args:
+        local_dir (Path): The root directory of the dataset.
+
+    Returns:
+        A dictionary of statistics or None if the file is not found.
+    """
     if not (local_dir / STATS_PATH).exists():
         return None
     stats = load_json(local_dir / STATS_PATH)
@@ -288,15 +370,21 @@ def load_episodes(local_dir: Path) -> datasets.Dataset:
     return episodes
 
 
-def backward_compatible_episodes_stats(
-    stats: dict[str, dict[str, np.ndarray]], episodes: list[int]
-) -> dict[int, dict[str, dict[str, np.ndarray]]]:
-    return dict.fromkeys(episodes, stats)
-
-
 def load_image_as_numpy(
     fpath: str | Path, dtype: np.dtype = np.float32, channel_first: bool = True
 ) -> np.ndarray:
+    """Load an image from a file into a numpy array.
+
+    Args:
+        fpath (str | Path): Path to the image file.
+        dtype (np.dtype): The desired data type of the output array. If floating,
+            pixels are scaled to [0, 1].
+        channel_first (bool): If True, converts the image to (C, H, W) format.
+            Otherwise, it remains in (H, W, C) format.
+
+    Returns:
+        np.ndarray: The image as a numpy array.
+    """
     img = PILImage.open(fpath).convert("RGB")
     img_array = np.array(img, dtype=dtype)
     if channel_first:  # (H, W, C) -> (C, H, W)
@@ -307,10 +395,19 @@ def load_image_as_numpy(
 
 
 def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:
-    """Get a transform function that convert items from Hugging Face dataset (pyarrow)
-    to torch tensors. Importantly, images are converted from PIL, which corresponds to
-    a channel last representation (h w c) of uint8 type, to a torch image representation
-    with channel first (c h w) of float32 type in range [0,1].
+    """Convert a batch from a Hugging Face dataset to torch tensors.
+
+    This transform function converts items from Hugging Face dataset format (pyarrow)
+    to torch tensors. Importantly, images are converted from PIL objects (H, W, C, uint8)
+    to a torch image representation (C, H, W, float32) in the range [0, 1]. Other
+    types are converted to torch.tensor.
+
+    Args:
+        items_dict (dict): A dictionary representing a batch of data from a
+            Hugging Face dataset.
+
+    Returns:
+        dict: The batch with items converted to torch tensors.
     """
     for key in items_dict:
         first_item = items_dict[key][0]
@@ -325,6 +422,14 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
 
 
 def is_valid_version(version: str) -> bool:
+    """Check if a string is a valid PEP 440 version.
+
+    Args:
+        version (str): The version string to check.
+
+    Returns:
+        bool: True if the version string is valid, False otherwise.
+    """
     try:
         packaging.version.parse(version)
         return True
@@ -338,6 +443,18 @@ def check_version_compatibility(
     current_version: str | packaging.version.Version,
     enforce_breaking_major: bool = True,
 ) -> None:
+    """Check for version compatibility between a dataset and the current codebase.
+
+    Args:
+        repo_id (str): The repository ID for logging purposes.
+        version_to_check (str | packaging.version.Version): The version of the dataset.
+        current_version (str | packaging.version.Version): The current version of the codebase.
+        enforce_breaking_major (bool): If True, raise an error on major version mismatch.
+
+    Raises:
+        BackwardCompatibilityError: If the dataset version is from a newer, incompatible
+            major version of the codebase.
+    """
     v_check = (
         packaging.version.parse(version_to_check)
         if not isinstance(version_to_check, packaging.version.Version)
@@ -355,7 +472,14 @@ def check_version_compatibility(
 
 
 def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
-    """Returns available valid versions (branches and tags) on given repo."""
+    """Return available valid versions (branches and tags) on a given Hub repo.
+
+    Args:
+        repo_id (str): The repository ID on the Hugging Face Hub.
+
+    Returns:
+        list[packaging.version.Version]: A list of valid versions found.
+    """
     api = HfApi()
     repo_refs = api.list_repo_refs(repo_id, repo_type="dataset")
     repo_refs = [b.name for b in repo_refs.branches + repo_refs.tags]
@@ -368,9 +492,22 @@ def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
 
 
 def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> str:
-    """
-    Returns the version if available on repo or the latest compatible one.
-    Otherwise, will throw a `CompatibilityError`.
+    """Return the specified version if available on repo, or the latest compatible one.
+
+    If the exact version is not found, it looks for the latest version with the
+    same major version number that is less than or equal to the target minor version.
+
+    Args:
+        repo_id (str): The repository ID on the Hugging Face Hub.
+        version (str | packaging.version.Version): The target version.
+
+    Returns:
+        str: The safe version string (e.g., "v1.2.3") to use as a revision.
+
+    Raises:
+        RevisionNotFoundError: If the repo has no version tags.
+        BackwardCompatibilityError: If only older major versions are available.
+        ForwardCompatibilityError: If only newer major versions are available.
     """
     target_version = (
         packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
@@ -412,6 +549,17 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
 
 
 def get_hf_features_from_features(features: dict) -> datasets.Features:
+    """Convert a LeRobot features dictionary to a `datasets.Features` object.
+
+    Args:
+        features (dict): A LeRobot-style feature dictionary.
+
+    Returns:
+        datasets.Features: The corresponding Hugging Face `datasets.Features` object.
+
+    Raises:
+        ValueError: If a feature has an unsupported shape.
+    """
     hf_features = {}
     for key, ft in features.items():
         if ft["dtype"] == "video":
@@ -439,6 +587,14 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
 
 
 def _validate_feature_names(features: dict[str, dict]) -> None:
+    """Validate that feature names do not contain invalid characters.
+
+    Args:
+        features (dict): The LeRobot features dictionary.
+
+    Raises:
+        ValueError: If any feature name contains '/'.
+    """
     invalid_features = {name: ft for name, ft in features.items() if "/" in name}
     if invalid_features:
         raise ValueError(f"Feature names should not contain '/'. Found '/' in '{invalid_features}'.")
@@ -447,18 +603,38 @@ def _validate_feature_names(features: dict[str, dict]) -> None:
 def hw_to_dataset_features(
     hw_features: dict[str, type | tuple], prefix: str, use_video: bool = True
 ) -> dict[str, dict]:
+    """Convert hardware-specific features to a LeRobot dataset feature dictionary.
+
+    This function takes a dictionary describing hardware outputs (like joint states
+    or camera image shapes) and formats it into the standard LeRobot feature
+    specification.
+
+    Args:
+        hw_features (dict): Dictionary mapping feature names to their type (float for
+            joints) or shape (tuple for images).
+        prefix (str): The prefix to add to the feature keys (e.g., "observation"
+            or "action").
+        use_video (bool): If True, image features are marked as "video", otherwise "image".
+
+    Returns:
+        dict: A LeRobot features dictionary.
+    """
     features = {}
-    joint_fts = {key: ftype for key, ftype in hw_features.items() if ftype is float}
+    joint_fts = {
+        key: ftype
+        for key, ftype in hw_features.items()
+        if ftype is float or (isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL)
+    }
     cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
 
-    if joint_fts and prefix == "action":
+    if joint_fts and prefix == ACTION:
         features[prefix] = {
             "dtype": "float32",
             "shape": (len(joint_fts),),
             "names": list(joint_fts),
         }
 
-    if joint_fts and prefix == "observation":
+    if joint_fts and prefix == OBS_STR:
         features[f"{prefix}.state"] = {
             "dtype": "float32",
             "shape": (len(joint_fts),),
@@ -479,6 +655,20 @@ def hw_to_dataset_features(
 def build_dataset_frame(
     ds_features: dict[str, dict], values: dict[str, Any], prefix: str
 ) -> dict[str, np.ndarray]:
+    """Construct a single data frame from raw values based on dataset features.
+
+    A "frame" is a dictionary containing all the data for a single timestep,
+    formatted as numpy arrays according to the feature specification.
+
+    Args:
+        ds_features (dict): The LeRobot dataset features dictionary.
+        values (dict): A dictionary of raw values from the hardware/environment.
+        prefix (str): The prefix to filter features by (e.g., "observation"
+            or "action").
+
+    Returns:
+        dict: A dictionary representing a single frame of data.
+    """
     frame = {}
     for key, ft in ds_features.items():
         if key in DEFAULT_FEATURES or not key.startswith(prefix):
@@ -492,6 +682,21 @@ def build_dataset_frame(
 
 
 def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:
+    """Convert dataset features to policy features.
+
+    This function transforms the dataset's feature specification into a format
+    that a policy can use, classifying features by type (e.g., visual, state,
+    action) and ensuring correct shapes (e.g., channel-first for images).
+
+    Args:
+        features (dict): The LeRobot dataset features dictionary.
+
+    Returns:
+        dict: A dictionary mapping feature keys to `PolicyFeature` objects.
+
+    Raises:
+        ValueError: If an image feature does not have a 3D shape.
+    """
     # TODO(aliberts): Implement "type" in dataset features and simplify this
     policy_features = {}
     for key, ft in features.items():
@@ -505,11 +710,11 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
             if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
                 shape = (shape[2], shape[0], shape[1])
-        elif key == "observation.environment_state":
+        elif key == OBS_ENV_STATE:
             type = FeatureType.ENV
-        elif key.startswith("observation"):
+        elif key.startswith(OBS_STR):
             type = FeatureType.STATE
-        elif key.startswith("action"):
+        elif key.startswith(ACTION):
             type = FeatureType.ACTION
         else:
             continue
@@ -522,6 +727,58 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
     return policy_features
 
 
+def combine_feature_dicts(*dicts: dict) -> dict:
+    """Merge LeRobot grouped feature dicts.
+
+    - For 1D numeric specs (dtype not image/video/string) with "names": we merge the names and recompute the shape.
+    - For others (e.g. `observation.images.*`), the last one wins (if they are identical).
+
+    Args:
+        *dicts: A variable number of LeRobot feature dictionaries to merge.
+
+    Returns:
+        dict: A single merged feature dictionary.
+
+    Raises:
+        ValueError: If there's a dtype mismatch for a feature being merged.
+    """
+    out: dict = {}
+    for d in dicts:
+        for key, value in d.items():
+            if not isinstance(value, dict):
+                out[key] = value
+                continue
+
+            dtype = value.get("dtype")
+            shape = value.get("shape")
+            is_vector = (
+                dtype not in ("image", "video", "string")
+                and isinstance(shape, tuple)
+                and len(shape) == 1
+                and "names" in value
+            )
+
+            if is_vector:
+                # Initialize or retrieve the accumulating dict for this feature key
+                target = out.setdefault(key, {"dtype": dtype, "names": [], "shape": (0,)})
+                # Ensure consistent data types across merged entries
+                if "dtype" in target and dtype != target["dtype"]:
+                    raise ValueError(f"dtype mismatch for '{key}': {target['dtype']} vs {dtype}")
+
+                # Merge feature names: append only new ones to preserve order without duplicates
+                seen = set(target["names"])
+                for n in value["names"]:
+                    if n not in seen:
+                        target["names"].append(n)
+                        seen.add(n)
+                # Recompute the shape to reflect the updated number of features
+                target["shape"] = (len(target["names"]),)
+            else:
+                # For images/videos and non-1D entries: override with the latest definition
+                out[key] = value
+    return out
+
+
 def create_empty_dataset_info(
     codebase_version: str,
     fps: int,
@@ -532,6 +789,18 @@ def create_empty_dataset_info(
     data_files_size_in_mb: int | None = None,
     video_files_size_in_mb: int | None = None,
 ) -> dict:
+    """Create a template dictionary for a new dataset's `info.json`.
+
+    Args:
+        codebase_version (str): The version of the LeRobot codebase.
+        fps (int): The frames per second of the data.
+        features (dict): The LeRobot features dictionary for the dataset.
+        use_videos (bool): Whether the dataset will store videos.
+        robot_type (str | None): The type of robot used, if any.
+
+    Returns:
+        dict: A dictionary with the initial dataset metadata.
+    """
     return {
         "codebase_version": codebase_version,
         "robot_type": robot_type,
@@ -552,9 +821,23 @@ def create_empty_dataset_info(
 def check_delta_timestamps(
     delta_timestamps: dict[str, list[float]], fps: int, tolerance_s: float, raise_value_error: bool = True
 ) -> bool:
-    """This will check if all the values in delta_timestamps are multiples of 1/fps +/- tolerance.
-    This is to ensure that these delta_timestamps added to any timestamp from a dataset will themselves be
-    actual timestamps from the dataset.
+    """Check if delta timestamps are multiples of 1/fps +/- tolerance.
+
+    This ensures that adding these delta timestamps to any existing timestamp in
+    the dataset will result in a value that aligns with the dataset's frame rate.
+
+    Args:
+        delta_timestamps (dict): A dictionary where values are lists of time
+            deltas in seconds.
+        fps (int): The frames per second of the dataset.
+        tolerance_s (float): The allowed tolerance in seconds.
+        raise_value_error (bool): If True, raises an error on failure.
+
+    Returns:
+        bool: True if all deltas are valid, False otherwise.
+
+    Raises:
+        ValueError: If any delta is outside the tolerance and `raise_value_error` is True.
     """
     outside_tolerance = {}
     for key, delta_ts in delta_timestamps.items():
@@ -580,6 +863,15 @@ def check_delta_timestamps(
 
 
 def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dict[str, list[int]]:
+    """Convert delta timestamps in seconds to delta indices in frames.
+
+    Args:
+        delta_timestamps (dict): A dictionary of time deltas in seconds.
+        fps (int): The frames per second of the dataset.
+
+    Returns:
+        dict: A dictionary of frame delta indices.
+    """
     delta_indices = {}
     for key, delta_ts in delta_timestamps.items():
         delta_indices[key] = [round(d * fps) for d in delta_ts]
@@ -588,9 +880,17 @@ def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dic
 
 
 def cycle(iterable: Any) -> Iterator[Any]:
-    """The equivalent of itertools.cycle, but safe for Pytorch dataloaders.
+    """Create a dataloader-safe cyclical iterator.
 
-    See https://github.com/pytorch/pytorch/issues/23900 for information on why itertools.cycle is not safe.
+    This is an equivalent of `itertools.cycle` but is safe for use with
+    PyTorch DataLoaders with multiple workers.
+    See https://github.com/pytorch/pytorch/issues/23900 for details.
+
+    Args:
+        iterable: The iterable to cycle over.
+
+    Yields:
+        Items from the iterable, restarting from the beginning when exhausted.
     """
     iterator = iter(iterable)
     while True:
@@ -601,8 +901,14 @@ def cycle(iterable: Any) -> Iterator[Any]:
 
 
 def create_branch(repo_id: str, *, branch: str, repo_type: str | None = None) -> None:
-    """Create a branch on a existing Hugging Face repo. Delete the branch if it already
-    exists before creating it.
+    """Create a branch on an existing Hugging Face repo.
+
+    Deletes the branch if it already exists before creating it.
+
+    Args:
+        repo_id (str): The ID of the repository.
+        branch (str): The name of the branch to create.
+        repo_type (str | None): The type of the repository (e.g., "dataset").
     """
     api = HfApi()
 
@@ -620,9 +926,20 @@ def create_lerobot_dataset_card(
     dataset_info: dict | None = None,
     **kwargs,
 ) -> DatasetCard:
-    """
-    Keyword arguments will be used to replace values in src/lerobot/datasets/card_template.md.
-    Note: If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
+    """Create a `DatasetCard` for a LeRobot dataset.
+
+    Keyword arguments are used to replace values in the card template.
+    Note: If specified, `license` must be a valid license identifier from
+    https://huggingface.co/docs/hub/repositories-licenses.
+
+    Args:
+        tags (list | None): A list of tags to add to the dataset card.
+        dataset_info (dict | None): The dataset's info dictionary, which will
+            be displayed on the card.
+        **kwargs: Additional keyword arguments to populate the card template.
+
+    Returns:
+        DatasetCard: The generated dataset card object.
     """
     card_tags = ["LeRobot"]
 
@@ -675,6 +992,15 @@ def validate_frame(frame: dict, features: dict) -> None:
 
 
 def validate_features_presence(actual_features: set[str], expected_features: set[str]) -> str:
+    """Check for missing or extra features in a frame.
+
+    Args:
+        actual_features (set[str]): The set of feature names present in the frame.
+        expected_features (set[str]): The set of feature names expected in the frame.
+
+    Returns:
+        str: An error message string if there's a mismatch, otherwise an empty string.
+    """
     error_message = ""
     missing_features = expected_features - actual_features
     extra_features = actual_features - expected_features
@@ -692,6 +1018,19 @@ def validate_features_presence(actual_features: set[str], expected_features: set
 def validate_feature_dtype_and_shape(
     name: str, feature: dict, value: np.ndarray | PILImage.Image | str
 ) -> str:
+    """Validate the dtype and shape of a single feature's value.
+
+    Args:
+        name (str): The name of the feature.
+        feature (dict): The feature specification from the LeRobot features dictionary.
+        value: The value of the feature to validate.
+
+    Returns:
+        str: An error message if validation fails, otherwise an empty string.
+
+    Raises:
+        NotImplementedError: If the feature dtype is not supported for validation.
+    """
     expected_dtype = feature["dtype"]
     expected_shape = feature["shape"]
     if is_valid_numpy_dtype_string(expected_dtype):
@@ -707,6 +1046,17 @@ def validate_feature_dtype_and_shape(
 def validate_feature_numpy_array(
     name: str, expected_dtype: str, expected_shape: list[int], value: np.ndarray
 ) -> str:
+    """Validate a feature that is expected to be a numpy array.
+
+    Args:
+        name (str): The name of the feature.
+        expected_dtype (str): The expected numpy dtype as a string.
+        expected_shape (list[int]): The expected shape.
+        value (np.ndarray): The numpy array to validate.
+
+    Returns:
+        str: An error message if validation fails, otherwise an empty string.
+    """
     error_message = ""
     if isinstance(value, np.ndarray):
         actual_dtype = value.dtype
@@ -726,6 +1076,18 @@ def validate_feature_numpy_array(
 def validate_feature_image_or_video(
     name: str, expected_shape: list[str], value: np.ndarray | PILImage.Image
 ) -> str:
+    """Validate a feature that is expected to be an image or video frame.
+
+    Accepts `np.ndarray` (channel-first or channel-last) or `PIL.Image.Image`.
+
+    Args:
+        name (str): The name of the feature.
+        expected_shape (list[str]): The expected shape (C, H, W).
+        value: The image data to validate.
+
+    Returns:
+        str: An error message if validation fails, otherwise an empty string.
+    """
     # Note: The check of pixels range ([0,1] for float and [0,255] for uint8) is done by the image writer threads.
     error_message = ""
     if isinstance(value, np.ndarray):
@@ -742,12 +1104,35 @@ def validate_feature_image_or_video(
 
 
 def validate_feature_string(name: str, value: str) -> str:
+    """Validate a feature that is expected to be a string.
+
+    Args:
+        name (str): The name of the feature.
+        value (str): The value to validate.
+
+    Returns:
+        str: An error message if validation fails, otherwise an empty string.
+    """
     if not isinstance(value, str):
         return f"The feature '{name}' is expected to be of type 'str', but type '{type(value)}' provided instead.\n"
     return ""
 
 
 def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features: dict) -> None:
+    """Validate the episode buffer before it's written to disk.
+
+    Ensures the buffer has the required keys, contains at least one frame, and
+    has features consistent with the dataset's specification.
+
+    Args:
+        episode_buffer (dict): The buffer containing data for a single episode.
+        total_episodes (int): The current total number of episodes in the dataset.
+        features (dict): The LeRobot features dictionary for the dataset.
+
+    Raises:
+        ValueError: If the buffer is invalid.
+        NotImplementedError: If the episode index is manually set and doesn't match.
+    """
     if "size" not in episode_buffer:
         raise ValueError("size key not found in episode_buffer")
 
@@ -793,7 +1178,7 @@ def item_to_torch(item: dict) -> dict:
         dict: Dictionary with all tensor-like items converted to torch.Tensor.
     """
     for key, val in item.items():
-        if isinstance(val, (np.ndarray, list)) and key not in ["task"]:
+        if isinstance(val, (np.ndarray | list)) and key not in ["task"]:
             # Convert numpy arrays and lists to torch tensors
             item[key] = torch.tensor(val)
     return item
@@ -867,8 +1252,8 @@ class Backtrackable(Generic[T]):
             raise ValueError("lookahead must be > 0")
 
         self._source: Iterator[T] = iter(iterable)
-        self._back_buf: Deque[T] = deque(maxlen=history)
-        self._ahead_buf: Deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
+        self._back_buf: deque[T] = deque(maxlen=history)
+        self._ahead_buf: deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
         self._cursor: int = 0
         self._history = history
         self._lookahead = lookahead
@@ -942,12 +1327,6 @@ class Backtrackable(Generic[T]):
         # When cursor<0, slice so the order remains chronological
         return list(self._back_buf)[: self._cursor or None]
 
-    def lookahead_buffer(self) -> list[T]:
-        """
-        Return a copy of the current lookahead buffer.
-        """
-        return list(self._ahead_buf)
-
     def can_peek_back(self, steps: int = 1) -> bool:
         """
         Check if we can go back `steps` items without raising an IndexError.
@@ -972,31 +1351,6 @@ class Backtrackable(Generic[T]):
             return True
         except StopIteration:
             return False
-
-    def reset_cursor(self) -> None:
-        """
-        Reset cursor to the most recent position (equivalent to calling next()
-        until you're back to the latest item).
-        """
-        self._cursor = 0
-
-    def clear_ahead_buffer(self) -> None:
-        """
-        Clear the ahead buffer, discarding any pre-fetched items.
-        """
-        self._ahead_buf.clear()
-
-    def switch_source_iterable(self, new_source: Iterable[T]) -> None:
-        """
-        Switch the source of the backtrackable to a new iterable, keeping the history.
-
-        This is useful when iterating over a sequence of datasets. The history from the
-        previous source is kept, but the lookahead buffer is cleared. The cursor is reset
-        to the present.
-        """
-        self._source = iter(new_source)
-        self.clear_ahead_buffer()
-        self.reset_cursor()
 
 
 def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:
