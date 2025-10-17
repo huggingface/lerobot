@@ -1,19 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+import argparse
 import base64
 import json
 import logging
@@ -47,26 +34,91 @@ class LeKiwiHost:
         self.zmq_context.term()
 
 
+def parse_args():
+    p = argparse.ArgumentParser()
+    # 这三个别名都能用：--id / --robot.id / --robot_id
+    p.add_argument(
+        "--id",
+        "--robot.id",
+        "--robot_id",
+        dest="robot_id",
+        type=str,
+        help="Robot ID (used for calibration file lookup)",
+    )
+    p.add_argument(
+        "--port",
+        "--robot.port",
+        dest="robot_port",
+        type=str,
+        help="Serial port for Feetech bus (e.g. /dev/so101_leader)",
+    )
+    p.add_argument("--cmd_port", type=int, default=5556, help="ZMQ command bind port")
+    p.add_argument(
+        "--state_port", "--obs_port", type=int, default=5555, help="ZMQ observation/state bind port"
+    )
+    p.add_argument("--watchdog_timeout_ms", type=int, default=500)
+    p.add_argument("--max_loop_hz", type=float, default=100.0)
+    p.add_argument(
+        "--connection_time_s", type=float, default=3600.0, help="Run time limit; <=0 means run forever"
+    )
+
+    # ★ 新增：两类日志的节流间隔（秒）
+    p.add_argument(
+        "--no_cmd_log_interval_s", type=float, default=1.0, help="Rate-limit 'No command available' logs"
+    )
+    p.add_argument(
+        "--drop_obs_log_interval_s", type=float, default=1.0, help="Rate-limit 'Dropping observation' logs"
+    )
+    return p.parse_args()
+
+
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    args = parse_args()
+
     logging.info("Configuring LeKiwi")
-    robot_config = LeKiwiConfig()
+    try:
+        robot_config = LeKiwiConfig(
+            id=args.robot_id,
+            port=args.robot_port,
+        )
+    except TypeError:
+        robot_config = LeKiwiConfig()
+        if args.robot_id:
+            robot_config.id = args.robot_id
+        if args.robot_port:
+            robot_config.port = args.robot_port
+
     robot = LeKiwi(robot_config)
 
     logging.info("Connecting LeKiwi")
     robot.connect()
 
     logging.info("Starting HostAgent")
-    host_config = LeKiwiHostConfig()
+    host_config = LeKiwiHostConfig(
+        # 如果希望 CLI 覆盖 dataclass 默认，这里也可以把端口/时长等接过去
+        connection_time_s=args.connection_time_s,
+        watchdog_timeout_ms=args.watchdog_timeout_ms,
+        max_loop_freq_hz=args.max_loop_hz,
+        # 注意：LeKiwiHostConfig 的字段名和你的 CLI 名称可能不同步，保持一致即可
+        # 若需要也可传端口：port_zmq_cmd=args.cmd_port, port_zmq_observations=args.state_port,
+    )
     host = LeKiwiHost(host_config)
 
     last_cmd_time = time.time()
     watchdog_active = False
+
+    # ★ 新增：首条命令标志 + 两类日志的“上次打印时间戳”
+    seen_first_cmd = False
+    last_no_cmd_warn_ts = 0.0
+    last_drop_obs_warn_ts = 0.0
+
     logging.info("Waiting for commands...")
     try:
-        # Business logic
         start = time.perf_counter()
         duration = 0
-        while duration < host.connection_time_s:
+        while duration < host.connection_time_s or host.connection_time_s <= 0:
             loop_start_time = time.time()
             try:
                 msg = host.zmq_cmd_socket.recv_string(zmq.NOBLOCK)
@@ -74,9 +126,17 @@ def main():
                 _action_sent = robot.send_action(data)
                 last_cmd_time = time.time()
                 watchdog_active = False
+
+                if not seen_first_cmd:
+                    logging.info("First command received from client; link is active.")
+                    seen_first_cmd = True
+
             except zmq.Again:
-                if not watchdog_active:
+                nowt = time.time()
+                # ★ 节流“无命令”日志
+                if not watchdog_active and (nowt - last_no_cmd_warn_ts) > args.no_cmd_log_interval_s:
                     logging.warning("No command available")
+                    last_no_cmd_warn_ts = nowt
             except Exception as e:
                 logging.error("Message fetching failed: %s", e)
 
@@ -104,13 +164,18 @@ def main():
             try:
                 host.zmq_observation_socket.send_string(json.dumps(last_observation), flags=zmq.NOBLOCK)
             except zmq.Again:
-                logging.info("Dropping observation, no client connected")
+                # ★ 节流“丢弃观测”日志
+                nowt = time.time()
+                if (nowt - last_drop_obs_warn_ts) > args.drop_obs_log_interval_s:
+                    logging.info("Dropping observation, no client connected")
+                    last_drop_obs_warn_ts = nowt
 
             # Ensure a short sleep to avoid overloading the CPU.
             elapsed = time.time() - loop_start_time
-
             time.sleep(max(1 / host.max_loop_freq_hz - elapsed, 0))
+
             duration = time.perf_counter() - start
+
         print("Cycle time reached.")
 
     except KeyboardInterrupt:
