@@ -18,7 +18,7 @@ import importlib
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, XarmEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -26,8 +26,6 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return AlohaEnv(**kwargs)
     elif env_type == "pusht":
         return PushtEnv(**kwargs)
-    elif env_type == "xarm":
-        return XarmEnv(**kwargs)
     elif env_type == "libero":
         return LiberoEnv(**kwargs)
     else:
@@ -64,11 +62,26 @@ def make_env(
     if "libero" in cfg.type:
         from lerobot.envs.libero import create_libero_envs
 
+        if cfg.task is None:
+            raise ValueError("LiberoEnv requires a task to be specified")
+
         return create_libero_envs(
             task=cfg.task,
             n_envs=n_envs,
             camera_name=cfg.camera_name,
             init_states=cfg.init_states,
+            gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+        )
+    elif "metaworld" in cfg.type:
+        from lerobot.envs.metaworld import create_metaworld_envs
+
+        if cfg.task is None:
+            raise ValueError("MetaWorld requires a task to be specified")
+
+        return create_metaworld_envs(
+            task=cfg.task,
+            n_envs=n_envs,
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
@@ -97,7 +110,7 @@ def make_env(
     def _make_one():
         return gym.make(cfg.gym_id, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
 
-    vec = env_cls([_make_one for _ in range(n_envs)])
+    vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
 
     # normalize to {suite: {task_id: vec_env}} for consistency
     suite_name = cfg.type  # e.g., "pusht", "aloha"
