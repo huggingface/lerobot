@@ -68,7 +68,30 @@ def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) 
     return PIL.Image.fromarray(image_array)
 
 
-def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path):
+def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1):
+    """
+    Saves a NumPy array or PIL Image to a file.
+
+    This function handles both NumPy arrays and PIL Image objects, converting
+    the former to a PIL Image before saving. It includes error handling for
+    the save operation.
+
+    Args:
+        image (np.ndarray | PIL.Image.Image): The image data to save.
+        fpath (Path): The destination file path for the image.
+        compress_level (int, optional): The compression level for the saved
+            image, as used by PIL.Image.save(). Defaults to 1.
+            Refer to: https://github.com/huggingface/lerobot/pull/2135
+            for more details on the default value rationale.
+
+    Raises:
+        TypeError: If the input 'image' is not a NumPy array or a
+            PIL.Image.Image object.
+
+    Side Effects:
+        Prints an error message to the console if the image writing process
+        fails for any reason.
+    """
     try:
         if isinstance(image, np.ndarray):
             img = image_array_to_pil_image(image)
@@ -76,7 +99,7 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path):
             img = image
         else:
             raise TypeError(f"Unsupported image type: {type(image)}")
-        img.save(fpath)
+        img.save(fpath, compress_level=compress_level)
     except Exception as e:
         print(f"Error writing image {fpath}: {e}")
 

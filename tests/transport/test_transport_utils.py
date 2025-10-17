@@ -21,6 +21,7 @@ from pickle import UnpicklingError
 import pytest
 import torch
 
+from lerobot.utils.constants import ACTION
 from lerobot.utils.transition import Transition
 from tests.utils import require_cuda, require_package
 
@@ -512,7 +513,7 @@ def test_transitions_to_bytes_single_transition():
 def assert_transitions_equal(t1: Transition, t2: Transition):
     """Helper to assert two transitions are equal."""
     assert_observation_equal(t1["state"], t2["state"])
-    assert torch.allclose(t1["action"], t2["action"])
+    assert torch.allclose(t1[ACTION], t2[ACTION])
     assert torch.allclose(t1["reward"], t2["reward"])
     assert torch.equal(t1["done"], t2["done"])
     assert_observation_equal(t1["next_state"], t2["next_state"])

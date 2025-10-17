@@ -1,0 +1,321 @@
+# Porting Large Datasets to LeRobot Dataset v3.0
+
+This tutorial explains how to port large-scale robotic datasets to the LeRobot Dataset v3.0 format. We'll use the **DROID 1.0.1** dataset as our primary example, which demonstrates handling multi-terabyte datasets with thousands of shards across SLURM clusters.
+
+## File Organization: v2.1 vs v3.0
+
+Dataset v3.0 fundamentally changes how data is organized and stored:
+
+**v2.1 Structure (Episode-based)**:
+
+```
+dataset/
+├── data/chunk-000/episode_000000.parquet
+├── data/chunk-000/episode_000001.parquet
+├── videos/chunk-000/camera/episode_000000.mp4
+└── meta/episodes.jsonl
+```
+
+**v3.0 Structure (File-based)**:
+
+```
+dataset/
+├── data/chunk-000/file-000.parquet        # Multiple episodes per file
+├── videos/camera/chunk-000/file-000.mp4   # Consolidated video chunks
+└── meta/episodes/chunk-000/file-000.parquet  # Structured metadata
+```
+
+This transition from individual episode files to file-based chunks dramatically improves performance and reduces storage overhead.
+
+## What's New in Dataset v3.0
+
+Dataset v3.0 introduces significant improvements for handling large datasets:
+
+### 🏗️ **Enhanced File Organization**
+
+- **File-based structure**: Episodes are now grouped into chunked files rather than individual episode files
+- **Configurable file sizes**: for data and video files
+- **Improved storage efficiency**: Better compression and reduced overhead
+
+### 📊 **Modern Metadata Management**
+
+- **Parquet-based metadata**: Replaced JSON Lines with efficient parquet format
+- **Structured episode access**: Direct pandas DataFrame access via `dataset.meta.episodes`
+- **Per-episode statistics**: Enhanced statistics tracking at episode level
+
+### 🚀 **Performance Enhancements**
+
+- **Memory-mapped access**: Improved RAM usage through PyArrow memory mapping
+- **Faster loading**: Significantly reduced dataset initialization time
+- **Better scalability**: Designed for datasets with millions of episodes
+
+## Prerequisites
+
+Before porting large datasets, ensure you have:
+
+- **LeRobot installed** with v3.0 support. Follow our [Installation Guide](./installation).
+- **Sufficient storage**: Raw datasets can be very large (e.g., DROID requires 2TB)
+- **Cluster access** (recommended for large datasets): SLURM or similar job scheduler
+- **Dataset-specific dependencies**: For DROID, you'll need TensorFlow Dataset utilities
+
+## Understanding the DROID Dataset
+
+[DROID 1.0.1](https://droid-dataset.github.io/droid/the-droid-dataset) is an excellent example of a large-scale robotic dataset:
+
+- **Size**: 1.7TB (RLDS format), 8.7TB (raw data)
+- **Structure**: 2048 pre-defined TensorFlow dataset shards
+- **Content**: 76,000+ robot manipulation trajectories from Franka Emika Panda robots
+- **Scope**: Real-world manipulation tasks across multiple environments and objects
+- **Format**: Originally in TensorFlow Records/RLDS format, requiring conversion to LeRobot format
+- **Hosting**: Google Cloud Storage with public access via `gsutil`
+
+The dataset contains diverse manipulation demonstrations with:
+
+- Multiple camera views (wrist camera, exterior cameras)
+- Natural language task descriptions
+- Robot proprioceptive state and actions
+- Success/failure annotations
+
+### DROID Features Schema
+
+```python
+DROID_FEATURES = {
+    # Episode markers
+    "is_first": {"dtype": "bool", "shape": (1,)},
+    "is_last": {"dtype": "bool", "shape": (1,)},
+    "is_terminal": {"dtype": "bool", "shape": (1,)},
+
+    # Language instructions
+    "language_instruction": {"dtype": "string", "shape": (1,)},
+    "language_instruction_2": {"dtype": "string", "shape": (1,)},
+    "language_instruction_3": {"dtype": "string", "shape": (1,)},
+
+    # Robot state
+    "observation.state.gripper_position": {"dtype": "float32", "shape": (1,)},
+    "observation.state.cartesian_position": {"dtype": "float32", "shape": (6,)},
+    "observation.state.joint_position": {"dtype": "float32", "shape": (7,)},
+
+    # Camera observations
+    "observation.images.wrist_left": {"dtype": "image"},
+    "observation.images.exterior_1_left": {"dtype": "image"},
+    "observation.images.exterior_2_left": {"dtype": "image"},
+
+    # Actions
+    "action.gripper_position": {"dtype": "float32", "shape": (1,)},
+    "action.cartesian_position": {"dtype": "float32", "shape": (6,)},
+    "action.joint_position": {"dtype": "float32", "shape": (7,)},
+
+    # Standard LeRobot format
+    "observation.state": {"dtype": "float32", "shape": (8,)},  # joints + gripper
+    "action": {"dtype": "float32", "shape": (8,)},  # joints + gripper
+}
+```
+
+## Approach 1: Single Computer Porting
+
+### Step 1: Install Dependencies
+
+For DROID specifically:
+
+```bash
+pip install tensorflow
+pip install tensorflow_datasets
+```
+
+For other datasets, install the appropriate readers for your source format.
+
+### Step 2: Download Raw Data
+
+Download DROID from Google Cloud Storage using `gsutil`:
+
+```bash
+# Install Google Cloud SDK if not already installed
+# https://cloud.google.com/sdk/docs/install
+
+# Download the full RLDS dataset (1.7TB)
+gsutil -m cp -r gs://gresearch/robotics/droid/1.0.1 /your/data/
+
+# Or download just the 100-episode sample (2GB) for testing
+gsutil -m cp -r gs://gresearch/robotics/droid_100 /your/data/
+```
+
+> [!WARNING]
+> Large datasets require substantial time and storage:
+>
+> - **Full DROID (1.7TB)**: Several days to download depending on bandwidth
+> - **Processing time**: 7+ days for local porting of full dataset
+> - **Upload time**: 3+ days to push to Hugging Face Hub
+> - **Local storage**: ~400GB for processed LeRobot format
+
+### Step 3: Port the Dataset
+
+```bash
+python examples/port_datasets/port_droid.py \
+    --raw-dir /your/data/droid/1.0.1 \
+    --repo-id your_id/droid_1.0.1 \
+    --push-to-hub
+```
+
+### Development and Testing
+
+For development, you can port a single shard:
+
+```bash
+python examples/port_datasets/port_droid.py \
+    --raw-dir /your/data/droid/1.0.1 \
+    --repo-id your_id/droid_1.0.1_test \
+    --num-shards 2048 \
+    --shard-index 0
+```
+
+This approach works for smaller datasets or testing, but large datasets require cluster computing.
+
+## Approach 2: SLURM Cluster Porting (Recommended)
+
+For large datasets like DROID, parallel processing across multiple nodes dramatically reduces processing time.
+
+### Step 1: Install Cluster Dependencies
+
+```bash
+pip install datatrove  # Hugging Face's distributed processing library
+```
+
+### Step 2: Configure Your SLURM Environment
+
+Find your partition information:
+
+```bash
+sinfo --format="%R"  # List available partitions
+sinfo -N -p your_partition -h -o "%N cpus=%c mem=%m"  # Check resources
+```
+
+Choose a **CPU partition** - no GPU needed for dataset porting.
+
+### Step 3: Launch Parallel Porting Jobs
+
+```bash
+python examples/port_datasets/slurm_port_shards.py \
+    --raw-dir /your/data/droid/1.0.1 \
+    --repo-id your_id/droid_1.0.1 \
+    --logs-dir /your/logs \
+    --job-name port_droid \
+    --partition your_partition \
+    --workers 2048 \
+    --cpus-per-task 8 \
+    --mem-per-cpu 1950M
+```
+
+#### Parameter Guidelines
+
+- **`--workers`**: Number of parallel jobs (max 2048 for DROID's shard count)
+- **`--cpus-per-task`**: 8 CPUs recommended for frame encoding parallelization
+- **`--mem-per-cpu`**: ~16GB total RAM (8×1950M) for loading raw frames
+
+> [!TIP]
+> Start with fewer workers (e.g., 100) to test your cluster configuration before launching thousands of jobs.
+
+### Step 4: Monitor Progress
+
+Check running jobs:
+
+```bash
+squeue -u $USER
+```
+
+Monitor overall progress:
+
+```bash
+jobs_status /your/logs
+```
+
+Inspect individual job logs:
+
+```bash
+less /your/logs/port_droid/slurm_jobs/JOB_ID_WORKER_ID.out
+```
+
+Debug failed jobs:
+
+```bash
+failed_logs /your/logs/port_droid
+```
+
+### Step 5: Aggregate Shards
+
+Once all porting jobs complete:
+
+```bash
+python examples/port_datasets/slurm_aggregate_shards.py \
+    --repo-id your_id/droid_1.0.1 \
+    --logs-dir /your/logs \
+    --job-name aggr_droid \
+    --partition your_partition \
+    --workers 2048 \
+    --cpus-per-task 8 \
+    --mem-per-cpu 1950M
+```
+
+### Step 6: Upload to Hub
+
+```bash
+python examples/port_datasets/slurm_upload.py \
+    --repo-id your_id/droid_1.0.1 \
+    --logs-dir /your/logs \
+    --job-name upload_droid \
+    --partition your_partition \
+    --workers 50 \
+    --cpus-per-task 4 \
+    --mem-per-cpu 1950M
+```
+
+> [!NOTE]
+> Upload uses fewer workers (50) since it's network-bound rather than compute-bound.
+
+## Dataset v3.0 File Structure
+
+Your completed dataset will have this modern structure:
+
+```
+dataset/
+├── meta/
+│   ├── episodes/
+│   │   └── chunk-000/
+│   │       └── file-000.parquet    # Episode metadata
+│   ├── tasks.parquet               # Task definitions
+│   ├── stats.json                  # Aggregated statistics
+│   └── info.json                   # Dataset information
+├── data/
+│   └── chunk-000/
+│       └── file-000.parquet        # Consolidated episode data
+└── videos/
+    └── camera_key/
+        └── chunk-000/
+            └── file-000.mp4        # Consolidated video files
+```
+
+This replaces the old episode-per-file structure with efficient, optimally-sized chunks.
+
+## Migrating from Dataset v2.1
+
+If you have existing datasets in v2.1 format, use the migration tool:
+
+```bash
+python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+    --repo-id your_id/existing_dataset
+```
+
+This automatically:
+
+- Converts file structure to v3.0 format
+- Migrates metadata from JSON Lines to parquet
+- Aggregates statistics and creates per-episode stats
+- Updates version information
+
+## Performance Benefits
+
+Dataset v3.0 provides significant improvements for large datasets:
+
+- **Faster loading**: 3-5x reduction in initialization time
+- **Memory efficiency**: Better RAM usage through memory mapping
+- **Scalable processing**: Handles millions of episodes efficiently
+- **Storage optimization**: Reduced file count and improved compression

@@ -29,7 +29,7 @@ from lerobot.datasets.transforms import (
     SharpnessJitter,
     make_transform_from_config,
 )
-from lerobot.scripts.visualize_image_transforms import (
+from lerobot.scripts.lerobot_imgtransform_viz import (
     save_all_transforms,
     save_each_transform,
 )

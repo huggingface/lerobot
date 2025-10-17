@@ -26,15 +26,18 @@ pip install -e ".[hilserl]"
 
 ## Configuration
 
-To use `gym_hil` with LeRobot, you need to create a configuration file. An example is provided [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/gym_hil_env.json). Key configuration sections include:
+To use `gym_hil` with LeRobot, you need to create a configuration file. An example is provided [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/env_config.json). Key configuration sections include:
 
 ### Environment Type and Task
 
 ```json
 {
-  "type": "hil",
-  "name": "franka_sim",
-  "task": "PandaPickCubeGamepad-v0",
+  "env": {
+    "type": "gym_manipulator",
+    "name": "gym_hil",
+    "task": "PandaPickCubeGamepad-v0",
+    "fps": 10
+  },
   "device": "cuda"
 }
 ```
@@ -45,28 +48,40 @@ Available tasks:
 - `PandaPickCubeGamepad-v0`: With gamepad control
 - `PandaPickCubeKeyboard-v0`: With keyboard control
 
-### Gym Wrappers Configuration
+### Processor Configuration
 
 ```json
-"wrapper": {
-    "gripper_penalty": -0.02,
-    "control_time_s": 15.0,
-    "use_gripper": true,
-    "fixed_reset_joint_positions": [0.0, 0.195, 0.0, -2.43, 0.0, 2.62, 0.785],
-    "end_effector_step_sizes": {
-        "x": 0.025,
-        "y": 0.025,
-        "z": 0.025
-    },
-    "control_mode": "gamepad"
+{
+  "env": {
+    "processor": {
+      "control_mode": "gamepad",
+      "gripper": {
+        "use_gripper": true,
+        "gripper_penalty": -0.02
+      },
+      "reset": {
+        "control_time_s": 15.0,
+        "fixed_reset_joint_positions": [
+          0.0, 0.195, 0.0, -2.43, 0.0, 2.62, 0.785
+        ]
+      },
+      "inverse_kinematics": {
+        "end_effector_step_sizes": {
+          "x": 0.025,
+          "y": 0.025,
+          "z": 0.025
+        }
+      }
     }
+  }
+}
 ```
 
 Important parameters:
 
-- `gripper_penalty`: Penalty for excessive gripper movement
-- `use_gripper`: Whether to enable gripper control
-- `end_effector_step_sizes`: Size of the steps in the x,y,z axes of the end-effector
+- `gripper.gripper_penalty`: Penalty for excessive gripper movement
+- `gripper.use_gripper`: Whether to enable gripper control
+- `inverse_kinematics.end_effector_step_sizes`: Size of the steps in the x,y,z axes of the end-effector
 - `control_mode`: Set to `"gamepad"` to use a gamepad controller
 
 ## Running with HIL RL of LeRobot
@@ -75,39 +90,50 @@ Important parameters:
 
 To run the environment, set mode to null:
 
-<!-- prettier-ignore-start -->
-```python
-python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/gym_hil_env.json
+```bash
+python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 ```
-<!-- prettier-ignore-end -->
 
 ### Recording a Dataset
 
 To collect a dataset, set the mode to `record` whilst defining the repo_id and number of episodes to record:
 
-<!-- prettier-ignore-start -->
-```python
-python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/gym_hil_env.json
+```json
+{
+  "env": {
+    "type": "gym_manipulator",
+    "name": "gym_hil",
+    "task": "PandaPickCubeGamepad-v0"
+  },
+  "dataset": {
+    "repo_id": "username/sim_dataset",
+    "root": null,
+    "task": "pick_cube",
+    "num_episodes_to_record": 10,
+    "replay_episode": null,
+    "push_to_hub": true
+  },
+  "mode": "record"
+}
 ```
-<!-- prettier-ignore-end -->
+
+```bash
+python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
+```
 
 ### Training a Policy
 
-To train a policy, checkout the configuration example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_gym_hil_env.json) and run the actor and learner servers:
+To train a policy, checkout the configuration example available [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/train_config.json) and run the actor and learner servers:
 
-<!-- prettier-ignore-start -->
-```python
-python -m lerobot.scripts.rl.actor --config_path path/to/train_gym_hil_env.json
+```bash
+python -m lerobot.rl.actor --config_path path/to/train_gym_hil_env.json
 ```
-<!-- prettier-ignore-end -->
 
 In a different terminal, run the learner server:
 
-<!-- prettier-ignore-start -->
-```python
-python -m lerobot.scripts.rl.learner --config_path path/to/train_gym_hil_env.json
+```bash
+python -m lerobot.rl.learner --config_path path/to/train_gym_hil_env.json
 ```
-<!-- prettier-ignore-end -->
 
 The simulation environment provides a safe and repeatable way to develop and test your Human-In-the-Loop reinforcement learning components before deploying to real robots.
 

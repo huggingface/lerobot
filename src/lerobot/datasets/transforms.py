@@ -120,7 +120,7 @@ class SharpnessJitter(Transform):
         self.sharpness = self._check_input(sharpness)
 
     def _check_input(self, sharpness):
-        if isinstance(sharpness, (int, float)):
+        if isinstance(sharpness, (int | float)):
             if sharpness < 0:
                 raise ValueError("If sharpness is a single number, it must be non negative.")
             sharpness = [1.0 - sharpness, 1.0 + sharpness]

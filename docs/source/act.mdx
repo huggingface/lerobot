@@ -1,0 +1,92 @@
+# ACT (Action Chunking with Transformers)
+
+ACT is a **lightweight and efficient policy for imitation learning**, especially well-suited for fine-grained manipulation tasks. It's the **first model we recommend when you're starting out** with LeRobot due to its fast training time, low computational requirements, and strong performance.
+
+<div class="video-container">
+  <iframe
+    width="100%"
+    height="415"
+    src="https://www.youtube.com/embed/ft73x0LfGpM"
+    title="LeRobot ACT Tutorial"
+    frameborder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowfullscreen
+  ></iframe>
+</div>
+
+_Watch this tutorial from the LeRobot team to learn how ACT works: [LeRobot ACT Tutorial](https://www.youtube.com/watch?v=ft73x0LfGpM)_
+
+## Model Overview
+
+Action Chunking with Transformers (ACT) was introduced in the paper [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705) by Zhao et al. The policy was designed to enable precise, contact-rich manipulation tasks using affordable hardware and minimal demonstration data.
+
+### Why ACT is Great for Beginners
+
+ACT stands out as an excellent starting point for several reasons:
+
+- **Fast Training**: Trains in a few hours on a single GPU
+- **Lightweight**: Only ~80M parameters, making it efficient and easy to work with
+- **Data Efficient**: Often achieves high success rates with just 50 demonstrations
+
+### Architecture
+
+ACT uses a transformer-based architecture with three main components:
+
+1. **Vision Backbone**: ResNet-18 processes images from multiple camera viewpoints
+2. **Transformer Encoder**: Synthesizes information from camera features, joint positions, and a learned latent variable
+3. **Transformer Decoder**: Generates coherent action sequences using cross-attention
+
+The policy takes as input:
+
+- Multiple RGB images (e.g., from wrist cameras, front/top cameras)
+- Current robot joint positions
+- A latent style variable `z` (learned during training, set to zero during inference)
+
+And outputs a chunk of `k` future action sequences.
+
+## Installation Requirements
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. ACT is included in the base LeRobot installation, so no additional dependencies are needed!
+
+## Training ACT
+
+ACT works seamlessly with the standard LeRobot training pipeline. Here's a complete example for training ACT on your dataset:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/your_dataset \
+  --policy.type=act \
+  --output_dir=outputs/train/act_your_dataset \
+  --job_name=act_your_dataset \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=${HF_USER}/act_policy
+```
+
+### Training Tips
+
+1. **Start with defaults**: ACT's default hyperparameters work well for most tasks
+2. **Training duration**: Expect a few hours for 100k training steps on a single GPU
+3. **Batch size**: Start with batch size 8 and adjust based on your GPU memory
+
+### Train using Google Colab
+
+If your local computer doesn't have a powerful GPU, you can utilize Google Colab to train your model by following the [ACT training notebook](./notebooks#training-act).
+
+## Evaluating ACT
+
+Once training is complete, you can evaluate your ACT policy using the `lerobot-record` command with your trained policy. This will run inference and record evaluation episodes:
+
+```bash
+lerobot-record \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_robot \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+  --display_data=true \
+  --dataset.repo_id=${HF_USER}/eval_act_your_dataset \
+  --dataset.num_episodes=10 \
+  --dataset.single_task="Your task description" \
+  --policy.path=${HF_USER}/act_policy
+```

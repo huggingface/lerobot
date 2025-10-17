@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 
 @TeleoperatorConfig.register_subclass("mock_teleop")

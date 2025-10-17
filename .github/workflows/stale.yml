@@ -1,0 +1,70 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This workflow handles closing stale issues and PRs.
+name: Stale
+on:
+  # Allows running this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  # Runs at 02:00
+  schedule:
+    - cron: "0 2 * * *"
+
+env:
+  CLOSE_ISSUE_MESSAGE: >
+    This issue was closed because it has been stalled for 14 days with no activity.
+    Feel free to reopen if is still relevant, or to ping a collaborator if you have any questions.
+  CLOSE_PR_MESSAGE: >
+    This PR was closed because it has been stalled for 21 days with no activity.
+    Feel free to reopen if is still relevant, or to ping a collaborator if you have any questions.
+  WARN_ISSUE_MESSAGE: >
+    This issue has been automatically marked as stale because it has not had
+    recent activity (6 months). It will be closed if no further activity occurs.
+    Any change, comment or update to this issue will reset this count.
+    Thank you for your contributions.
+  WARN_PR_MESSAGE: >
+    This PR has been automatically marked as stale because it has not had
+    recent activity (1 year). It will be closed if no further activity occurs.
+    Any change, comment or update to this PR will reset this count.
+    Thank you for your contributions.
+
+jobs:
+  # This job runs the actions/stale action to close stale issues and PRs.
+  stale:
+    name: Close Stale Issues and PRs
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write # only for delete-branch option
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@v10
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: never-stale
+          exempt-pr-labels: never-stale
+          days-before-issue-stale: 180
+          days-before-issue-close: 14
+          days-before-pr-stale: 365
+          days-before-pr-close: 21
+          delete-branch: true
+          close-issue-message: ${{ env.CLOSE_ISSUE_MESSAGE }}
+          close-pr-message: ${{ env.CLOSE_PR_MESSAGE }}
+          stale-issue-message: ${{ env.WARN_ISSUE_MESSAGE }}
+          stale-pr-message: ${{ env.WARN_PR_MESSAGE }}
+          operations-per-run: 500

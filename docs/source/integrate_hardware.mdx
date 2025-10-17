@@ -8,7 +8,7 @@ To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blo
 
 - Your own robot which exposes a communication interface (e.g. serial, CAN, TCP)
 - A way to read sensor data and send motor commands programmatically, e.g. manufacturer's SDK or API, or your own protocol implementation.
-- LeRobot installed in your environment. Follow our [Installation Guide](./installation.mdx).
+- LeRobot installed in your environment. Follow our [Installation Guide](./installation).
 
 ## Choose your motors
 
@@ -65,7 +65,7 @@ class MyCoolRobotConfig(RobotConfig):
 ```
 <!-- prettier-ignore-end -->
 
-[Cameras tutorial](./cameras.mdx) to understand how to detect and add your camera.
+[Cameras tutorial](./cameras) to understand how to detect and add your camera.
 
 Next, we'll create our actual robot class which inherits from `Robot`. This abstract class defines a contract you must follow for your robot to be usable with the rest of the LeRobot tools.
 
@@ -208,33 +208,35 @@ LeRobot supports saving and loading calibration data automatically. This is usef
 
 <!-- prettier-ignore-start -->
 ```python
-> @property
-> def is_calibrated(self) -> bool:
->    return True
->
-> def calibrate(self) -> None:
->    pass
-> ```
+@property
+def is_calibrated(self) -> bool:
+    return True
+
+def calibrate(self) -> None:
+    pass
+```
+<!-- prettier-ignore-end -->
 
 ### `is_calibrated`
 
 This should reflect whether your robot has the required calibration loaded.
 
-```
-<!-- prettier-ignore-end -->python
+<!-- prettier-ignore-start -->
+```python
 @property
 def is_calibrated(self) -> bool:
     return self.bus.is_calibrated
 ```
+<!-- prettier-ignore-end -->
 
 ### `calibrate()`
 
 The goal of the calibration is twofold:
-    - Know the physical range of motion of each motors in order to only send commands within this range.
-    - Normalize raw motors positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete value dependant on the specific motor used that will not replicate elsewhere.
+
+- Know the physical range of motion of each motors in order to only send commands within this range.
+- Normalize raw motors positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete value dependant on the specific motor used that will not replicate elsewhere.
 
 It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, our bus interfaces already include methods to help with this.
-
 
 <!-- prettier-ignore-start -->
 ```python
@@ -334,6 +336,134 @@ def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
 For implementing teleoperation devices, we also provide a [`Teleoperator`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/teleoperators/teleoperator.py) base class. This class is very similar to the `Robot` base class and also doesn't assume anything on form factor.
 
 The main differences are in the I/O functions: a teleoperator allows you to produce action via `get_action` and can receive feedback actions via `send_feedback`. Feedback could be anything controllable on the teleoperation device that could help the person controlling it understand the consequences of the actions sent. Think motion/force feedback on a leader arm, vibrations on a gamepad controller for example. To implement a teleoperator, you can follow this same tutorial and adapt it for these two methods.
+
+## Using Your Own `LeRobot` Devices 🔌
+
+You can easily extend `lerobot` with your own custom hardware—be it a camera, robot, or teleoperation device—by creating a separate, installable Python package. If you follow a few simple conventions, the `lerobot` command-line tools (like `lerobot-teleop` and `lerobot-record`) will **automatically discover and integrate your creations** without requiring any changes to the `lerobot` source code.
+
+This guide outlines the conventions your plugin must follow.
+
+### The 4 Core Conventions
+
+To ensure your custom device is discoverable, you must adhere to the following four rules.
+
+#### 1\. Create an Installable Package with a Specific Prefix
+
+Your project must be a standard, installable Python package. Crucially, the name of your package (as defined in `pyproject.toml` or `setup.py`) must begin with one of these prefixes:
+
+- `lerobot_robot_` for a robot.
+- `lerobot_camera_` for a camera.
+- `lerobot_teleoperator_` for a teleoperation device.
+
+This prefix system is how `lerobot` automatically finds your plugin in the Python environment.
+
+#### 2\. Follow the `SomethingConfig`/`Something` Naming Pattern
+
+Your device's implementation class must be named after its configuration class, simply by removing the `Config` suffix.
+
+- **Config Class:** `MyAwesomeTeleopConfig`
+- **Device Class:** `MyAwesomeTeleop`
+
+#### 3\. Place Your Files in a Predictable Structure
+
+The device class (`MyAwesomeTeleop`) must be located in a predictable module relative to its configuration class (`MyAwesomeTeleopConfig`). `lerobot` will automatically search in these locations:
+
+- In the **same module** as the config class.
+- In a **submodule named after the device** (e.g., `my_awesome_teleop.py`).
+
+The recommended and simplest structure is to place them in separate, clearly named files within the same directory.
+
+#### 4\. Expose Classes in `__init__.py`
+
+Your package's `__init__.py` file should import and expose both the configuration and the device classes, making them easily accessible.
+
+### Putting It All Together: A Complete Example
+
+Let's create a new teleoperator called `my_awesome_teleop`.
+
+#### Directory Structure
+
+Here is what the project folder should look like. The package name, `lerobot_teleoperator_my_awesome_teleop`, follows **Convention \#1**.
+
+```
+lerobot_teleoperator_my_awesome_teleop/
+├── pyproject.toml # (or setup.py) lists lerobot as a dependency
+└── lerobot_teleoperator_my_awesome_teleop/
+    ├── __init__.py
+    ├── config_my_awesome_teleop.py
+    └── my_awesome_teleop.py
+```
+
+#### File Contents
+
+- **`config_my_awesome_teleop.py`**: Defines the configuration class. Note the `Config` suffix (**Convention \#2**).
+
+  ```python
+  from dataclasses import dataclass
+
+  from lerobot.teleoperators.config import TeleoperatorConfig
+
+  @TeleoperatorConfig.register_subclass("my_awesome_teleop")
+  @dataclass
+  class MyAwesomeTeleopConfig(TeleoperatorConfig):
+      # Your configuration fields go here
+      port: str = "192.168.1.1"
+  ```
+
+- **`my_awesome_teleop.py`**: Implements the device. The class name `MyAwesomeTeleop` matches its config class name (**Convention \#2**). This file structure adheres to **Convention \#3**.
+
+  ```python
+  from lerobot.teleoperators.teleoperator import Teleoperator
+
+  from .config_my_awesome_teleop import MyAwesomeTeleopConfig
+
+  class MyAwesomeTeleop(Teleoperator):
+      config_class = MyAwesomeTeleopConfig
+      name = "my_awesome_teleop"
+
+      def __init__(self, config: MyAwesomeTeleopConfig):
+          super().__init__(config)
+          self.config = config
+
+      # Your device logic (e.g., connect) goes here
+  ```
+
+- **`__init__.py`**: Exposes the key classes (**Convention \#4**).
+
+  ```python
+  from .config_my_awesome_teleop import MyAwesomeTeleopConfig
+  from .my_awesome_teleop import MyAwesomeTeleop
+  ```
+
+### Installation and Usage
+
+1.  **Install your new plugin in your Python environment.** You can install your local plugin package using `pip`'s editable mode or from PyPi.
+
+    ```bash
+    # Locally
+    # Navigate to your plugin's root directory and install it
+    cd lerobot_teleoperator_my_awesome_teleop
+    pip install -e .
+
+    # From PyPi
+    pip install lerobot_teleoperator_my_awesome_teleop
+    ```
+
+2.  **Use it directly from the command line.** Now, you can use your custom device by referencing its type.
+
+    ```bash
+    lerobot-teleoperate --teleop.type=my_awesome_teleop \
+    # other arguments
+    ```
+
+And that's it\! Your custom device is now fully integrated.
+
+### Looking for an example ?
+
+Check out these two packages from the community:
+
+- https://github.com/SpesRobotics/lerobot-robot-xarm
+- https://github.com/SpesRobotics/lerobot-teleoperator-teleop
 
 ## Wrapping Up
 

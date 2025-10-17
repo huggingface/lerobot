@@ -21,9 +21,10 @@ import time
 from queue import Queue
 from typing import Any
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
+from ..utils import TeleopEvents
 from .configuration_keyboard import KeyboardEndEffectorTeleopConfig, KeyboardTeleopConfig
 
 PYNPUT_AVAILABLE = True
@@ -176,16 +177,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
             }
 
-    def _on_press(self, key):
-        if hasattr(key, "char"):
-            key = key.char
-        self.event_queue.put((key, True))
-
-    def _on_release(self, key):
-        if hasattr(key, "char"):
-            key = key.char
-        self.event_queue.put((key, False))
-
     def get_action(self) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(
@@ -235,3 +226,66 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             action_dict["gripper"] = gripper_action
 
         return action_dict
+
+    def get_teleop_events(self) -> dict[str, Any]:
+        """
+        Get extra control events from the keyboard such as intervention status,
+        episode termination, success indicators, etc.
+
+        Keyboard mappings:
+        - Any movement keys pressed = intervention active
+        - 's' key = success (terminate episode successfully)
+        - 'r' key = rerecord episode (terminate and rerecord)
+        - 'q' key = quit episode (terminate without success)
+
+        Returns:
+            Dictionary containing:
+                - is_intervention: bool - Whether human is currently intervening
+                - terminate_episode: bool - Whether to terminate the current episode
+                - success: bool - Whether the episode was successful
+                - rerecord_episode: bool - Whether to rerecord the episode
+        """
+        if not self.is_connected:
+            return {
+                TeleopEvents.IS_INTERVENTION: False,
+                TeleopEvents.TERMINATE_EPISODE: False,
+                TeleopEvents.SUCCESS: False,
+                TeleopEvents.RERECORD_EPISODE: False,
+            }
+
+        # Check if any movement keys are currently pressed (indicates intervention)
+        movement_keys = [
+            keyboard.Key.up,
+            keyboard.Key.down,
+            keyboard.Key.left,
+            keyboard.Key.right,
+            keyboard.Key.shift,
+            keyboard.Key.shift_r,
+            keyboard.Key.ctrl_r,
+            keyboard.Key.ctrl_l,
+        ]
+        is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
+
+        # Check for episode control commands from misc_keys_queue
+        terminate_episode = False
+        success = False
+        rerecord_episode = False
+
+        # Process any pending misc keys
+        while not self.misc_keys_queue.empty():
+            key = self.misc_keys_queue.get_nowait()
+            if key == "s":
+                success = True
+            elif key == "r":
+                terminate_episode = True
+                rerecord_episode = True
+            elif key == "q":
+                terminate_episode = True
+                success = False
+
+        return {
+            TeleopEvents.IS_INTERVENTION: is_intervention,
+            TeleopEvents.TERMINATE_EPISODE: terminate_episode,
+            TeleopEvents.SUCCESS: success,
+            TeleopEvents.RERECORD_EPISODE: rerecord_episode,
+        }

@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import warnings
+from collections.abc import Mapping, Sequence
+from functools import singledispatch
 from typing import Any
 
 import einops
@@ -24,6 +26,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.utils import get_channel_first_image_shape
 
 
@@ -39,44 +42,44 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     return_observations = {}
     if "pixels" in observations:
         if isinstance(observations["pixels"], dict):
-            imgs = {f"observation.images.{key}": img for key, img in observations["pixels"].items()}
+            imgs = {f"{OBS_IMAGES}.{key}": img for key, img in observations["pixels"].items()}
         else:
-            imgs = {"observation.image": observations["pixels"]}
+            imgs = {OBS_IMAGE: observations["pixels"]}
 
         for imgkey, img in imgs.items():
             # TODO(aliberts, rcadene): use transforms.ToTensor()?
-            img = torch.from_numpy(img)
+            img_tensor = torch.from_numpy(img)
 
             # When preprocessing observations in a non-vectorized environment, we need to add a batch dimension.
             # This is the case for human-in-the-loop RL where there is only one environment.
-            if img.ndim == 3:
-                img = img.unsqueeze(0)
+            if img_tensor.ndim == 3:
+                img_tensor = img_tensor.unsqueeze(0)
             # sanity check that images are channel last
-            _, h, w, c = img.shape
-            assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
+            _, h, w, c = img_tensor.shape
+            assert c < h and c < w, f"expect channel last images, but instead got {img_tensor.shape=}"
 
             # sanity check that images are uint8
-            assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
+            assert img_tensor.dtype == torch.uint8, f"expect torch.uint8, but instead {img_tensor.dtype=}"
 
             # convert to channel first of type float32 in range [0,1]
-            img = einops.rearrange(img, "b h w c -> b c h w").contiguous()
-            img = img.type(torch.float32)
-            img /= 255
+            img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous()
+            img_tensor = img_tensor.type(torch.float32)
+            img_tensor /= 255
 
-            return_observations[imgkey] = img
+            return_observations[imgkey] = img_tensor
 
     if "environment_state" in observations:
         env_state = torch.from_numpy(observations["environment_state"]).float()
         if env_state.dim() == 1:
             env_state = env_state.unsqueeze(0)
 
-        return_observations["observation.environment_state"] = env_state
+        return_observations[OBS_ENV_STATE] = env_state
 
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
     agent_pos = torch.from_numpy(observations["agent_pos"]).float()
     if agent_pos.dim() == 1:
         agent_pos = agent_pos.unsqueeze(0)
-    return_observations["observation.state"] = agent_pos
+    return_observations[OBS_STATE] = agent_pos
 
     return return_observations
 
@@ -127,10 +130,68 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
 def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
     if hasattr(env.envs[0], "task_description"):
-        observation["task"] = env.call("task_description")
+        task_result = env.call("task_description")
+
+        if isinstance(task_result, tuple):
+            task_result = list(task_result)
+
+        if not isinstance(task_result, list):
+            raise TypeError(f"Expected task_description to return a list, got {type(task_result)}")
+        if not all(isinstance(item, str) for item in task_result):
+            raise TypeError("All items in task_description result must be strings")
+
+        observation["task"] = task_result
     elif hasattr(env.envs[0], "task"):
-        observation["task"] = env.call("task")
+        task_result = env.call("task")
+
+        if isinstance(task_result, tuple):
+            task_result = list(task_result)
+
+        if not isinstance(task_result, list):
+            raise TypeError(f"Expected task to return a list, got {type(task_result)}")
+        if not all(isinstance(item, str) for item in task_result):
+            raise TypeError("All items in task result must be strings")
+
+        observation["task"] = task_result
     else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
         num_envs = observation[list(observation.keys())[0]].shape[0]
         observation["task"] = ["" for _ in range(num_envs)]
     return observation
+
+
+def _close_single_env(env: Any) -> None:
+    try:
+        env.close()
+    except Exception as exc:
+        print(f"Exception while closing env {env}: {exc}")
+
+
+@singledispatch
+def close_envs(obj: Any) -> None:
+    """Default: raise if the type is not recognized."""
+    raise NotImplementedError(f"close_envs not implemented for type {type(obj).__name__}")
+
+
+@close_envs.register
+def _(env: Mapping) -> None:
+    for v in env.values():
+        if isinstance(v, Mapping):
+            close_envs(v)
+        elif hasattr(v, "close"):
+            _close_single_env(v)
+
+
+@close_envs.register
+def _(envs: Sequence) -> None:
+    if isinstance(envs, (str | bytes)):
+        return
+    for v in envs:
+        if isinstance(v, Mapping) or isinstance(v, Sequence) and not isinstance(v, (str | bytes)):
+            close_envs(v)
+        elif hasattr(v, "close"):
+            _close_single_env(v)
+
+
+@close_envs.register
+def _(env: gym.Env) -> None:
+    _close_single_env(env)

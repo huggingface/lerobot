@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from lerobot.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME
 
 LEROBOT_TEST_DIR = HF_LEROBOT_HOME / "_testing"
 DUMMY_REPO_ID = "dummy/repo"
 DUMMY_ROBOT_TYPE = "dummy_robot"
 DUMMY_MOTOR_FEATURES = {
-    "action": {
+    ACTION: {
         "dtype": "float32",
         "shape": (6,),
         "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
@@ -29,8 +29,8 @@ DUMMY_MOTOR_FEATURES = {
     },
 }
 DUMMY_CAMERA_FEATURES = {
-    "laptop": {"shape": (480, 640, 3), "names": ["height", "width", "channels"], "info": None},
-    "phone": {"shape": (480, 640, 3), "names": ["height", "width", "channels"], "info": None},
+    "laptop": {"shape": (64, 96, 3), "names": ["height", "width", "channels"], "info": None},
+    "phone": {"shape": (64, 96, 3), "names": ["height", "width", "channels"], "info": None},
 }
 DEFAULT_FPS = 30
 DUMMY_VIDEO_INFO = {

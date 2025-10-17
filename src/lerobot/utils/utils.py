@@ -15,25 +15,20 @@
 # limitations under the License.
 import logging
 import os
-import os.path as osp
 import platform
 import select
 import subprocess
 import sys
 import time
 from copy import copy, deepcopy
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from statistics import mean
 
 import numpy as np
 import torch
-
-
-def none_or_int(value):
-    if value == "None":
-        return None
-    return int(value)
+from accelerate import Accelerator
+from datasets.utils.logging import disable_progress_bar, enable_progress_bar
 
 
 def inside_slurm():
@@ -116,36 +111,50 @@ def init_logging(
     display_pid: bool = False,
     console_level: str = "INFO",
     file_level: str = "DEBUG",
+    accelerator: Accelerator | None = None,
 ):
+    """Initialize logging configuration for LeRobot.
+
+    In multi-GPU training, only the main process logs to console to avoid duplicate output.
+    Non-main processes have console logging suppressed but can still log to file.
+
+    Args:
+        log_file: Optional file path to write logs to
+        display_pid: Include process ID in log messages (useful for debugging multi-process)
+        console_level: Logging level for console output
+        file_level: Logging level for file output
+        accelerator: Optional Accelerator instance (for multi-GPU detection)
+    """
+
     def custom_format(record: logging.LogRecord) -> str:
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
-
-        # NOTE: Display PID is useful for multi-process logging.
-        if display_pid:
-            pid_str = f"[PID: {os.getpid()}]"
-            message = f"{record.levelname} {pid_str} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
-        else:
-            message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
-        return message
+        pid_str = f"[PID: {os.getpid()}] " if display_pid else ""
+        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
 
     formatter = logging.Formatter()
     formatter.format = custom_format
 
     logger = logging.getLogger()
-    logger.setLevel(logging.NOTSET)  # Set the logger to the lowest level to capture all messages
+    logger.setLevel(logging.NOTSET)
 
-    # Remove unused default handlers
-    for handler in logger.handlers[:]:
-        logger.removeHandler(handler)
+    # Clear any existing handlers
+    logger.handlers.clear()
 
-    # Write logs to console
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(console_level.upper())
-    logger.addHandler(console_handler)
+    # Determine if this is a non-main process in distributed training
+    is_main_process = accelerator.is_main_process if accelerator is not None else True
 
-    # Additionally write logs to file
+    # Console logging (main process only)
+    if is_main_process:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        console_handler.setLevel(console_level.upper())
+        logger.addHandler(console_handler)
+    else:
+        # Suppress console output for non-main processes
+        logger.addHandler(logging.NullHandler())
+        logger.setLevel(logging.ERROR)
+
     if log_file is not None:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
@@ -163,36 +172,6 @@ def format_big_number(num, precision=0):
         num /= divisor
 
     return num
-
-
-def _relative_path_between(path1: Path, path2: Path) -> Path:
-    """Returns path1 relative to path2."""
-    path1 = path1.absolute()
-    path2 = path2.absolute()
-    try:
-        return path1.relative_to(path2)
-    except ValueError:  # most likely because path1 is not a subpath of path2
-        common_parts = Path(osp.commonpath([path1, path2])).parts
-        return Path(
-            "/".join([".."] * (len(path2.parts) - len(common_parts)) + list(path1.parts[len(common_parts) :]))
-        )
-
-
-def print_cuda_memory_usage():
-    """Use this function to locate and debug memory leak."""
-    import gc
-
-    gc.collect()
-    # Also clear the cache if you want to fully release the memory
-    torch.cuda.empty_cache()
-    print(f"Current GPU Memory Allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
-    print(f"Maximum GPU Memory Allocated: {torch.cuda.max_memory_allocated(0) / 1024**2:.2f} MB")
-    print(f"Current GPU Memory Reserved: {torch.cuda.memory_reserved(0) / 1024**2:.2f} MB")
-    print(f"Maximum GPU Memory Reserved: {torch.cuda.max_memory_reserved(0) / 1024**2:.2f} MB")
-
-
-def capture_timestamp_utc():
-    return datetime.now(timezone.utc)
 
 
 def say(text: str, blocking: bool = False):
@@ -272,6 +251,35 @@ def enter_pressed() -> bool:
 def move_cursor_up(lines):
     """Move the cursor up by a specified number of lines."""
     print(f"\033[{lines}A", end="")
+
+
+def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
+    days = int(elapsed_time_s // (24 * 3600))
+    elapsed_time_s %= 24 * 3600
+    hours = int(elapsed_time_s // 3600)
+    elapsed_time_s %= 3600
+    minutes = int(elapsed_time_s // 60)
+    seconds = elapsed_time_s % 60
+    return days, hours, minutes, seconds
+
+
+class SuppressProgressBars:
+    """
+    Context manager to suppress progress bars.
+
+    Example
+    --------
+    ```python
+    with SuppressProgressBars():
+        # Code that would normally show progress bars
+    ```
+    """
+
+    def __enter__(self):
+        disable_progress_bar()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        enable_progress_bar()
 
 
 class TimerManager:
@@ -356,10 +364,6 @@ class TimerManager:
     @property
     def history(self) -> list[float]:
         return deepcopy(self._history)
-
-    @property
-    def fps_history(self) -> list[float]:
-        return [1.0 / t for t in self._history]
 
     @property
     def fps_last(self) -> float:
