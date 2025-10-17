@@ -137,7 +137,7 @@ The finetuned model can be found here:
 We then evaluate the finetuned model using the LeRobot LIBERO implementation, by running the following command:
 
 ```bash
-python src/lerobot/scripts/eval.py \
+lerobot-eval \
   --output_dir=/logs/ \
   --env.type=libero \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
