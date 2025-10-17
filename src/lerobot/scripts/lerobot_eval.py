@@ -26,7 +26,7 @@ lerobot-eval \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
+    --policy.use_amp=false \
     --policy.device=cuda
 ```
 
@@ -37,7 +37,7 @@ lerobot-eval \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
+    --policy.use_amp=false \
     --policy.device=cuda
 ```
 
