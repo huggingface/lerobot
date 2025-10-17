@@ -127,15 +127,16 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
             )
             delta_r = np.array(
                 [
-                    wx * self.end_effector_step_sizes.get("wx", 0),
-                    wy * self.end_effector_step_sizes.get("wy", 0),
-                    wz * self.end_effector_step_sizes.get("wz", 0),
+                    wx * self.end_effector_step_sizes.get("wx", 1),
+                    wy * self.end_effector_step_sizes.get("wy", 1),
+                    wz * self.end_effector_step_sizes.get("wz", 1),
                 ],
                 dtype=float,
             )
-            r_vec = Rotation.from_rotvec(delta_r).as_matrix()
+
+            r_mat = Rotation.from_rotvec(delta_r).as_matrix()
             desired = np.eye(4, dtype=float)
-            desired[:3, :3] = ref[:3, :3] @ r_vec
+            desired[:3, :3] = ref[:3, :3] @ r_mat
             desired[:3, 3] = ref[:3, 3] + delta_p
 
             self._command_when_disabled = desired.copy()

@@ -112,6 +112,7 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
         delta_x = action.pop("delta_x")
         delta_y = action.pop("delta_y")
         delta_z = action.pop("delta_z")
+
         if self.use_rotation:
             delta_wx = action.pop("delta_wx")
             delta_wy = action.pop("delta_wy")
@@ -137,8 +138,6 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
         scaled_delta_y = delta_y * self.position_scale
         scaled_delta_z = delta_z * self.position_scale
 
-        # For gamepad/keyboard, we don't have rotation input, so set to 0
-        # These could be extended in the future for more sophisticated teleoperators
         target_wx = delta_wx * self.rotation_scale
         target_wy = delta_wy * self.rotation_scale
         target_wz = delta_wz * self.rotation_scale
