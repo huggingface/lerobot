@@ -645,11 +645,6 @@ def add_actor_information_and_train(
                         }
                     )
 
-            # # Push policy to actors periodically
-            # if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
-            #     push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
-            #     last_time_policy_pushed = time.time()
-
             # Logging
             if optimization_step % log_freq == 0:
                 training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
@@ -744,21 +739,10 @@ def add_actor_information_and_train(
                 queue_size=2,
             )
 
-        # if offline_replay_buffer is not None and offline_iterator is None:
-        #     offline_iterator = offline_replay_buffer.get_iterator(
-        #         batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
-        #     )
-
         time_for_one_optimization_step = time.time()
         for _ in range(utd_ratio - 1):
             # Sample from the iterators
             batch = next(online_iterator)
-
-            # if dataset_repo_id is not None:
-            #     batch_offline = next(offline_iterator)
-            #     batch = concatenate_batch_transitions(
-            #         left_batch_transitions=batch, right_batch_transition=batch_offline
-            #     )
 
             # Extract n-step batch components
             actions = batch[ACTION]  # [B, h, action_dim]
@@ -855,18 +839,11 @@ def add_actor_information_and_train(
         # Sample for the last update in the UTD ratio
         batch = next(online_iterator)
 
-        # if dataset_repo_id is not None:
-        #     batch_offline = next(offline_iterator)
-        #     batch = concatenate_batch_transitions(
-        #         left_batch_transitions=batch, right_batch_transition=batch_offline
-        #     )
-
         # Extract n-step batch components
         actions = batch[ACTION]  # [B, h, action_dim]
         rewards = batch["reward"]
         observations = batch["state"]
         next_observations = batch["next_state"]
-        # done = batch["done"]
 
         observations = preprocessor(
             {
@@ -940,33 +917,14 @@ def add_actor_information_and_train(
         ).item()
         optimizers["critic"].step()
 
-        # # Initialize training info dictionary
-        # training_infos = {
-        #     "loss_critic": loss_critic.item(),
-        #     "critic_grad_norm": critic_grad_norm,
-        # }
+        # Initialize training info dictionary
         training_infos = {
             f"critic/{k}": v.item() if isinstance(v, torch.Tensor) else v
             for k, v in critic_output["info"].items()
         }
         training_infos["critic/grad_norm"] = critic_grad_norm
 
-        # # Discrete critic optimization (if available)
-        # if policy.config.num_discrete_actions is not None:
-        #     discrete_critic_output = policy.forward(forward_batch, model="discrete_critic")
-        #     loss_discrete_critic = discrete_critic_output["loss_discrete_critic"]
-        #     optimizers["discrete_critic"].zero_grad()
-        #     loss_discrete_critic.backward()
-        #     discrete_critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-        #         parameters=policy.discrete_critic.parameters(), max_norm=clip_grad_norm_value
-        #     ).item()
-        #     optimizers["discrete_critic"].step()
-
-        #     # Add discrete critic info to training info
-        #     training_infos["loss_discrete_critic"] = loss_discrete_critic.item()
-        #     training_infos["discrete_critic_grad_norm"] = discrete_critic_grad_norm
-
-        # Actor and temperature optimization (at specified frequency)
+        # Actor optimization (at specified frequency)
         if optimization_step % policy_update_freq == 0:
             for _ in range(policy_update_freq):
                 # Actor BC flow optimization
@@ -1001,7 +959,6 @@ def add_actor_information_and_train(
                 optimizers["actor_onestep_flow"].step()
 
                 # Add actor info to training info
-                # training_infos["actor_one/loss"] = loss_actor_onestep_flow.item()
                 training_infos["actor_one/grad_norm"] = actor_onestep_flow_grad_norm
 
                 training_infos.update(
@@ -1106,6 +1063,8 @@ def save_training_checkpoint(
         offline_replay_buffer: Optional offline replay buffer to save
         dataset_repo_id: Repository ID for dataset
         fps: Frames per second for dataset
+        preprocessor: Optional preprocessor for dataset
+        postprocessor: Optional postprocessor for dataset
     """
     logging.info(f"Checkpoint policy after step {optimization_step}")
     _num_digits = max(6, len(str(online_steps)))
@@ -1179,7 +1138,6 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
 
     NOTE:
     - If the encoder is shared, its parameters are excluded from the actor's optimization process.
-    - The policy's log temperature (`log_alpha`) is wrapped in a list to ensure proper optimization as a standalone tensor.
 
     Args:
         cfg: Configuration object containing hyperparameters.
@@ -1194,38 +1152,12 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
     """
     # Collect trainable params for the joint optimizer.
     # If you share encoders and want to freeze vision, keep your existing logic for freezing.
-    # joint_params = []
-    # critic
-    # joint_params = [
-    #     p
-    #     for n, p in policy.critic_ensemble.named_parameters()
-    #     if not (policy.config.shared_encoder and n.startswith("encoder"))
-    # ]
-    # # actor bc-flow
-    # joint_params += [
-    #     p
-    #     for n, p in policy.actor_bc_flow.named_parameters()
-    #     if not (policy.config.shared_encoder and n.startswith("encoder"))
-    # ]
-    # # actor one-step
-    # joint_params += [
-    #     p
-    #     for n, p in policy.actor_onestep_flow.named_parameters()
-    #     if not (policy.config.shared_encoder and n.startswith("encoder"))
-    # ]
 
-    # # optimizer_all = torch.optim.Adam(joint_params, lr=cfg.policy.critic_lr)
-
-    # optimizers = {"all": optimizer_all}
-    # lr_scheduler = None
-    # # if cfg.policy.num_discrete_actions is not None:
-    # #     optimizers["discrete_critic"] = optimizer_discrete_critic
     optimizer_actor_bc_flow = torch.optim.Adam(
         params=[
             p
             for n, p in policy.actor_bc_flow.named_parameters()
-            # if not policy.config.shared_encoder or not n.startswith("encoder")
-            # if not any(n.startswith(p) for p in params_to_skip)
+            if not policy.config.shared_encoder or not n.startswith("encoder")
         ],
         lr=cfg.policy.actor_lr,
     )
@@ -1233,27 +1165,19 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
         params=[
             p
             for n, p in policy.actor_onestep_flow.named_parameters()
-            # if not policy.config.shared_encoder or not n.startswith("encoder")
-            # if not any(n.startswith(p) for p in params_to_skip)
+            if not policy.config.shared_encoder or not n.startswith("encoder")
         ],
         lr=cfg.policy.actor_lr,
     )
     optimizer_critic = torch.optim.Adam(params=policy.critic_ensemble.parameters(), lr=cfg.policy.critic_lr)
 
-    # if cfg.policy.num_discrete_actions is not None:
-    #     optimizer_discrete_critic = torch.optim.Adam(
-    #         params=policy.discrete_critic.parameters(), lr=cfg.policy.critic_lr
-    #     )
-    # optimizer_temperature = torch.optim.Adam(params=[policy.log_alpha], lr=cfg.policy.critic_lr)
     lr_scheduler = None
     optimizers = {
         "actor_bc_flow": optimizer_actor_bc_flow,
         "actor_onestep_flow": optimizer_actor_onestep_flow,
         "critic": optimizer_critic,
-        # "temperature": optimizer_temperature,
     }
-    # if cfg.policy.num_discrete_actions is not None:
-    #     optimizers["discrete_critic"] = optimizer_discrete_critic
+
     return optimizers, lr_scheduler
 
 
@@ -1437,11 +1361,9 @@ def get_observation_features(
         return None, None
 
     with torch.no_grad():
-        observation_features = policy.actor_onestep_flow.encoder.get_cached_image_features(
-            observations, normalize=True
-        )  # TODO(jpizarrom): normalization is not done any more in the encoder, it's being done in a preprocessor
+        observation_features = policy.actor_onestep_flow.encoder.get_cached_image_features(observations)
         next_observation_features = policy.actor_onestep_flow.encoder.get_cached_image_features(
-            next_observations, normalize=True
+            next_observations
         )
 
     return observation_features, next_observation_features
