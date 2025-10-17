@@ -204,15 +204,17 @@ def disconnect(self) -> None:
 
 LeRobot supports saving and loading calibration data automatically. This is useful for joint offsets, zero positions, or sensor alignment.
 
-<!-- prettier-ignore-start -->
 > Note that depending on your hardware, this may not apply. If that's the case, you can simply leave these methods as no-ops:
->
->     @property
->     def is_calibrated(self) -> bool:
->        return True
->
->     def calibrate(self) -> None:
->        pass
+
+<!-- prettier-ignore-start -->
+```python
+@property
+def is_calibrated(self) -> bool:
+    return True
+
+def calibrate(self) -> None:
+    pass
+```
 <!-- prettier-ignore-end -->
 
 ### `is_calibrated`
@@ -235,7 +237,6 @@ The goal of the calibration is twofold:
 - Normalize raw motors positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete value dependant on the specific motor used that will not replicate elsewhere.
 
 It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, our bus interfaces already include methods to help with this.
-
 
 <!-- prettier-ignore-start -->
 ```python
