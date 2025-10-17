@@ -75,6 +75,8 @@ class PI0Config(PreTrainedConfig):
     optimizer_grad_clip_norm: float = 1.0
 
     # Scheduler settings: see openpi `CosineDecaySchedule`
+    # Note: These will auto-scale if --steps < scheduler_decay_steps
+    # For example, --steps=3000 will scale warmup to 100 and decay to 3000
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
