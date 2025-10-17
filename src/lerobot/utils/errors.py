@@ -30,14 +30,3 @@ class DeviceAlreadyConnectedError(ConnectionError):
     ):
         self.message = message
         super().__init__(self.message)
-
-
-class InvalidActionError(ValueError):
-    """Exception raised when an action is already invalid."""
-
-    def __init__(
-        self,
-        message="The action is invalid. Check the value follows what it is expected from the action space.",
-    ):
-        self.message = message
-        super().__init__(self.message)

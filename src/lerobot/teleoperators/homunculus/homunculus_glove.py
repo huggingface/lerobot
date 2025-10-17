@@ -18,7 +18,6 @@ import logging
 import threading
 from collections import deque
 from pprint import pformat
-from typing import Deque
 
 import serial
 
@@ -97,7 +96,7 @@ class HomunculusGlove(Teleoperator):
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
         # one deque *per joint* so we can inspect raw history if needed
-        self._buffers: dict[str, Deque[int]] = {joint: deque(maxlen=n) for joint in self.joints}
+        self._buffers: dict[str, deque[int]] = {joint: deque(maxlen=n) for joint in self.joints}
         # running EMA value per joint – lazily initialised on first read
         self._ema: dict[str, float | None] = dict.fromkeys(self._buffers)
 
@@ -305,8 +304,15 @@ class HomunculusGlove(Teleoperator):
                 positions = None
                 with self.serial_lock:
                     if self.serial.in_waiting > 0:
-                        self.serial.flush()
-                        positions = self.serial.readline().decode("utf-8").strip().split(" ")
+                        lines = []
+                        while self.serial.in_waiting > 0:
+                            line = self.serial.read_until().decode("utf-8").strip()
+                            if line:
+                                lines.append(line.split(" "))
+
+                        if lines:
+                            positions = lines[-1]
+
                 if positions is None or len(positions) != len(self.joints):
                     continue
 

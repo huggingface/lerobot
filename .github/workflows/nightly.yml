@@ -119,6 +119,7 @@ jobs:
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
     container:
       image: ${{ needs.build-docker-cpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      options: --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
         password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -158,3 +159,35 @@ jobs:
         run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
         run: make test-end-to-end
+
+  # This job runs multi-GPU training tests with 4 GPUs
+  nightly-multi-gpu-tests:
+    name: Nightly Multi-GPU Tests
+    needs: [build-docker-gpu-nightly]
+    runs-on:
+      group: aws-g4dn-12xlarge  # Instance with 4 GPUs
+    env:
+      HF_HOME: /home/user_lerobot/.cache/huggingface
+      HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
+      TORCH_HOME: /home/user_lerobot/.cache/torch
+      TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+      CUDA_VISIBLE_DEVICES: "0,1,2,3"
+    container:
+      image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
+      options: --gpus all --shm-size "16gb"
+      credentials:
+        username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: /lerobot
+    steps:
+      - name: Verify GPU availability
+        run: |
+          nvidia-smi
+          python -c "import torch; print(f'PyTorch CUDA available: {torch.cuda.is_available()}'); print(f'Number of GPUs: {torch.cuda.device_count()}')"
+
+      - name: Run multi-GPU training tests
+        run: pytest tests/training/test_multi_gpu.py -vv --maxfail=3
+        timeout-minutes: 10
