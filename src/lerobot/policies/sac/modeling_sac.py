@@ -28,10 +28,10 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
-from lerobot.policies.normalize import NormalizeBuffer
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig, is_image_feature
 from lerobot.policies.utils import get_device_from_parameters
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 
 DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 
@@ -45,15 +45,13 @@ class SACPolicy(
     def __init__(
         self,
         config: SACConfig | None = None,
-        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         super().__init__(config)
         config.validate_features()
         self.config = config
 
         # Determine action dimension and initialize all components
-        continuous_action_dim = config.output_features["action"].shape[0]
-        self._init_normalization(dataset_stats)
+        continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
         self._init_critics(continuous_action_dim)
         self._init_actor(continuous_action_dim)
@@ -88,8 +86,7 @@ class SACPolicy(
 
         observations_features = None
         if self.shared_encoder and self.actor.encoder.has_images:
-            # Cache and normalize image features
-            observations_features = self.actor.encoder.get_cached_image_features(batch, normalize=True)
+            observations_features = self.actor.encoder.get_cached_image_features(batch)
 
         actions, _, _ = self.actor(batch, observations_features)
 
@@ -161,7 +158,7 @@ class SACPolicy(
             The computed loss tensor
         """
         # Extract common components from batch
-        actions: Tensor = batch["action"]
+        actions: Tensor = batch[ACTION]
         observations: dict[str, Tensor] = batch["state"]
         observation_features: Tensor = batch.get("observation_feature")
 
@@ -391,28 +388,12 @@ class SACPolicy(
         actor_loss = ((self.temperature * log_probs) - min_q_preds).mean()
         return actor_loss
 
-    def _init_normalization(self, dataset_stats):
-        """Initialize input/output normalization modules."""
-        self.normalize_inputs = nn.Identity()
-        self.normalize_targets = nn.Identity()
-        if self.config.dataset_stats is not None:
-            params = _convert_normalization_params_to_tensor(self.config.dataset_stats)
-            self.normalize_inputs = NormalizeBuffer(
-                self.config.input_features, self.config.normalization_mapping, params
-            )
-            stats = dataset_stats or params
-            self.normalize_targets = NormalizeBuffer(
-                self.config.output_features, self.config.normalization_mapping, stats
-            )
-
     def _init_encoders(self):
         """Initialize shared or separate encoders for actor and critic."""
         self.shared_encoder = self.config.shared_encoder
-        self.encoder_critic = SACObservationEncoder(self.config, self.normalize_inputs)
+        self.encoder_critic = SACObservationEncoder(self.config)
         self.encoder_actor = (
-            self.encoder_critic
-            if self.shared_encoder
-            else SACObservationEncoder(self.config, self.normalize_inputs)
+            self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
         )
 
     def _init_critics(self, continuous_action_dim):
@@ -424,9 +405,7 @@ class SACPolicy(
             )
             for _ in range(self.config.num_critics)
         ]
-        self.critic_ensemble = CriticEnsemble(
-            encoder=self.encoder_critic, ensemble=heads, output_normalization=self.normalize_targets
-        )
+        self.critic_ensemble = CriticEnsemble(encoder=self.encoder_critic, ensemble=heads)
         target_heads = [
             CriticHead(
                 input_dim=self.encoder_critic.output_dim + continuous_action_dim,
@@ -434,9 +413,7 @@ class SACPolicy(
             )
             for _ in range(self.config.num_critics)
         ]
-        self.critic_target = CriticEnsemble(
-            encoder=self.encoder_critic, ensemble=target_heads, output_normalization=self.normalize_targets
-        )
+        self.critic_target = CriticEnsemble(encoder=self.encoder_critic, ensemble=target_heads)
         self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
 
         if self.config.use_torch_compile:
@@ -490,10 +467,9 @@ class SACPolicy(
 class SACObservationEncoder(nn.Module):
     """Encode image and/or state vector observations."""
 
-    def __init__(self, config: SACConfig, input_normalizer: nn.Module) -> None:
+    def __init__(self, config: SACConfig) -> None:
         super().__init__()
         self.config = config
-        self.input_normalization = input_normalizer
         self._init_image_layers()
         self._init_state_layers()
         self._compute_output_dim()
@@ -538,17 +514,17 @@ class SACObservationEncoder(nn.Module):
             )
 
     def _init_state_layers(self) -> None:
-        self.has_env = "observation.environment_state" in self.config.input_features
-        self.has_state = "observation.state" in self.config.input_features
+        self.has_env = OBS_ENV_STATE in self.config.input_features
+        self.has_state = OBS_STATE in self.config.input_features
         if self.has_env:
-            dim = self.config.input_features["observation.environment_state"].shape[0]
+            dim = self.config.input_features[OBS_ENV_STATE].shape[0]
             self.env_encoder = nn.Sequential(
                 nn.Linear(dim, self.config.latent_dim),
                 nn.LayerNorm(self.config.latent_dim),
                 nn.Tanh(),
             )
         if self.has_state:
-            dim = self.config.input_features["observation.state"].shape[0]
+            dim = self.config.input_features[OBS_STATE].shape[0]
             self.state_encoder = nn.Sequential(
                 nn.Linear(dim, self.config.latent_dim),
                 nn.LayerNorm(self.config.latent_dim),
@@ -568,16 +544,15 @@ class SACObservationEncoder(nn.Module):
     def forward(
         self, obs: dict[str, Tensor], cache: dict[str, Tensor] | None = None, detach: bool = False
     ) -> Tensor:
-        obs = self.input_normalization(obs)
         parts = []
         if self.has_images:
             if cache is None:
-                cache = self.get_cached_image_features(obs, normalize=False)
+                cache = self.get_cached_image_features(obs)
             parts.append(self._encode_images(cache, detach))
         if self.has_env:
-            parts.append(self.env_encoder(obs["observation.environment_state"]))
+            parts.append(self.env_encoder(obs[OBS_ENV_STATE]))
         if self.has_state:
-            parts.append(self.state_encoder(obs["observation.state"]))
+            parts.append(self.state_encoder(obs[OBS_STATE]))
         if parts:
             return torch.cat(parts, dim=-1)
 
@@ -585,7 +560,7 @@ class SACObservationEncoder(nn.Module):
             "No parts to concatenate, you should have at least one image or environment state or state"
         )
 
-    def get_cached_image_features(self, obs: dict[str, Tensor], normalize: bool = False) -> dict[str, Tensor]:
+    def get_cached_image_features(self, obs: dict[str, Tensor]) -> dict[str, Tensor]:
         """Extract and optionally cache image features from observations.
 
         This function processes image observations through the vision encoder once and returns
@@ -597,26 +572,17 @@ class SACObservationEncoder(nn.Module):
         - The vision encoder forward pass is typically the main computational bottleneck during training and inference
         - Caching these features can provide 2-4x speedup in training and inference
 
-        Normalization behavior:
-        - When called from inside forward(): set normalize=False since inputs are already normalized
-        - When called from outside forward(): set normalize=True to ensure proper input normalization
-
         Usage patterns:
-        - Called in select_action() with normalize=True
+        - Called in select_action()
         - Called in learner.py's get_observation_features() to pre-compute features for all policy components
-        - Called internally by forward() with normalize=False
+        - Called internally by forward()
 
         Args:
             obs: Dictionary of observation tensors containing image keys
-            normalize: Whether to normalize observations before encoding
-                      Set to True when calling directly from outside the encoder's forward method
-                      Set to False when calling from within forward() where inputs are already normalized
 
         Returns:
             Dictionary mapping image keys to their corresponding encoded features
         """
-        if normalize:
-            obs = self.input_normalization(obs)
         batched = torch.cat([obs[k] for k in self.image_keys], dim=0)
         out = self.image_encoder(batched)
         chunks = torch.chunk(out, len(self.image_keys), dim=0)
@@ -747,7 +713,6 @@ class CriticEnsemble(nn.Module):
     Args:
         encoder (SACObservationEncoder): encoder for observations.
         ensemble (List[CriticHead]): list of critic heads.
-        output_normalization (nn.Module): normalization layer for actions.
         init_final (float | None): optional initializer scale for final layers.
 
     Forward returns a tensor of shape (num_critics, batch_size) containing Q-values.
@@ -757,13 +722,11 @@ class CriticEnsemble(nn.Module):
         self,
         encoder: SACObservationEncoder,
         ensemble: list[CriticHead],
-        output_normalization: nn.Module,
         init_final: float | None = None,
     ):
         super().__init__()
         self.encoder = encoder
         self.init_final = init_final
-        self.output_normalization = output_normalization
         self.critics = nn.ModuleList(ensemble)
 
     def forward(
@@ -775,11 +738,6 @@ class CriticEnsemble(nn.Module):
         device = get_device_from_parameters(self)
         # Move each tensor in observations to device
         observations = {k: v.to(device) for k, v in observations.items()}
-        # NOTE: We normalize actions it helps for sample efficiency
-        actions: dict[str, torch.tensor] = {"action": actions}
-        # NOTE: Normalization layer took dict in input and outputs a dict that why
-        actions = self.output_normalization(actions)["action"]
-        actions = actions.to(device)
 
         obs_enc = self.encoder(observations, cache=observation_features)
 
@@ -1103,15 +1061,3 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
             x = transform(x)
 
         return x
-
-
-def _convert_normalization_params_to_tensor(normalization_params: dict) -> dict:
-    converted_params = {}
-    for outer_key, inner_dict in normalization_params.items():
-        converted_params[outer_key] = {}
-        for key, value in inner_dict.items():
-            converted_params[outer_key][key] = torch.tensor(value)
-            if "image" in outer_key:
-                converted_params[outer_key][key] = converted_params[outer_key][key].view(3, 1, 1)
-
-    return converted_params
