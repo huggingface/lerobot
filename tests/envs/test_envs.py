@@ -102,7 +102,7 @@ def test_factory_custom_gym_id():
         dummy_envs = envs_dict["dummy"]
         assert len(dummy_envs) == 1
         env = next(iter(dummy_envs.values()))
-        assert env is not None and isinstance(env, gym.Env)
+        assert env is not None and isinstance(env, gym.vector.VectorEnv)
         env.close()
 
     finally:
