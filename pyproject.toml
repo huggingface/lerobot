@@ -59,32 +59,33 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 dependencies = [
 
     # Hugging Face dependencies
-    "datasets>=2.19.0,<=3.6.0", # TODO: Bumb dependency
-    "diffusers>=0.27.2",
-    "huggingface-hub[hf-transfer,cli]>=0.34.2",
+    "datasets>=4.0.0,<4.2.0",
+    "diffusers>=0.27.2,<0.36.0",
+    "huggingface-hub[hf-transfer,cli]>=0.34.2,<0.36.0",
+    "accelerate>=1.10.0,<2.0.0",
 
     # Core dependencies
-    "cmake>=3.29.0.1",
-    "einops>=0.8.0",
-    "opencv-python-headless>=4.9.0",
-    "av>=14.2.0",
-    "jsonlines>=4.0.0",
-    "packaging>=24.2",
-    "pynput>=1.7.7",
-    "pyserial>=3.5",
-    "wandb>=0.20.0",
+    "setuptools>=71.0.0,<81.0.0",
+    "cmake>=3.29.0.1,<4.2.0",
+    "einops>=0.8.0,<0.9.0",
+    "opencv-python-headless>=4.9.0,<4.13.0",
+    "av>=15.0.0,<16.0.0",
+    "jsonlines>=4.0.0,<5.0.0",
+    "packaging>=24.2,<26.0",
+    "pynput>=1.7.7,<1.9.0",
+    "pyserial>=3.5,<4.0",
+    "wandb>=0.20.0,<0.22.0", # TODO: Bumb dependency (compatible with protobuf)
 
     "torch>=2.2.1,<2.8.0", # TODO: Bumb dependency
     "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')", # TODO: Bumb dependency
     "torchvision>=0.21.0,<0.23.0", # TODO: Bumb dependency
 
     "draccus==0.10.0", # TODO: Remove ==
-    "gymnasium>=0.29.1,<1.0.0", # TODO: Bumb dependency
+    "gymnasium>=1.0.0",
     "rerun-sdk>=0.21.0,<0.23.0", # TODO: Bumb dependency
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
-    "flask>=3.0.3,<4.0.0",
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
     "termcolor>=2.4.0,<4.0.0",
 ]
@@ -93,47 +94,45 @@ dependencies = [
 [project.optional-dependencies]
 
 # Common
-pygame-dep = ["pygame>=2.5.1"]
-placo-dep = ["placo>=0.9.6"]
-transformers-dep = ["transformers>=4.50.3,<4.52.0"] # TODO: Bumb dependency
-grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"]
+pygame-dep = ["pygame>=2.5.1,<2.7.0"]
+placo-dep = ["placo>=0.9.6,<0.10.0"]
+transformers-dep = ["transformers>=4.53.0,<5.0.0"]
+grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"] # TODO: Bumb dependency (compatible with wandb)
 
 # Motors
-feetech = ["feetech-servo-sdk>=1.0.0"]
-dynamixel = ["dynamixel-sdk>=3.7.31"]
+feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
+dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
 
 # Robots
-gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0"]
+gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
-lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1"]
+lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1,<28.0.0"]
+reachy2 = ["reachy2_sdk>=1.0.14,<1.1.0"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
-    "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
-    "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
+    "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
+    "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
-# stretch = [
-#     "hello-robot-stretch-body>=0.7.27 ; sys_platform == 'linux'",
-#     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
-#     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"
-# ] # TODO: Currently not supported
+phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0"]
 
 # Policies
-pi0 = ["lerobot[transformers-dep]"]
-smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
-hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.9", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
+smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
-async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
+async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
 
 # Development
-dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
-test = ["pytest>=8.1.0", "pytest-timeout>=2.4.0", "pytest-cov>=5.0.0", "mock-serial>=0.0.1 ; sys_platform != 'win32'"]
-video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
+dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
+test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
+video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
-aloha = ["gym-aloha>=0.1.1"]
-pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
-xarm = ["gym-xarm>=0.1.1"]
+aloha = ["gym-aloha>=0.1.2,<0.2.0"]
+pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
+libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
+metaworld = ["metaworld>=3.0.0"]
 
 # All
 all = [
@@ -141,9 +140,10 @@ all = [
     "lerobot[gamepad]",
     "lerobot[hopejr]",
     "lerobot[lekiwi]",
+    "lerobot[reachy2]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
-    "lerobot[pi0]",
+    "lerobot[pi]",
     "lerobot[smolvla]",
     "lerobot[hilserl]",
     "lerobot[async]",
@@ -152,19 +152,26 @@ all = [
     "lerobot[video_benchmark]",
     "lerobot[aloha]",
     "lerobot[pusht]",
-    "lerobot[xarm]"
+    "lerobot[phone]",
+    "lerobot[libero]",
+    "lerobot[metaworld]",
 ]
 
 [project.scripts]
-lerobot-calibrate="lerobot.calibrate:main"
-lerobot-find-cameras="lerobot.find_cameras:main"
-lerobot-find-port="lerobot.find_port:main"
-lerobot-record="lerobot.record:main"
-lerobot-replay="lerobot.replay:main"
-lerobot-setup-motors="lerobot.setup_motors:main"
-lerobot-teleoperate="lerobot.teleoperate:main"
-lerobot-eval="lerobot.scripts.eval:main"
-lerobot-train="lerobot.scripts.train:main"
+lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
+lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
+lerobot-find-port="lerobot.scripts.lerobot_find_port:main"
+lerobot-record="lerobot.scripts.lerobot_record:main"
+lerobot-replay="lerobot.scripts.lerobot_replay:main"
+lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
+lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
+lerobot-eval="lerobot.scripts.lerobot_eval:main"
+lerobot-train="lerobot.scripts.lerobot_train:main"
+lerobot-dataset-viz="lerobot.scripts.lerobot_dataset_viz:main"
+lerobot-info="lerobot.scripts.lerobot_info:main"
+lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
+lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
+lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
@@ -191,7 +198,7 @@ exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
 # N: pep8-naming
 # TODO: Uncomment rules when ready to use
 select = [
-    "E", "W", "F", "I", "B", "C4", "T20", "N" # "SIM", "A", "S", "D", "RUF", "UP"
+    "E", "W", "F", "I", "B", "C4", "T20", "N", "UP", "SIM" #, "A", "S", "D", "RUF"
 ]
 ignore = [
     "E501", # Line too long
@@ -257,8 +264,87 @@ default.extend-ignore-identifiers-re = [
 # color = true
 # paths = ["src/lerobot"]
 
-# [tool.mypy]
-# python_version = "3.10"
+# TODO: Enable mypy gradually module by module across multiple PRs
+# Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "skip"
 # warn_return_any = true
 # warn_unused_configs = true
-# ignore_missing_imports = false
+# strict = true
+# disallow_untyped_defs = true
+# disallow_incomplete_defs = true
+# check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.envs.*"
+# Enable type checking only for the envs module
+ignore_errors = false
+
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.utils.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.configs.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.optim.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.model.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.processor.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.datasets.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.cameras.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.motors.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.robots.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.teleoperators.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.policies.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.rl.*"
+# ignore_errors = false
+
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.async_inference.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.transport.*"
+# ignore_errors = false
+
+# [[tool.mypy.overrides]]
+# module = "lerobot.scripts.*"
+# ignore_errors = false

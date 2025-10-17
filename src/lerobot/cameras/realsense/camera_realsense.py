@@ -29,7 +29,7 @@ try:
 except Exception as e:
     logging.info(f"Could not import realsense: {e}")
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
 from ..configs import ColorMode

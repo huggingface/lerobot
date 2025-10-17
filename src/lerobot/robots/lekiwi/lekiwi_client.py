@@ -23,7 +23,8 @@ from typing import Any
 import cv2
 import numpy as np
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from .config_lekiwi import LeKiwiClientConfig
@@ -203,7 +204,7 @@ class LeKiwiClient(Robot):
 
         state_vec = np.array([flat_state[key] for key in self._state_order], dtype=np.float32)
 
-        obs_dict: dict[str, Any] = {**flat_state, "observation.state": state_vec}
+        obs_dict: dict[str, Any] = {**flat_state, OBS_STATE: state_vec}
 
         # Decode images
         current_frames: dict[str, np.ndarray] = {}
@@ -329,7 +330,7 @@ class LeKiwiClient(Robot):
         actions = np.array([action.get(k, 0.0) for k in self._state_order], dtype=np.float32)
 
         action_sent = {key: actions[i] for i, key in enumerate(self._state_order)}
-        action_sent["action"] = actions
+        action_sent[ACTION] = actions
         return action_sent
 
     def disconnect(self):
