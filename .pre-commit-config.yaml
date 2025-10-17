@@ -39,20 +39,20 @@ repos:
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.13.0
+    rev: v0.14.1
     hooks:
       - id: ruff-format
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
 
   - repo: https://github.com/adhtruong/mirrors-typos
-    rev: v1.36.2
+    rev: v1.38.1
     hooks:
       - id: typos
         args: [--force-exclude]
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.20.0
+    rev: v3.21.0
     hooks:
     -   id: pyupgrade
         args: [--py310-plus]
@@ -73,7 +73,7 @@ repos:
       - id: gitleaks
 
   - repo: https://github.com/woodruffw/zizmor-pre-commit
-    rev: v1.13.0
+    rev: v1.15.2
     hooks:
       - id: zizmor
 
@@ -87,7 +87,7 @@ repos:
   # TODO(Steven): Uncomment when ready to use
   ##### Static Analysis & Typing #####
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.16.0
+    rev: v1.18.2
     hooks:
       - id: mypy
         args: [--config-file=pyproject.toml]
