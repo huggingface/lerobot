@@ -1130,14 +1130,12 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
     Creates and returns optimizers for the actor, critic, and temperature components of a reinforcement learning policy.
 
     This function sets up Adam optimizers for:
-    - The **actor network**, ensuring that only relevant parameters are optimized.
+    - The **actor BC network**, Behavior Cloning actor.
+    - The **actor onestep network**, One-step actor.
     - The **critic ensemble**, which evaluates the value function.
-    - The **temperature parameter**, which controls the entropy in soft actor-critic (SAC)-like methods.
 
     It also initializes a learning rate scheduler, though currently, it is set to `None`.
 
-    NOTE:
-    - If the encoder is shared, its parameters are excluded from the actor's optimization process.
 
     Args:
         cfg: Configuration object containing hyperparameters.
@@ -1150,26 +1148,15 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
         - `lr_scheduler`: Currently set to `None` but can be extended to support learning rate scheduling.
 
     """
-    # Collect trainable params for the joint optimizer.
-    # If you share encoders and want to freeze vision, keep your existing logic for freezing.
+    optimizer_params = policy.get_optim_params()
 
     optimizer_actor_bc_flow = torch.optim.Adam(
-        params=[
-            p
-            for n, p in policy.actor_bc_flow.named_parameters()
-            if not policy.config.shared_encoder or not n.startswith("encoder")
-        ],
-        lr=cfg.policy.actor_lr,
+        params=optimizer_params["actor_bc_flow"], lr=cfg.policy.actor_lr
     )
     optimizer_actor_onestep_flow = torch.optim.Adam(
-        params=[
-            p
-            for n, p in policy.actor_onestep_flow.named_parameters()
-            if not policy.config.shared_encoder or not n.startswith("encoder")
-        ],
-        lr=cfg.policy.actor_lr,
+        params=optimizer_params["actor_onestep_flow"], lr=cfg.policy.actor_lr
     )
-    optimizer_critic = torch.optim.Adam(params=policy.critic_ensemble.parameters(), lr=cfg.policy.critic_lr)
+    optimizer_critic = torch.optim.Adam(params=optimizer_params["critic"], lr=cfg.policy.critic_lr)
 
     lr_scheduler = None
     optimizers = {

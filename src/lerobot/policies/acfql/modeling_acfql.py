@@ -47,9 +47,6 @@ class ACFQLPolicy(
         config.validate_features()
         self.config = config
 
-        # # queues are populated during rollout of the policy, they contain the n latest observations and actions
-        # self._queues = None
-
         # Determine action dimension and initialize all components
         action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
