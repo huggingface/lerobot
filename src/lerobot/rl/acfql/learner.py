@@ -60,8 +60,6 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-# from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor.pipeline import PolicyProcessorPipeline

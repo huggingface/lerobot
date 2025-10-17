@@ -57,8 +57,6 @@ from torch.multiprocessing import Queue
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
-
-# from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.policies.acfql.modeling_acfql import ACFQLPolicy
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor import TransitionKey
@@ -256,7 +254,7 @@ def act_with_policy(
     logging.info("make_policy")
 
     ### Instantiate the policy in both the actor and learner processes
-    ### To avoid sending a SACPolicy object through the port, we create a policy instance
+    ### To avoid sending a ACFQLPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
     policy: ACFQLPolicy = make_policy(
         cfg=cfg.policy,

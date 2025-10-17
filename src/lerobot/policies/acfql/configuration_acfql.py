@@ -79,13 +79,12 @@ class PolicyConfig:
 @PreTrainedConfig.register_subclass("acfql")
 @dataclass
 class ACFQLConfig(PreTrainedConfig):
-    """Soft Actor-Critic (SAC) configuration.
+    """Flow Q-learning agent with action chunking (ACFQL) configuration.
 
-    SAC is an off-policy actor-critic deep RL algorithm based on the maximum entropy
-    reinforcement learning framework. It learns a policy and a Q-function simultaneously
+    ACFQL is an off-policy actor-critic deep RL algorithm. It learns two actor policies and a Q-function simultaneously
     using experience collected from the environment.
 
-    This configuration class contains all the parameters needed to define a SAC agent,
+    This configuration class contains all the parameters needed to define a ACFQL agent,
     including network architectures, optimization settings, and algorithm-specific
     hyperparameters.
     """
@@ -158,8 +157,8 @@ class ACFQLConfig(PreTrainedConfig):
     # Frequency of policy updates
     policy_update_freq: int = 1
 
-    # SAC algorithm parameters
-    # Discount factor for the SAC algorithm
+    # ACFQL algorithm parameters
+    # Discount factor for the ACFQL algorithm
     discount: float = 0.99
     # Number of critics in the ensemble
     num_critics: int = 2
@@ -173,9 +172,9 @@ class ACFQLConfig(PreTrainedConfig):
     critic_target_update_weight: float = 0.005
     # Aggregation method for Q-values, can be "mean" or "max"
     q_agg: str = "mean"
-    # Weight for the alpha parameter in the SAC algorithm
+    # Weight for the alpha parameter in the ACFQL algorithm
     alpha: float = 10.0
-    # Number of steps for the flow in the SAC algorithm
+    # Number of steps for the flow in the ACFQL algorithm
     flow_steps: int = 10
     # Whether to normalize the Q-loss
     normalize_q_loss: bool = False
@@ -187,7 +186,7 @@ class ACFQLConfig(PreTrainedConfig):
     state_encoder_hidden_dim: int = 256
     # Dimension of the latent space
     latent_dim: int = 256
-    # Gradient clipping norm for the SAC algorithm
+    # Gradient clipping norm for the ACFQL algorithm
     grad_clip_norm: float = 40.0
 
     # Network configuration
