@@ -627,7 +627,7 @@ class ACTDecoderLayer(nn.Module):
             encoder_out: (Encoder Sequence, B, C) output features from the last layer of the encoder we are
                 cross-attending with.
             encoder_pos_embed: (ES, 1, C) positional embedding for keys (from the encoder).
-            decoder_pos_embed: (DS, 1, C) Positional_embedding for the queries (from the decoder).
+            decoder_pos_embed: (DS, 1, C) positional embedding for the queries (from the decoder).
         Returns:
             (DS, B, C) tensor of decoder output features.
         """
