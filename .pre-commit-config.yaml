@@ -26,7 +26,7 @@ repos:
 
    ##### General Code Quality & Formatting #####
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-added-large-files
         args: ['--maxkb=1024']
@@ -39,20 +39,20 @@ repos:
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.4
+    rev: v0.14.1
     hooks:
       - id: ruff-format
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
 
   - repo: https://github.com/adhtruong/mirrors-typos
-    rev: v1.34.0
+    rev: v1.38.1
     hooks:
       - id: typos
         args: [--force-exclude]
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.20.0
+    rev: v3.21.0
     hooks:
     -   id: pyupgrade
         args: [--py310-plus]
@@ -68,12 +68,12 @@ repos:
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.27.2
+    rev: v8.28.0
     hooks:
       - id: gitleaks
 
   - repo: https://github.com/woodruffw/zizmor-pre-commit
-    rev: v1.11.0
+    rev: v1.15.2
     hooks:
       - id: zizmor
 
@@ -87,7 +87,7 @@ repos:
   # TODO(Steven): Uncomment when ready to use
   ##### Static Analysis & Typing #####
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.16.0
+    rev: v1.18.2
     hooks:
       - id: mypy
         args: [--config-file=pyproject.toml]

@@ -17,6 +17,8 @@
     title: Train RL in Simulation
   - local: async
     title: Use Async Inference
+  - local: multi_gpu_training
+    title: Multi GPU training
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
