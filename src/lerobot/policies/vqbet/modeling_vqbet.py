@@ -47,7 +47,7 @@ class VQBeTPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: VQBeTConfig | None = None,
-    ):
+    ) -> None:
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -103,7 +103,7 @@ class VQBeTPolicy(PreTrainedPolicy):
             },
         ]
 
-    def reset(self):
+    def reset(self) -> None:
         """
         Clear observation and action queues. Should be called on `env.reset()`
         queues are populated during rollout of the policy, they contain the n latest observations and actions
@@ -201,7 +201,7 @@ class SpatialSoftmax(nn.Module):
     linear mapping (in_channels, H, W) -> (num_kp, H, W).
     """
 
-    def __init__(self, input_shape, num_kp=None):
+    def __init__(self, input_shape: tuple[int, int, int], num_kp: int | None = None) -> None:
         """
         Args:
             input_shape (list): (C, H, W) input feature map shape.
@@ -308,7 +308,7 @@ class VQBeTModel(nn.Module):
                                                       ONLY this chunk is used in rollout!
     """
 
-    def __init__(self, config: VQBeTConfig):
+    def __init__(self, config: VQBeTConfig) -> None:
         super().__init__()
         self.config = config
 
@@ -402,7 +402,7 @@ class VQBeTModel(nn.Module):
 
 
 class VQBeTHead(nn.Module):
-    def __init__(self, config: VQBeTConfig):
+    def __init__(self, config: VQBeTConfig) -> None:
         """
         VQBeTHead takes output of GPT layers, and pass the feature through bin prediction head (`self.map_to_cbet_preds_bin`), and offset prediction head (`self.map_to_cbet_preds_offset`)
 
@@ -652,7 +652,7 @@ class VQBeTRgbEncoder(nn.Module):
     Same with DiffusionRgbEncoder from modeling_diffusion.py
     """
 
-    def __init__(self, config: VQBeTConfig):
+    def __init__(self, config: VQBeTConfig) -> None:
         super().__init__()
         # Set up optional preprocessing.
         if config.crop_shape is not None:

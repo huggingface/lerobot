@@ -222,7 +222,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: SmolVLAConfig,
-    ):
+    ) -> None:
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -236,7 +236,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.model = VLAFlowMatching(config)
         self.reset()
 
-    def reset(self):
+    def reset(self) -> None:
         """This should be called whenever the environment is reset."""
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
@@ -471,7 +471,7 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config: SmolVLAConfig):
+    def __init__(self, config: SmolVLAConfig) -> None:
         super().__init__()
         self.config = config
 
