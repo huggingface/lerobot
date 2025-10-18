@@ -1054,8 +1054,8 @@ class PI0Policy(PreTrainedPolicy):
 
     def reset(self) -> None:
         """Reset internal state - called when environment resets."""
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
-        self._queues = {
+        self._action_queue: deque = deque(maxlen=self.config.n_action_steps)
+        self._queues: dict[str, deque] = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 

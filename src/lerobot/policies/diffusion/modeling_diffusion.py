@@ -70,7 +70,7 @@ class DiffusionPolicy(PreTrainedPolicy):
         self.config = config
 
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
-        self._queues = None
+        self._queues: dict[str, deque] | None = None
 
         self.diffusion = DiffusionModel(config)
 
@@ -94,6 +94,7 @@ class DiffusionPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         # stack n latest observations from the queue
+        assert self._queues is not None  # for type checker
         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
         actions = self.diffusion.generate_actions(batch, noise=noise)
 
@@ -130,6 +131,7 @@ class DiffusionPolicy(PreTrainedPolicy):
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         # NOTE: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
+        assert self._queues is not None  # for type checker
 
         if len(self._queues[ACTION]) == 0:
             actions = self.predict_action_chunk(batch, noise=noise)

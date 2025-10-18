@@ -19,6 +19,7 @@
 import warnings
 from collections import deque
 from collections.abc import Callable
+from typing import Any
 
 import einops
 import numpy as np
@@ -56,6 +57,7 @@ class VQBeTPolicy(PreTrainedPolicy):
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
         super().__init__(config)
+        assert config is not None  # for type checker
         config.validate_features()
         self.config = config
 
@@ -63,7 +65,7 @@ class VQBeTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> list[dict[str, Any]]:
         vqvae_params = (
             list(self.vqbet.action_head.vqvae_model.encoder.parameters())
             + list(self.vqbet.action_head.vqvae_model.decoder.parameters())
@@ -108,7 +110,7 @@ class VQBeTPolicy(PreTrainedPolicy):
         Clear observation and action queues. Should be called on `env.reset()`
         queues are populated during rollout of the policy, they contain the n latest observations and actions
         """
-        self._queues = {
+        self._queues: dict[str, deque] = {
             OBS_IMAGES: deque(maxlen=self.config.n_obs_steps),
             OBS_STATE: deque(maxlen=self.config.n_obs_steps),
             ACTION: deque(maxlen=self.config.action_chunk_size),
@@ -373,7 +375,7 @@ class VQBeTModel(nn.Module):
         features = self.policy(input_tokens)
         # len(self.config.input_features) is the number of different observation modes.
         # this line gets the index of action prompt tokens.
-        historical_act_pred_index = np.arange(0, n_obs_steps) * (len(self.config.input_features) + 1) + len(
+        historical_act_pred_index: np.ndarray = np.arange(0, n_obs_steps) * (len(self.config.input_features) + 1) + len(
             self.config.input_features
         )
 

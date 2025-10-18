@@ -23,6 +23,7 @@ import math
 from collections import deque
 from collections.abc import Callable
 from itertools import chain
+from typing import Any
 
 import einops
 import numpy as np
@@ -67,7 +68,7 @@ class ACTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> list[dict[str, Any]]:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
         # Should we remove this and just `return self.parameters()`?
         return [
@@ -93,7 +94,7 @@ class ACTPolicy(PreTrainedPolicy):
         if self.config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler.reset()
         else:
-            self._action_queue = deque([], maxlen=self.config.n_action_steps)
+            self._action_queue: deque = deque([], maxlen=self.config.n_action_steps)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -228,6 +229,7 @@ class ACTTemporalEnsembler:
             self.ensembled_actions = actions.clone()
             # Note: The last dimension is unsqueeze to make sure we can broadcast properly for tensor
             # operations later.
+            assert self.ensembled_actions is not None  # for type checker
             self.ensembled_actions_count = torch.ones(
                 (self.chunk_size, 1), dtype=torch.long, device=self.ensembled_actions.device
             )
@@ -244,6 +246,7 @@ class ACTTemporalEnsembler:
                 [self.ensembled_actions_count, torch.ones_like(self.ensembled_actions_count[-1:])]
             )
         # "Consume" the first action.
+        assert self.ensembled_actions is not None  # for type checker
         action, self.ensembled_actions, self.ensembled_actions_count = (
             self.ensembled_actions[:, 0],
             self.ensembled_actions[:, 1:],

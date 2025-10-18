@@ -90,7 +90,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         Clear observation and action queues. Clear previous means for warm starting of MPPI/CEM. Should be
         called on `env.reset()`
         """
-        self._queues = {
+        self._queues: dict[str, deque] = {
             OBS_STATE: deque(maxlen=1),
             ACTION: deque(maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)),
         }

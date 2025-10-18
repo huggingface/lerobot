@@ -344,9 +344,29 @@ ignore_errors = false
 # ignore_errors = false
 
 [[tool.mypy.overrides]]
-module = "lerobot.policies.*"
-# Enable type checking for policies module
+module = [
+    "lerobot.policies.act.modeling_act",
+    "lerobot.policies.diffusion.modeling_diffusion",
+    "lerobot.policies.tdmpc.modeling_tdmpc",
+    "lerobot.policies.sac.modeling_sac",
+    "lerobot.policies.pi0.modeling_pi0",
+    "lerobot.policies.pi05.modeling_pi05",
+    "lerobot.policies.smolvla.modeling_smolvla",
+    "lerobot.policies.vqbet.modeling_vqbet",
+]
+# Enable basic type checking for policies modeling modules (non-strict)
 ignore_errors = false
+strict = false  # Disable strict mode for gradual typing
+disallow_untyped_calls = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_decorators = false
+disallow_any_generics = false
+warn_return_any = false
+warn_unreachable = false
+no_implicit_optional = false
+# Allow subclassing from Any (needed for nn.Module, PreTrainedPolicy which lack type stubs)
+disallow_subclassing_any = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.rl.*"

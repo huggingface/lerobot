@@ -47,6 +47,7 @@ class SACPolicy(
         config: SACConfig | None = None,
     ) -> None:
         super().__init__(config)
+        assert config is not None  # for type checker
         config.validate_features()
         self.config = config
 

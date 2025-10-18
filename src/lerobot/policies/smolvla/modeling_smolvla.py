@@ -238,7 +238,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
     def reset(self) -> None:
         """This should be called whenever the environment is reset."""
-        self._queues = {
+        self._queues: dict[str, deque] = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
