@@ -58,36 +58,22 @@ from pprint import pformat
 
 import rerun as rr
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.opencv.configuration_opencv import \
+    OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import \
+    RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.processor import (
-    RobotAction,
-    RobotObservation,
-    RobotProcessorPipeline,
-    make_default_processors,
-)
-from lerobot.robots import (  # noqa: F401
-    Robot,
-    RobotConfig,
-    bi_so100_follower,
-    hope_jr,
-    koch_follower,
-    make_robot_from_config,
-    so100_follower,
-    so101_follower,
-)
-from lerobot.teleoperators import (  # noqa: F401
-    Teleoperator,
-    TeleoperatorConfig,
-    bi_so100_leader,
-    gamepad,
-    homunculus,
-    koch_leader,
-    make_teleoperator_from_config,
-    so100_leader,
-    so101_leader,
-)
+from lerobot.processor import (RobotAction, RobotObservation,
+                               RobotProcessorPipeline, make_default_processors)
+from lerobot.robots import (Robot, RobotConfig,  # noqa: F401
+                            bi_so100_follower, bi_so101_follower, hope_jr,
+                            koch_follower, make_robot_from_config,
+                            so100_follower, so101_follower)
+from lerobot.teleoperators import (Teleoperator,  # noqa: F401
+                                   TeleoperatorConfig, bi_so100_leader,
+                                   bi_so101_leader, gamepad, homunculus,
+                                   koch_leader, make_teleoperator_from_config,
+                                   so100_leader, so101_leader)
 from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up

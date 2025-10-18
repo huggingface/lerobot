@@ -47,26 +47,15 @@ from pprint import pformat
 
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor import (
-    make_default_robot_action_processor,
-)
-from lerobot.robots import (  # noqa: F401
-    Robot,
-    RobotConfig,
-    bi_so100_follower,
-    hope_jr,
-    koch_follower,
-    make_robot_from_config,
-    so100_follower,
-    so101_follower,
-)
+from lerobot.processor import make_default_robot_action_processor
+from lerobot.robots import (Robot, RobotConfig,  # noqa: F401
+                            bi_so100_follower, bi_so101_follower, hope_jr,
+                            koch_follower, make_robot_from_config,
+                            so100_follower, so101_follower)
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
-from lerobot.utils.utils import (
-    init_logging,
-    log_say,
-)
+from lerobot.utils.utils import init_logging, log_say
 
 
 @dataclass
