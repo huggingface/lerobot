@@ -60,7 +60,7 @@ class OperatingMode(Enum):
 
     # This mode controls position. This mode is identical to the Multi-turn Position Control from existing
     # DYNAMIXEL. 512 turns are supported(-256[rev] ~ 256[rev]). This mode is ideal for multi-turn wrists or
-    # conveyer systems or a system that requires an additional reduction gear. Note that Max Position
+    # conveyor systems or a system that requires an additional reduction gear. Note that Max Position
     # Limit(48), Min Position Limit(52) are not used on Extended Position Control Mode.
     EXTENDED_POSITION = 4
 
