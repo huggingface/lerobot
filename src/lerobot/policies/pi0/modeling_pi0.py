@@ -285,7 +285,7 @@ def compute_layer_complete(
 class GemmaConfig:  # see openpi `gemma.py: Config`
     """Configuration for Gemma model variants."""
 
-    def __init__(self, width, depth, mlp_dim, num_heads, num_kv_heads, head_dim):
+    def __init__(self, width: int, depth: int, mlp_dim: int, num_heads: int, num_kv_heads: int, head_dim: int) -> None:
         self.width = width
         self.depth = depth
         self.mlp_dim = mlp_dim
@@ -325,11 +325,11 @@ class PaliGemmaWithExpertModel(
 
     def __init__(
         self,
-        vlm_config,
-        action_expert_config,
-        use_adarms=None,
+        vlm_config: GemmaConfig,
+        action_expert_config: GemmaConfig,
+        use_adarms: list[bool] | None = None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
-    ):
+    ) -> None:
         if use_adarms is None:
             use_adarms = [False, False]
         super().__init__()
@@ -503,7 +503,7 @@ class PaliGemmaWithExpertModel(
 class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI0 PyTorch model."""
 
-    def __init__(self, config: PI0Config):
+    def __init__(self, config: PI0Config) -> None:
         super().__init__()
         self.config = config
 
@@ -859,7 +859,7 @@ class PI0Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0Config,
-    ):
+    ) -> None:
         """
         Args:
             config: Policy configuration class instance.
@@ -1052,7 +1052,7 @@ class PI0Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset internal state - called when environment resets."""
         self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._queues = {
