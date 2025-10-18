@@ -207,13 +207,13 @@ lerobot-dataset-viz \
     --episode-index 0
 ```
 
-or from a dataset in a local folder with the `root` option and the `--local-files-only` (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
+or from a dataset in a local folder with the `root` option and the `--mode local` (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
 
 ```bash
 lerobot-dataset-viz \
     --repo-id lerobot/pusht \
     --root ./my_local_data_dir \
-    --local-files-only 1 \
+    --mode local \
     --episode-index 0
 ```
 

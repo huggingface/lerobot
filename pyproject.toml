@@ -82,7 +82,7 @@ dependencies = [
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=1.0.0",
-    "rerun-sdk>=0.21.0,<0.23.0", # TODO: Bumb dependency
+    "rerun-sdk>=0.24.0,<0.27.0",
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
@@ -246,6 +246,7 @@ default.extend-ignore-identifiers-re = [
     "pn",
     "ser",
     "ein",
+    "inpt",
 ]
 
 # TODO: Uncomment when ready to use
