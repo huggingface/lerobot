@@ -23,13 +23,17 @@ import time
 from threading import Event, Lock, Thread
 from typing import Any
 
+from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
+
 # Fix MSMF hardware transform compatibility for Windows before importing cv2
 if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
-import cv2
-import numpy as np
-from reachy2_sdk.media.camera import CameraView
-from reachy2_sdk.media.camera_manager import CameraManager
+import cv2  # type: ignore  # TODO: add type stubs for OpenCV
+import numpy as np  # type: ignore  # TODO: add type stubs for numpy
+from reachy2_sdk.media.camera import CameraView  # type: ignore  # TODO: add type stubs for reachy2_sdk
+from reachy2_sdk.media.camera_manager import (  # type: ignore  # TODO: add type stubs for reachy2_sdk
+    CameraManager,
+)
 
 from lerobot.utils.errors import DeviceNotConnectedError
 
@@ -73,7 +77,7 @@ class Reachy2Camera(Camera):
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
-        self.latest_frame: np.ndarray | None = None
+        self.latest_frame: NDArray[Any] | None = None
         self.new_frame_event: Event = Event()
 
     def __str__(self) -> str:
@@ -83,13 +87,17 @@ class Reachy2Camera(Camera):
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
         if self.config.name == "teleop":
-            return self.cam_manager._grpc_connected and self.cam_manager.teleop if self.cam_manager else False
+            return bool(
+                self.cam_manager._grpc_connected and self.cam_manager.teleop if self.cam_manager else False
+            )
         elif self.config.name == "depth":
-            return self.cam_manager._grpc_connected and self.cam_manager.depth if self.cam_manager else False
+            return bool(
+                self.cam_manager._grpc_connected and self.cam_manager.depth if self.cam_manager else False
+            )
         else:
             raise ValueError(f"Invalid camera name '{self.config.name}'. Expected 'teleop' or 'depth'.")
 
-    def connect(self, warmup: bool = True):
+    def connect(self, warmup: bool = True) -> None:
         """
         Connects to the Reachy2 CameraManager as specified in the configuration.
         """
@@ -131,7 +139,7 @@ class Reachy2Camera(Camera):
         camera_manager.disconnect()
         return initialized_cameras
 
-    def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
         """
         Reads a single frame synchronously from the camera.
 
@@ -152,7 +160,7 @@ class Reachy2Camera(Camera):
 
         start_time = time.perf_counter()
 
-        frame = None
+        frame: NDArray[Any] = np.empty((0, 0, 3), dtype=np.uint8)
 
         if self.cam_manager is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -179,7 +187,7 @@ class Reachy2Camera(Camera):
 
         return frame
 
-    def _read_loop(self):
+    def _read_loop(self) -> None:
         """
         Internal loop run by the background thread for asynchronous reading.
 
@@ -190,6 +198,9 @@ class Reachy2Camera(Camera):
 
         Stops on DeviceNotConnectedError, logs other errors and continues.
         """
+        if self.stop_event is None:
+            raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
+
         while not self.stop_event.is_set():
             try:
                 color_image = self.read()
@@ -226,7 +237,7 @@ class Reachy2Camera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
         Reads the latest available frame asynchronously.
 
@@ -269,7 +280,7 @@ class Reachy2Camera(Camera):
 
         return frame
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         """
         Stops the background read thread (if running).
 
