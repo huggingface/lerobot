@@ -65,7 +65,7 @@ class TDMPCPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: TDMPCConfig,
-    ):
+    ) -> None:
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -85,7 +85,7 @@ class TDMPCPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def reset(self):
+    def reset(self) -> None:
         """
         Clear observation and action queues. Clear previous means for warm starting of MPPI/CEM. Should be
         called on `env.reset()`
@@ -256,7 +256,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def estimate_value(self, z: Tensor, actions: Tensor):
+    def estimate_value(self, z: Tensor, actions: Tensor) -> Tensor:
         """Estimates the value of a trajectory as per eqn 4 of the FOWM paper.
 
         Args:
@@ -507,7 +507,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         return loss, info
 
-    def update(self):
+    def update(self) -> None:
         """Update the target model's parameters with an EMA step."""
         # Note a minor variation with respect to the original FOWM code. Here they do this based on an EMA
         # update frequency parameter which is set to 2 (every 2 steps an update is done). To simplify the code
@@ -518,7 +518,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 class TDMPCTOLD(nn.Module):
     """Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC."""
 
-    def __init__(self, config: TDMPCConfig):
+    def __init__(self, config: TDMPCConfig) -> None:
         super().__init__()
         self.config = config
         self._encoder = TDMPCObservationEncoder(config)
@@ -574,7 +574,7 @@ class TDMPCTOLD(nn.Module):
         )
         self._init_weights()
 
-    def _init_weights(self):
+    def _init_weights(self) -> None:
         """Initialize model weights.
 
         Orthogonal initialization for all linear and convolutional layers' weights (apart from final layers
@@ -582,7 +582,7 @@ class TDMPCTOLD(nn.Module):
         Zero initialization for all linear and convolutional layers' biases.
         """
 
-        def _apply_fn(m):
+        def _apply_fn(m: nn.Module) -> None:
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight.data)
                 if m.bias is not None:
@@ -685,7 +685,7 @@ class TDMPCTOLD(nn.Module):
 class TDMPCObservationEncoder(nn.Module):
     """Encode image and/or state vector observations."""
 
-    def __init__(self, config: TDMPCConfig):
+    def __init__(self, config: TDMPCConfig) -> None:
         """
         Creates encoders for pixel and/or state modalities.
         TODO(alexander-soare): The original work allows for multiple images by concatenating them along the

@@ -284,10 +284,10 @@ ignore_missing_imports = true
 follow_imports = "skip"
 # warn_return_any = true
 # warn_unused_configs = true
-# strict = true
-# disallow_untyped_defs = true
-# disallow_incomplete_defs = true
-# check_untyped_defs = true
+strict = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 module = "lerobot.*"
@@ -343,9 +343,10 @@ ignore_errors = false
 # module = "lerobot.teleoperators.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.policies.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.policies.*"
+# Enable type checking for policies module
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.rl.*"

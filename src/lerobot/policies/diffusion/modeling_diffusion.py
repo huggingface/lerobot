@@ -23,6 +23,7 @@ TODO(alexander-soare):
 import math
 from collections import deque
 from collections.abc import Callable
+from typing import Any
 
 import einops
 import numpy as np
@@ -56,7 +57,7 @@ class DiffusionPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: DiffusionConfig,
-    ):
+    ) -> None:
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -78,7 +79,7 @@ class DiffusionPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.diffusion.parameters()
 
-    def reset(self):
+    def reset(self) -> None:
         """Clear observation and action queues. Should be called on `env.reset()`"""
         self._queues = {
             OBS_STATE: deque(maxlen=self.config.n_obs_steps),
@@ -147,7 +148,7 @@ class DiffusionPolicy(PreTrainedPolicy):
         return loss, None
 
 
-def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
+def _make_noise_scheduler(name: str, **kwargs: Any) -> DDPMScheduler | DDIMScheduler:
     """
     Factory for noise scheduler instances of the requested type. All kwargs are passed
     to the scheduler.
@@ -161,7 +162,7 @@ def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMSche
 
 
 class DiffusionModel(nn.Module):
-    def __init__(self, config: DiffusionConfig):
+    def __init__(self, config: DiffusionConfig) -> None:
         super().__init__()
         self.config = config
 
@@ -388,7 +389,7 @@ class SpatialSoftmax(nn.Module):
     linear mapping (in_channels, H, W) -> (num_kp, H, W).
     """
 
-    def __init__(self, input_shape, num_kp=None):
+    def __init__(self, input_shape: tuple[int, int, int], num_kp: int | None = None) -> None:
         """
         Args:
             input_shape (list): (C, H, W) input feature map shape.
@@ -442,7 +443,7 @@ class DiffusionRgbEncoder(nn.Module):
     Includes the ability to normalize and crop the image first.
     """
 
-    def __init__(self, config: DiffusionConfig):
+    def __init__(self, config: DiffusionConfig) -> None:
         super().__init__()
         # Set up optional preprocessing.
         if config.crop_shape is not None:
@@ -548,7 +549,7 @@ def _replace_submodules(
 class DiffusionSinusoidalPosEmb(nn.Module):
     """1D sinusoidal positional embeddings as in Attention is All You Need."""
 
-    def __init__(self, dim: int):
+    def __init__(self, dim: int) -> None:
         super().__init__()
         self.dim = dim
 
@@ -565,7 +566,7 @@ class DiffusionSinusoidalPosEmb(nn.Module):
 class DiffusionConv1dBlock(nn.Module):
     """Conv1d --> GroupNorm --> Mish"""
 
-    def __init__(self, inp_channels, out_channels, kernel_size, n_groups=8):
+    def __init__(self, inp_channels: int, out_channels: int, kernel_size: int, n_groups: int = 8) -> None:
         super().__init__()
 
         self.block = nn.Sequential(
@@ -574,7 +575,7 @@ class DiffusionConv1dBlock(nn.Module):
             nn.Mish(),
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         return self.block(x)
 
 
@@ -584,7 +585,7 @@ class DiffusionConditionalUnet1d(nn.Module):
     Note: this removes local conditioning as compared to the original diffusion policy code.
     """
 
-    def __init__(self, config: DiffusionConfig, global_cond_dim: int):
+    def __init__(self, config: DiffusionConfig, global_cond_dim: int) -> None:
         super().__init__()
 
         self.config = config
@@ -660,7 +661,7 @@ class DiffusionConditionalUnet1d(nn.Module):
             nn.Conv1d(config.down_dims[0], config.action_feature.shape[0], 1),
         )
 
-    def forward(self, x: Tensor, timestep: Tensor | int, global_cond=None) -> Tensor:
+    def forward(self, x: Tensor, timestep: Tensor | int, global_cond: Tensor | None = None) -> Tensor:
         """
         Args:
             x: (B, T, input_dim) tensor for input to the Unet.
@@ -718,7 +719,7 @@ class DiffusionConditionalResidualBlock1d(nn.Module):
         # Set to True to do scale modulation with FiLM as well as bias modulation (defaults to False meaning
         # FiLM just modulates bias).
         use_film_scale_modulation: bool = False,
-    ):
+    ) -> None:
         super().__init__()
 
         self.use_film_scale_modulation = use_film_scale_modulation
