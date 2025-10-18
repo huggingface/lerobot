@@ -45,7 +45,7 @@ class SACPolicy(
     def __init__(
         self,
         config: SACConfig | None = None,
-    ):
+    ) -> None:
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -71,7 +71,7 @@ class SACPolicy(
             optim_params["discrete_critic"] = self.discrete_critic.parameters()
         return optim_params
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset the policy"""
         pass
 
@@ -217,7 +217,7 @@ class SACPolicy(
 
         raise ValueError(f"Unknown model type: {model}")
 
-    def update_target_networks(self):
+    def update_target_networks(self) -> None:
         """Update target networks with exponential moving average"""
         for target_param, param in zip(
             self.critic_target.parameters(),
@@ -239,7 +239,7 @@ class SACPolicy(
                     + target_param.data * (1.0 - self.config.critic_target_update_weight)
                 )
 
-    def update_temperature(self):
+    def update_temperature(self) -> None:
         self.temperature = self.log_alpha.exp().item()
 
     def compute_loss_critic(
@@ -647,7 +647,7 @@ class MLP(nn.Module):
         activate_final: bool = False,
         dropout_rate: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
-    ):
+    ) -> None:
         super().__init__()
         layers: list[nn.Module] = []
         in_dim = input_dim
@@ -685,7 +685,7 @@ class CriticHead(nn.Module):
         dropout_rate: float | None = None,
         init_final: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.net = MLP(
             input_dim=input_dim,
@@ -723,7 +723,7 @@ class CriticEnsemble(nn.Module):
         encoder: SACObservationEncoder,
         ensemble: list[CriticHead],
         init_final: float | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.encoder = encoder
         self.init_final = init_final
@@ -765,7 +765,7 @@ class DiscreteCritic(nn.Module):
         dropout_rate: float | None = None,
         init_final: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.encoder = encoder
         self.output_dim = output_dim
@@ -807,7 +807,7 @@ class Policy(nn.Module):
         init_final: float | None = None,
         use_tanh_squash: bool = False,
         encoder_is_shared: bool = False,
-    ):
+    ) -> None:
         super().__init__()
         self.encoder: SACObservationEncoder = encoder
         self.network = network
