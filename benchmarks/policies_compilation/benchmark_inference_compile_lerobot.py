@@ -26,7 +26,6 @@ from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
 from lerobot.policies.factory import make_policy, make_policy_config
 from lerobot.policies.pi0.processor_pi0 import make_pi0_pre_post_processors
-from lerobot.policies.pi0fast.processor_pi0fast import make_pi0fast_pre_post_processors
 from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
 from lerobot.policies.vqbet.processor_vqbet import make_vqbet_pre_post_processors
@@ -60,11 +59,6 @@ POLICY_CONFIGS: dict[str, PolicyConfig] = {
     ),
     "pi0": PolicyConfig(
         processor_func=make_pi0_pre_post_processors,
-        config_kwargs={"n_obs_steps": 1, "chunk_size": 50, "n_action_steps": 50},
-        delta_timestamps_func=lambda cfg, fps: {"action": [i / fps for i in range(cfg.chunk_size)]},
-    ),
-    "pi0fast": PolicyConfig(
-        processor_func=make_pi0fast_pre_post_processors,
         config_kwargs={"n_obs_steps": 1, "chunk_size": 50, "n_action_steps": 50},
         delta_timestamps_func=lambda cfg, fps: {"action": [i / fps for i in range(cfg.chunk_size)]},
     ),
