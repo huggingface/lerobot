@@ -184,10 +184,10 @@ class SACPolicy(
 
         if model == "discrete_critic" and self.config.num_discrete_actions is not None:
             # Extract critic-specific components
-            rewards: Tensor = batch["reward"]
-            next_observations: dict[str, Tensor] = batch["next_state"]
-            done: Tensor = batch["done"]
-            next_observation_features: Tensor = batch.get("next_observation_feature")
+            rewards = batch["reward"]
+            next_observations = batch["next_state"]
+            done = batch["done"]
+            next_observation_features = batch.get("next_observation_feature")
             complementary_info = batch.get("complementary_info")
             loss_discrete_critic = self.compute_loss_discrete_critic(
                 observations=observations,
@@ -283,7 +283,7 @@ class SACPolicy(
             # NOTE: We only want to keep the continuous action part
             # In the buffer we have the full action space (continuous + discrete)
             # We need to split them before concatenating them in the critic forward
-            actions: Tensor = actions[:, :DISCRETE_DIMENSION_INDEX]
+            actions = actions[:, :DISCRETE_DIMENSION_INDEX]
         q_preds = self.critic_forward(
             observations=observations,
             actions=actions,
@@ -324,7 +324,7 @@ class SACPolicy(
 
         discrete_penalties: Tensor | None = None
         if complementary_info is not None:
-            discrete_penalties: Tensor | None = complementary_info.get("discrete_penalty")
+            discrete_penalties = complementary_info.get("discrete_penalty")
 
         with torch.no_grad():
             # For DQN, select actions using online network, evaluate with target network
@@ -665,7 +665,7 @@ class MLP(nn.Module):
                     layers.append(nn.Dropout(p=dropout_rate))
                 layers.append(nn.LayerNorm(out_dim))
                 act_cls = final_activation if is_last and final_activation else activations
-                act = act_cls if isinstance(act_cls, nn.Module) else getattr(nn, act_cls)()
+                act = act_cls if isinstance(act_cls, nn.Module) else getattr(nn, act_cls)()  # type: ignore[arg-type]
                 layers.append(act)
 
             in_dim = out_dim

@@ -411,6 +411,8 @@ class PaliGemmaWithExpertModel(
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
+        assert adarms_cond is not None  # for type checker
+        assert inputs_embeds is not None  # for type checker
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
