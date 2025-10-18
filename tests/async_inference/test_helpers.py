@@ -389,7 +389,7 @@ def test_raw_observation_to_observation_device_handling():
     # Check that all expected keys produce tensors (device placement handled by preprocessor later)
     for key, value in observation.items():
         if isinstance(value, torch.Tensor):
-            assert value.device.type in ["cpu", "cuda", "mps"], f"Tensor {key} on unexpected device"
+            assert value.device.type in ["cpu", "cuda", "mps", "xpu"], f"Tensor {key} on unexpected device"
 
 
 def test_raw_observation_to_observation_deterministic():

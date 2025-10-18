@@ -79,6 +79,7 @@ from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
@@ -316,10 +317,7 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
-            action_names = dataset.features[ACTION]["names"]
-            act_processed_policy: RobotAction = {
-                f"{name}": float(action_values[i]) for i, name in enumerate(action_names)
-            }
+            act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
