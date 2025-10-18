@@ -17,21 +17,15 @@ from copy import deepcopy
 from enum import Enum
 from pprint import pformat
 
-from lerobot.motors.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
+from lerobot.motors.encoding_utils import (decode_sign_magnitude,
+                                           encode_sign_magnitude)
 
-from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address
-from .tables import (
-    FIRMWARE_MAJOR_VERSION,
-    FIRMWARE_MINOR_VERSION,
-    MODEL_BAUDRATE_TABLE,
-    MODEL_CONTROL_TABLE,
-    MODEL_ENCODING_TABLE,
-    MODEL_NUMBER,
-    MODEL_NUMBER_TABLE,
-    MODEL_PROTOCOL,
-    MODEL_RESOLUTION,
-    SCAN_BAUDRATES,
-)
+from ..motors_bus import (Motor, MotorCalibration, MotorsBus, NameOrID, Value,
+                          get_address)
+from .tables import (FIRMWARE_MAJOR_VERSION, FIRMWARE_MINOR_VERSION,
+                     MODEL_BAUDRATE_TABLE, MODEL_CONTROL_TABLE,
+                     MODEL_ENCODING_TABLE, MODEL_NUMBER, MODEL_NUMBER_TABLE,
+                     MODEL_PROTOCOL, MODEL_RESOLUTION, SCAN_BAUDRATES)
 
 DEFAULT_PROTOCOL_VERSION = 0
 DEFAULT_BAUDRATE = 1_000_000
@@ -315,7 +309,10 @@ class FeetechMotorsBus(MotorsBus):
             encoding_table = self.model_encoding_table.get(model)
             if encoding_table and data_name in encoding_table:
                 sign_bit = encoding_table[data_name]
-                ids_values[id_] = encode_sign_magnitude(ids_values[id_], sign_bit)
+                try:
+                    ids_values[id_] = encode_sign_magnitude(ids_values[id_], sign_bit)
+                except ValueError as e:
+                    logger.error(f"Error encoding sign magnitude for motor {id_}: {e}")
 
         return ids_values
 
