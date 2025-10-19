@@ -229,9 +229,6 @@ exclude_dirs = [
     "tests",
     "benchmarks",
     "src/lerobot/datasets/push_dataset_to_hub",
-    "src/lerobot/datasets/v2/convert_dataset_v1_to_v2",
-    "src/lerobot/policies/pi0/conversion_scripts",
-    "src/lerobot/scripts/push_dataset_to_hub.py",
 ]
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
