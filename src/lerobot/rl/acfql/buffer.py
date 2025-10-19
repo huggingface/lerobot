@@ -462,8 +462,16 @@ class ReplayBufferNSteps(ReplayBuffer):
                     if next_sample["episode_index"] != current_sample["episode_index"]:
                         done = True
 
-            # TODO: (azouitine) Handle truncation (using the same value as done for now)
-            truncated = done
+            truncated = False
+            if not done:
+                #  This is important if the dataset has truncations, as it is likely that resuming training will have truncations.
+                # If this is the last frame or if next frame is in a different episode, mark as truncated
+                if i == num_frames - 1:
+                    truncated = True
+                elif i < num_frames - 1:
+                    next_sample = dataset[i + 1]
+                    if next_sample["episode_index"] != current_sample["episode_index"]:
+                        truncated = True
 
             # ----- 4) Next state -----
             # If not done and the next sample is in the same episode, we pull the next sample's state.
