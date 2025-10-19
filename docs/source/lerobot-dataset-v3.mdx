@@ -1,0 +1,314 @@
+# LeRobotDataset v3.0
+
+`LeRobotDataset v3.0` is a standardized format for robot learning data. It provides unified access to multi-modal time-series data, sensorimotor signals and multi‑camera video, as well as rich metadata for indexing, search, and visualization on the Hugging Face Hub.
+
+This docs will guide you to:
+
+- Understand the v3.0 design and directory layout
+- Record a dataset and push it to the Hub
+- Load datasets for training with `LeRobotDataset`
+- Stream datasets without downloading using `StreamingLeRobotDataset`
+- Apply image transforms for data augmentation during training
+- Migrate existing `v2.1` datasets to `v3.0`
+
+## What’s new in `v3`
+
+- **File-based storage**: Many episodes per Parquet/MP4 file (v2 used one file per episode).
+- **Relational metadata**: Episode boundaries and lookups are resolved through metadata, not filenames.
+- **Hub-native streaming**: Consume datasets directly from the Hub with `StreamingLeRobotDataset`.
+- **Lower file-system pressure**: Fewer, larger files ⇒ faster initialization and fewer issues at scale.
+- **Unified organization**: Clean directory layout with consistent path templates across data and videos.
+
+## Installation
+
+`LeRobotDataset v3.0` will be included in `lerobot >= 0.4.0`.
+
+Until that stable release, you can use the main branch by following the [build from source instructions](./installation#from-source).
+
+## Record a dataset
+
+Run the command below to record a dataset with the SO-101 and push to the Hub:
+
+```bash
+lerobot-record \
+  --robot.type=so101_follower \
+  --robot.port=/dev/tty.usbmodem585A0076841 \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/tty.usbmodem58760431551 \
+  --teleop.id=my_awesome_leader_arm \
+  --display_data=true \
+  --dataset.repo_id=${HF_USER}/record-test \
+  --dataset.num_episodes=5 \
+  --dataset.single_task="Grab the black cube"
+```
+
+See the [recording guide](./il_robots#record-a-dataset) for more details.
+
+## Format design
+
+A core v3 principle is **decoupling storage from the user API**: data is stored efficiently (few large files), while the public API exposes intuitive episode-level access.
+
+`v3` has three pillars:
+
+1. **Tabular data**: Low‑dimensional, high‑frequency signals (states, actions, timestamps) stored in **Apache Parquet**. Access is memory‑mapped or streamed via the `datasets` stack.
+2. **Visual data**: Camera frames concatenated and encoded into **MP4**. Frames from the same episode are grouped; videos are sharded per camera for practical sizes.
+3. **Metadata**: JSON/Parquet records describing schema (feature names, dtypes, shapes), frame rates, normalization stats, and **episode segmentation** (start/end offsets into shared Parquet/MP4 files).
+
+> To scale to millions of episodes, tabular rows and video frames from multiple episodes are **concatenated** into larger files. Episode‑specific views are reconstructed **via metadata**, not file boundaries.
+
+<div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
+  <figure style="margin:0; text-align:center;">
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/asset1datasetv3.png"
+      alt="LeRobotDataset v3 diagram"
+      width="220"
+    />
+    <figcaption style="font-size:0.9em; color:#666;">
+      From episode‑based to file‑based datasets
+    </figcaption>
+  </figure>
+</div>
+
+### Directory layout (simplified)
+
+- **`meta/info.json`**: canonical schema (features, shapes/dtypes), FPS, codebase version, and **path templates** to locate data/video shards.
+- **`meta/stats.json`**: global feature statistics (mean/std/min/max) used for normalization; exposed as `dataset.meta.stats`.
+- **`meta/tasks.jsonl`**: natural‑language task descriptions mapped to integer IDs for task‑conditioned policies.
+- **`meta/episodes/`**: per‑episode records (lengths, tasks, offsets) stored as **chunked Parquet** for scalability.
+- **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
+- **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
+
+## Load a dataset for training
+
+`LeRobotDataset` returns Python dictionaries of PyTorch tensors and integrates with `torch.utils.data.DataLoader`. Here is a code example showing its use:
+
+```python
+import torch
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+repo_id = "yaak-ai/L2D-v3"
+
+# 1) Load from the Hub (cached locally)
+dataset = LeRobotDataset(repo_id)
+
+# 2) Random access by index
+sample = dataset[100]
+print(sample)
+# {
+#   'observation.state': tensor([...]),
+#   'action': tensor([...]),
+#   'observation.images.front_left': tensor([C, H, W]),
+#   'timestamp': tensor(1.234),
+#   ...
+# }
+
+# 3) Temporal windows via delta_timestamps (seconds relative to t)
+delta_timestamps = {
+    "observation.images.front_left": [-0.2, -0.1, 0.0]  # 0.2s and 0.1s before current frame
+}
+
+dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps)
+
+# Accessing an index now returns a stack for the specified key(s)
+sample = dataset[100]
+print(sample["observation.images.front_left"].shape)  # [T, C, H, W], where T=3
+
+# 4) Wrap with a DataLoader for training
+batch_size = 16
+data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+for batch in data_loader:
+    observations = batch["observation.state"].to(device)
+    actions = batch["action"].to(device)
+    images = batch["observation.images.front_left"].to(device)
+    # model.forward(batch)
+```
+
+## Stream a dataset (no downloads)
+
+Use `StreamingLeRobotDataset` to iterate directly from the Hub without local copies. This allows to stream large datasets without the need to downloading them onto disk or loading them onto memory, and is a key feature of the new dataset format.
+
+```python
+from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+
+repo_id = "yaak-ai/L2D-v3"
+dataset = StreamingLeRobotDataset(repo_id)  # streams directly from the Hub
+```
+
+<div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
+  <figure style="margin:0; text-align:center;">
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/streaming-lerobot.png"
+      alt="StreamingLeRobotDataset"
+      width="520"
+    />
+    <figcaption style="font-size:0.9em; color:#666;">
+      Stream directly from the Hub for on‑the‑fly training.
+    </figcaption>
+  </figure>
+</div>
+
+## Image transforms
+
+Image transforms are data augmentations applied to camera frames during training to improve model robustness and generalization. LeRobot supports various transforms including brightness, contrast, saturation, hue, and sharpness adjustments.
+
+### Using transforms during dataset creation/recording
+
+Currently, transforms are applied during **training time only**, not during recording. When you create or record a dataset, the raw images are stored without transforms. This allows you to experiment with different augmentations later without re-recording data.
+
+### Adding transforms to existing datasets (API)
+
+Use the `image_transforms` parameter when loading a dataset for training:
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
+
+# Option 1: Use default transform configuration (disabled by default)
+transforms_config = ImageTransformsConfig(
+    enable=True,  # Enable transforms
+    max_num_transforms=3,  # Apply up to 3 transforms per frame
+    random_order=False,  # Apply in standard order
+)
+transforms = ImageTransforms(transforms_config)
+
+dataset = LeRobotDataset(
+    repo_id="your-username/your-dataset",
+    image_transforms=transforms
+)
+
+# Option 2: Create custom transform configuration
+custom_transforms_config = ImageTransformsConfig(
+    enable=True,
+    max_num_transforms=2,
+    random_order=True,
+    tfs={
+        "brightness": ImageTransformConfig(
+            weight=1.0,
+            type="ColorJitter",
+            kwargs={"brightness": (0.7, 1.3)}  # Adjust brightness range
+        ),
+        "contrast": ImageTransformConfig(
+            weight=2.0,  # Higher weight = more likely to be selected
+            type="ColorJitter",
+            kwargs={"contrast": (0.8, 1.2)}
+        ),
+        "sharpness": ImageTransformConfig(
+            weight=0.5,  # Lower weight = less likely to be selected
+            type="SharpnessJitter",
+            kwargs={"sharpness": (0.3, 2.0)}
+        ),
+    }
+)
+
+dataset = LeRobotDataset(
+    repo_id="your-username/your-dataset",
+    image_transforms=ImageTransforms(custom_transforms_config)
+)
+
+# Option 3: Use pure torchvision transforms
+from torchvision.transforms import v2
+
+torchvision_transforms = v2.Compose([
+    v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+    v2.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+])
+
+dataset = LeRobotDataset(
+    repo_id="your-username/your-dataset",
+    image_transforms=torchvision_transforms
+)
+```
+
+### Available transform types
+
+LeRobot provides several transform types:
+
+- **`ColorJitter`**: Adjusts brightness, contrast, saturation, and hue
+- **`SharpnessJitter`**: Randomly adjusts image sharpness
+- **`Identity`**: No transformation (useful for testing)
+
+You can also use any `torchvision.transforms.v2` transform by passing it directly to the `image_transforms` parameter.
+
+### Configuration options
+
+- **`enable`**: Enable/disable transforms (default: `False`)
+- **`max_num_transforms`**: Maximum number of transforms applied per frame (default: `3`)
+- **`random_order`**: Apply transforms in random order vs. standard order (default: `False`)
+- **`weight`**: Sampling probability for each transform (higher = more likely, if sum of weights is not 1, they will be normalized)
+- **`kwargs`**: Transform-specific parameters (e.g., brightness range)
+
+### Visualizing transforms
+
+Use the visualization script to preview how transforms affect your data:
+
+```bash
+lerobot-imgtransform-viz \
+  --repo-id=your-username/your-dataset \
+  --output-dir=./transform_examples \
+  --n-examples=5
+```
+
+This saves example images showing the effect of each transform, helping you tune parameters.
+
+### Best practices
+
+- **Start conservative**: Begin with small ranges (e.g., brightness 0.9-1.1) and increase gradually
+- **Test first**: Use the visualization script to ensure transforms look reasonable
+- **Monitor training**: Strong augmentations can hurt performance if too aggressive
+- **Match your domain**: If your robot operates in varying lighting, use brightness/contrast transforms
+- **Combine wisely**: Using too many transforms simultaneously can make training unstable
+
+## Migrate `v2.1` → `v3.0`
+
+A converter aggregates per‑episode files into larger shards and writes episode offsets/metadata. Convert your dataset using the instructions below.
+
+```bash
+# Pre-release build with v3 support:
+pip install "https://github.com/huggingface/lerobot/archive/33cad37054c2b594ceba57463e8f11ee374fa93c.zip"
+
+# Convert an existing v2.1 dataset hosted on the Hub:
+python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_ID>
+```
+
+**What it does**
+
+- Aggregates parquet files: `episode-0000.parquet`, `episode-0001.parquet`, … → **`file-0000.parquet`**, …
+- Aggregates mp4 files: `episode-0000.mp4`, `episode-0001.mp4`, … → **`file-0000.mp4`**, …
+- Updates `meta/episodes/*` (chunked Parquet) with per‑episode lengths, tasks, and byte/frame offsets.
+
+## Common Issues
+
+### Always call `finalize()` before pushing
+
+When creating or recording datasets, you **must** call `dataset.finalize()` to properly close parquet writers. See the [PR #1903](https://github.com/huggingface/lerobot/pull/1903) for more details.
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+# Create dataset and record episodes
+dataset = LeRobotDataset.create(...)
+
+for episode in range(num_episodes):
+    # Record frames
+    for frame in episode_data:
+        dataset.add_frame(frame)
+    dataset.save_episode()
+
+# Call finalize() when done recording and before push_to_hub()
+dataset.finalize()  # Closes parquet writers, writes metadata footers
+dataset.push_to_hub()
+```
+
+**Why is this necessary?**
+
+Dataset v3.0 uses incremental parquet writing with buffered metadata for efficiency. The `finalize()` method:
+
+- Flushes any buffered episode metadata to disk
+- Closes parquet writers to write footer metadata, otherwise the parquet files will be corrupt
+- Ensures the dataset is valid for loading
+
+Without calling `finalize()`, your parquet files will be incomplete and the dataset won't load properly.

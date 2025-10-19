@@ -50,7 +50,7 @@ def create_learner_service_stub(
 ):
     import grpc
 
-    from lerobot.scripts.rl.learner_service import LearnerService
+    from lerobot.rl.learner_service import LearnerService
     from lerobot.transport import services_pb2_grpc  # generated from .proto
 
     """Fixture to start a LearnerService gRPC server and provide a connected stub."""
@@ -117,12 +117,12 @@ def test_send_interactions():
         services_pb2.InteractionMessage(transfer_state=services_pb2.TransferState.TRANSFER_END, data=b"8"),
     ]
 
-    def mock_intercations_stream():
+    def mock_interactions_stream():
         yield from list_of_interaction_messages
 
         return services_pb2.Empty()
 
-    response = client.SendInteractions(mock_intercations_stream())
+    response = client.SendInteractions(mock_interactions_stream())
     assert response == services_pb2.Empty()
 
     close_learner_service_stub(channel, server)
