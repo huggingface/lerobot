@@ -1,8 +1,15 @@
 # Installation
 
+## Install [`miniforge`](https://conda-forge.org/download/)
+
+```bash
+wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh
+```
+
 ## Environment Setup
 
-Create a virtual environment with Python 3.10, using [`Miniconda`](https://docs.anaconda.com/miniconda/install/#quick-command-line-install)
+Create a virtual environment with Python 3.10, using conda:
 
 ```bash
 conda create -y -n lerobot python=3.10
@@ -14,7 +21,7 @@ Then activate your conda environment, you have to do this each time you open a s
 conda activate lerobot
 ```
 
-When using `miniconda`, install `ffmpeg` in your environment:
+When using `conda`, install `ffmpeg` in your environment:
 
 ```bash
 conda install ffmpeg -c conda-forge
