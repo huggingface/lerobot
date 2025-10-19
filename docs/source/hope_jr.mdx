@@ -19,7 +19,7 @@ pip install -e ".[hopejr]"
 Before starting calibration and operation, you need to identify the USB ports for each HopeJR component. Run this script to find the USB ports for the arm, hand, glove, and exoskeleton:
 
 ```bash
-python -m lerobot.find_port
+lerobot-find-port
 ```
 
 This will display the available USB ports and their associated devices. Make note of the port paths (e.g., `/dev/tty.usbmodem58760433331`, `/dev/tty.usbmodem11301`) as you'll need to specify them in the `--robot.port` and `--teleop.port` parameters when recording data, replaying episodes, or running teleoperation scripts.
@@ -31,7 +31,7 @@ Before performing teleoperation, HopeJR's limbs need to be calibrated. Calibrati
 ### 1.1 Calibrate Robot Hand
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --robot.type=hope_jr_hand \
     --robot.port=/dev/tty.usbmodem58760432281 \
     --robot.id=blue \
@@ -81,7 +81,7 @@ Once you have set the appropriate boundaries for all joints, click "Save" to sav
 ### 1.2 Calibrate Teleoperator Glove
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --teleop.type=homunculus_glove \
     --teleop.port=/dev/tty.usbmodem11201 \
     --teleop.id=red \
@@ -120,7 +120,7 @@ Once calibration is complete, the system will save the calibration to `/Users/yo
 ### 1.3 Calibrate Robot Arm
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --robot.type=hope_jr_arm \
     --robot.port=/dev/tty.usbserial-1110 \
     --robot.id=white
@@ -146,7 +146,7 @@ Use the calibration interface to set the range boundaries for each joint. Move e
 ### 1.4 Calibrate Teleoperator Exoskeleton
 
 ```bash
-python -m lerobot.calibrate \
+lerobot-calibrate \
     --teleop.type=homunculus_arm \
     --teleop.port=/dev/tty.usbmodem11201 \
     --teleop.id=black
@@ -178,7 +178,7 @@ Due to global variable conflicts in the Feetech middleware, teleoperation for ar
 ### Hand
 
 ```bash
-python -m lerobot.teleoperate \
+lerobot-teleoperate \
     --robot.type=hope_jr_hand \
     --robot.port=/dev/tty.usbmodem58760432281 \
     --robot.id=blue \
@@ -194,7 +194,7 @@ python -m lerobot.teleoperate \
 ### Arm
 
 ```bash
-python -m lerobot.teleoperate \
+lerobot-teleoperate \
     --robot.type=hope_jr_arm \
     --robot.port=/dev/tty.usbserial-1110 \
     --robot.id=white \
@@ -214,7 +214,7 @@ Record, Replay and Train with Hope-JR is still experimental.
 This step records the dataset, which can be seen as an example [here](https://huggingface.co/datasets/nepyope/hand_record_test_with_video_data/settings).
 
 ```bash
-python -m lerobot.record \
+lerobot-record \
     --robot.type=hope_jr_hand \
     --robot.port=/dev/tty.usbmodem58760432281 \
     --robot.id=right \
@@ -236,7 +236,7 @@ python -m lerobot.record \
 ### Replay
 
 ```bash
-python -m lerobot.replay \
+lerobot-replay \
     --robot.type=hope_jr_hand \
     --robot.port=/dev/tty.usbmodem58760432281 \
     --robot.id=right \
@@ -248,7 +248,7 @@ python -m lerobot.replay \
 ### Train
 
 ```bash
-python -m lerobot.scripts.train \
+lerobot-train \
   --dataset.repo_id=nepyope/hand_record_test_with_video_data \
   --policy.type=act \
   --output_dir=outputs/train/hopejr_hand \
@@ -263,7 +263,7 @@ python -m lerobot.scripts.train \
 This training run can be viewed as an example [here](https://wandb.ai/tino/lerobot/runs/rp0k8zvw?nw=nwusertino).
 
 ```bash
-python -m lerobot.record \
+lerobot-record \
   --robot.type=hope_jr_hand \
   --robot.port=/dev/tty.usbmodem58760432281 \
   --robot.id=right \

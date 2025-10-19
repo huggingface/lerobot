@@ -18,12 +18,11 @@ import logging
 import threading
 from collections import deque
 from pprint import pformat
-from typing import Deque
 
 import serial
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors.motors_bus import MotorCalibration, MotorNormMode
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
@@ -60,7 +59,7 @@ class HomunculusArm(Teleoperator):
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
         # one deque *per joint* so we can inspect raw history if needed
-        self._buffers: dict[str, Deque[int]] = {
+        self._buffers: dict[str, deque[int]] = {
             joint: deque(maxlen=n)
             for joint in (
                 "shoulder_pitch",
@@ -271,8 +270,15 @@ class HomunculusArm(Teleoperator):
                 raw_values = None
                 with self.serial_lock:
                     if self.serial.in_waiting > 0:
-                        self.serial.flush()
-                        raw_values = self.serial.readline().decode("utf-8").strip().split(" ")
+                        lines = []
+                        while self.serial.in_waiting > 0:
+                            line = self.serial.read_until().decode("utf-8").strip()
+                            if line:
+                                lines.append(line.split(" "))
+
+                        if lines:
+                            raw_values = lines[-1]
+
                 if raw_values is None or len(raw_values) != 21:  # 16 raw + 5 angle values
                     continue
 

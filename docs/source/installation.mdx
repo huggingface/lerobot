@@ -1,17 +1,15 @@
 # Installation
 
-## Install LeRobot
-
-Currently only available from source.
-
-Download our source code:
+## Install [`miniforge`](https://conda-forge.org/download/)
 
 ```bash
-git clone https://github.com/huggingface/lerobot.git
-cd lerobot
+wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh
 ```
 
-Create a virtual environment with Python 3.10, using [`Miniconda`](https://docs.anaconda.com/miniconda/install/#quick-command-line-install)
+## Environment Setup
+
+Create a virtual environment with Python 3.10, using conda:
 
 ```bash
 conda create -y -n lerobot python=3.10
@@ -23,7 +21,7 @@ Then activate your conda environment, you have to do this each time you open a s
 conda activate lerobot
 ```
 
-When using `miniconda`, install `ffmpeg` in your environment:
+When using `conda`, install `ffmpeg` in your environment:
 
 ```bash
 conda install ffmpeg -c conda-forge
@@ -40,11 +38,48 @@ conda install ffmpeg -c conda-forge
 >
 > - _[On Linux only]_ If you want to bring your own ffmpeg: Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 
-Install 🤗 LeRobot:
+## Install LeRobot 🤗
+
+### From Source
+
+First, clone the repository and navigate into the directory:
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+```
+
+Then, install the library in editable mode. This is useful if you plan to contribute to the code.
 
 ```bash
 pip install -e .
 ```
+
+### Installation from PyPI
+
+**Core Library:**
+Install the base package with:
+
+```bash
+pip install lerobot
+```
+
+_This installs only the default dependencies._
+
+**Extra Features:**
+To install additional functionality, use one of the following:
+
+```bash
+pip install 'lerobot[all]'          # All available features
+pip install 'lerobot[aloha,pusht]'  # Specific features (Aloha & Pusht)
+pip install 'lerobot[feetech]'      # Feetech motor support
+```
+
+_Replace `[...]` with your desired features._
+
+**Available Tags:**
+For a full list of optional dependencies, see:
+https://pypi.org/project/lerobot/
 
 ### Troubleshooting
 
@@ -63,7 +98,7 @@ LeRobot provides optional extras for specific functionalities. Multiple extras c
 
 ### Simulations
 
-Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), `xarm` ([gym-xarm](https://github.com/huggingface/gym-xarm)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht))
+Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht))
 Example:
 
 ```bash
