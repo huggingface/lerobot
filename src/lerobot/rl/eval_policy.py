@@ -65,7 +65,7 @@ def main(cfg: TrainRLServerPipelineConfig):
         # env_cfg=cfg.env,
         ds_meta=dataset_meta,
     )
-    policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
+    policy = policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
     policy.eval()
 
     eval_policy(env, policy=policy, n_episodes=10)

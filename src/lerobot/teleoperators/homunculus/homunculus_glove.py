@@ -304,8 +304,15 @@ class HomunculusGlove(Teleoperator):
                 positions = None
                 with self.serial_lock:
                     if self.serial.in_waiting > 0:
-                        self.serial.flush()
-                        positions = self.serial.readline().decode("utf-8").strip().split(" ")
+                        lines = []
+                        while self.serial.in_waiting > 0:
+                            line = self.serial.read_until().decode("utf-8").strip()
+                            if line:
+                                lines.append(line.split(" "))
+
+                        if lines:
+                            positions = lines[-1]
+
                 if positions is None or len(positions) != len(self.joints):
                     continue
 
