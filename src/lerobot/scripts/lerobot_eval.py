@@ -26,8 +26,8 @@ lerobot-eval \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
-    --device=cuda
+    --policy.use_amp=false \
+    --policy.device=cuda
 ```
 
 OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
@@ -37,8 +37,8 @@ lerobot-eval \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
-    --device=cuda
+    --policy.use_amp=false \
+    --policy.device=cuda
 ```
 
 Note that in both examples, the repo/folder should contain at least `config.json` and `model.safetensors` files.
@@ -180,9 +180,15 @@ def rollout(
             render_callback(env)
 
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
-        # available of none of the envs finished.
+        # available if none of the envs finished.
         if "final_info" in info:
-            successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
+            final_info = info["final_info"]
+            if not isinstance(final_info, dict):
+                raise RuntimeError(
+                    "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
+                    "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
+                )
+            successes = final_info["is_success"].tolist()
         else:
             successes = [False] * env.num_envs
 

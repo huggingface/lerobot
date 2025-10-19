@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,12 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from .configuration_pi05 import PI05Config
+from .modeling_pi05 import PI05Policy
+from .processor_pi05 import make_pi05_pre_post_processors
 
-from ..config import TeleoperatorConfig
-
-
-@TeleoperatorConfig.register_subclass("stretch3")
-@dataclass
-class Stretch3GamePadConfig(TeleoperatorConfig):
-    """Stretch3GamePadConfig"""
+__all__ = ["PI05Config", "PI05Policy", "make_pi05_pre_post_processors"]

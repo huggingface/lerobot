@@ -199,4 +199,6 @@ log_say("Stop recording")
 leader.disconnect()
 follower.disconnect()
 listener.stop()
+
+dataset.finalize()
 dataset.push_to_hub()

@@ -270,8 +270,15 @@ class HomunculusArm(Teleoperator):
                 raw_values = None
                 with self.serial_lock:
                     if self.serial.in_waiting > 0:
-                        self.serial.flush()
-                        raw_values = self.serial.readline().decode("utf-8").strip().split(" ")
+                        lines = []
+                        while self.serial.in_waiting > 0:
+                            line = self.serial.read_until().decode("utf-8").strip()
+                            if line:
+                                lines.append(line.split(" "))
+
+                        if lines:
+                            raw_values = lines[-1]
+
                 if raw_values is None or len(raw_values) != 21:  # 16 raw + 5 angle values
                     continue
 

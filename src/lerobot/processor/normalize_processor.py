@@ -281,8 +281,14 @@ class _NormalizationMixin:
         """
         Core logic to apply a normalization or unnormalization transformation to a tensor.
 
-        This method selects the appropriate normalization mode (e.g., mean/std, min/max)
-        based on the feature type and applies the corresponding mathematical operation.
+        This method selects the appropriate normalization mode based on the feature type
+        and applies the corresponding mathematical operation.
+
+        Normalization Modes:
+          - MEAN_STD: Centers data around zero with unit variance.
+          - MIN_MAX: Scales data to [-1, 1] range using actual min/max values.
+          - QUANTILES: Scales data to [-1, 1] range using 1st and 99th percentiles (q01/q99).
+          - QUANTILE10: Scales data to [-1, 1] range using 10th and 90th percentiles (q10/q90).
 
         Args:
             tensor: The input tensor to transform.
@@ -300,7 +306,12 @@ class _NormalizationMixin:
         if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
             return tensor
 
-        if norm_mode not in (NormalizationMode.MEAN_STD, NormalizationMode.MIN_MAX):
+        if norm_mode not in (
+            NormalizationMode.MEAN_STD,
+            NormalizationMode.MIN_MAX,
+            NormalizationMode.QUANTILES,
+            NormalizationMode.QUANTILE10,
+        ):
             raise ValueError(f"Unsupported normalization mode: {norm_mode}")
 
         # For Accelerate compatibility: Ensure stats are on the same device and dtype as the input tensor
@@ -311,7 +322,14 @@ class _NormalizationMixin:
 
         stats = self._tensor_stats[key]
 
-        if norm_mode == NormalizationMode.MEAN_STD and "mean" in stats and "std" in stats:
+        if norm_mode == NormalizationMode.MEAN_STD:
+            mean = stats.get("mean", None)
+            std = stats.get("std", None)
+            if mean is None or std is None:
+                raise ValueError(
+                    "MEAN_STD normalization mode requires mean and std stats, please update the dataset with the correct stats"
+                )
+
             mean, std = stats["mean"], stats["std"]
             # Avoid division by zero by adding a small epsilon.
             denom = std + self.eps
@@ -319,7 +337,14 @@ class _NormalizationMixin:
                 return tensor * std + mean
             return (tensor - mean) / denom
 
-        if norm_mode == NormalizationMode.MIN_MAX and "min" in stats and "max" in stats:
+        if norm_mode == NormalizationMode.MIN_MAX:
+            min_val = stats.get("min", None)
+            max_val = stats.get("max", None)
+            if min_val is None or max_val is None:
+                raise ValueError(
+                    "MIN_MAX normalization mode requires min and max stats, please update the dataset with the correct stats"
+                )
+
             min_val, max_val = stats["min"], stats["max"]
             denom = max_val - min_val
             # When min_val == max_val, substitute the denominator with a small epsilon
@@ -333,6 +358,40 @@ class _NormalizationMixin:
                 return (tensor + 1) / 2 * denom + min_val
             # Map from [min, max] to [-1, 1]
             return 2 * (tensor - min_val) / denom - 1
+
+        if norm_mode == NormalizationMode.QUANTILES:
+            q01 = stats.get("q01", None)
+            q99 = stats.get("q99", None)
+            if q01 is None or q99 is None:
+                raise ValueError(
+                    "QUANTILES normalization mode requires q01 and q99 stats, please update the dataset with the correct stats using the `augment_dataset_quantile_stats.py` script"
+                )
+
+            denom = q99 - q01
+            # Avoid division by zero by adding epsilon when quantiles are identical
+            denom = torch.where(
+                denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
+            )
+            if inverse:
+                return (tensor + 1.0) * denom / 2.0 + q01
+            return 2.0 * (tensor - q01) / denom - 1.0
+
+        if norm_mode == NormalizationMode.QUANTILE10:
+            q10 = stats.get("q10", None)
+            q90 = stats.get("q90", None)
+            if q10 is None or q90 is None:
+                raise ValueError(
+                    "QUANTILE10 normalization mode requires q10 and q90 stats, please update the dataset with the correct stats using the `augment_dataset_quantile_stats.py` script"
+                )
+
+            denom = q90 - q10
+            # Avoid division by zero by adding epsilon when quantiles are identical
+            denom = torch.where(
+                denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
+            )
+            if inverse:
+                return (tensor + 1.0) * denom / 2.0 + q10
+            return 2.0 * (tensor - q10) / denom - 1.0
 
         # If necessary stats are missing, return input unchanged.
         return tensor
