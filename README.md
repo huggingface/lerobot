@@ -1,7 +1,7 @@
 > **Fork Highlights**
 > - Supports bimanual SO-101 configurations out-of-the-box  
 > - Adds XLerobot combined platform (bi\_so101 arms + LeKiwi base)  
-> - Uses dataset schema v2.1 (downshifted from upstream v3.0 for compatibility)  
+> - Data conversion scripts from v3.0 to v2.1 
 >   - If you need to convert to v2.0 for GR00T, check out a fork of [any4lerobot](https://github.com/bingogome/any4lerobot/commit/a375348f55b18537aac0cf4812ab2bb749419156) where I have an implementation for v2.1 to v2.0
 > - Enables fast MJPEG capture via camera `fourcc=mjpeg`  
 > - Verified with the [AR teleoperation controller](https://github.com/SMSL-Project/unity-so101) 

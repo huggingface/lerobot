@@ -25,9 +25,9 @@ lerobot-record \
   }' \
   --robot.mount='{}' \
   --robot.cameras='{
-      "left":  {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 15},
-      "right": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 15},
-      "top":   {"type": "opencv", "index_or_path": 8, "width": 640, "height": 480, "fps": 15}
+      "left":  {"type": "opencv", "index_or_path": 8, "width": 640, "height": 480, "fps": 15},
+      "right": {"type": "opencv", "index_or_path": 6, "width": 640, "height": 480, "fps": 15},
+      "top":   {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 15}
   }' \
   --teleop.type=xlerobot_leader_gamepad \
   --teleop.arms='{
@@ -43,14 +43,12 @@ lerobot-record \
   }' \
   --teleop.mount='{}' \
   --dataset.video=true \
-  --dataset.repo_id="${HF_USER}/xlerobot-get-water" \
-  --dataset.num_episodes=50 \
-  --dataset.single_task="Move towards the table, align the right arm, grab the drink, and place it in the robot's basket." \
+  --dataset.repo_id="${HF_USER}/xlerobot-get-altereco" \
+  --dataset.num_episodes=20 \
+  --dataset.single_task="Use the right arm to pick up the altereco candy and place it in the paper box." \
   --dataset.episode_time_s=300 \
   --dataset.reset_time_s=300 \
   --dataset.push_to_hub=true\
-  --dataset.root="/home/yihao/.cache/huggingface/lerobot/yihao-brain-bot/xlerobot-get-water/" \
-  --display_data=true \
-  --resume=true
-
+  --dataset.root="/home/yihao/.cache/huggingface/lerobot/yihao-brain-bot/xlerobot-get-altereco/" \
+  --display_data=true
 echo "Recording complete."
