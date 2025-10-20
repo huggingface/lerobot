@@ -60,10 +60,10 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     if try_device.startswith("cuda"):
         assert torch.cuda.is_available()
         device = torch.device(try_device)
-    elif try_device ==  "mps":
+    elif try_device == "mps":
         assert torch.backends.mps.is_available()
         device = torch.device("mps")
-    elif try_device ==  "xpu":
+    elif try_device == "xpu":
         assert torch.xpu.is_available()
         device = torch.device("xpu")
     elif try_device == "cpu":
