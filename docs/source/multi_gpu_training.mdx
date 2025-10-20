@@ -93,7 +93,7 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --policy.type=act \
   --batch_size=8 \
   --steps=100000 \
-  --auto-scale=true
+  --auto_scale=true
 ```
 
 The effective behavior will be approximately:
@@ -104,7 +104,8 @@ The effective behavior will be approximately:
 Notes:
 
 - Auto-scaling is skipped when resuming from a checkpoint to preserve training state.
-- If you prefer manual control, omit `--auto-scale` and set `--optimizer.lr` and `--steps` yourself.
+- If you prefer manual control, omit `--auto_scale` and set `--optimizer.lr` and `--steps` yourself.
+- Checkpoint and eval cadence: `auto_scale` currently does not adjust `save_freq` or `eval_freq`. If you want the same number of checkpoints/evaluations as a single-GPU run, consider scaling them as `ceil(freq / world_size)`. Whether to scale these by default is under discussion with maintainers.
 
 ## Notes
 
