@@ -13,14 +13,16 @@
 # limitations under the License.
 
 import datetime as dt
-import logging
 from dataclasses import dataclass, field
+from logging import getLogger
 from pathlib import Path
 
 from lerobot import envs, policies  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.default import EvalConfig
 from lerobot.configs.policies import PreTrainedConfig
+
+logger = getLogger(__name__)
 
 
 @dataclass
@@ -44,7 +46,7 @@ class EvalPipelineConfig:
             self.policy.pretrained_path = Path(policy_path)
 
         else:
-            logging.warning(
+            logger.warning(
                 "No pretrained path was provided, evaluated policy will be built from scratch (random weights)."
             )
 
@@ -55,6 +57,8 @@ class EvalPipelineConfig:
                 self.job_name = (
                     f"{self.env.type}_{self.policy.type if self.policy is not None else 'scratch'}"
                 )
+
+            logger.warning(f"No job name provided, using '{self.job_name}' as job name.")
 
         if not self.output_dir:
             now = dt.datetime.now()
