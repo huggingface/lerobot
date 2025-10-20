@@ -289,9 +289,19 @@ ignore_errors = false
 # module = "lerobot.utils.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.configs.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.configs.*"
+ignore_errors = false
+
+# extra strictness for configs
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+# ignores
+disable_error_code = ["attr-defined"] #TODO: draccus issue
+
+# include = "src/lerobot/configs/**/*.py"
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.optim.*"
