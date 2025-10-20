@@ -40,7 +40,7 @@ def bytes_buffer_size(buffer: io.BytesIO) -> int:
     return result
 
 
-def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = "", silent: bool = True):
+def send_bytes_in_chunks(buffer: io.BytesIO, message_class: Any, log_prefix: str = "", silent: bool = True):
     buffer = io.BytesIO(buffer)
     size_in_bytes = bytes_buffer_size(buffer)
 
@@ -108,7 +108,7 @@ def receive_bytes_in_chunks(iterator: Iterable[Any], queue: Queue | None, shutdo
             raise ValueError(f"Received unknown transfer state {item.transfer_state}")
 
 
-def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:
+def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> io.BytesIO:
     """Convert model state dict to flat array for transmission"""
     buffer = io.BytesIO()
 
@@ -117,17 +117,17 @@ def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:
     return buffer.getvalue()
 
 
-def bytes_to_state_dict(buffer: bytes) -> dict[str, torch.Tensor]:
+def bytes_to_state_dict(buffer: io.BytesIO) -> dict[str, torch.Tensor]:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
     return torch.load(buffer, weights_only=True)
 
 
-def python_object_to_bytes(python_object: Any) -> bytes:
+def python_object_to_bytes(python_object: Any) -> io.BytesIO:
     return pickle.dumps(python_object)
 
 
-def bytes_to_python_object(buffer: bytes) -> Any:
+def bytes_to_python_object(buffer: io.BytesIO) -> Any:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
     obj = pickle.load(buffer)  # nosec B301: Safe usage of pickle.load
@@ -135,14 +135,14 @@ def bytes_to_python_object(buffer: bytes) -> Any:
     return obj
 
 
-def bytes_to_transitions(buffer: bytes) -> list[Transition]:
+def bytes_to_transitions(buffer: io.BytesIO) -> list[Transition]:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
     transitions = torch.load(buffer, weights_only=True)
     return transitions
 
 
-def transitions_to_bytes(transitions: list[Transition]) -> bytes:
+def transitions_to_bytes(transitions: list[Transition]) -> io.BytesIO:
     buffer = io.BytesIO()
     torch.save(transitions, buffer)
     return buffer.getvalue()
