@@ -81,6 +81,16 @@ class ARController(Teleoperator):
                 "jaw": 0.0,
             },
         }
+        self._base_state = {
+            "x.vel": 0.0,
+            "y.vel": 0.0,
+            "theta.vel": 0.0,
+        }
+        self._mount_state = {
+            self.config.mount_pan_key: 0.0,
+            self.config.mount_tilt_key: 0.0,
+        }
+        self._last_mount_update: float | None = time.time()
 
         # Pre-initialize kinematics for active arms.
         for arm in self._active_arms:
@@ -94,17 +104,25 @@ class ARController(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
+        features: dict[str, type] = {}
         if self.config.bi_controller:
-            return {
-                **{f"left_{joint}.pos": float for joint in ROBOT_JOINT_NAMES[:-1]},
-                "left_gripper.pos": float,
-                **{f"right_{joint}.pos": float for joint in ROBOT_JOINT_NAMES[:-1]},
-                "right_gripper.pos": float,
-            }
-        return {
-            **{f"{joint}.pos": float for joint in ROBOT_JOINT_NAMES[:-1]},
-            "gripper.pos": float,
-        }
+            features.update(
+                {f"left_{joint}.pos": float for joint in ROBOT_JOINT_NAMES[:-1]}
+            )
+            features["left_gripper.pos"] = float
+            features.update(
+                {f"right_{joint}.pos": float for joint in ROBOT_JOINT_NAMES[:-1]}
+            )
+            features["right_gripper.pos"] = float
+        else:
+            features.update(
+                {f"{joint}.pos": float for joint in ROBOT_JOINT_NAMES[:-1]}
+            )
+            features["gripper.pos"] = float
+
+        features.update({key: float for key in self._base_state.keys()})
+        features.update({key: float for key in self._mount_state.keys()})
+        return features
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -184,17 +202,22 @@ class ARController(Teleoperator):
         """Handle incoming message from Unity"""
         try:
             logger.debug("[%s] Received from topic '%s'", datetime.now().strftime('%H:%M:%S'), topic)
-            
+
             hand_data = json.loads(message)
 
+            left_hand = hand_data.get("leftHand")
             right_hand = hand_data.get("rightHand")
+
             if right_hand:
                 self._process_hand(right_hand, "right")
+                self._process_mount_controls(right_hand)
+            if left_hand and self.config.bi_controller:
+                self._process_hand(left_hand, "left")
 
-            if self.config.bi_controller:
-                left_hand = hand_data.get("leftHand")
-                if left_hand:
-                    self._process_hand(left_hand, "left")
+            if left_hand:
+                self._process_base_controls(left_hand)
+            elif right_hand:
+                self._process_base_controls(right_hand)
 
             self._send_robot_data()
 
@@ -227,6 +250,94 @@ class ARController(Teleoperator):
         quat_robot = R.from_matrix(R_r).as_quat()
 
         return pos_robot, quat_robot
+
+    def _apply_deadzone(self, value: float) -> float:
+        if abs(value) < self.config.thumbstick_deadzone:
+            return 0.0
+        return float(value)
+
+    @staticmethod
+    def _clamp(value: float, limits: tuple[float, float]) -> float:
+        lower, upper = limits
+        if lower > upper:
+            lower, upper = upper, lower
+        if value < lower:
+            return lower
+        if value > upper:
+            return upper
+        return value
+
+    def _process_base_controls(self, hand_payload: dict | None) -> None:
+        if not hand_payload:
+            return
+
+        try:
+            axis_x = float(hand_payload.get("stickX", 0.0))
+        except (TypeError, ValueError):
+            axis_x = 0.0
+        try:
+            axis_y = float(hand_payload.get("stickY", 0.0))
+        except (TypeError, ValueError):
+            axis_y = 0.0
+
+        axis_x = self._apply_deadzone(axis_x)
+        axis_y = self._apply_deadzone(axis_y)
+
+        x_vel = -axis_y * self.config.base_max_speed_mps
+        y_vel = axis_x * self.config.base_max_speed_mps
+
+        button_x = bool(hand_payload.get("buttonX", False))
+        button_y = bool(hand_payload.get("buttonY", False))
+
+        theta_vel = 0.0
+        if button_x and not button_y:
+            theta_vel = -self.config.base_yaw_speed_deg
+        elif button_y and not button_x:
+            theta_vel = self.config.base_yaw_speed_deg
+
+        with self._state_lock:
+            self._base_state["x.vel"] = x_vel
+            self._base_state["y.vel"] = y_vel
+            self._base_state["theta.vel"] = theta_vel
+
+    def _process_mount_controls(self, hand_payload: dict | None) -> None:
+        if not hand_payload:
+            return
+
+        try:
+            axis_x = float(hand_payload.get("stickX", 0.0))
+        except (TypeError, ValueError):
+            axis_x = 0.0
+        try:
+            axis_y = float(hand_payload.get("stickY", 0.0))
+        except (TypeError, ValueError):
+            axis_y = 0.0
+
+        axis_x = self._apply_deadzone(axis_x)
+        axis_y = self._apply_deadzone(axis_y)
+
+        now = time.time()
+        with self._state_lock:
+            last_time = self._last_mount_update or now
+            dt = max(0.0, now - last_time)
+            self._last_mount_update = now
+
+            if axis_x == 0.0 and axis_y == 0.0:
+                return
+
+            pan_key = self.config.mount_pan_key
+            tilt_key = self.config.mount_tilt_key
+            pan = float(self._mount_state.get(pan_key, 0.0))
+            tilt = float(self._mount_state.get(tilt_key, 0.0))
+
+            pan += axis_x * self.config.mount_pan_speed_deg * dt
+            tilt += axis_y * self.config.mount_tilt_speed_deg * dt
+
+            pan = self._clamp(pan, self.config.mount_pan_limits)
+            tilt = self._clamp(tilt, self.config.mount_tilt_limits)
+
+            self._mount_state[pan_key] = pan
+            self._mount_state[tilt_key] = tilt
 
     def _process_hand(self, hand_payload, arm: str):
         if not hand_payload:
@@ -373,6 +484,8 @@ class ARController(Teleoperator):
                     **{f"{joint}.pos": value for joint, value in zip(ROBOT_JOINT_NAMES[:-1], right["joints"])},
                     "gripper.pos": right["jaw"],
                 }
+            action.update(self._base_state)
+            action.update(self._mount_state)
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:

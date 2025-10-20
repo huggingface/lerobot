@@ -11,7 +11,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 POLICY_HOST=${POLICY_HOST:-"0.0.0.0"}
 POLICY_PORT=${POLICY_PORT:-5555}
-LANG_INSTRUCTION=${LANG_INSTRUCTION:-"Move towards the table, align the left arm with the drink in the robot's basket, grab the drink, and place it on the table."}
+LANG_INSTRUCTION=${LANG_INSTRUCTION:-"Move to the table, use the left arm to pick up the Musketeer candy bar and place it in the paper box."}
 ROBOT_ID=${ROBOT_ID:-"xlerobot_eval"}
 
 python "${PROJECT_ROOT}/Isaac-GR00T/examples/SO-100/eval_lerobot.py" \
@@ -37,5 +37,5 @@ python "${PROJECT_ROOT}/Isaac-GR00T/examples/SO-100/eval_lerobot.py" \
   --policy_port="${POLICY_PORT}" \
   --lang_instruction="${LANG_INSTRUCTION}" \
   --modality_config_path="${PROJECT_ROOT}/Isaac-GR00T/examples/SO-100/xlerobot_modality.json" \
-  --action_horizon=20 \
+  --action_horizon=60 \
   "$@"
