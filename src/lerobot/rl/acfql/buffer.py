@@ -66,11 +66,20 @@ class ReplayBufferNSteps(ReplayBuffer):
         high = (
             max(0, self.size - n_steps - 1)
             if self.optimize_memory and self.size < self.capacity
-            else self.size
+            else self.size - n_steps
         )
 
         # Random indices for sampling - create on the same device as storage
         idx = torch.randint(low=0, high=high, size=(batch_size,), device=self.storage_device)
+        return self.sample_nstep_full_for_indices(idx, batch_size, n_steps, gamma)
+
+    def sample_nstep_full_for_indices(
+        self,
+        idx: torch.Tensor,
+        batch_size: int,
+        n_steps: int,
+        gamma: float,
+    ) -> BatchTransitionNSteps:
         steps = torch.arange(n_steps, device=self.storage_device).view(1, -1)
 
         # Build sequences
@@ -85,7 +94,8 @@ class ReplayBufferNSteps(ReplayBuffer):
             batch_state_nsteps[key] = self.states[key][idx].to(self.device)
             if not self.optimize_memory:
                 # Full sequence of next observations
-                batch_next_state_nsteps[key] = self.next_states[key][idx].to(self.device)
+                next_indices = (idx + n_steps - 1) % self.capacity
+                batch_next_state_nsteps[key] = self.next_states[key][next_indices].to(self.device)
             else:
                 next_indices = (idx + n_steps) % self.capacity
                 batch_next_state_nsteps[key] = self.states[key][next_indices].to(self.device)
