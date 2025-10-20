@@ -51,7 +51,7 @@ class OpenCVCameraConfig(CameraConfig):
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
-        - FOURCC codes must be 4-character strings (e.g., "MJPG", "YUYV").
+        - FOURCC codes must be 4-character strings (e.g., "MJPG", "YUYV"). Some common FOUCC codes: https://learn.microsoft.com/en-us/windows/win32/medfound/video-fourccs#fourcc-constants
         - Setting FOURCC can help achieve higher frame rates on some cameras.
     """
 
