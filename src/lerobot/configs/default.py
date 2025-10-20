@@ -16,9 +16,6 @@
 
 from dataclasses import dataclass, field
 
-from lerobot import (
-    policies,  # noqa: F401
-)
 from lerobot.datasets.transforms import ImageTransformsConfig
 from lerobot.datasets.video_utils import get_safe_default_codec
 
@@ -37,6 +34,7 @@ class DatasetConfig:
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_codec)
+    streaming: bool = False
 
 
 @dataclass
@@ -59,7 +57,7 @@ class EvalConfig:
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     use_async_envs: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.batch_size > self.n_episodes:
             raise ValueError(
                 "The eval batch size is greater than the number of eval episodes "
