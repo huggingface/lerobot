@@ -502,7 +502,6 @@ def eval_main(cfg: EvalPipelineConfig):
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
-
     policy.eval()
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
