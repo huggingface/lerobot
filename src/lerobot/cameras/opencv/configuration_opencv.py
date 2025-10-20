@@ -79,9 +79,7 @@ class OpenCVCameraConfig(CameraConfig):
                 f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
             )
 
-        if self.fourcc is not None and (
-            not isinstance(self.fourcc, str) or len(self.fourcc) != 4
-        ):
+        if self.fourcc is not None and (not isinstance(self.fourcc, str) or len(self.fourcc) != 4):
             raise ValueError(
                 f"`fourcc` must be a 4-character string (e.g., 'MJPG', 'YUYV'), but '{self.fourcc}' is provided."
             )
