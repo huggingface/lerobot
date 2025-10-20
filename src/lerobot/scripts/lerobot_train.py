@@ -169,9 +169,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 for _name, group in opt_cfg.optimizer_groups.items():
                     if isinstance(group, dict) and "lr" in group and isinstance(group["lr"], (int, float)):
                         group["lr"] *= factor
-        except Exception:
-            # Best-effort scaling; if structure is unexpected, skip silently
-            pass
+        except (AttributeError, TypeError) as e:
+            # Best-effort scaling; if structure is unexpected, log a warning
+            logging.warning(f"Failed to scale optimizer lr: {e}")
 
     if cfg.auto_scale and not cfg.resume:
         world_size = max(1, accelerator.num_processes)
