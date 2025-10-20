@@ -244,6 +244,10 @@ class OpenCVCamera(Camera):
         """Validates and sets the camera's FOURCC code."""
 
         fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)
+
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
         success = self.videocapture.set(cv2.CAP_PROP_FOURCC, fourcc_code)
         actual_fourcc_code = self.videocapture.get(cv2.CAP_PROP_FOURCC)
 
