@@ -282,7 +282,6 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "lerobot.envs.*"
-# Enable type checking only for the envs module
 ignore_errors = false
 
 
@@ -308,9 +307,9 @@ disable_error_code = ["attr-defined"] #TODO: draccus issue
 # module = "lerobot.optim.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.model.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.model.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.processor.*"
