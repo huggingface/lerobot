@@ -525,14 +525,10 @@ def append_or_create_parquet_file(
         new_path.parent.mkdir(parents=True, exist_ok=True)
         final_df = df
         target_path = new_path
-        target_chunk = idx["chunk"]
-        target_file = idx["file"]
     else:
         existing_df = pd.read_parquet(dst_path)
         final_df = pd.concat([existing_df, df], ignore_index=True)
         target_path = dst_path
-        target_chunk = idx["chunk"]
-        target_file = idx["file"]
 
     if contains_images:
         to_parquet_with_hf_images(final_df, target_path)
