@@ -81,7 +81,7 @@ dependencies = [
     "torchvision>=0.21.0,<0.23.0", # TODO: Bumb dependency
 
     "draccus==0.10.0", # TODO: Remove ==
-    "gymnasium>=1.0.0",
+    "gymnasium>=1.1.1",
     "rerun-sdk>=0.24.0,<0.27.0",
 
     # Support dependencies
