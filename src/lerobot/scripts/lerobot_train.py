@@ -179,6 +179,20 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             old_steps = cfg.steps
             # Linear LR scaling
             _scale_optimizer_lr(cfg.optimizer, world_size)
+            # Also scale policy-level LR fields when using presets (e.g., optimizer_lr, optimizer_lr_backbone)
+            if cfg.use_policy_training_preset and cfg.policy is not None:
+                scaled_policy_lr_fields: list[tuple[str, float, float]] = []
+                for attr in dir(cfg.policy):
+                    if not attr.startswith("optimizer_lr"):
+                        continue
+                    try:
+                        val = getattr(cfg.policy, attr)
+                    except Exception:
+                        continue
+                    if isinstance(val, (int, float)):
+                        new_val = val * world_size
+                        setattr(cfg.policy, attr, new_val)
+                        scaled_policy_lr_fields.append((attr, val, new_val))
             # Scale steps down so total samples processed remains comparable
             cfg.steps = max(1, (cfg.steps + world_size - 1) // world_size)
             if is_main_process:
@@ -189,6 +203,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                         attrs=["bold"],
                     )
                 )
+                if cfg.use_policy_training_preset and cfg.policy is not None:
+                    for (name, old_v, new_v) in scaled_policy_lr_fields:
+                        logging.info(colored(f"Auto-scale policy {name}: {old_v} -> {new_v}", "cyan"))
         else:
             if is_main_process:
                 logging.info("Auto-scale enabled but single process detected; skipping scaling.")
