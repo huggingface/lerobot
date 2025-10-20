@@ -77,7 +77,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     pretrained_path: Path | None = None
 
     def __post_init__(self) -> None:
-        self.pretrained_path: Path | None = None
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
