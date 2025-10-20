@@ -194,6 +194,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                         setattr(cfg.policy, attr, new_val)
                         scaled_policy_lr_fields.append((attr, val, new_val))
             # Scale steps down so total samples processed remains comparable
+            # Use ceiling division to ensure at least the original number of total samples are processed across all GPUs.
+            # Implements ceil(steps / world_size)
             cfg.steps = max(1, (cfg.steps + world_size - 1) // world_size)
             if is_main_process:
                 logging.info(
