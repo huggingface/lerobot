@@ -14,8 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_lekiwi import LeKiwiClientConfig, LeKiwiConfig
-from .lekiwi import LeKiwi
-from .lekiwi_client import LeKiwiClient
+from dataclasses import dataclass
 
-__all__ = ["LeKiwi", "LeKiwiConfig", "LeKiwiClient", "LeKiwiClientConfig"]
+from ..config import TeleoperatorConfig
+
+
+@TeleoperatorConfig.register_subclass("bi_so101_leader")
+@dataclass
+class BiSO101LeaderConfig(TeleoperatorConfig):
+    left_arm_port: str
+    right_arm_port: str

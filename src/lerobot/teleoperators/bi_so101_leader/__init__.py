@@ -14,8 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_lekiwi import LeKiwiClientConfig, LeKiwiConfig
-from .lekiwi import LeKiwi
-from .lekiwi_client import LeKiwiClient
-
-__all__ = ["LeKiwi", "LeKiwiConfig", "LeKiwiClient", "LeKiwiClientConfig"]
+from .bi_so101_leader import BiSO101Leader
+from .config_bi_so101_leader import BiSO101LeaderConfig

@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,8 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_lekiwi import LeKiwiClientConfig, LeKiwiConfig
-from .lekiwi import LeKiwi
-from .lekiwi_client import LeKiwiClient
+from dataclasses import dataclass
 
-__all__ = ["LeKiwi", "LeKiwiConfig", "LeKiwiClient", "LeKiwiClientConfig"]
+from ..config import RobotConfig
+
+
+@RobotConfig.register_subclass("xlerobot_mount")
+@dataclass
+class XLeRobotMountConfig(RobotConfig):
+    """Placeholder config for the XLeRobot top camera mount."""
+
+    pan_key: str = "mount_pan.pos"
+    tilt_key: str = "mount_tilt.pos"

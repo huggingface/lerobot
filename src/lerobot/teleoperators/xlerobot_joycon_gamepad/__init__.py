@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_lekiwi import LeKiwiClientConfig, LeKiwiConfig
-from .lekiwi import LeKiwi
-from .lekiwi_client import LeKiwiClient
+from .config import XLeRobotJoyconGamepadConfig
+from .teleop import XLeRobotJoyconGamepad
 
-__all__ = ["LeKiwi", "LeKiwiConfig", "LeKiwiClient", "LeKiwiClientConfig"]
+__all__ = ["XLeRobotJoyconGamepad", "XLeRobotJoyconGamepadConfig"]

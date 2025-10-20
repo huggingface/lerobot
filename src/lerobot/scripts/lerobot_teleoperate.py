@@ -71,22 +71,30 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    bi_so101_follower,
     hope_jr,
     koch_follower,
+    lekiwi_base,
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xlerobot,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_so100_leader,
+    bi_so101_leader,
     gamepad,
     homunculus,
     koch_leader,
+    lekiwi_base_gamepad,
+    lekiwi_base_joycon,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    xlerobot_joycon_gamepad,
+    xlerobot_leader_gamepad,
 )
 from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
@@ -175,7 +183,7 @@ def teleop_loop(
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
         loop_s = time.perf_counter() - loop_start
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        logging.debug("teleop loop time: %.2fms (%.0f Hz)", loop_s * 1e3, 1 / loop_s)
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
