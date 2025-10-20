@@ -187,7 +187,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                         continue
                     try:
                         val = getattr(cfg.policy, attr)
-                    except Exception:
+                    except AttributeError:
                         continue
                     if isinstance(val, (int, float)):
                         new_val = val * world_size
