@@ -34,7 +34,7 @@ class OpenCVCameraConfig(CameraConfig):
     OpenCVCameraConfig(/dev/video4, 60, 640, 480)   # 640x480 @ 60FPS
 
     # Advanced configurations with FOURCC format
-    OpenCVCameraConfig(128422271347, 30, 640, 480, rotation=Cv2Rotation.ROTATE_90, fourcc="MJPG")     # With MJPG format
+    OpenCVCameraConfig(128422271347, 30, 640, 480, rotation=Cv2Rotation.ROTATE_90, fourcc="MJPG")     # With 90° rotation and MJPG format
     OpenCVCameraConfig(0, 30, 1280, 720, fourcc="YUYV")     # With YUYV format
     ```
 
