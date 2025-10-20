@@ -229,9 +229,6 @@ exclude_dirs = [
     "tests",
     "benchmarks",
     "src/lerobot/datasets/push_dataset_to_hub",
-    "src/lerobot/datasets/v2/convert_dataset_v1_to_v2",
-    "src/lerobot/policies/pi0/conversion_scripts",
-    "src/lerobot/scripts/push_dataset_to_hub.py",
 ]
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
@@ -285,7 +282,6 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "lerobot.envs.*"
-# Enable type checking only for the envs module
 ignore_errors = false
 
 
@@ -301,9 +297,9 @@ ignore_errors = false
 # module = "lerobot.optim.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.model.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.model.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.processor.*"
