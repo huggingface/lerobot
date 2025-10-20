@@ -181,12 +181,14 @@ class OpenCVCamera(Camera):
 
     def _configure_capture_settings(self) -> None:
         """
-        Applies the specified FPS, width, and height settings to the connected camera.
+        Applies the specified FOURCC, FPS, width, and height settings to the connected camera.
 
         This method attempts to set the camera properties via OpenCV. It checks if
         the camera successfully applied the settings and raises an error if not.
+        FOURCC is set first (if specified) as it can affect the available FPS and resolution options.
 
         Args:
+            fourcc: The desired FOURCC code (e.g., "MJPG", "YUYV"). If None, auto-detect.
             fps: The desired frames per second. If None, the setting is skipped.
             width: The desired capture width. If None, the setting is skipped.
             height: The desired capture height. If None, the setting is skipped.
@@ -200,6 +202,9 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
+        # Set FOURCC first (if specified) as it can affect available FPS/resolution options
+        if self.config.fourcc is not None:
+            self._validate_fourcc()
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
 
@@ -234,6 +239,23 @@ class OpenCVCamera(Camera):
         # Use math.isclose for robust float comparison
         if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise RuntimeError(f"{self} failed to set fps={self.fps} ({actual_fps=}).")
+
+    def _validate_fourcc(self) -> None:
+        """Validates and sets the camera's FOURCC code."""
+
+        fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)
+        success = self.videocapture.set(cv2.CAP_PROP_FOURCC, fourcc_code)
+        actual_fourcc_code = self.videocapture.get(cv2.CAP_PROP_FOURCC)
+
+        # Convert actual FOURCC code back to string for comparison
+        actual_fourcc_code_int = int(actual_fourcc_code)
+        actual_fourcc = "".join([chr((actual_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
+
+        if not success or actual_fourcc != self.config.fourcc:
+            logger.warning(
+                f"{self} failed to set fourcc={self.config.fourcc} (actual={actual_fourcc}, success={success}). "
+                f"Continuing with default format."
+            )
 
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
@@ -287,6 +309,12 @@ class OpenCVCamera(Camera):
                 default_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 default_fps = camera.get(cv2.CAP_PROP_FPS)
                 default_format = camera.get(cv2.CAP_PROP_FORMAT)
+
+                # Get FOURCC code and convert to string
+                default_fourcc_code = camera.get(cv2.CAP_PROP_FOURCC)
+                default_fourcc_code_int = int(default_fourcc_code)
+                default_fourcc = "".join([chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
+
                 camera_info = {
                     "name": f"OpenCV Camera @ {target}",
                     "type": "OpenCV",
@@ -294,6 +322,7 @@ class OpenCVCamera(Camera):
                     "backend_api": camera.getBackendName(),
                     "default_stream_profile": {
                         "format": default_format,
+                        "fourcc": default_fourcc,
                         "width": default_width,
                         "height": default_height,
                         "fps": default_fps,
