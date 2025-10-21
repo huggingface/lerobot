@@ -64,6 +64,7 @@ from lerobot.robots import (  # noqa: F401
 )
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
+    EEObservationStep,
     EEReferenceAndDelta,
     ForwardKinematicsJointsToEEObservation,
     GripperVelocityToJoint,
@@ -429,6 +430,12 @@ def make_processors(
                 motor_names=motor_names,
             )
         )
+        if cfg.processor.observation is not None and cfg.processor.observation.add_ee_pose_to_observation:
+            env_pipeline_steps.append(
+                EEObservationStep(
+                    use_rotation=True,  # TODO(jpizarrom): make this configurable
+                )
+            )
 
     if cfg.processor.image_preprocessing is not None:
         env_pipeline_steps.append(

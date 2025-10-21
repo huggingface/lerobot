@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.model.kinematics import RobotKinematics
@@ -30,6 +31,7 @@ from lerobot.processor import (
     RobotActionProcessorStep,
     TransitionKey,
 )
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.rotation import Rotation
 
 
@@ -621,3 +623,50 @@ class InverseKinematicsRLStep(ProcessorStep):
     def reset(self):
         """Resets the initial guess for the IK solver."""
         self.q_curr = None
+
+
+@dataclass
+@ProcessorStepRegistry.register("ee_observation")
+class EEObservationStep(ObservationProcessorStep):
+    use_rotation: bool = False
+
+    def observation(self, observation: dict) -> dict:
+        ee_pose_list = [
+            observation["ee.x"],
+            observation["ee.y"],
+            observation["ee.z"],
+        ]
+        if self.use_rotation:
+            ee_pose_list.extend(
+                [
+                    observation["ee.wx"],
+                    observation["ee.wy"],
+                    observation["ee.wz"],
+                ]
+            )
+        # gripper_pos = action.pop("ee.gripper_pos")
+        ee_pose = torch.tensor(ee_pose_list, dtype=torch.float32).unsqueeze(0)
+
+        current_state = observation.get(OBS_STATE)
+        if current_state is None:
+            return observation
+
+        extended_state = torch.cat([current_state, ee_pose], dim=-1)
+
+        # Create new observation dict
+        new_observation = dict(observation)
+        new_observation[OBS_STATE] = extended_state
+
+        return new_observation
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        if OBS_STATE in features[PipelineFeatureType.OBSERVATION]:
+            original_feature = features[PipelineFeatureType.OBSERVATION][OBS_STATE]
+            new_shape = (original_feature.shape[0] + 3,) + original_feature.shape[1:]
+
+            features[PipelineFeatureType.OBSERVATION][OBS_STATE] = PolicyFeature(
+                type=original_feature.type, shape=new_shape
+            )
+        return features
