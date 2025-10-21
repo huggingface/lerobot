@@ -28,6 +28,35 @@ import torch
 from lerobot.transport import services_pb2
 from lerobot.utils.transition import Transition
 
+def safe_torch_load(path, map_location=None):
+    """Safely load a PyTorch model with security checks."""
+    import os
+    import warnings
+    import torch
+    
+    # Validate that the path is a local file (not a URL or remote path)
+    if not isinstance(path, (str, os.PathLike)):
+        raise ValueError("Path must be a string or PathLike object")
+    
+    path_str = str(path)
+    if path_str.startswith(('http://', 'https://', 'ftp://', '//')):
+        raise ValueError("Loading from remote URLs is not allowed for security reasons")
+    
+    if not os.path.exists(path_str):
+        raise FileNotFoundError(f"Model file not found: {path_str}")
+    
+    # Try to load with weights_only=True first (safer)
+    try:
+        return safe_torch_load(path, map_location=map_location, weights_only=True)
+    except (TypeError, RuntimeError) as e:
+        # Fall back to regular loading with a warning
+        warnings.warn(
+            f"Loading model with pickle (unsafe). Consider updating the model format. Error: {e}",
+            SecurityWarning,
+            stacklevel=2
+        )
+        return safe_torch_load(path, map_location=map_location)
+
 CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 
@@ -119,7 +148,7 @@ def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:
 def bytes_to_state_dict(buffer: bytes) -> dict[str, torch.Tensor]:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
-    return torch.load(buffer, weights_only=True)
+    return safe_torch_load(buffer, weights_only=True)
 
 
 def python_object_to_bytes(python_object: Any) -> bytes:
@@ -137,7 +166,7 @@ def bytes_to_python_object(buffer: bytes) -> Any:
 def bytes_to_transitions(buffer: bytes) -> list[Transition]:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
-    transitions = torch.load(buffer, weights_only=True)
+    transitions = safe_torch_load(buffer, weights_only=True)
     return transitions
 
 
