@@ -626,7 +626,7 @@ def control_loop(
                 **observations,
                 ACTION: action_to_record.cpu(),
                 REWARD: np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
-                DONE: np.array([terminated or truncated], dtype=bool),
+                DONE: np.array([terminated], dtype=bool),
             }
             if use_gripper:
                 discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
