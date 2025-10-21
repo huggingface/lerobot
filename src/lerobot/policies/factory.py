@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any, TypedDict
 
@@ -46,7 +47,6 @@ from lerobot.processor.converters import (
     transition_to_policy_action,
 )
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
-from lerobot.utils.import_utils import get_policy_cls_from_policy_name, make_processors_from_policy_config
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -104,7 +104,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         return SmolVLAPolicy
     else:
         try:
-            return get_policy_cls_from_policy_name(name=name)
+            return _get_policy_cls_from_policy_name(name=name)
         except Exception as e:
             raise ValueError(f"Policy type '{name}' is not available.") from e
 
@@ -303,7 +303,7 @@ def make_pre_post_processors(
 
     else:
         try:
-            processors = make_processors_from_policy_config(
+            processors = _make_processors_from_policy_config(
                 config=policy_cfg,
                 dataset_stats=kwargs.get("dataset_stats"),
             )
@@ -395,3 +395,57 @@ def make_policy(
     # policy = torch.compile(policy, mode="reduce-overhead")
 
     return policy
+
+
+def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedConfig]:
+    """Get policy class from its registered name using dynamic imports.
+
+    This is used as a helper function to import policies from 3rd party lerobot plugins.
+
+    Args:
+        name: The name of the policy.
+    Returns:
+        The policy class corresponding to the given name.
+    """
+    if name not in PreTrainedConfig.get_known_choices():
+        raise ValueError(
+            f"Unknown policy name '{name}'. Available policies: {PreTrainedConfig.get_known_choices()}"
+        )
+
+    config_cls = PreTrainedConfig.get_choice_class(name)
+    config_cls_name = config_cls.__name__
+
+    cls_name = config_cls_name[:-6] + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
+    module_path = config_cls.__module__.replace(
+        "configuration_", "modeling_"
+    )  # e.g., configuration_diffusion -> modeling_diffusion
+
+    module = importlib.import_module(module_path)
+    policy_cls = getattr(module, cls_name)
+    return policy_cls
+
+
+def _make_processors_from_policy_config(
+    config: PreTrainedConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+) -> tuple[Any, Any]:
+    """Create pre- and post-processors from a policy configuration using dynamic imports.
+    Args:
+        config: The policy configuration object.
+        dataset_stats: Dataset statistics for normalization.
+    Returns:
+        A tuple containing the input (pre-processor) and output (post-processor) pipelines.
+    """
+
+    policy_type = config.type
+    print(policy_type)
+    function_name = f"make_{policy_type}_pre_post_processors"
+    module_path = config.__class__.__module__.replace(
+        "configuration_", "processor_"
+    )  # e.g., configuration_diffusion -> processor_diffusion
+    logging.debug(
+        f"Instantiating pre/post processors using function '{function_name}' from module '{module_path}'"
+    )
+    module = importlib.import_module(module_path)
+    function = getattr(module, function_name)
+    return function(config, dataset_stats=dataset_stats)
