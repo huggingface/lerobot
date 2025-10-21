@@ -1,6 +1,6 @@
 # ACT (Action Chunking with Transformers)
 
-ACT is a **lightweight and efficient policy for imitation learning**, especially well-suited for fine-grained manipulation tasks. It's the **first model we recommend when you're starting out** with LeRobot due to its fast training time, low computational requirements, and strong performance.
+ACT는 **모방 학습을 위한 경량이고 효율적인 정책**으로, 특히 미세한 조작 작업에 적합합니다. 빠른 학습 시간, 낮은 계산 요구 사항, 강력한 성능으로 인해 LeRobot을 시작할 때 **권장하는 첫 번째 모델**입니다.
 
 <div class="video-container">
   <iframe
@@ -14,44 +14,44 @@ ACT is a **lightweight and efficient policy for imitation learning**, especially
   ></iframe>
 </div>
 
-_Watch this tutorial from the LeRobot team to learn how ACT works: [LeRobot ACT Tutorial](https://www.youtube.com/watch?v=ft73x0LfGpM)_
+_ACT가 작동하는 방식을 배우려면 LeRobot 팀의 이 튜토리얼을 시청하세요: [LeRobot ACT 튜토리얼](https://www.youtube.com/watch?v=ft73x0LfGpM)_
 
-## Model Overview
+## 모델 개요
 
-Action Chunking with Transformers (ACT) was introduced in the paper [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705) by Zhao et al. The policy was designed to enable precise, contact-rich manipulation tasks using affordable hardware and minimal demonstration data.
+Action Chunking with Transformers (ACT)는 Zhao 등의 논문 [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705)에서 소개되었습니다. 이 정책은 저렴한 하드웨어와 최소한의 시연 데이터를 사용하여 정확하고 접촉이 많은 조작 작업을 가능하게 하도록 설계되었습니다.
 
-### Why ACT is Great for Beginners
+### ACT가 초보자에게 적합한 이유
 
-ACT stands out as an excellent starting point for several reasons:
+ACT는 여러 가지 이유로 훌륭한 출발점입니다:
 
-- **Fast Training**: Trains in a few hours on a single GPU
-- **Lightweight**: Only ~80M parameters, making it efficient and easy to work with
-- **Data Efficient**: Often achieves high success rates with just 50 demonstrations
+- **빠른 학습**: 단일 GPU에서 몇 시간 만에 학습
+- **경량**: 약 80M 매개변수만으로 효율적이고 작업하기 쉬움
+- **데이터 효율적**: 단 50개의 시연으로도 높은 성공률을 달성
 
-### Architecture
+### 아키텍처
 
-ACT uses a transformer-based architecture with three main components:
+ACT는 세 가지 주요 구성 요소로 구성된 트랜스포머 기반 아키텍처를 사용합니다:
 
-1. **Vision Backbone**: ResNet-18 processes images from multiple camera viewpoints
-2. **Transformer Encoder**: Synthesizes information from camera features, joint positions, and a learned latent variable
-3. **Transformer Decoder**: Generates coherent action sequences using cross-attention
+1. **비전 백본**: ResNet-18이 여러 카메라 시점의 이미지를 처리
+2. **트랜스포머 인코더**: 카메라 특징, 관절 위치 및 학습된 잠재 변수의 정보를 합성
+3. **트랜스포머 디코더**: 교차 어텐션을 사용하여 일관된 액션 시퀀스 생성
 
-The policy takes as input:
+정책은 다음을 입력으로 받습니다:
 
-- Multiple RGB images (e.g., from wrist cameras, front/top cameras)
-- Current robot joint positions
-- A latent style variable `z` (learned during training, set to zero during inference)
+- 여러 RGB 이미지 (예: 손목 카메라, 전면/상단 카메라에서)
+- 현재 로봇 관절 위치
+- 잠재 스타일 변수 `z` (학습 중 학습되며 추론 중에는 0으로 설정)
 
-And outputs a chunk of `k` future action sequences.
+그리고 `k`개의 미래 액션 시퀀스 청크를 출력합니다.
 
-## Installation Requirements
+## 설치 요구 사항
 
-1. Install LeRobot by following our [Installation Guide](./installation).
-2. ACT is included in the base LeRobot installation, so no additional dependencies are needed!
+1. [설치 가이드](./installation)를 따라 LeRobot을 설치합니다.
+2. ACT는 기본 LeRobot 설치에 포함되어 있으므로 추가 종속성이 필요하지 않습니다!
 
-## Training ACT
+## ACT 학습
 
-ACT works seamlessly with the standard LeRobot training pipeline. Here's a complete example for training ACT on your dataset:
+ACT는 표준 LeRobot 학습 파이프라인과 원활하게 작동합니다. 데이터셋에서 ACT를 학습하는 완전한 예제는 다음과 같습니다:
 
 ```bash
 lerobot-train \
@@ -64,19 +64,19 @@ lerobot-train \
   --policy.repo_id=${HF_USER}/act_policy
 ```
 
-### Training Tips
+### 학습 팁
 
-1. **Start with defaults**: ACT's default hyperparameters work well for most tasks
-2. **Training duration**: Expect a few hours for 100k training steps on a single GPU
-3. **Batch size**: Start with batch size 8 and adjust based on your GPU memory
+1. **기본값으로 시작**: ACT의 기본 하이퍼파라미터는 대부분의 작업에 잘 작동합니다
+2. **학습 기간**: 단일 GPU에서 100k 학습 스텝에 몇 시간이 소요됩니다
+3. **배치 크기**: 배치 크기 8로 시작하고 GPU 메모리에 따라 조정합니다
 
-### Train using Google Colab
+### Google Colab을 사용한 학습
 
-If your local computer doesn't have a powerful GPU, you can utilize Google Colab to train your model by following the [ACT training notebook](./notebooks#training-act).
+로컬 컴퓨터에 강력한 GPU가 없는 경우 [ACT 학습 노트북](./notebooks#training-act)을 따라 Google Colab을 활용하여 모델을 학습할 수 있습니다.
 
-## Evaluating ACT
+## ACT 평가
 
-Once training is complete, you can evaluate your ACT policy using the `lerobot-record` command with your trained policy. This will run inference and record evaluation episodes:
+학습이 완료되면 학습된 정책과 함께 `lerobot-record` 명령을 사용하여 ACT 정책을 평가할 수 있습니다. 이렇게 하면 추론이 실행되고 평가 에피소드가 기록됩니다:
 
 ```bash
 lerobot-record \

@@ -1,18 +1,18 @@
-# Cameras
+# 카메라
 
-LeRobot offers multiple options for video capture, including phone cameras, built-in laptop cameras, external webcams, and Intel RealSense cameras. To efficiently record frames from most cameras, you can use either the `OpenCVCamera` or `RealSenseCamera` class. For additional compatibility details on the `OpenCVCamera` class, refer to the [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
+LeRobot은 휴대폰 카메라, 내장 노트북 카메라, 외부 웹캠, Intel RealSense 카메라를 포함한 비디오 캡처를 위한 여러 옵션을 제공합니다. 대부분의 카메라에서 프레임을 효율적으로 기록하려면 `OpenCVCamera` 또는 `RealSenseCamera` 클래스를 사용할 수 있습니다. `OpenCVCamera` 클래스의 추가 호환성 세부 정보는 [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html)를 참조하세요.
 
-### Finding your camera
+### 카메라 찾기
 
-To instantiate a camera, you need a camera identifier. This identifier might change if you reboot your computer or re-plug your camera, a behavior mostly dependant on your operating system.
+카메라를 인스턴스화하려면 카메라 식별자가 필요합니다. 이 식별자는 컴퓨터를 재부팅하거나 카메라를 다시 연결하면 변경될 수 있으며, 이는 주로 운영 체제에 따라 다릅니다.
 
-To find the camera indices of the cameras plugged into your system, run the following script:
+시스템에 연결된 카메라의 카메라 인덱스를 찾으려면 다음 스크립트를 실행하세요:
 
 ```bash
-lerobot-find-cameras opencv # or realsense for Intel Realsense cameras
+lerobot-find-cameras opencv # 또는 Intel Realsense 카메라의 경우 realsense
 ```
 
-The output will look something like this if you have two cameras connected:
+두 개의 카메라가 연결되어 있는 경우 출력은 다음과 같습니다:
 
 ```
 --- Detected Cameras ---
@@ -27,18 +27,18 @@ Camera #0:
     Height: 1080
     Fps: 15.0
 --------------------
-(more cameras ...)
+(더 많은 카메라 ...)
 ```
 
 > [!WARNING]
-> When using Intel RealSense cameras in `macOS`, you could get this [error](https://github.com/IntelRealSense/librealsense/issues/12307): `Error finding RealSense cameras: failed to set power state`, this can be solved by running the same command with `sudo` permissions. Note that using RealSense cameras in `macOS` is unstable.
+> `macOS`에서 Intel RealSense 카메라를 사용할 때 이 [오류](https://github.com/IntelRealSense/librealsense/issues/12307)가 발생할 수 있습니다: `Error finding RealSense cameras: failed to set power state`. 이는 `sudo` 권한으로 동일한 명령을 실행하여 해결할 수 있습니다. `macOS`에서 RealSense 카메라를 사용하는 것은 불안정합니다.
 
-## Use Cameras
+## 카메라 사용
 
-Below are two examples, demonstrating how to work with the API.
+다음은 API 작업 방법을 보여주는 두 가지 예제입니다.
 
-- **Asynchronous frame capture** using an OpenCV-based camera
-- **Color and depth capture** using an Intel RealSense camera
+- OpenCV 기반 카메라를 사용한 **비동기 프레임 캡처**
+- Intel RealSense 카메라를 사용한 **컬러 및 깊이 캡처**
 
 <hfoptions id="shell_restart">
 <hfoption id="Open CV Camera">
@@ -49,7 +49,7 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
 
-# Construct an `OpenCVCameraConfig` with your desired FPS, resolution, color mode, and rotation.
+# 원하는 FPS, 해상도, 색상 모드 및 회전으로 `OpenCVCameraConfig`를 구성합니다.
 config = OpenCVCameraConfig(
     index_or_path=0,
     fps=15,
@@ -59,11 +59,11 @@ config = OpenCVCameraConfig(
     rotation=Cv2Rotation.NO_ROTATION
 )
 
-# Instantiate and connect an `OpenCVCamera`, performing a warm-up read (default).
+# `OpenCVCamera`를 인스턴스화하고 연결하며, 워밍업 읽기를 수행합니다(기본값).
 camera = OpenCVCamera(config)
 camera.connect()
 
-# Read frames asynchronously in a loop via `async_read(timeout_ms)`
+# `async_read(timeout_ms)`를 통해 루프에서 비동기적으로 프레임을 읽습니다
 try:
     for i in range(10):
         frame = camera.async_read(timeout_ms=200)
@@ -82,7 +82,7 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
 
-# Create a `RealSenseCameraConfig` specifying your camera’s serial number and enabling depth.
+# 카메라의 일련 번호를 지정하고 깊이를 활성화하는 `RealSenseCameraConfig`를 생성합니다.
 config = RealSenseCameraConfig(
     serial_number_or_name="233522074606",
     fps=15,
@@ -93,11 +93,11 @@ config = RealSenseCameraConfig(
     rotation=Cv2Rotation.NO_ROTATION
 )
 
-# Instantiate and connect a `RealSenseCamera` with warm-up read (default).
+# 워밍업 읽기(기본값)와 함께 `RealSenseCamera`를 인스턴스화하고 연결합니다.
 camera = RealSenseCamera(config)
 camera.connect()
 
-# Capture a color frame via `read()` and a depth map via `read_depth()`.
+# `read()`를 통해 컬러 프레임을 캡처하고 `read_depth()`를 통해 깊이 맵을 캡처합니다.
 try:
     color_frame = camera.read()
     depth_map = camera.read_depth()
@@ -111,27 +111,27 @@ finally:
 </hfoption>
 </hfoptions>
 
-## Use your phone
+## 휴대폰 사용
 
 <hfoptions id="use phone">
 <hfoption id="Mac">
 
-To use your iPhone as a camera on macOS, enable the Continuity Camera feature:
+macOS에서 iPhone을 카메라로 사용하려면 Continuity Camera 기능을 활성화하세요:
 
-- Ensure your Mac is running macOS 13 or later, and your iPhone is on iOS 16 or later.
-- Sign in both devices with the same Apple ID.
-- Connect your devices with a USB cable or turn on Wi-Fi and Bluetooth for a wireless connection.
+- Mac이 macOS 13 이상을 실행하고 있고 iPhone이 iOS 16 이상인지 확인하세요.
+- 두 기기 모두 동일한 Apple ID로 로그인하세요.
+- USB 케이블로 기기를 연결하거나 무선 연결을 위해 Wi-Fi와 Bluetooth를 켜세요.
 
-For more details, visit [Apple support](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac).
+자세한 내용은 [Apple 지원](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac)을 방문하세요.
 
-Your iPhone should be detected automatically when running the camera setup script in the next section.
+다음 섹션의 카메라 설정 스크립트를 실행할 때 iPhone이 자동으로 감지됩니다.
 
 </hfoption>
 <hfoption id="Linux">
 
-If you want to use your phone as a camera on Linux, follow these steps to set up a virtual camera
+Linux에서 휴대폰을 카메라로 사용하려면 다음 단계에 따라 가상 카메라를 설정하세요
 
-1. _Install `v4l2loopback-dkms` and `v4l-utils`_. Those packages are required to create virtual camera devices (`v4l2loopback`) and verify their settings with the `v4l2-ctl` utility from `v4l-utils`. Install them using:
+1. _`v4l2loopback-dkms` 및 `v4l-utils` 설치_. 이러한 패키지는 가상 카메라 디바이스(`v4l2loopback`)를 생성하고 `v4l-utils`의 `v4l2-ctl` 유틸리티로 설정을 확인하는 데 필요합니다. 다음을 사용하여 설치하세요:
 
 <!-- prettier-ignore-start -->
 ```python
@@ -139,8 +139,8 @@ sudo apt install v4l2loopback-dkms v4l-utils
 ```
 <!-- prettier-ignore-end -->
 
-2. _Install [DroidCam](https://droidcam.app) on your phone_. This app is available for both iOS and Android.
-3. _Install [OBS Studio](https://obsproject.com)_. This software will help you manage the camera feed. Install it using [Flatpak](https://flatpak.org):
+2. _휴대폰에 [DroidCam](https://droidcam.app) 설치_. 이 앱은 iOS와 Android 모두에서 사용할 수 있습니다.
+3. _[OBS Studio](https://obsproject.com) 설치_. 이 소프트웨어는 카메라 피드를 관리하는 데 도움이 됩니다. [Flatpak](https://flatpak.org)을 사용하여 설치하세요:
 
 <!-- prettier-ignore-start -->
 ```python
@@ -148,7 +148,7 @@ flatpak install flathub com.obsproject.Studio
 ```
 <!-- prettier-ignore-end -->
 
-4. _Install the DroidCam OBS plugin_. This plugin integrates DroidCam with OBS Studio. Install it with:
+4. _DroidCam OBS 플러그인 설치_. 이 플러그인은 DroidCam을 OBS Studio와 통합합니다. 다음으로 설치하세요:
 
 <!-- prettier-ignore-start -->
 ```python
@@ -156,7 +156,7 @@ flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
 ```
 <!-- prettier-ignore-end -->
 
-5. _Start OBS Studio_. Launch with:
+5. _OBS Studio 시작_. 다음으로 시작하세요:
 
 <!-- prettier-ignore-start -->
 ```python
@@ -164,10 +164,10 @@ flatpak run com.obsproject.Studio
 ```
 <!-- prettier-ignore-end -->
 
-6. _Add your phone as a source_. Follow the instructions [here](https://droidcam.app/obs/usage). Be sure to set the resolution to `640x480`.
-7. _Adjust resolution settings_. In OBS Studio, go to `File > Settings > Video`. Change the `Base(Canvas) Resolution` and the `Output(Scaled) Resolution` to `640x480` by manually typing it in.
-8. _Start virtual camera_. In OBS Studio, follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
-9. _Verify the virtual camera setup_. Use `v4l2-ctl` to list the devices:
+6. _휴대폰을 소스로 추가_. [여기](https://droidcam.app/obs/usage)의 지침을 따르세요. 해상도를 `640x480`으로 설정해야 합니다.
+7. _해상도 설정 조정_. OBS Studio에서 `File > Settings > Video`로 이동하세요. `Base(Canvas) Resolution`과 `Output(Scaled) Resolution`을 수동으로 입력하여 `640x480`으로 변경하세요.
+8. _가상 카메라 시작_. OBS Studio에서 [여기](https://obsproject.com/kb/virtual-camera-guide)의 지침을 따르세요.
+9. _가상 카메라 설정 확인_. `v4l2-ctl`을 사용하여 디바이스를 나열하세요:
 
 <!-- prettier-ignore-start -->
 ```python
@@ -175,14 +175,14 @@ v4l2-ctl --list-devices
 ```
 <!-- prettier-ignore-end -->
 
-You should see an entry like:
+다음과 같은 항목이 표시되어야 합니다:
 
 ```
 VirtualCam (platform:v4l2loopback-000):
 /dev/video1
 ```
 
-10. _Check the camera resolution_. Use `v4l2-ctl` to ensure that the virtual camera output resolution is `640x480`. Change `/dev/video1` to the port of your virtual camera from the output of `v4l2-ctl --list-devices`.
+10. _카메라 해상도 확인_. `v4l2-ctl`을 사용하여 가상 카메라 출력 해상도가 `640x480`인지 확인하세요. `/dev/video1`을 `v4l2-ctl --list-devices` 출력의 가상 카메라 포트로 변경하세요.
 
 <!-- prettier-ignore-start -->
 ```python
@@ -190,7 +190,7 @@ v4l2-ctl -d /dev/video1 --get-fmt-video
 ```
 <!-- prettier-ignore-end -->
 
-You should see an entry like:
+다음과 같은 항목이 표시되어야 합니다:
 
 ```
 >>> Format Video Capture:
@@ -198,9 +198,9 @@ You should see an entry like:
 >>>	Pixel Format      : 'YUYV' (YUYV 4:2:2)
 ```
 
-Troubleshooting: If the resolution is not correct you will have to delete the Virtual Camera port and try again as it cannot be changed.
+문제 해결: 해상도가 올바르지 않으면 Virtual Camera 포트를 삭제하고 다시 시도해야 합니다. 변경할 수 없습니다.
 
-If everything is set up correctly, you can proceed with the rest of the tutorial.
+모든 것이 올바르게 설정되었다면 튜토리얼의 나머지 부분을 진행할 수 있습니다.
 
 </hfoption>
 </hfoptions>

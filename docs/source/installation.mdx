@@ -1,124 +1,124 @@
-# Installation
+# 설치
 
-## Install [`miniforge`](https://conda-forge.org/download/)
+## [`miniforge`](https://conda-forge.org/download/) 설치
 
 ```bash
 wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
 bash Miniforge3-$(uname)-$(uname -m).sh
 ```
 
-## Environment Setup
+## 환경 설정
 
-Create a virtual environment with Python 3.10, using conda:
+conda를 사용하여 Python 3.10으로 가상 환경을 만듭니다:
 
 ```bash
 conda create -y -n lerobot python=3.10
 ```
 
-Then activate your conda environment, you have to do this each time you open a shell to use lerobot:
+그런 다음 conda 환경을 활성화합니다. lerobot을 사용하려면 셸을 열 때마다 이 작업을 수행해야 합니다:
 
 ```bash
 conda activate lerobot
 ```
 
-When using `conda`, install `ffmpeg` in your environment:
+`conda`를 사용할 때 환경에 `ffmpeg`를 설치합니다:
 
 ```bash
 conda install ffmpeg -c conda-forge
 ```
 
 > [!TIP]
-> This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
+> 이렇게 하면 일반적으로 `libsvtav1` 인코더로 컴파일된 플랫폼용 `ffmpeg 7.X`가 설치됩니다. `libsvtav1`이 지원되지 않는 경우(`ffmpeg -encoders`로 지원되는 인코더 확인), 다음을 수행할 수 있습니다:
 >
-> - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
+> - _[모든 플랫폼에서]_ 다음을 사용하여 명시적으로 `ffmpeg 7.X`를 설치합니다:
 >
 > ```bash
 > conda install ffmpeg=7.1.1 -c conda-forge
 > ```
 >
-> - _[On Linux only]_ If you want to bring your own ffmpeg: Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+> - _[Linux에만 해당]_ 자체 ffmpeg를 가져오려면: [ffmpeg 빌드 종속성](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies)을 설치하고 [libsvtav1로 소스에서 ffmpeg를 컴파일](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1)한 다음 `which ffmpeg`로 설치에 해당하는 ffmpeg 바이너리를 사용하는지 확인하세요.
 
-## Install LeRobot 🤗
+## LeRobot 설치 🤗
 
-### From Source
+### 소스에서 설치
 
-First, clone the repository and navigate into the directory:
+먼저 저장소를 복제하고 디렉토리로 이동합니다:
 
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
 
-Then, install the library in editable mode. This is useful if you plan to contribute to the code.
+그런 다음 편집 가능한 모드로 라이브러리를 설치합니다. 이는 코드에 기여할 계획이 있는 경우 유용합니다.
 
 ```bash
 pip install -e .
 ```
 
-### Installation from PyPI
+### PyPI에서 설치
 
-**Core Library:**
-Install the base package with:
+**핵심 라이브러리:**
+다음 명령으로 기본 패키지를 설치합니다:
 
 ```bash
 pip install lerobot
 ```
 
-_This installs only the default dependencies._
+_이것은 기본 종속성만 설치합니다._
 
-**Extra Features:**
-To install additional functionality, use one of the following:
+**추가 기능:**
+추가 기능을 설치하려면 다음 중 하나를 사용하세요:
 
 ```bash
-pip install 'lerobot[all]'          # All available features
-pip install 'lerobot[aloha,pusht]'  # Specific features (Aloha & Pusht)
-pip install 'lerobot[feetech]'      # Feetech motor support
+pip install 'lerobot[all]'          # 사용 가능한 모든 기능
+pip install 'lerobot[aloha,pusht]'  # 특정 기능 (Aloha & Pusht)
+pip install 'lerobot[feetech]'      # Feetech 모터 지원
 ```
 
-_Replace `[...]` with your desired features._
+_`[...]`를 원하는 기능으로 바꾸세요._
 
-**Available Tags:**
-For a full list of optional dependencies, see:
+**사용 가능한 태그:**
+선택적 종속성의 전체 목록은 다음을 참조하세요:
 https://pypi.org/project/lerobot/
 
-### Troubleshooting
+### 문제 해결
 
-If you encounter build errors, you may need to install additional dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
-To install these for linux run:
+빌드 오류가 발생하면 추가 종속성을 설치해야 할 수 있습니다: `cmake`, `build-essential`, `ffmpeg libs`.
+리눅스의 경우 다음을 실행하세요:
 
 ```bash
 sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config
 ```
 
-For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
+다른 시스템의 경우 다음을 참조하세요: [PyAV 컴파일](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
-## Optional dependencies
+## 선택적 종속성
 
-LeRobot provides optional extras for specific functionalities. Multiple extras can be combined (e.g., `.[aloha,feetech]`). For all available extras, refer to `pyproject.toml`.
+LeRobot은 특정 기능에 대한 선택적 추가 기능을 제공합니다. 여러 추가 기능을 결합할 수 있습니다(예: `.[aloha,feetech]`). 사용 가능한 모든 추가 기능은 `pyproject.toml`을 참조하세요.
 
-### Simulations
+### 시뮬레이션
 
-Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht))
-Example:
-
-```bash
-pip install -e ".[aloha]" # or "[pusht]" for example
-```
-
-### Motor Control
-
-For Koch v1.1 install the Dynamixel SDK, for SO100/SO101/Moss install the Feetech SDK.
+환경 패키지를 설치합니다: `aloha`([gym-aloha](https://github.com/huggingface/gym-aloha)) 또는 `pusht`([gym-pusht](https://github.com/huggingface/gym-pusht))
+예시:
 
 ```bash
-pip install -e ".[feetech]" # or "[dynamixel]" for example
+pip install -e ".[aloha]" # 또는 예를 들어 "[pusht]"
 ```
 
-### Experiment Tracking
+### 모터 제어
 
-To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
+Koch v1.1의 경우 Dynamixel SDK를 설치하고, SO100/SO101/Moss의 경우 Feetech SDK를 설치합니다.
+
+```bash
+pip install -e ".[feetech]" # 또는 예를 들어 "[dynamixel]"
+```
+
+### 실험 추적
+
+실험 추적을 위해 [Weights and Biases](https://docs.wandb.ai/quickstart)를 사용하려면 다음으로 로그인하세요:
 
 ```bash
 wandb login
 ```
 
-You can now assemble your robot if it's not ready yet, look for your robot type on the left. Then follow the link below to use Lerobot with your robot.
+이제 로봇이 아직 준비되지 않았다면 조립할 수 있습니다. 왼쪽에서 로봇 유형을 찾아보세요. 그런 다음 아래 링크를 따라 로봇과 함께 Lerobot을 사용하세요.

@@ -1,34 +1,34 @@
-# Asynchronous Inference
+# 비동기 추론
 
-With our [SmolVLA](https://huggingface.co/papers/2506.01844) we introduced a new way to run inference on real-world robots, **decoupling action prediction from action execution**.
-In this tutorial, we'll show how to use asynchronous inference (_async inference_) using a finetuned version of SmolVLA, and all the policies supported by LeRobot.
-**Try async inference with all the policies** supported by LeRobot!
+[SmolVLA](https://huggingface.co/papers/2506.01844)를 통해 실제 로봇에서 추론을 실행하는 새로운 방법인 **액션 예측과 액션 실행의 분리**를 도입했습니다.
+이 튜토리얼에서는 SmolVLA의 미세 조정 버전과 LeRobot이 지원하는 모든 정책을 사용하여 비동기 추론(_async inference_)을 사용하는 방법을 보여줍니다.
+**LeRobot이 지원하는 모든 정책**으로 비동기 추론을 시도해보세요!
 
-**What you'll learn:**
+**배울 내용:**
 
-1. Why asynchronous inference matters and how it compares to, more traditional, sequential inference.
-2. How to spin-up a `PolicyServer` and connect a `RobotClient` from the same machine, and even over the network.
-3. How to tune key parameters (`actions_per_chunk`, `chunk_size_threshold`) for your robot and policy.
+1. 비동기 추론이 중요한 이유와 더 전통적인 순차 추론과 비교하는 방법.
+2. 같은 머신에서 `PolicyServer`를 시작하고 `RobotClient`를 연결하는 방법, 심지어 네트워크를 통해서도.
+3. 로봇 및 정책에 대한 주요 매개변수(`actions_per_chunk`, `chunk_size_threshold`)를 조정하는 방법.
 
-If you get stuck, hop into our [Discord community](https://discord.gg/s3KuuzsPFb)!
+막히면 [Discord 커뮤니티](https://discord.gg/s3KuuzsPFb)로 오세요!
 
-In a nutshell: with _async inference_, your robot keeps acting while the policy server is already busy computing the next chunk of actions---eliminating "wait-for-inference" lags and unlocking smoother, more reactive behaviours.
-This is fundamentally different from synchronous inference (sync), where the robot stays idle while the policy computes the next chunk of actions.
+요약: _비동기 추론_을 사용하면 정책 서버가 이미 다음 액션 청크를 계산하는 동안 로봇이 계속 행동하여 "추론 대기" 지연을 제거하고 더 부드럽고 반응적인 동작을 가능하게 합니다.
+이것은 로봇이 정책이 다음 액션 청크를 계산하는 동안 유휴 상태로 있는 동기 추론(sync)과 근본적으로 다릅니다.
 
 ---
 
-## Getting started with async inference
+## 비동기 추론 시작하기
 
-You can read more information on asynchronous inference in our [blogpost](https://huggingface.co/blog/async-robot-inference). This guide is designed to help you quickly set up and run asynchronous inference in your environment.
+비동기 추론에 대한 자세한 정보는 [블로그 게시물](https://huggingface.co/blog/async-robot-inference)에서 읽을 수 있습니다. 이 가이드는 환경에서 비동기 추론을 빠르게 설정하고 실행하는 데 도움을 주기 위해 설계되었습니다.
 
-First, install `lerobot` with the `async` tag, to install the extra dependencies required to run async inference.
+먼저 비동기 추론을 실행하는 데 필요한 추가 종속성을 설치하기 위해 `async` 태그와 함께 `lerobot`을 설치합니다.
 
 ```shell
 pip install -e ".[async]"
 ```
 
-Then, spin up a policy server (in one terminal, or in a separate machine) specifying the host address and port for the client to connect to.
-You can spin up a policy server running:
+그런 다음 클라이언트가 연결할 호스트 주소와 포트를 지정하여 정책 서버를 시작합니다(한 터미널 또는 별도의 머신에서).
+다음을 실행하여 정책 서버를 시작할 수 있습니다:
 
 ```shell
 python -m lerobot.async_inference.policy_server \
@@ -36,45 +36,45 @@ python -m lerobot.async_inference.policy_server \
      --port=8080
 ```
 
-This will start a policy server listening on `127.0.0.1:8080` (`localhost`, port 8080). At this stage, the policy server is empty, as all information related to which policy to run and with which parameters are specified during the first handshake with the client. Spin up a client with:
+이렇게 하면 `127.0.0.1:8080`(`localhost`, 포트 8080)에서 수신 대기하는 정책 서버가 시작됩니다. 이 단계에서 정책 서버는 비어 있습니다. 실행할 정책 및 매개변수와 관련된 모든 정보는 클라이언트와의 첫 번째 핸드셰이크 중에 지정됩니다. 클라이언트를 시작합니다:
 
 ```shell
 python -m lerobot.async_inference.robot_client \
-    --server_address=127.0.0.1:8080 \ # SERVER: the host address and port of the policy server
-    --robot.type=so100_follower \ # ROBOT: your robot type
-    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: your robot port
-    --robot.id=follower_so100 \ # ROBOT: your robot id, to load calibration file
-    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: the cameras used to acquire frames, with keys matching the keys expected by the policy
-    --task="dummy" \ # POLICY: The task to run the policy on (`Fold my t-shirt`). Not necessarily defined for all policies, such as `act`
-    --policy_type=your_policy_type \ # POLICY: the type of policy to run (smolvla, act, etc)
-    --pretrained_name_or_path=user/model \ # POLICY: the model name/path on server to the checkpoint to run (e.g., lerobot/smolvla_base)
-    --policy_device=mps \ # POLICY: the device to run the policy on, on the server
-    --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
-    --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
-    --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
-    --debug_visualize_queue_size=True # CLIENT: whether to visualize the queue size at runtime
+    --server_address=127.0.0.1:8080 \ # SERVER: 정책 서버의 호스트 주소와 포트
+    --robot.type=so100_follower \ # ROBOT: 로봇 유형
+    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: 로봇 포트
+    --robot.id=follower_so100 \ # ROBOT: 캘리브레이션 파일을 로드하기 위한 로봇 ID
+    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: 정책이 기대하는 키와 일치하는 키로 프레임을 획득하는 데 사용되는 카메라
+    --task="dummy" \ # POLICY: 정책을 실행할 작업 (`Fold my t-shirt`). `act`와 같은 모든 정책에 대해 반드시 정의되지는 않습니다.
+    --policy_type=your_policy_type \ # POLICY: 실행할 정책 유형 (smolvla, act 등)
+    --pretrained_name_or_path=user/model \ # POLICY: 실행할 체크포인트에 대한 서버의 모델 이름/경로 (예: lerobot/smolvla_base)
+    --policy_device=mps \ # POLICY: 서버에서 정책을 실행할 디바이스
+    --actions_per_chunk=50 \ # POLICY: 한 번에 출력할 액션 수
+    --chunk_size_threshold=0.5 \ # CLIENT: 서버에 새 관찰을 보내기 전 청크 크기의 임계값
+    --aggregate_fn_name=weighted_average \ # CLIENT: 겹치는 부분에서 액션을 집계하는 함수
+    --debug_visualize_queue_size=True # CLIENT: 런타임에 큐 크기를 시각화할지 여부
 ```
 
-In summary, you need to specify instructions for:
+요약하면 다음에 대한 지침을 지정해야 합니다:
 
-- `SERVER`: the address and port of the policy server
-- `ROBOT`: the type of robot to connect to, the port to connect to, and the local `id` of the robot
-- `POLICY`: the type of policy to run, and the model name/path on server to the checkpoint to run. You also need to specify which device should the sever be using, and how many actions to output at once (capped at the policy max actions value).
-- `CLIENT`: the threshold for the chunk size before sending a new observation to the server, and the function to aggregate actions on overlapping portions. Optionally, you can also visualize the queue size at runtime, to help you tune the `CLIENT` parameters.
+- `SERVER`: 정책 서버의 주소와 포트
+- `ROBOT`: 연결할 로봇 유형, 연결할 포트 및 로봇의 로컬 `id`
+- `POLICY`: 실행할 정책 유형 및 실행할 체크포인트에 대한 서버의 모델 이름/경로. 또한 서버가 사용해야 하는 디바이스와 한 번에 출력할 액션 수(정책 최대 액션 값으로 제한됨)를 지정해야 합니다.
+- `CLIENT`: 서버에 새 관찰을 보내기 전 청크 크기의 임계값과 겹치는 부분에서 액션을 집계하는 함수. 선택적으로 런타임에 큐 크기를 시각화하여 `CLIENT` 매개변수를 조정하는 데 도움을 줄 수도 있습니다.
 
-Importantly,
+중요한 점은,
 
-- `actions_per_chunk` and `chunk_size_threshold` are key parameters to tune for your setup.
-- `aggregate_fn_name` is the function to aggregate actions on overlapping portions. You can either add a new one to a registry of functions, or add your own in `robot_client.py` (see [here](NOTE:addlinktoLOC))
-- `debug_visualize_queue_size` is a useful tool to tune the `CLIENT` parameters.
+- `actions_per_chunk`와 `chunk_size_threshold`는 설정에 맞게 조정해야 하는 주요 매개변수입니다.
+- `aggregate_fn_name`은 겹치는 부분에서 액션을 집계하는 함수입니다. 함수 레지스트리에 새 함수를 추가하거나 `robot_client.py`에 자체 함수를 추가할 수 있습니다([여기](NOTE:addlinktoLOC) 참조).
+- `debug_visualize_queue_size`는 `CLIENT` 매개변수를 조정하는 데 유용한 도구입니다.
 
-## Done! You should see your robot moving around by now 😉
+## 완료! 이제 로봇이 움직이는 것을 볼 수 있어야 합니다 😉
 
-## Async vs. synchronous inference
+## 비동기 vs. 동기 추론
 
-Synchronous inference relies on interleaving action chunk prediction and action execution. This inherently results in _idle frames_, frames where the robot awaits idle the policy's output: a new action chunk.
-In turn, inference is plagued by evident real-time lags, where the robot simply stops acting due to the lack of available actions.
-With robotics models increasing in size, this problem risks becoming only more severe.
+동기 추론은 액션 청크 예측과 액션 실행을 교대로 수행하는 데 의존합니다. 이는 본질적으로 _유휴 프레임_, 즉 로봇이 정책의 출력(새 액션 청크)을 기다리며 유휴 상태로 있는 프레임을 초래합니다.
+결과적으로 추론은 사용 가능한 액션 부족으로 인해 로봇이 단순히 행동을 멈추는 명백한 실시간 지연에 시달립니다.
+로봇 공학 모델의 크기가 증가함에 따라 이 문제는 더욱 심각해질 위험이 있습니다.
 
 <p align="center">
   <img
@@ -83,13 +83,12 @@ With robotics models increasing in size, this problem risks becoming only more s
   ></img>
 </p>
 <p align="center">
-  <i>Synchronous inference</i> makes the robot idle while the policy is
-  computing the next chunk of actions.
+  <i>동기 추론</i>은 정책이 다음 액션 청크를 계산하는 동안 로봇을 유휴 상태로 만듭니다.
 </p>
 
-To overcome this, we design async inference, a paradigm where action planning and execution are decoupled, resulting in (1) higher adaptability and, most importantly, (2) no idle frames.
-Crucially, with async inference, the next action chunk is computed _before_ the current one is exhausted, resulting in no idleness.
-Higher adaptability is ensured by aggregating the different action chunks on overlapping portions, obtaining an up-to-date plan and a tighter control loop.
+이를 극복하기 위해 우리는 액션 계획과 실행이 분리되어 (1) 더 높은 적응성과 가장 중요하게는 (2) 유휴 프레임이 없는 패러다임인 비동기 추론을 설계했습니다.
+결정적으로 비동기 추론을 사용하면 현재 청크가 소진되기 _전에_ 다음 액션 청크가 계산되어 유휴 상태가 없습니다.
+더 높은 적응성은 겹치는 부분에서 다른 액션 청크를 집계하여 최신 계획과 더 긴밀한 제어 루프를 얻음으로써 보장됩니다.
 
 <p align="center">
   <img
@@ -98,17 +97,16 @@ Higher adaptability is ensured by aggregating the different action chunks on ove
   ></img>
 </p>
 <p align="center">
-  <i>Asynchronous inference</i> results in no idleness because the next chunk is
-  computed before the current chunk is exhausted.
+  <i>비동기 추론</i>은 현재 청크가 소진되기 전에 다음 청크가 계산되므로 유휴 상태가 없습니다.
 </p>
 
 ---
 
-## Start the Policy Server
+## 정책 서버 시작
 
-Policy servers are wrappers around a `PreTrainedPolicy` interfacing them with observations coming from a robot client.
-Policy servers are initialized as empty containers which are populated with the requested policy specified in the initial handshake between the robot client and the policy server.
-As such, spinning up a policy server is as easy as specifying the host address and port. If you're running the policy server on the same machine as the robot client, you can use `localhost` as the host address.
+정책 서버는 로봇 클라이언트에서 들어오는 관찰과 인터페이스하는 `PreTrainedPolicy`의 래퍼입니다.
+정책 서버는 로봇 클라이언트와 정책 서버 간의 초기 핸드셰이크에서 지정된 요청된 정책으로 채워지는 빈 컨테이너로 초기화됩니다.
+따라서 정책 서버를 시작하는 것은 호스트 주소와 포트를 지정하는 것만큼 쉽습니다. 정책 서버를 로봇 클라이언트와 같은 머신에서 실행하는 경우 호스트 주소로 `localhost`를 사용할 수 있습니다.
 
 <hfoptions id="start_policy_server">
 <hfoption id="Command">
@@ -136,32 +134,32 @@ serve(config)
 </hfoption>
 </hfoptions>
 
-This listens on `localhost:8080` for an incoming connection from the associated`RobotClient`, which will communicate which policy to run during the first client-server handshake.
+이렇게 하면 관련 `RobotClient`의 들어오는 연결을 위해 `localhost:8080`에서 수신 대기하며, 첫 번째 클라이언트-서버 핸드셰이크 중에 실행할 정책을 전달합니다.
 
 ---
 
-## Launch the Robot Client
+## 로봇 클라이언트 시작
 
-`RobotClient` is a wrapper around a `Robot` instance, which `RobotClient` connects to the (possibly remote) `PolicyServer`.
-The `RobotClient` streams observations to the `PolicyServer`, and receives action chunks obtained running inference on the server (which we assume to have better computational resources than the robot controller).
+`RobotClient`는 `Robot` 인스턴스의 래퍼로, `RobotClient`가 (원격일 수 있는) `PolicyServer`에 연결합니다.
+`RobotClient`는 `PolicyServer`로 관찰을 스트리밍하고, 서버에서 추론을 실행하여 얻은 액션 청크를 수신합니다(로봇 컨트롤러보다 더 나은 계산 리소스를 가지고 있다고 가정합니다).
 
 <hfoptions id="start_robot_client">
 <hfoption id="Command">
 ```bash
 python -m lerobot.async_inference.robot_client \
-    --server_address=127.0.0.1:8080 \ # SERVER: the host address and port of the policy server
-    --robot.type=so100_follower \ # ROBOT: your robot type
-    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: your robot port
-    --robot.id=follower_so100 \ # ROBOT: your robot id, to load calibration file
-    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: the cameras used to acquire frames, with keys matching the keys expected by the policy
-    --task="dummy" \ # POLICY: The task to run the policy on (`Fold my t-shirt`). Not necessarily defined for all policies, such as `act`
-    --policy_type=your_policy_type \ # POLICY: the type of policy to run (smolvla, act, etc)
-    --pretrained_name_or_path=user/model \ # POLICY: the model name/path on server to the checkpoint to run (e.g., lerobot/smolvla_base)
-    --policy_device=mps \ # POLICY: the device to run the policy on, on the server
-    --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
-    --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
-    --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
-    --debug_visualize_queue_size=True # CLIENT: whether to visualize the queue size at runtime
+    --server_address=127.0.0.1:8080 \ # SERVER: 정책 서버의 호스트 주소와 포트
+    --robot.type=so100_follower \ # ROBOT: 로봇 유형
+    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: 로봇 포트
+    --robot.id=follower_so100 \ # ROBOT: 캘리브레이션 파일을 로드하기 위한 로봇 ID
+    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: 정책이 기대하는 키와 일치하는 키로 프레임을 획득하는 데 사용되는 카메라
+    --task="dummy" \ # POLICY: 정책을 실행할 작업 (`Fold my t-shirt`). `act`와 같은 모든 정책에 대해 반드시 정의되지는 않습니다.
+    --policy_type=your_policy_type \ # POLICY: 실행할 정책 유형 (smolvla, act 등)
+    --pretrained_name_or_path=user/model \ # POLICY: 실행할 체크포인트에 대한 서버의 모델 이름/경로 (예: lerobot/smolvla_base)
+    --policy_device=mps \ # POLICY: 서버에서 정책을 실행할 디바이스
+    --actions_per_chunk=50 \ # POLICY: 한 번에 출력할 액션 수
+    --chunk_size_threshold=0.5 \ # CLIENT: 서버에 새 관찰을 보내기 전 청크 크기의 임계값
+    --aggregate_fn_name=weighted_average \ # CLIENT: 겹치는 부분에서 액션을 집계하는 함수
+    --debug_visualize_queue_size=True # CLIENT: 런타임에 큐 크기를 시각화할지 여부
 ```
 </hfoption>
 <hfoption id="API example">
@@ -175,10 +173,10 @@ from lerobot.async_inference.configs import RobotClientConfig
 from lerobot.async_inference.robot_client import RobotClient
 from lerobot.async_inference.helpers import visualize_action_queue_size
 
-# 1. Create the robot instance
-"""Check out the cameras available in your setup by running `python lerobot/find_cameras.py`"""
-# these cameras must match the ones expected by the policy
-# check the config.json on the Hub for the policy you are using
+# 1. 로봇 인스턴스 생성
+"""시스템에서 사용 가능한 카메라를 확인하려면 `python lerobot/find_cameras.py`를 실행하세요"""
+# 이 카메라는 정책이 기대하는 것과 일치해야 합니다
+# 사용 중인 정책의 Hub에서 config.json을 확인하세요
 camera_cfg = {
     "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
     "side": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30)
@@ -190,7 +188,7 @@ robot_cfg = SO100FollowerConfig(
   cameras=camera_cfg
 )
 
-# 3. Create client configuration
+# 3. 클라이언트 구성 생성
 client_cfg = RobotClientConfig(
     robot=robot_cfg,
     server_address="localhost:8080",
@@ -198,27 +196,27 @@ client_cfg = RobotClientConfig(
     policy_type="smolvla",
     pretrained_name_or_path="fracapuano/smolvla_async",
     chunk_size_threshold=0.5,
-    actions_per_chunk=50,  # make sure this is less than the max actions of the policy
+    actions_per_chunk=50,  # 정책의 최대 액션보다 적은지 확인하세요
 )
 
-# 4. Create and start client
+# 4. 클라이언트 생성 및 시작
 client = RobotClient(client_cfg)
 
-# 5. Specify the task
+# 5. 작업 지정
 task = "Don't do anything, stay still"
 
 if client.start():
-    # Start action receiver thread
+    # 액션 수신자 스레드 시작
     action_receiver_thread = threading.Thread(target=client.receive_actions, daemon=True)
     action_receiver_thread.start()
 
     try:
-        # Run the control loop
+        # 제어 루프 실행
         client.control_loop(task)
     except KeyboardInterrupt:
         client.stop()
         action_receiver_thread.join()
-        # (Optionally) plot the action queue size
+        # (선택 사항) 액션 큐 크기 플롯
         visualize_action_queue_size(client.action_queue_size)
 ```
 <!-- prettier-ignore-end -->
@@ -226,14 +224,14 @@ if client.start():
 </hfoption>
 </hfoptions>
 
-The following two parameters are key in every setup:
+다음 두 매개변수는 모든 설정에서 핵심입니다:
 
 <table>
   <thead>
     <tr>
-      <th>Hyperparameter</th>
-      <th>Default</th>
-      <th>What it does</th>
+      <th>하이퍼파라미터</th>
+      <th>기본값</th>
+      <th>역할</th>
     </tr>
   </thead>
   <tbody>
@@ -243,7 +241,7 @@ The following two parameters are key in every setup:
       </td>
       <td>50</td>
       <td>
-        How many actions the policy outputs at once. Typical values: 10-50.
+        정책이 한 번에 출력하는 액션 수. 일반적인 값: 10-50.
       </td>
     </tr>
     <tr>
@@ -252,33 +250,32 @@ The following two parameters are key in every setup:
       </td>
       <td>0.7</td>
       <td>
-        When the queue is ≤ 50% full, the client sends a fresh observation.
-        Value in [0, 1].
+        큐가 ≤ 50% 찼을 때 클라이언트가 새로운 관찰을 보냅니다.
+        값은 [0, 1]입니다.
       </td>
     </tr>
   </tbody>
 </table>
 
 <Tip>
-  Different values of `actions_per_chunk` and `chunk_size_threshold` do result
-  in different behaviours.
+  `actions_per_chunk`와 `chunk_size_threshold`의 다른 값은 다른 동작을 초래합니다.
 </Tip>
 
-On the one hand, increasing the value of `actions_per_chunk` will result in reducing the likelihood of ending up with no actions to execute, as more actions will be available when the new chunk is computed.
-However, larger values of `actions_per_chunk` might also result in less precise actions, due to the compounding errors consequent to predicting actions over longer timespans.
+한편으로는 `actions_per_chunk` 값을 늘리면 새 청크가 계산될 때 더 많은 액션을 사용할 수 있으므로 실행할 액션이 없는 상황이 발생할 가능성이 줄어듭니다.
+그러나 `actions_per_chunk`의 더 큰 값은 더 긴 시간 범위에 걸쳐 액션을 예측하는 결과로 인한 복합 오류로 인해 덜 정확한 액션을 초래할 수도 있습니다.
 
-On the other hand, increasing the value of `chunk_size_threshold` will result in sending out to the `PolicyServer` observations for inference more often, resulting in a larger number of updates action chunks, overlapping on significant portions. This results in high adaptability, in the limit predicting one action chunk for each observation, which is in turn only marginally consumed while a new one is produced.
-This option does also put more pressure on the inference pipeline, as a consequence of the many requests. Conversely, values of `chunk_size_threshold` close to 0.0 collapse to the synchronous edge case, whereby new observations are only sent out whenever the current chunk is exhausted.
+반면에 `chunk_size_threshold` 값을 늘리면 `PolicyServer`에 추론을 위한 관찰을 더 자주 보내게 되어 상당한 부분에서 겹치는 업데이트 액션 청크가 더 많아집니다. 이는 높은 적응성을 초래하며, 극한에서는 각 관찰에 대해 하나의 액션 청크를 예측하고, 이는 새 청크가 생성되는 동안 약간만 소비됩니다.
+이 옵션은 많은 요청의 결과로 추론 파이프라인에 더 많은 압력을 가합니다. 반대로 0.0에 가까운 `chunk_size_threshold` 값은 현재 청크가 소진될 때만 새 관찰이 전송되는 동기 엣지 케이스로 축소됩니다.
 
-We found the default values of `actions_per_chunk` and `chunk_size_threshold` to work well in the experiments we developed for the [SmolVLA paper](https://huggingface.co/papers/2506.01844), but recommend experimenting with different values to find the best fit for your setup.
+우리는 `actions_per_chunk`와 `chunk_size_threshold`의 기본값이 [SmolVLA 논문](https://huggingface.co/papers/2506.01844)을 위해 개발한 실험에서 잘 작동하는 것을 발견했지만, 설정에 가장 적합한 값을 찾기 위해 다른 값을 실험해 볼 것을 권장합니다.
 
-### Tuning async inference for your setup
+### 설정에 맞게 비동기 추론 조정
 
-1. **Choose your computational resources carefully.** [PI0](https://huggingface.co/lerobot/pi0) occupies 14GB of memory at inference time, while [SmolVLA](https://huggingface.co/lerobot/smolvla_base) requires only ~2GB. You should identify the best computational resource for your use case keeping in mind smaller policies require less computational resources. The combination of policy and device used (CPU-intensive, using MPS, or the number of CUDA cores on a given NVIDIA GPU) directly impacts the average inference latency you should expect.
-2. **Adjust your `fps` based on inference latency.** While the server generates a new action chunk, the client is not idle and is stepping through its current action queue. If the two processes happen at fundamentally different speeds, the client might end up with an empty queue. As such, you should reduce your fps if you consistently run out of actions in queue.
-3. **Adjust `chunk_size_threshold`**.
-   - Values closer to `0.0` result in almost sequential behavior. Values closer to `1.0` → send observation every step (more bandwidth, relies on good world-model).
-   - We found values around 0.5-0.6 to work well. If you want to tweak this, spin up a `RobotClient` setting the `--debug-visualize-queue-size` to `True`. This will plot the action queue size evolution at runtime, and you can use it to find the value of `chunk_size_threshold` that works best for your setup.
+1. **계산 리소스를 신중하게 선택하세요.** [PI0](https://huggingface.co/lerobot/pi0)은 추론 시 14GB의 메모리를 차지하는 반면, [SmolVLA](https://huggingface.co/lerobot/smolvla_base)는 약 2GB만 필요합니다. 더 작은 정책은 더 적은 계산 리소스가 필요하다는 점을 염두에 두고 사용 사례에 가장 적합한 계산 리소스를 식별해야 합니다. 사용된 정책과 디바이스의 조합(CPU 집약적, MPS 사용 또는 주어진 NVIDIA GPU의 CUDA 코어 수)은 예상해야 하는 평균 추론 지연 시간에 직접적인 영향을 미칩니다.
+2. **추론 지연 시간을 기반으로 `fps`를 조정하세요.** 서버가 새 액션 청크를 생성하는 동안 클라이언트는 유휴 상태가 아니며 현재 액션 큐를 단계별로 진행합니다. 두 프로세스가 근본적으로 다른 속도로 발생하면 클라이언트가 빈 큐로 끝날 수 있습니다. 따라서 큐의 액션이 지속적으로 부족하면 fps를 줄여야 합니다.
+3. **`chunk_size_threshold` 조정**.
+   - `0.0`에 가까운 값은 거의 순차적인 동작을 초래합니다. `1.0`에 가까운 값 → 매 스텝마다 관찰 전송(더 많은 대역폭, 좋은 세계 모델에 의존).
+   - 우리는 약 0.5-0.6의 값이 잘 작동하는 것을 발견했습니다. 이를 조정하려면 `--debug-visualize-queue-size`를 `True`로 설정하여 `RobotClient`를 시작하세요. 이렇게 하면 런타임에 액션 큐 크기 진화가 플롯되며, 설정에 가장 적합한 `chunk_size_threshold` 값을 찾는 데 사용할 수 있습니다.
 
 <p align="center">
   <img
@@ -288,25 +285,23 @@ We found the default values of `actions_per_chunk` and `chunk_size_threshold` to
 </p>
 <p align="center">
   <i>
-    The action queue size is plotted at runtime when the
-    `--debug-visualize-queue-size` flag is passed, for various levels of
-    `chunk_size_threshold` (`g` in the SmolVLA paper).
+    `--debug-visualize-queue-size` 플래그가 전달되면 다양한 수준의 `chunk_size_threshold`(SmolVLA 논문의 `g`)에 대해 런타임에 액션 큐 크기가 플롯됩니다.
   </i>
 </p>
 
 ---
 
-## Conclusion
+## 결론
 
-Asynchronous inference represents a significant advancement in real-time robotics control, addressing the fundamental challenge of inference latency that has long plagued robotics applications. Through this tutorial, you've learned how to implement a complete async inference pipeline that eliminates idle frames and enables smoother, more reactive robot behaviors.
+비동기 추론은 실시간 로봇 제어의 중요한 발전을 나타내며, 로봇 공학 애플리케이션을 오랫동안 괴롭혀온 추론 지연의 근본적인 문제를 해결합니다. 이 튜토리얼을 통해 유휴 프레임을 제거하고 더 부드럽고 반응적인 로봇 동작을 가능하게 하는 완전한 비동기 추론 파이프라인을 구현하는 방법을 배웠습니다.
 
-**Key Takeaways:**
+**주요 요점:**
 
-- **Paradigm Shift**: Async inference decouples action prediction from execution, allowing robots to continue acting while new action chunks are computed in parallel
-- **Performance Benefits**: Eliminates "wait-for-inference" lags that are inherent in synchronous approaches, becoming increasingly important as policy models grow larger
-- **Flexible Architecture**: The server-client design enables distributed computing, where inference can run on powerful remote hardware while maintaining real-time robot control
-- **Tunable Parameters**: Success depends on properly configuring `actions_per_chunk` and `chunk_size_threshold` for your specific hardware, policy, and task requirements
-- **Universal Compatibility**: Works with all LeRobot-supported policies, from lightweight ACT models to vision-language models like SmolVLA
+- **패러다임 전환**: 비동기 추론은 액션 예측과 실행을 분리하여 로봇이 새 액션 청크가 병렬로 계산되는 동안 계속 행동할 수 있게 합니다
+- **성능 이점**: 동기 접근 방식에 내재된 "추론 대기" 지연을 제거하며, 정책 모델이 커질수록 점점 더 중요해집니다
+- **유연한 아키텍처**: 서버-클라이언트 설계는 분산 컴퓨팅을 가능하게 하여 실시간 로봇 제어를 유지하면서 강력한 원격 하드웨어에서 추론을 실행할 수 있습니다
+- **조정 가능한 매개변수**: 성공은 특정 하드웨어, 정책 및 작업 요구 사항에 맞게 `actions_per_chunk`와 `chunk_size_threshold`를 적절하게 구성하는 데 달려 있습니다
+- **범용 호환성**: 경량 ACT 모델에서 SmolVLA와 같은 비전-언어 모델까지 모든 LeRobot 지원 정책과 작동합니다
 
-Start experimenting with the default parameters, monitor your action queue sizes, and iteratively refine your setup to achieve optimal performance for your specific use case.
-If you want to discuss this further, hop into our [Discord community](https://discord.gg/s3KuuzsPFb), or open an issue on our [GitHub repository](https://github.com/lerobot/lerobot/issues).
+기본 매개변수로 실험을 시작하고, 액션 큐 크기를 모니터링하고, 특정 사용 사례에 최적의 성능을 달성하기 위해 설정을 반복적으로 개선하세요.
+이에 대해 더 논의하고 싶다면 [Discord 커뮤니티](https://discord.gg/s3KuuzsPFb)로 오거나 [GitHub 저장소](https://github.com/lerobot/lerobot/issues)에 이슈를 여세요.

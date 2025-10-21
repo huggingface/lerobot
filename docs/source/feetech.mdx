@@ -1,71 +1,71 @@
-# Feetech Motor Firmware Update
+# Feetech 모터 펌웨어 업데이트
 
-This tutorial guides you through updating the firmware of Feetech motors using the official Feetech software.
+이 튜토리얼은 공식 Feetech 소프트웨어를 사용하여 Feetech 모터의 펌웨어를 업데이트하는 방법을 안내합니다.
 
-## Prerequisites
+## 전제 조건
 
-- Windows computer (Feetech software is only available for Windows)
-- Feetech motor control board
-- USB cable to connect the control board to your computer
-- Feetech motors connected to the control board
+- Windows 컴퓨터 (Feetech 소프트웨어는 Windows에서만 사용 가능)
+- Feetech 모터 제어 보드
+- 제어 보드를 컴퓨터에 연결하기 위한 USB 케이블
+- 제어 보드에 연결된 Feetech 모터
 
-## Step 1: Download Feetech Software
+## 1단계: Feetech 소프트웨어 다운로드
 
-1. Visit the official Feetech software download page: [https://www.feetechrc.com/software.html](https://www.feetechrc.com/software.html)
-2. Download the latest version of the Feetech debugging software (FD)
-3. Install the software on your Windows computer
+1. 공식 Feetech 소프트웨어 다운로드 페이지 방문: [https://www.feetechrc.com/software.html](https://www.feetechrc.com/software.html)
+2. Feetech 디버깅 소프트웨어(FD)의 최신 버전 다운로드
+3. Windows 컴퓨터에 소프트웨어 설치
 
-## Step 2: Hardware Setup
+## 2단계: 하드웨어 설정
 
-1. Connect your Feetech motors to the motor control board
-2. Connect the motor control board to your Windows computer via USB cable
-3. Ensure power is supplied to the motors
+1. Feetech 모터를 모터 제어 보드에 연결
+2. 모터 제어 보드를 USB 케이블을 통해 Windows 컴퓨터에 연결
+3. 모터에 전원이 공급되는지 확인
 
-## Step 3: Configure Connection
+## 3단계: 연결 구성
 
-1. Launch the Feetech debugging software
-2. Select the correct COM port from the port dropdown menu
-   - If unsure which port to use, check Windows Device Manager under "Ports (COM & LPT)"
-3. Set the appropriate baud rate (typically 1000000 for most Feetech motors)
-4. Click "Open" to establish communication with the control board
+1. Feetech 디버깅 소프트웨어 실행
+2. 포트 드롭다운 메뉴에서 올바른 COM 포트 선택
+   - 어떤 포트를 사용해야 할지 확실하지 않은 경우 "포트(COM & LPT)" 아래의 Windows 장치 관리자 확인
+3. 적절한 전송 속도 설정 (대부분의 Feetech 모터의 경우 일반적으로 1000000)
+4. "Open"을 클릭하여 제어 보드와의 통신 설정
 
-## Step 4: Scan for Motors
+## 4단계: 모터 스캔
 
-1. Once connected, click the "Search" button to detect all connected motors
-2. The software will automatically discover and list all motors on the bus
-3. Each motor will appear with its ID number
+1. 연결되면 "Search" 버튼을 클릭하여 연결된 모든 모터 감지
+2. 소프트웨어가 자동으로 버스의 모든 모터를 발견하고 나열
+3. 각 모터는 ID 번호와 함께 표시됨
 
-## Step 5: Update Firmware
+## 5단계: 펌웨어 업데이트
 
-For each motor you want to update:
+업데이트하려는 각 모터에 대해:
 
-1. **Select the motor** from the list by clicking on it
-2. **Click on Upgrade tab**:
-3. **Click on Online button**:
-   - If an potential firmware update is found, it will be displayed in the box
-4. **Click on Upgrade button**:
-   - The update progress will be displayed
+1. **목록에서 모터 선택** (클릭)
+2. **Upgrade 탭 클릭**:
+3. **Online 버튼 클릭**:
+   - 잠재적인 펌웨어 업데이트가 발견되면 상자에 표시됨
+4. **Upgrade 버튼 클릭**:
+   - 업데이트 진행률이 표시됨
 
-## Step 6: Verify Update
+## 6단계: 업데이트 확인
 
-1. After the update completes, the software should automatically refresh the motor information
-2. Verify that the firmware version has been updated to the expected version
+1. 업데이트가 완료되면 소프트웨어가 자동으로 모터 정보를 새로 고침
+2. 펌웨어 버전이 예상 버전으로 업데이트되었는지 확인
 
-## Important Notes
+## 중요 사항
 
-⚠️ **Warning**: Do not disconnect power or USB during firmware updates, it will potentially brick the motor.
+⚠️ **경고**: 펌웨어 업데이트 중에는 전원이나 USB를 분리하지 마세요. 모터가 손상될 수 있습니다.
 
-## Bonus: Motor Debugging on Linux/macOS
+## 보너스: Linux/macOS에서 모터 디버깅
 
-For debugging purposes only, you can use the open-source Feetech Debug Tool:
+디버깅 목적으로만 오픈 소스 Feetech Debug Tool을 사용할 수 있습니다:
 
-- **Repository**: [FT_SCServo_Debug_Qt](https://github.com/CarolinePascal/FT_SCServo_Debug_Qt/tree/fix/port-search-timer)
+- **저장소**: [FT_SCServo_Debug_Qt](https://github.com/CarolinePascal/FT_SCServo_Debug_Qt/tree/fix/port-search-timer)
 
-### Installation Instructions
+### 설치 지침
 
-Follow the instructions in the repository to install the tool, for Ubuntu you can directly install it, for MacOS you need to build it from source.
+저장소의 지침에 따라 도구를 설치하세요. Ubuntu의 경우 직접 설치할 수 있으며, MacOS의 경우 소스에서 빌드해야 합니다.
 
-**Limitations:**
+**제한 사항:**
 
-- This tool is for debugging and parameter adjustment only
-- Firmware updates must still be done on Windows with official Feetech software
+- 이 도구는 디버깅 및 매개변수 조정 전용입니다
+- 펌웨어 업데이트는 여전히 공식 Feetech 소프트웨어로 Windows에서 수행해야 합니다

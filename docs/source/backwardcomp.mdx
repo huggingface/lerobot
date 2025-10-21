@@ -1,26 +1,26 @@
-# Backward compatibility
+# 하위 호환성
 
-## Policy Normalization Migration (PR #1452)
+## 정책 정규화 마이그레이션 (PR #1452)
 
-**Breaking Change**: LeRobot policies no longer have built-in normalization layers embedded in their weights. Normalization is now handled by external `PolicyProcessorPipeline` components.
+**중대한 변경 사항**: LeRobot 정책에는 더 이상 가중치에 내장된 정규화 레이어가 없습니다. 이제 정규화는 외부 `PolicyProcessorPipeline` 구성 요소에 의해 처리됩니다.
 
-### What changed?
+### 무엇이 변경되었나요?
 
-|                            | Before PR #1452                                  | After PR #1452                                               |
+|                            | PR #1452 이전                                  | PR #1452 이후                                               |
 | -------------------------- | ------------------------------------------------ | ------------------------------------------------------------ |
-| **Normalization Location** | Embedded in model weights (`normalize_inputs.*`) | External `PolicyProcessorPipeline` components                |
-| **Model State Dict**       | Contains normalization statistics                | **Clean weights only** - no normalization parameters         |
-| **Usage**                  | `policy(batch)` handles everything               | `preprocessor(batch)` → `policy(...)` → `postprocessor(...)` |
+| **정규화 위치** | 모델 가중치에 내장됨 (`normalize_inputs.*`) | 외부 `PolicyProcessorPipeline` 구성 요소                |
+| **모델 State Dict**       | 정규화 통계 포함                | **클린 가중치만** - 정규화 매개변수 없음         |
+| **사용법**                  | `policy(batch)`가 모든 것을 처리               | `preprocessor(batch)` → `policy(...)` → `postprocessor(...)` |
 
-### Impact on existing models
+### 기존 모델에 미치는 영향
 
-- Models trained **before** PR #1452 have normalization embedded in their weights
-- These models need migration to work with the new `PolicyProcessorPipeline` system
-- The migration extracts normalization statistics and creates separate processor pipelines
+- PR #1452 **이전에** 학습된 모델은 가중치에 정규화가 내장되어 있습니다
+- 이러한 모델은 새로운 `PolicyProcessorPipeline` 시스템과 작동하려면 마이그레이션이 필요합니다
+- 마이그레이션은 정규화 통계를 추출하고 별도의 프로세서 파이프라인을 생성합니다
 
-### Migrating old models
+### 이전 모델 마이그레이션
 
-Use the migration script to convert models with embedded normalization:
+내장된 정규화가 있는 모델을 변환하려면 마이그레이션 스크립트를 사용하세요:
 
 ```shell
 python src/lerobot/processor/migrate_policy_normalization.py \
@@ -29,57 +29,57 @@ python src/lerobot/processor/migrate_policy_normalization.py \
     --branch migrated
 ```
 
-The script:
+스크립트는 다음을 수행합니다:
 
-1. **Extracts** normalization statistics from model weights
-2. **Creates** external preprocessor and postprocessor pipelines
-3. **Removes** normalization layers from model weights
-4. **Saves** clean model + processor pipelines
-5. **Pushes** to Hub with automatic PR creation
+1. 모델 가중치에서 정규화 통계를 **추출**합니다
+2. 외부 전처리기 및 후처리기 파이프라인을 **생성**합니다
+3. 모델 가중치에서 정규화 레이어를 **제거**합니다
+4. 클린 모델 + 프로세서 파이프라인을 **저장**합니다
+5. 자동 PR 생성과 함께 Hub에 **푸시**합니다
 
-### Using migrated models
+### 마이그레이션된 모델 사용
 
 ```python
-# New usage pattern (after migration)
+# 새로운 사용 패턴 (마이그레이션 후)
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 
-# Load model and processors separately
+# 모델과 프로세서를 별도로 로드
 policy = make_policy(config, ds_meta=dataset.meta)
 preprocessor, postprocessor = make_pre_post_processors(
     policy_cfg=config,
     dataset_stats=dataset.meta.stats
 )
 
-# Process data through pipeline
+# 파이프라인을 통해 데이터 처리
 processed_batch = preprocessor(raw_batch)
 action = policy.select_action(processed_batch)
 final_action = postprocessor(action)
 ```
 
-## Hardware API redesign
+## 하드웨어 API 재설계
 
-PR [#777](https://github.com/huggingface/lerobot/pull/777) improves the LeRobot calibration but is **not backward-compatible**. Below is a overview of what changed and how you can continue to work with datasets created before this pull request.
+PR [#777](https://github.com/huggingface/lerobot/pull/777)은 LeRobot 캘리브레이션을 개선하지만 **하위 호환되지 않습니다**. 다음은 변경 사항과 이 풀 리퀘스트 이전에 생성된 데이터셋으로 계속 작업하는 방법에 대한 개요입니다.
 
-### What changed?
+### 무엇이 변경되었나요?
 
-|                                   | Before PR #777                                    | After PR #777                                                |
+|                                   | PR #777 이전                                    | PR #777 이후                                                |
 | --------------------------------- | ------------------------------------------------- | ------------------------------------------------------------ |
-| **Joint range**                   | Degrees `-180...180°`                             | **Normalised range** Joints: `–100...100` Gripper: `0...100` |
-| **Zero position (SO100 / SO101)** | Arm fully extended horizontally                   | **In middle of the range for each joint**                    |
-| **Boundary handling**             | Software safeguards to detect ±180 ° wrap-arounds | No wrap-around logic needed due to mid-range zero            |
+| **관절 범위**                   | 도 `-180...180°`                             | **정규화된 범위** 관절: `–100...100` 그리퍼: `0...100` |
+| **제로 위치 (SO100 / SO101)** | 수평으로 완전히 펼쳐진 팔                   | **각 관절의 범위 중간**                    |
+| **경계 처리**             | ±180° 래핑을 감지하는 소프트웨어 안전 장치 | 중간 범위 제로로 인해 래핑 로직이 필요 없음            |
 
 ---
 
-### Impact on existing datasets
+### 기존 데이터셋에 미치는 영향
 
-- Recorded trajectories created **before** PR #777 will replay incorrectly if loaded directly:
-  - Joint angles are offset and incorrectly normalized.
-- Any models directly finetuned or trained on the old data will need their inputs and outputs converted.
+- PR #777 **이전에** 생성된 기록된 궤적은 직접 로드하면 잘못 재생됩니다:
+  - 관절 각도가 오프셋되고 잘못 정규화됩니다.
+- 이전 데이터로 직접 미세 조정되거나 학습된 모든 모델은 입력 및 출력을 변환해야 합니다.
 
-### Using datasets made with the previous calibration system
+### 이전 캘리브레이션 시스템으로 만든 데이터셋 사용
 
-We provide a migration example script for replaying an episode recorded with the previous calibration here: `examples/backward_compatibility/replay.py`.
-Below we take you through the modifications that are done in the example script to make the previous calibration datasets work.
+이전 캘리브레이션으로 기록된 에피소드를 재생하기 위한 마이그레이션 예제 스크립트를 제공합니다: `examples/backward_compatibility/replay.py`.
+아래에서 이전 캘리브레이션 데이터셋이 작동하도록 예제 스크립트에서 수행된 수정 사항을 안내합니다.
 
 ```diff
 +   key = f"{name.removeprefix('main_')}.pos"
@@ -88,8 +88,8 @@ Below we take you through the modifications that are done in the example script 
 +   action["elbow_flex.pos"] -= 90
 ```
 
-Let's break this down.
-New codebase uses `.pos` suffix for the position observations and we have removed `main_` prefix:
+이를 분석해 보겠습니다.
+새 코드베이스는 위치 관찰에 `.pos` 접미사를 사용하며 `main_` 접두사를 제거했습니다:
 
 <!-- prettier-ignore-start -->
 ```python
@@ -97,7 +97,7 @@ key = f"{name.removeprefix('main_')}.pos"
 ```
 <!-- prettier-ignore-end -->
 
-For `"shoulder_lift"` (id = 2), the 0 position is changed by -90 degrees and the direction is reversed compared to old calibration/code.
+`"shoulder_lift"`(id = 2)의 경우 0 위치는 이전 캘리브레이션/코드에 비해 -90도 변경되고 방향이 반대로 됩니다.
 
 <!-- prettier-ignore-start -->
 ```python
@@ -105,7 +105,7 @@ action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
 ```
 <!-- prettier-ignore-end -->
 
-For `"elbow_flex"` (id = 3), the 0 position is changed by -90 degrees compared to old calibration/code.
+`"elbow_flex"`(id = 3)의 경우 0 위치는 이전 캘리브레이션/코드에 비해 -90도 변경됩니다.
 
 <!-- prettier-ignore-start -->
 ```python
@@ -113,7 +113,7 @@ action["elbow_flex.pos"] -= 90
 ```
 <!-- prettier-ignore-end -->
 
-To use degrees normalization we then set the `--robot.use_degrees` option to `true`.
+도 정규화를 사용하려면 `--robot.use_degrees` 옵션을 `true`로 설정합니다.
 
 ```diff
 python examples/backward_compatibility/replay.py \
@@ -125,12 +125,12 @@ python examples/backward_compatibility/replay.py \
     --dataset.episode=0
 ```
 
-### Using policies trained with the previous calibration system
+### 이전 캘리브레이션 시스템으로 학습된 정책 사용
 
-Policies output actions in the same format as the datasets (`torch.Tensors`). Therefore, the same transformations should be applied.
+정책은 데이터셋과 동일한 형식(`torch.Tensors`)으로 액션을 출력합니다. 따라서 동일한 변환을 적용해야 합니다.
 
-To find these transformations, we recommend to first try and and replay an episode of the dataset your policy was trained on using the section above.
-Then, add these same transformations on your inference script (shown here in the `record.py` script):
+이러한 변환을 찾으려면 먼저 위 섹션을 사용하여 정책이 학습된 데이터셋의 에피소드를 재생해 보는 것이 좋습니다.
+그런 다음 추론 스크립트에 동일한 변환을 추가합니다(`record.py` 스크립트에 표시됨):
 
 ```diff
 action_values = predict_action(
@@ -148,4 +148,4 @@ action_values = predict_action(
     robot.send_action(action)
 ```
 
-If you have questions or run into migration issues, feel free to ask them on [Discord](https://discord.gg/s3KuuzsPFb)
+질문이 있거나 마이그레이션 문제가 발생하면 [Discord](https://discord.gg/s3KuuzsPFb)에서 자유롭게 문의하세요

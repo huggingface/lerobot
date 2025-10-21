@@ -1,106 +1,104 @@
-# Debug Your Processor Pipeline
+# 프로세서 파이프라인 디버그
 
-Processor pipelines can be complex, especially when chaining multiple transformation steps.
-Unlike simple function calls, pipelines lack natural observability, you can't easily see what happens
-between each step or where things go wrong.
-This guide provides debugging tools and techniques specifically designed to address these challenges
-and help you understand data flow through your pipelines.
+프로세서 파이프라인은 여러 변환 단계를 연결할 때 특히 복잡할 수 있습니다.
+단순한 함수 호출과 달리 파이프라인은 자연스러운 관찰 가능성이 부족하여 각 단계 사이에 무슨 일이 일어나는지 또는 어디서 잘못되는지 쉽게 볼 수 없습니다.
+이 가이드는 이러한 문제를 해결하고 파이프라인을 통한 데이터 흐름을 이해하는 데 특별히 설계된 디버깅 도구와 기술을 제공합니다.
 
-We'll explore three complementary debugging approaches: **hooks** for runtime monitoring, **step-through debugging** for detailed inspection, and **feature validation** for catching structural mismatches. Each serves a different purpose and together they provide complete visibility into your pipeline's behavior.
+런타임 모니터링을 위한 **훅**, 세부 검사를 위한 **단계별 디버깅**, 구조적 불일치를 포착하기 위한 **기능 검증**의 세 가지 보완적인 디버깅 접근 방식을 탐구합니다. 각각은 다른 목적을 제공하며 함께 파이프라인 동작에 대한 완전한 가시성을 제공합니다.
 
-## Understanding Hooks
+## 훅 이해하기
 
-Hooks are functions that get called at specific points during pipeline execution.
-They provide a way to inspect, monitor, or modify data without changing your pipeline code.
-Think of them as "event listeners" for your pipeline.
+훅은 파이프라인 실행 중 특정 시점에 호출되는 함수입니다.
+파이프라인 코드를 변경하지 않고 데이터를 검사, 모니터링 또는 수정하는 방법을 제공합니다.
+파이프라인에 대한 "이벤트 리스너"로 생각하세요.
 
-### What is a Hook?
+### 훅이란 무엇인가?
 
-A hook is a callback function that gets automatically invoked at specific moments during pipeline execution.
-The concept comes from event-driven programming, imagine you could "hook into" the pipeline's execution flow to observe or react to what's happening.
+훅은 파이프라인 실행 중 특정 순간에 자동으로 호출되는 콜백 함수입니다.
+이 개념은 이벤트 기반 프로그래밍에서 나온 것으로, 파이프라인의 실행 흐름에 "훅을 걸어" 무슨 일이 일어나는지 관찰하거나 반응할 수 있다고 상상해보세요.
 
-Think of hooks like inserting checkpoints into your pipeline. Every time the pipeline reaches one of these checkpoints, it pauses briefly to call your hook function, giving you a chance to inspect the current state, log information, and validate data.
+훅을 파이프라인에 체크포인트를 삽입하는 것으로 생각하세요. 파이프라인이 이러한 체크포인트 중 하나에 도달할 때마다 잠시 멈춰서 훅 함수를 호출하여 현재 상태를 검사하고, 정보를 기록하고, 데이터를 검증할 기회를 제공합니다.
 
-A hook is simply a function that accepts two parameters:
+훅은 두 개의 매개변수를 받는 간단한 함수입니다:
 
-- `step_idx: int` - The index of the current processing step (0, 1, 2, etc.)
-- `transition: EnvTransition` - The data transition at that point in the pipeline
+- `step_idx: int` - 현재 처리 단계의 인덱스 (0, 1, 2 등)
+- `transition: EnvTransition` - 파이프라인의 해당 시점에서의 데이터 전환
 
-The beauty of hooks is their non-invasive nature: you can add monitoring, validation, or debugging logic without changing a single line of your pipeline code. The pipeline remains clean and focused on its core logic, while hooks handle the cross-cutting concerns like logging, monitoring, and debugging.
+훅의 아름다움은 비침습적 특성에 있습니다: 파이프라인 코드의 한 줄도 변경하지 않고 모니터링, 검증 또는 디버깅 로직을 추가할 수 있습니다. 파이프라인은 핵심 로직에 집중하고 깨끗하게 유지되며, 훅은 로깅, 모니터링, 디버깅과 같은 횡단 관심사를 처리합니다.
 
-### Before vs After Hooks
+### Before vs After 훅
 
-The pipeline supports two types of hooks:
+파이프라인은 두 가지 유형의 훅을 지원합니다:
 
-- **Before hooks** (`register_before_step_hook`) - Called before each step executes
-- **After hooks** (`register_after_step_hook`) - Called after each step completes
+- **Before 훅** (`register_before_step_hook`) - 각 단계가 실행되기 전에 호출됨
+- **After 훅** (`register_after_step_hook`) - 각 단계가 완료된 후 호출됨
 
 ```python
 def before_hook(step_idx: int, transition: EnvTransition):
-    """Called before step processes the transition."""
+    """단계가 전환을 처리하기 전에 호출됩니다."""
     print(f"About to execute step {step_idx}")
-    # Useful for: logging, validation, setup
+    # 유용한 용도: 로깅, 검증, 설정
 
 def after_hook(step_idx: int, transition: EnvTransition):
-    """Called after step has processed the transition."""
+    """단계가 전환을 처리한 후 호출됩니다."""
     print(f"Completed step {step_idx}")
-    # Useful for: monitoring results, cleanup, debugging
+    # 유용한 용도: 결과 모니터링, 정리, 디버깅
 
 processor.register_before_step_hook(before_hook)
 processor.register_after_step_hook(after_hook)
 ```
 
-### Implementing a NaN Detection Hook
+### NaN 감지 훅 구현
 
-Here's a practical example of a hook that detects NaN values:
+다음은 NaN 값을 감지하는 훅의 실용적인 예제입니다:
 
 ```python
 def check_nans(step_idx: int, transition: EnvTransition):
-    """Check for NaN values in observations."""
+    """관찰에서 NaN 값을 확인합니다."""
     obs = transition.get(TransitionKey.OBSERVATION)
     if obs:
         for key, value in obs.items():
             if isinstance(value, torch.Tensor) and torch.isnan(value).any():
                 print(f"NaN detected in {key} at step {step_idx}")
 
-# Register the hook to run after each step
+# 각 단계 후에 실행되도록 훅을 등록
 processor.register_after_step_hook(check_nans)
 
-# Process your data - the hook will be called automatically
+# 데이터 처리 - 훅이 자동으로 호출됨
 output = processor(input_data)
 
-# Remove the hook when done debugging
+# 디버깅이 완료되면 훅 제거
 processor.unregister_after_step_hook(check_nans)
 ```
 
-### How Hooks Work Internally
+### 훅의 내부 작동 방식
 
-Understanding the internal mechanism helps you use hooks more effectively. The pipeline maintains two separate lists: one for before-step hooks and another for after-step hooks. When you register a hook, it's simply appended to the appropriate list.
+내부 메커니즘을 이해하면 훅을 더 효과적으로 사용할 수 있습니다. 파이프라인은 두 개의 별도 리스트를 유지합니다: 하나는 before-step 훅용이고 다른 하나는 after-step 훅용입니다. 훅을 등록하면 적절한 리스트에 추가됩니다.
 
-During execution, the pipeline follows a strict sequence: for each processing step, it first calls all before-hooks in registration order, then executes the actual step transformation, and finally calls all after-hooks in registration order. This creates a predictable, sandwich-like structure around each step.
+실행 중에 파이프라인은 엄격한 순서를 따릅니다: 각 처리 단계에 대해 먼저 모든 before-hooks를 등록 순서대로 호출한 다음 실제 단계 변환을 실행하고 마지막으로 모든 after-hooks를 등록 순서대로 호출합니다. 이것은 각 단계 주위에 예측 가능한 샌드위치 같은 구조를 만듭니다.
 
-The key insight is that hooks don't change the core pipeline logic—they're purely additive. The pipeline's `_forward` method orchestrates this dance between hooks and processing steps, ensuring that your debugging or monitoring code runs at exactly the right moments without interfering with the main data flow.
+핵심 통찰은 훅이 핵심 파이프라인 로직을 변경하지 않는다는 것입니다—순전히 추가적입니다. 파이프라인의 `_forward` 메서드는 훅과 처리 단계 사이의 이 춤을 조율하여 디버깅 또는 모니터링 코드가 주요 데이터 흐름을 방해하지 않고 정확한 순간에 실행되도록 합니다.
 
-Here's a simplified view of how the pipeline executes hooks:
+다음은 파이프라인이 훅을 실행하는 방법의 간략한 보기입니다:
 
 ```python
 class DataProcessorPipeline:
     def __init__(self):
         self.steps = [...]
-        self.before_step_hooks = []  # List of before hooks
-        self.after_step_hooks = []   # List of after hooks
+        self.before_step_hooks = []  # Before 훅 리스트
+        self.after_step_hooks = []   # After 훅 리스트
 
     def _forward(self, transition):
-        """Internal method that processes the transition through all steps."""
+        """모든 단계를 통해 전환을 처리하는 내부 메서드."""
         for step_idx, processor_step in enumerate(self.steps):
-            # 1. Call all BEFORE hooks
+            # 1. 모든 BEFORE 훅 호출
             for hook in self.before_step_hooks:
                 hook(step_idx, transition)
 
-            # 2. Execute the actual processing step
+            # 2. 실제 처리 단계 실행
             transition = processor_step(transition)
 
-            # 3. Call all AFTER hooks
+            # 3. 모든 AFTER 훅 호출
             for hook in self.after_step_hooks:
                 hook(step_idx, transition)
 
@@ -113,15 +111,15 @@ class DataProcessorPipeline:
         self.after_step_hooks.append(hook_fn)
 ```
 
-### Execution Flow
+### 실행 흐름
 
-The execution flow looks like this:
+실행 흐름은 다음과 같습니다:
 
 ```
 Input → Before Hook → Step 0 → After Hook → Before Hook → Step 1 → After Hook → ... → Output
 ```
 
-For example, with 3 steps and both hook types:
+예를 들어 3개의 단계와 두 훅 유형이 있는 경우:
 
 ```python
 def timing_before(step_idx, transition):
@@ -133,7 +131,7 @@ def validation_after(step_idx, transition):
 processor.register_before_step_hook(timing_before)
 processor.register_after_step_hook(validation_after)
 
-# This will output:
+# 다음을 출력합니다:
 # ⏱️  Starting step 0
 # ✅ Completed step 0
 # ⏱️  Starting step 1
@@ -142,9 +140,9 @@ processor.register_after_step_hook(validation_after)
 # ✅ Completed step 2
 ```
 
-### Multiple Hooks
+### 여러 훅
 
-You can register multiple hooks of the same type - they execute in the order registered:
+같은 유형의 여러 훅을 등록할 수 있습니다 - 등록된 순서대로 실행됩니다:
 
 ```python
 def log_shapes(step_idx: int, transition: EnvTransition):
@@ -155,39 +153,39 @@ def log_shapes(step_idx: int, transition: EnvTransition):
             if isinstance(value, torch.Tensor):
                 print(f"  {key}: {value.shape}")
 
-processor.register_after_step_hook(check_nans)      # Executes first
-processor.register_after_step_hook(log_shapes)     # Executes second
+processor.register_after_step_hook(check_nans)      # 먼저 실행
+processor.register_after_step_hook(log_shapes)     # 두 번째로 실행
 
-# Both hooks will be called after each step in registration order
+# 두 훅 모두 각 단계 후에 등록 순서대로 호출됩니다
 output = processor(input_data)
 ```
 
-While hooks are excellent for monitoring specific issues (like NaN detection) or gathering metrics during normal pipeline execution, sometimes you need to dive deeper. When you want to understand exactly what happens at each step or debug complex transformation logic, step-through debugging provides the detailed inspection you need.
+훅은 특정 문제를 모니터링하거나(예: NaN 감지) 일반 파이프라인 실행 중 메트릭을 수집하는 데 훌륭하지만 때로는 더 깊이 파고들어야 합니다. 각 단계에서 정확히 무슨 일이 일어나는지 이해하거나 복잡한 변환 로직을 디버그하고 싶을 때 단계별 디버깅은 필요한 세부 검사를 제공합니다.
 
-## Step-Through Debugging
+## 단계별 디버깅
 
-Step-through debugging is like having a slow-motion replay for your pipeline. Instead of watching your data get transformed in one quick blur from input to output, you can pause and examine what happens after each individual step.
+단계별 디버깅은 파이프라인에 대한 슬로우 모션 리플레이를 갖는 것과 같습니다. 입력에서 출력으로 데이터가 빠르게 변환되는 것을 한 번에 보는 대신 각 개별 단계 후에 무슨 일이 일어나는지 일시 정지하고 검사할 수 있습니다.
 
-This approach is particularly valuable when you're trying to understand a complex pipeline, debug unexpected behavior, or verify that each transformation is working as expected. Unlike hooks, which are great for automated monitoring, step-through debugging gives you manual, interactive control over the inspection process.
+이 접근 방식은 복잡한 파이프라인을 이해하려고 할 때, 예상치 못한 동작을 디버그할 때 또는 각 변환이 예상대로 작동하는지 확인하려고 할 때 특히 유용합니다. 자동화된 모니터링에 적합한 훅과 달리 단계별 디버깅은 검사 프로세스에 대한 수동의 대화형 제어를 제공합니다.
 
-The `step_through()` method is a generator that yields the transition state after each processing step, allowing you to inspect intermediate results. Think of it as creating a series of snapshots of your data as it flows through the pipeline—each snapshot shows you exactly what your data looks like after one more transformation has been applied.
+`step_through()` 메서드는 각 처리 단계 후 전환 상태를 생성하는 제너레이터로, 중간 결과를 검사할 수 있습니다. 파이프라인을 통해 데이터가 흐를 때 일련의 스냅샷을 생성하는 것으로 생각하세요—각 스냅샷은 하나 더 많은 변환이 적용된 후 데이터가 정확히 어떻게 보이는지 보여줍니다.
 
-### How Step-Through Works
+### 단계별 작동 방식
 
-The `step_through()` method fundamentally changes how the pipeline executes. Instead of running all steps in sequence and only returning the final result, it transforms the pipeline into an iterator that yields intermediate results.
+`step_through()` 메서드는 파이프라인이 실행되는 방식을 근본적으로 변경합니다. 모든 단계를 순서대로 실행하고 최종 결과만 반환하는 대신 중간 결과를 생성하는 반복자로 파이프라인을 변환합니다.
 
-Here's what happens internally: the method starts by converting your input data into the pipeline's internal transition format, then yields this initial state. Next, it applies the first processing step and yields the result. Then it applies the second step to that result and yields again, and so on. Each `yield` gives you a complete snapshot of the transition at that point.
+내부적으로 무슨 일이 일어나는지는 다음과 같습니다: 이 메서드는 입력 데이터를 파이프라인의 내부 전환 형식으로 변환한 다음 이 초기 상태를 생성합니다. 다음으로 첫 번째 처리 단계를 적용하고 결과를 생성합니다. 그런 다음 두 번째 단계를 해당 결과에 적용하고 다시 생성하는 식입니다. 각 `yield`는 해당 시점의 전환에 대한 완전한 스냅샷을 제공합니다.
 
-This generator pattern is powerful because it's lazy—the pipeline only computes the next step when you ask for it. This means you can stop at any point, inspect the current state thoroughly, and decide whether to continue. You're not forced to run the entire pipeline just to debug one problematic step.
+이 제너레이터 패턴은 게으르기 때문에 강력합니다—파이프라인은 요청할 때만 다음 단계를 계산합니다. 이는 언제든지 멈추고, 현재 상태를 철저히 검사하고, 계속할지 결정할 수 있음을 의미합니다. 하나의 문제 단계를 디버그하기 위해 전체 파이프라인을 실행해야 하는 것이 아닙니다.
 
-Instead of running the entire pipeline and only seeing the final result, `step_through()` pauses after each step and gives you the intermediate transition:
+전체 파이프라인을 실행하고 최종 결과만 보는 대신 `step_through()`는 각 단계 후에 일시 정지하고 중간 전환을 제공합니다:
 
 ```python
-# This creates a generator that yields intermediate states
+# 중간 상태를 생성하는 제너레이터를 생성합니다
 for i, intermediate_result in enumerate(processor.step_through(input_data)):
     print(f"=== After step {i} ===")
 
-    # Inspect the observation at this stage
+    # 이 단계에서 관찰 검사
     obs = intermediate_result.get(TransitionKey.OBSERVATION)
     if obs:
         for key, value in obs.items():
@@ -195,43 +193,43 @@ for i, intermediate_result in enumerate(processor.step_through(input_data)):
                 print(f"{key}: shape={value.shape}, dtype={value.dtype}")
 ```
 
-### Interactive Debugging with Breakpoints
+### 중단점을 사용한 대화형 디버깅
 
-You can add breakpoints in the step-through loop to interactively debug:
+단계별 루프에 중단점을 추가하여 대화형으로 디버그할 수 있습니다:
 
 ```python
-# Step through the pipeline with debugging
+# 디버깅과 함께 파이프라인 단계별 실행
 for i, intermediate in enumerate(processor.step_through(data)):
     print(f"Step {i}: {processor.steps[i].__class__.__name__}")
 
-    # Set a breakpoint to inspect the current state
-    breakpoint()  # Debugger will pause here
+    # 현재 상태를 검사하기 위해 중단점 설정
+    breakpoint()  # 디버거가 여기서 일시 정지됩니다
 
-    # You can now inspect 'intermediate' in the debugger:
-    # - Check tensor shapes and values
-    # - Verify expected transformations
-    # - Look for unexpected changes
+    # 이제 디버거에서 'intermediate'를 검사할 수 있습니다:
+    # - 텐서 모양과 값 확인
+    # - 예상 변환 확인
+    # - 예상치 못한 변경 사항 찾기
 ```
 
-During the debugger session, you can:
+디버거 세션 중에 다음을 수행할 수 있습니다:
 
-- Examine `intermediate[TransitionKey.OBSERVATION]` to see observation data
-- Check `intermediate[TransitionKey.ACTION]` for action transformations
-- Inspect any part of the transition to understand what each step does
+- `intermediate[TransitionKey.OBSERVATION]`을 검사하여 관찰 데이터 확인
+- `intermediate[TransitionKey.ACTION]`을 확인하여 액션 변환 확인
+- 전환의 모든 부분을 검사하여 각 단계가 수행하는 작업 이해
 
-Step-through debugging is perfect for understanding the _data_ transformations, but what about the _structure_ of that data? While hooks and step-through help you debug runtime behavior, you also need to ensure your pipeline produces data in the format expected by downstream components. This is where feature contract validation comes in.
+단계별 디버깅은 _데이터_ 변환을 이해하는 데 완벽하지만 해당 데이터의 _구조_는 어떻습니까? 훅과 단계별이 런타임 동작을 디버그하는 데 도움이 되지만 파이프라인이 다운스트림 구성 요소가 예상하는 형식의 데이터를 생성하는지도 확인해야 합니다. 이것이 기능 계약 검증이 필요한 곳입니다.
 
-## Validating Feature Contracts
+## 기능 계약 검증
 
-Feature contracts define what data structure your pipeline expects as input and produces as output.
-Validating these contracts helps catch mismatches early.
+기능 계약은 파이프라인이 입력으로 예상하고 출력으로 생성하는 데이터 구조를 정의합니다.
+이러한 계약을 검증하면 불일치를 조기에 포착하는 데 도움이 됩니다.
 
-### Understanding Feature Contracts
+### 기능 계약 이해
 
-Each processor step has a `transform_features()` method that describes how it changes the data structure:
+각 프로세서 단계에는 데이터 구조를 어떻게 변경하는지 설명하는 `transform_features()` 메서드가 있습니다:
 
 ```python
-# Get the expected output features from your pipeline
+# 파이프라인에서 예상되는 출력 기능 가져오기
 initial_features = {
     PipelineFeatureType.OBSERVATION: {
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(7,)),
@@ -242,7 +240,7 @@ initial_features = {
     }
 }
 
-# Check what your pipeline will output
+# 파이프라인이 출력할 내용 확인
 output_features = processor.transform_features(initial_features)
 
 print("Input features:")
@@ -258,12 +256,12 @@ for feature_type, features in output_features.items():
         print(f"    {key}: {feature.type.value}, shape={feature.shape}")
 ```
 
-### Verifying Expected Features
+### 예상 기능 확인
 
-Check that your pipeline produces the features you expect:
+파이프라인이 예상하는 기능을 생성하는지 확인하세요:
 
 ```python
-# Define what features you expect the pipeline to produce
+# 파이프라인이 생성할 것으로 예상하는 기능 정의
 expected_keys = ["observation.state", "observation.image", "action"]
 
 print("Validating feature contract...")
@@ -280,20 +278,20 @@ for expected_key in expected_keys:
         print(f"❌ Missing expected feature: {expected_key}")
 ```
 
-This validation helps ensure your pipeline will work correctly with downstream components that expect specific data structures.
+이 검증은 파이프라인이 특정 데이터 구조를 예상하는 다운스트림 구성 요소와 올바르게 작동하는지 확인하는 데 도움이 됩니다.
 
-## Summary
+## 요약
 
-Now that you understand the three debugging approaches, you can tackle any pipeline issue systematically:
+이제 세 가지 디버깅 접근 방식을 이해했으므로 모든 파이프라인 문제를 체계적으로 해결할 수 있습니다:
 
-1. **Hooks** - For runtime monitoring and validation without modifying pipeline code
-2. **Step-through** - For inspecting intermediate states and understanding transformations
-3. **Feature validation** - For ensuring data structure contracts are met
+1. **훅** - 파이프라인 코드를 수정하지 않고 런타임 모니터링 및 검증을 위해
+2. **단계별** - 중간 상태를 검사하고 변환을 이해하기 위해
+3. **기능 검증** - 데이터 구조 계약이 충족되는지 확인하기 위해
 
-**When to use each approach:**
+**각 접근 방식을 사용하는 시기:**
 
-- Start with **step-through debugging** when you need to understand what your pipeline does or when something unexpected happens
-- Add **hooks** for continuous monitoring during development and production to catch issues automatically
-- Use **feature validation** before deployment to ensure your pipeline works with downstream components
+- 파이프라인이 수행하는 작업을 이해해야 하거나 예상치 못한 일이 발생할 때 **단계별 디버깅**으로 시작하세요
+- 개발 및 프로덕션 중 지속적인 모니터링을 위해 문제를 자동으로 포착하기 위해 **훅**을 추가하세요
+- 배포 전에 **기능 검증**을 사용하여 파이프라인이 다운스트림 구성 요소와 작동하는지 확인하세요
 
-These three tools work together to give you the complete observability that complex pipelines naturally lack. With hooks watching for issues, step-through helping you understand behavior, and feature validation ensuring compatibility, you'll be able to debug any pipeline confidently and efficiently.
+이 세 가지 도구는 함께 작동하여 복잡한 파이프라인에 자연스럽게 부족한 완전한 관찰 가능성을 제공합니다. 문제를 감시하는 훅, 동작을 이해하는 데 도움이 되는 단계별, 호환성을 보장하는 기능 검증을 통해 모든 파이프라인을 자신 있고 효율적으로 디버그할 수 있습니다.
