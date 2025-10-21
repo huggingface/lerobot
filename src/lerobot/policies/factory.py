@@ -360,6 +360,7 @@ def make_policy(
         if env_cfg is None:
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
+
     if not cfg.output_features:
         cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
