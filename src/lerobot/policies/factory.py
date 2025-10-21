@@ -394,7 +394,7 @@ def make_policy(
                 f"Please ensure your dataset and policy use consistent feature names.\n"
                 f"If your dataset uses different observation keys (e.g., cameras named differently), "
                 f"use the `--rename_map` argument, for example:\n"
-                f"  --rename_map='{{\"observation.images.left\": \"observation.images.camera1\", "
-                f"\"observation.images.top\": \"observation.images.camera2\"}}'"
+                f'  --rename_map=\'{{"observation.images.left": "observation.images.camera1", '
+                f'"observation.images.top": "observation.images.camera2"}}\''
             )
     return policy
