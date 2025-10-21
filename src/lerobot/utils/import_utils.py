@@ -129,7 +129,7 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     )
 
 
-def register_third_party_devices() -> None:
+def register_third_party_plugins() -> None:
     """
     Discover and import third-party lerobot_* plugins so they can register themselves.
 

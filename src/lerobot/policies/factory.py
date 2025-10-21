@@ -430,6 +430,9 @@ def _make_processors_from_policy_config(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[Any, Any]:
     """Create pre- and post-processors from a policy configuration using dynamic imports.
+
+    This is used as a helper function to import processor factories from 3rd party lerobot plugins.
+
     Args:
         config: The policy configuration object.
         dataset_stats: Dataset statistics for normalization.
