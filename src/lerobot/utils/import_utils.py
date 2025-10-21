@@ -19,6 +19,9 @@ import pkgutil
 from typing import Any
 
 from draccus.choice_types import ChoiceRegistry
+import torch
+
+from lerobot.configs.policies import PreTrainedConfig
 
 
 def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[bool, str] | bool:
@@ -129,14 +132,51 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     )
 
 
+def get_policy_cls_from_policy_name(name: str) -> type[PreTrainedConfig]:
+    if name not in PreTrainedConfig.get_known_choices():
+        raise ValueError(
+            f"Unknown policy name '{name}'. Available policies: {PreTrainedConfig.get_known_choices()}"
+        )
+
+    config_cls = PreTrainedConfig.get_choice_class(name)
+    config_cls_name = config_cls.__name__
+
+    cls_name = config_cls_name[:-6] + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
+    module_path = config_cls.__module__.replace(
+        "configuration_", "modeling_"
+    )  # e.g., configuration_diffusion -> modeling_diffusion
+
+    module = importlib.import_module(module_path)
+    policy_cls = getattr(module, cls_name)
+    return policy_cls
+
+
+def make_processors_from_policy_config(
+    config: PreTrainedConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+) -> tuple[Any, Any]:
+    policy_type = config.type
+    print(policy_type)
+    function_name = f"make_{policy_type}_pre_post_processors"
+    module_path = config.__class__.__module__.replace(
+        "configuration_", "processor_"
+    )  # e.g., configuration_diffusion -> processor_diffusion
+    logging.debug(
+        f"Instantiating pre/post processors using function '{function_name}' from module '{module_path}'"
+    )
+    module = importlib.import_module(module_path)
+    function = getattr(module, function_name)
+    return function(config, dataset_stats=dataset_stats)
+
+
 def register_third_party_devices() -> None:
     """
     Discover and import third-party lerobot_* plugins so they can register themselves.
 
     Scans top-level modules on sys.path for packages starting with
-    'lerobot_robot_', 'lerobot_camera_' or 'lerobot_teleoperator_' and imports them.
+    'lerobot_robot_', 'lerobot_camera_', 'lerobot_teleoperator_' or "lerobot_policy_' and imports them.
     """
-    prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_")
+    prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_", "lerobot_policy_")
     imported: list[str] = []
     failed: list[str] = []
 

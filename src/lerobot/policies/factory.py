@@ -46,6 +46,7 @@ from lerobot.processor.converters import (
     transition_to_policy_action,
 )
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.utils.import_utils import make_processors_from_policy_config, get_policy_cls_from_policy_name
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -102,7 +103,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
         return SmolVLAPolicy
     else:
-        raise NotImplementedError(f"Policy with name {name} is not implemented.")
+        try:
+            return get_policy_cls_from_policy_name(name=name)
+        except Exception as e:
+            raise ValueError(f"Policy type '{name}' is not available.") from e
 
 
 def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
@@ -143,7 +147,11 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
     else:
-        raise ValueError(f"Policy type '{policy_type}' is not available.")
+        try:
+            config_cls = PreTrainedConfig.get_choice_class(policy_type)
+            return config_cls(**kwargs)
+        except Exception as e:
+            raise ValueError(f"Policy type '{policy_type}' is not available.") from e
 
 
 class ProcessorConfigKwargs(TypedDict, total=False):
@@ -294,7 +302,13 @@ def make_pre_post_processors(
         )
 
     else:
-        raise NotImplementedError(f"Processor for policy type '{policy_cfg.type}' is not implemented.")
+        try:
+            processors = make_processors_from_policy_config(
+                config=policy_cfg,
+                dataset_stats=kwargs.get("dataset_stats"),
+            )
+        except Exception as e:
+            raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
 
     return processors
 
