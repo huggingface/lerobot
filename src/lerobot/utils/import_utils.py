@@ -18,8 +18,8 @@ import logging
 import pkgutil
 from typing import Any
 
-from draccus.choice_types import ChoiceRegistry
 import torch
+from draccus.choice_types import ChoiceRegistry
 
 from lerobot.configs.policies import PreTrainedConfig
 

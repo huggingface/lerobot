@@ -46,7 +46,7 @@ from lerobot.processor.converters import (
     transition_to_policy_action,
 )
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
-from lerobot.utils.import_utils import make_processors_from_policy_config, get_policy_cls_from_policy_name
+from lerobot.utils.import_utils import get_policy_cls_from_policy_name, make_processors_from_policy_config
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
