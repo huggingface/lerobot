@@ -303,6 +303,7 @@ def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
     env_cfg: EnvConfig | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> PreTrainedPolicy:
     """
     Instantiate a policy model.
@@ -319,6 +320,8 @@ def make_policy(
                  statistics for normalization layers.
         env_cfg: Environment configuration used to infer feature shapes and types.
                  One of `ds_meta` or `env_cfg` must be provided.
+        rename_map: Optional mapping of dataset or environment feature keys to match
+                 expected policy feature names (e.g., `"left"` → `"camera1"`).
 
     Returns:
         An instantiated and device-placed policy model.
@@ -380,4 +383,21 @@ def make_policy(
 
     # policy = torch.compile(policy, mode="reduce-overhead")
 
+    if not rename_map:
+        expected_features = set(cfg.input_features.keys()) | set(cfg.output_features.keys())
+        provided_features = set(features.keys())
+        if expected_features and provided_features != expected_features:
+            missing = expected_features - provided_features
+            extra = provided_features - expected_features
+            # TODO (jadechoghari): provide a dynamic rename map suggestion to the user.
+            raise ValueError(
+                f"Feature mismatch between dataset/environment and policy config.\n"
+                f"- Missing features: {sorted(missing) if missing else 'None'}\n"
+                f"- Extra features: {sorted(extra) if extra else 'None'}\n\n"
+                f"Please ensure your dataset and policy use consistent feature names.\n"
+                f"If your dataset uses different observation keys (e.g., cameras named differently), "
+                f"use the `--rename_map` argument, for example:\n"
+                f'  --rename_map=\'{{"observation.images.left": "observation.images.camera1", '
+                f'"observation.images.top": "observation.images.camera2"}}\''
+            )
     return policy
