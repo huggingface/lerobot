@@ -380,7 +380,7 @@ def make_policy(
 
     # policy = torch.compile(policy, mode="reduce-overhead")
 
-    if not rename_map:
+    if rename_map is None:
         expected_features = set(cfg.input_features.keys()) | set(cfg.output_features.keys())
         provided_features = set(features.keys())
         if expected_features and provided_features != expected_features:
