@@ -265,6 +265,8 @@ class ACFQLPolicy(
             self.critic_ensemble.parameters(),
             strict=True,
         ):
+            if not param.requires_grad:
+                continue
             target_param.data.copy_(
                 param.data * self.config.critic_target_update_weight
                 + target_param.data * (1.0 - self.config.critic_target_update_weight)
