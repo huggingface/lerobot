@@ -303,6 +303,7 @@ def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
     env_cfg: EnvConfig | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> PreTrainedPolicy:
     """
     Instantiate a policy model.
@@ -359,7 +360,6 @@ def make_policy(
         if env_cfg is None:
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
-
     if not cfg.output_features:
         cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
@@ -380,4 +380,21 @@ def make_policy(
 
     # policy = torch.compile(policy, mode="reduce-overhead")
 
+    if not rename_map:
+        expected_features = set(cfg.input_features.keys()) | set(cfg.output_features.keys())
+        provided_features = set(features.keys())
+        if expected_features and provided_features != expected_features:
+            missing = expected_features - provided_features
+            extra = provided_features - expected_features
+            # TODO (jadechoghari): provide a dynamic rename map suggestion to the user.
+            raise ValueError(
+                f"Feature mismatch between dataset/environment and policy config.\n"
+                f"- Missing features: {sorted(missing) if missing else 'None'}\n"
+                f"- Extra features: {sorted(extra) if extra else 'None'}\n\n"
+                f"Please ensure your dataset and policy use consistent feature names.\n"
+                f"If your dataset uses different observation keys (e.g., cameras named differently), "
+                f"use the `--rename_map` argument, for example:\n"
+                f"  --rename_map='{{\"observation.images.left\": \"observation.images.camera1\", "
+                f"\"observation.images.top\": \"observation.images.camera2\"}}'"
+            )
     return policy
