@@ -19,6 +19,7 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
+from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -33,15 +34,24 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
 
 
 def make_env(
-    cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False
+    cfg: EnvConfig | str,
+    n_envs: int = 1,
+    use_async_envs: bool = False,
+    hub_cache_dir: str | None = None,
+    trust_remote_code: bool = False,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """Makes a gym vector environment according to the config.
+    """Makes a gym vector environment according to the config or Hub reference.
 
     Args:
-        cfg (EnvConfig): the config of the environment to instantiate.
+        cfg (EnvConfig | str): Either an `EnvConfig` object describing the environment to build locally,
+            or a Hugging Face Hub repository identifier (e.g. `"username/repo"`). In the latter case,
+            the repo must include a Python file (usually `env.py`).
         n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
         use_async_envs (bool, optional): Whether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
             False.
+        hub_cache_dir (str | None): Optional cache path for downloaded hub files.
+        trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
+            Default False — must be set to True to import/exec hub `env.py`.
 
     Raises:
         ValueError: if n_envs < 1
@@ -54,6 +64,21 @@ def make_env(
             - For single-task environments: a single suite entry (cfg.type) with task_id=0.
 
     """
+    # if user passed a hub id string (e.g., "username/repo", "username/repo@main:env.py")
+    # simplified: only support hub-provided `make_env`
+    if isinstance(cfg, str):
+        # _download_hub_file will raise the same RuntimeError if trust_remote_code is False
+        repo_id, file_path, local_file, revision = _download_hub_file(cfg, trust_remote_code, hub_cache_dir)
+
+        # import and surface clear import errors
+        module = _import_hub_module(local_file, repo_id)
+
+        # call the hub-provided make_env
+        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs)
+
+        # normalize the return into {suite: {task_id: vec_env}}
+        return _normalize_hub_result(raw_result)
+
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
 
