@@ -81,7 +81,7 @@ dependencies = [
     "torchvision>=0.21.0,<0.23.0", # TODO: Bumb dependency
 
     "draccus==0.10.0", # TODO: Remove ==
-    "gymnasium>=1.0.0",
+    "gymnasium>=1.1.1,<2.0.0",
     "rerun-sdk>=0.24.0,<0.27.0",
 
     # Support dependencies
@@ -118,7 +118,7 @@ phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0"]
 # Policies
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
-hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
@@ -132,7 +132,7 @@ video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 aloha = ["gym-aloha>=0.1.2,<0.2.0"]
 pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
-metaworld = ["metaworld>=3.0.0"]
+metaworld = ["metaworld==3.0.0"]
 
 # All
 all = [
