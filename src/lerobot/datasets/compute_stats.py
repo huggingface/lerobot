@@ -32,17 +32,15 @@ class RunningQuantileStats:
 
     def __init__(self, quantile_list: list[float] | None = None, num_quantile_bins: int = 5000):
         self._count = 0
-        self._mean = None
+        self._mean: np.ndarray = None
         self._mean_of_squares = None
-        self._min = None
-        self._max = None
-        self._histograms = None
-        self._bin_edges = None
+        self._min: np.ndarray = None
+        self._max: np.ndarray = None
+        self._histograms: list[np.ndarray] | None = None
+        self._bin_edges: list[np.ndarray] | None = None
         self._num_quantile_bins = num_quantile_bins
 
-        self._quantile_list = quantile_list
-        if self._quantile_list is None:
-            self._quantile_list = DEFAULT_QUANTILES
+        self._quantile_list: list[float] = quantile_list or DEFAULT_QUANTILES
         self._quantile_keys = [f"q{int(q * 100):02d}" for q in self._quantile_list]
 
     def update(self, batch: np.ndarray) -> None:
@@ -150,12 +148,19 @@ class RunningQuantileStats:
 
     def _update_histograms(self, batch: np.ndarray) -> None:
         """Update histograms with new vectors."""
+
+        assert self._histograms is not None
+        assert self._bin_edges is not None
+
         for i in range(batch.shape[1]):
             hist, _ = np.histogram(batch[:, i], bins=self._bin_edges[i])
             self._histograms[i] += hist
 
     def _compute_quantiles(self) -> list[np.ndarray]:
         """Compute quantiles based on histograms."""
+        assert self._histograms is not None
+        assert self._bin_edges is not None
+
         results = []
         for q in self._quantile_list:
             target_count = q * self._count
@@ -508,11 +513,13 @@ def compute_episode_stats(
         if features[key]["dtype"] == "string":
             continue
 
+        axes_to_reduce: int | tuple[int, ...] | None
         if features[key]["dtype"] in ["image", "video"]:
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)
             keepdims = True
         else:
+            assert isinstance(data, np.ndarray)
             ep_ft_array = data
             axes_to_reduce = 0
             keepdims = data.ndim == 1
@@ -562,7 +569,7 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
                 _validate_stat_value(stat_value, stat_key, feature_key)
 
 
-def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
+def aggregate_feature_stats(stats_ft_list: list[dict[str, float]]) -> dict[str, dict[str, np.ndarray]]:
     """Aggregates stats for a single feature."""
     means = np.stack([s["mean"] for s in stats_ft_list])
     variances = np.stack([s["std"] ** 2 for s in stats_ft_list])
@@ -617,7 +624,7 @@ def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np
     _assert_type_and_shape(stats_list)
 
     data_keys = {key for stats in stats_list for key in stats}
-    aggregated_stats = {key: {} for key in data_keys}
+    aggregated_stats: dict[str, dict[str, np.ndarray]] = {key: {} for key in data_keys}
 
     for key in data_keys:
         stats_with_key = [stats[key] for stats in stats_list if key in stats]

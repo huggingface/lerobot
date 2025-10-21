@@ -171,8 +171,8 @@ def aggregate_datasets(
     aggr_repo_id: str,
     roots: list[Path] | None = None,
     aggr_root: Path | None = None,
-    data_files_size_in_mb: float | None = None,
-    video_files_size_in_mb: float | None = None,
+    data_files_size_in_mb: int | None = None,
+    video_files_size_in_mb: int | None = None,
     chunk_size: int | None = None,
 ):
     """Aggregates multiple LeRobot datasets into a single unified dataset.
