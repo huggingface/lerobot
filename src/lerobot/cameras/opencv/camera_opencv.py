@@ -115,6 +115,7 @@ class OpenCVCamera(Camera):
         self.fps = config.fps
         self.color_mode = config.color_mode
         self.warmup_s = config.warmup_s
+        self.fourcc = config.fourcc
 
         self.videocapture: cv2.VideoCapture | None = None
 
@@ -199,6 +200,8 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
+        self._apply_fourcc()
+
         if self.fps is None:
             self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         else:
@@ -241,6 +244,28 @@ class OpenCVCamera(Camera):
         if not height_success or self.capture_height != actual_height:
             raise RuntimeError(
                 f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=})."
+            )
+
+    def _apply_fourcc(self) -> None:
+        """Optionally set the capture pixel format via FOURCC."""
+        if self.fourcc is None:
+            return
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"Cannot set FOURCC for {self} as it is not connected.")
+
+        desired_fourcc = cv2.VideoWriter_fourcc(*self.fourcc)
+        success = self.videocapture.set(cv2.CAP_PROP_FOURCC, desired_fourcc)
+        actual_fourcc = int(self.videocapture.get(cv2.CAP_PROP_FOURCC))
+
+        if actual_fourcc:
+            actual_str = "".join(chr((actual_fourcc >> 8 * i) & 0xFF) for i in range(4))
+        else:
+            actual_str = "UNKNOWN"
+
+        if not success or actual_fourcc != desired_fourcc:
+            raise RuntimeError(
+                f"{self} failed to set FOURCC='{self.fourcc}' ({actual_str=}, {success=})."
             )
 
     @staticmethod
