@@ -189,5 +189,5 @@ jobs:
           python -c "import torch; print(f'PyTorch CUDA available: {torch.cuda.is_available()}'); print(f'Number of GPUs: {torch.cuda.device_count()}')"
 
       - name: Run multi-GPU training tests
-        run: pytest tests/training/test_multi_gpu.py -vv --maxfail=3
+        run: pytest tests -vv --maxfail=10 --ignore=tests/motors/test_dynamixel.py
         timeout-minutes: 10
