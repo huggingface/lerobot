@@ -20,7 +20,7 @@ from typing import Any, Dict
 from ..teleoperator import Teleoperator
 from ..bi_joycon.bi_joycon import BiJoycon
 from ..lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import LeKiwiBaseTeleop
-from ..xlerobot_mount_idle.teleop import XLeRobotMountIdle
+from ..xlerobot_mount_gamepad.teleop import XLeRobotMountGamepadTeleop
 from .config import XLeRobotJoyconGamepadConfig
 
 
@@ -35,7 +35,7 @@ class XLeRobotJoyconGamepad(Teleoperator):
         self.config = config
         self.arm_teleop = BiJoycon(config.arms_config)
         self.base_teleop = LeKiwiBaseTeleop(config.base_config)
-        self.mount_teleop = XLeRobotMountIdle(config.mount_config)
+        self.mount_teleop = XLeRobotMountGamepadTeleop(config.mount_config)
 
     @cached_property
     def action_features(self) -> dict[str, type]:
