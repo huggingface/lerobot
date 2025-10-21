@@ -320,6 +320,8 @@ def make_policy(
                  statistics for normalization layers.
         env_cfg: Environment configuration used to infer feature shapes and types.
                  One of `ds_meta` or `env_cfg` must be provided.
+        rename_map: Optional mapping of dataset or environment feature keys to match
+                 expected policy feature names (e.g., `"left"` → `"camera1"`).
 
     Returns:
         An instantiated and device-placed policy model.
@@ -381,7 +383,7 @@ def make_policy(
 
     # policy = torch.compile(policy, mode="reduce-overhead")
 
-    if rename_map is None:
+    if not rename_map:
         expected_features = set(cfg.input_features.keys()) | set(cfg.output_features.keys())
         provided_features = set(features.keys())
         if expected_features and provided_features != expected_features:

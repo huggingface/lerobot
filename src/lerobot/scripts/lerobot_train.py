@@ -225,10 +225,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 "norm_map": policy.config.normalization_mapping,
             },
         }
-        if getattr(cfg, "rename_map", None):
-            processor_kwargs["preprocessor_overrides"]["rename_observations_processor"] = {
-                "rename_map": cfg.rename_map
-            }
+        processor_kwargs["preprocessor_overrides"]["rename_observations_processor"] = {
+            "rename_map": cfg.rename_map
+        }
         postprocessor_kwargs["postprocessor_overrides"] = {
             "unnormalizer_processor": {
                 "stats": dataset.meta.stats,
