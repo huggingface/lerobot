@@ -257,7 +257,7 @@ class ReplayBufferNSteps(ReplayBuffer):
                 memory.
 
         Yields:
-            BatchTransition: A batch sampled from the replay buffer.
+            BatchTransitionNSteps: A batch sampled from the replay buffer.
         """
         import queue
         import threading
@@ -525,3 +525,81 @@ class ReplayBufferNSteps(ReplayBuffer):
             )
 
             yield transition
+
+
+def concatenate_batch_transitions_nstep(
+    left_batch_transitions: BatchTransitionNSteps, right_batch_transition: BatchTransitionNSteps
+) -> BatchTransitionNSteps:
+    """
+    Concatenates two BatchTransitionNSteps objects into one.
+
+    This function merges the right BatchTransitionNSteps into the left one by concatenating
+    all corresponding tensors along dimension 0. The operation modifies the left_batch_transitions
+    in place and also returns it.
+
+    Args:
+        left_batch_transitions (BatchTransitionNSteps): The first batch to concatenate and the one
+            that will be modified in place.
+        right_batch_transition (BatchTransitionNSteps): The second batch to append to the first one.
+
+    Returns:
+        BatchTransitionNSteps: The concatenated batch (same object as left_batch_transitions).
+
+    Warning:
+        This function modifies the left_batch_transitions object in place.
+    """
+    # Concatenate state fields
+    left_batch_transitions["state"] = {
+        key: torch.cat(
+            [left_batch_transitions["state"][key], right_batch_transition["state"][key]],
+            dim=0,
+        )
+        for key in left_batch_transitions["state"]
+    }
+
+    # Concatenate basic fields
+    left_batch_transitions[ACTION] = torch.cat(
+        [left_batch_transitions[ACTION], right_batch_transition[ACTION]], dim=0
+    )
+    left_batch_transitions["reward"] = torch.cat(
+        [left_batch_transitions["reward"], right_batch_transition["reward"]], dim=0
+    )
+
+    # Concatenate next_state fields
+    left_batch_transitions["next_state"] = {
+        key: torch.cat(
+            [left_batch_transitions["next_state"][key], right_batch_transition["next_state"][key]],
+            dim=0,
+        )
+        for key in left_batch_transitions["next_state"]
+    }
+
+    # Concatenate done and truncated fields
+    left_batch_transitions["masks"] = torch.cat(
+        [left_batch_transitions["masks"], right_batch_transition["masks"]], dim=0
+    )
+    left_batch_transitions["terminals"] = torch.cat(
+        [left_batch_transitions["terminals"], right_batch_transition["terminals"]], dim=0
+    )
+    left_batch_transitions["valid"] = torch.cat(
+        [left_batch_transitions["valid"], right_batch_transition["valid"]], dim=0
+    )
+
+    # Handle complementary_info
+    left_info = left_batch_transitions.get("complementary_info")
+    right_info = right_batch_transition.get("complementary_info")
+
+    # Only process if right_info exists
+    if right_info is not None:
+        # Initialize left complementary_info if needed
+        if left_info is None:
+            left_batch_transitions["complementary_info"] = right_info
+        else:
+            # Concatenate each field
+            for key in right_info:
+                if key in left_info:
+                    left_info[key] = torch.cat([left_info[key], right_info[key]], dim=0)
+                else:
+                    left_info[key] = right_info[key]
+
+    return left_batch_transitions

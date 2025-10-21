@@ -75,7 +75,6 @@ from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.robots import so100_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
-from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport.utils import (
     bytes_to_transitions,
     state_to_bytes,
@@ -100,7 +99,10 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
-from .buffer import ReplayBufferNSteps as ReplayBuffer
+from .buffer import (
+    ReplayBufferNSteps as ReplayBuffer,
+    concatenate_batch_transitions_nstep as concatenate_batch_transitions,
+)
 from .configs import ACFQLTrainRLServerPipelineConfig as TrainRLServerPipelineConfig
 
 
@@ -385,6 +387,8 @@ def add_actor_information_and_train(
     # =============================================================================
     # PHASE 1: OFFLINE PRETRAINING
     # =============================================================================
+
+    offline_iterator = None
 
     if offline_steps > 0 and offline_replay_buffer is not None and optimization_step < offline_steps:
         logging.info(f"[LEARNER] Starting offline pretraining for {offline_steps} steps")
@@ -695,6 +699,20 @@ def add_actor_information_and_train(
     logging.info(f"[LEARNER] Online step before learning steps: {online_step_before_learning}")
     online_iterator = None
 
+    if cfg.dataset is not None and offline_replay_buffer is None:
+        offline_replay_buffer = initialize_offline_replay_buffer(
+            cfg=cfg,
+            device=device,
+            storage_device=storage_device,
+        )
+
+    if offline_iterator is not None:
+        # TODO(jpizarrom): clean memory used by offline iterator
+        offline_iterator = None
+
+    if dataset_repo_id is not None:
+        batch_size: int = batch_size // 2  # We will sample from both replay buffer
+
     # Push policy to actors to start collecting transitions
     push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
     last_time_policy_pushed = time.time()
@@ -728,6 +746,15 @@ def add_actor_information_and_train(
         if len(replay_buffer) < online_step_before_learning:
             continue
 
+        if offline_iterator is None and offline_replay_buffer is not None:
+            offline_iterator = offline_replay_buffer.get_iterator_nstep(
+                batch_size=batch_size,
+                n_steps=cfg.policy.chunk_size,
+                gamma=cfg.policy.discount,
+                async_prefetch=async_prefetch,
+                queue_size=2,
+            )
+
         if online_iterator is None:
             online_iterator = replay_buffer.get_iterator_nstep(
                 batch_size=batch_size,
@@ -741,6 +768,12 @@ def add_actor_information_and_train(
         for _ in range(utd_ratio - 1):
             # Sample from the iterators
             batch = next(online_iterator)
+            if dataset_repo_id is not None:
+                batch_offline = next(offline_iterator)
+                # Merge both batches
+                batch = concatenate_batch_transitions(
+                    left_batch_transitions=batch, right_batch_transition=batch_offline
+                )
 
             # Extract n-step batch components
             actions = batch[ACTION]  # [B, h, action_dim]
@@ -836,6 +869,12 @@ def add_actor_information_and_train(
 
         # Sample for the last update in the UTD ratio
         batch = next(online_iterator)
+        if dataset_repo_id is not None:
+            batch_offline = next(offline_iterator)
+            # Merge both batches
+            batch = concatenate_batch_transitions(
+                left_batch_transitions=batch, right_batch_transition=batch_offline
+            )
 
         # Extract n-step batch components
         actions = batch[ACTION]  # [B, h, action_dim]
@@ -1408,12 +1447,12 @@ def process_transitions(
             replay_buffer.add(**transition)
 
             # Add to offline buffer if it's an intervention
-            # TODO(jpizarrom): Interventions should not be added to offline buffer when using action chunks
+            # TODO(jpizarrom): single intervention should not be added to offline buffer when using action chunks, but a chunk where there are intervention make sense
             # TODO(jpizarrom): Review if the enum or the str value is available in the complementary info
-            if dataset_repo_id is not None and transition.get("complementary_info", {}).get(
-                TeleopEvents.IS_INTERVENTION
-            ):
-                offline_replay_buffer.add(**transition)
+            # if dataset_repo_id is not None and transition.get("complementary_info", {}).get(
+            #     TeleopEvents.IS_INTERVENTION
+            # ):
+            #     offline_replay_buffer.add(**transition)
 
 
 if __name__ == "__main__":
