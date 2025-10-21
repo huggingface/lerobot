@@ -34,7 +34,7 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
 
 
 def make_env(
-    cfg: EnvConfig,
+    cfg: EnvConfig | str,
     n_envs: int = 1,
     use_async_envs: bool = False,
     hub_cache_dir: str | None = None,
@@ -43,7 +43,9 @@ def make_env(
     """Makes a gym vector environment according to the config or Hub reference.
 
     Args:
-        cfg (EnvConfig): the config of the environment to instantiate.
+        cfg (EnvConfig | str): Either an `EnvConfig` object describing the environment to build locally,
+            or a Hugging Face Hub repository identifier (e.g. `"username/repo"`). In the latter case,
+            the repo must include a Python file (usually `env.py`).
         n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
         use_async_envs (bool, optional): Whether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
             False.
