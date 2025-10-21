@@ -20,7 +20,7 @@ from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 
 @PreTrainedConfig.register_subclass("rtc_smolvla")
 @dataclass
-class RTCSmolVLA(SmolVLAConfig):
+class RTCSmolVLAConfig(SmolVLAConfig):
     """
     Configuration for Real-Time Chunking (RTC) SmolVLA Policy.
 

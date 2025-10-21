@@ -21,7 +21,7 @@ from queue import Empty, Queue
 import torch
 from torch import Tensor
 
-from lerobot.policies.rtc_smolvla.configuration_rtc_smolvla import RTCSmolVLA
+from lerobot.policies.rtc_smolvla.configuration_rtc_smolvla import RTCSmolVLAConfig
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy, VLAFlowMatching, make_att_2d_masks
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
@@ -292,7 +292,7 @@ class RTCSmolVLAPolicy(SmolVLAPolicy):
       • swaps to the new chunk as soon as it is available (re-indexing by δ)
     """
 
-    config_class = RTCSmolVLA
+    config_class = RTCSmolVLAConfig
     name = "rtc_smolvla"
 
     def __init__(self, config):

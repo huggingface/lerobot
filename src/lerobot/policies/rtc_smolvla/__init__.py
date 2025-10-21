@@ -14,14 +14,14 @@
 
 """Real-Time Chunking (RTC) SmolVLA Policy Implementation."""
 
-from lerobot.policies.rtc_smolvla.configuration_rtc_smolvla import RTCSmolVLA
+from lerobot.policies.rtc_smolvla.configuration_rtc_smolvla import RTCSmolVLAConfig
 from lerobot.policies.rtc_smolvla.modeling_rtc_smolvla import (
     RTCSmolVLAPolicy,
     RTCVLAFlowMatching,
 )
 
 __all__ = [
-    "RTCSmolVLA",
+    "RTCSmolVLAConfig",
     "RTCVLAFlowMatching",
     "RTCSmolVLAPolicy",
 ]
