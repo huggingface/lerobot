@@ -29,7 +29,7 @@ from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LAN
 logger = logging.getLogger(__name__)
 
 
-class VLAFlowMatchingRealTimeCorrected(VLAFlowMatching):
+class RTCVLAFlowMatching(VLAFlowMatching):
     """
     Real-time chunking wrapper around a (frozen) flow-matching VLA.
     This class runs a background inference loop and performs *guided inpainting*
@@ -278,7 +278,7 @@ class VLAFlowMatchingRealTimeCorrected(VLAFlowMatching):
         return v_t
 
     def reset(self):
-        """Reset the state of the VLAFlowMatchingRealTimeCorrected instance."""
+        """Reset the state of the RTCVLAFlowMatching instance."""
         self.current_action = None
 
 
@@ -331,7 +331,7 @@ class RTCSmolVLAPolicy(SmolVLAPolicy):
         self.model.start_inference_loop()
 
     def load_model(self):
-        return VLAFlowMatchingRealTimeCorrected(self.config)
+        return RTCVLAFlowMatching(self.config)
 
     def reset(self):
         super().reset()

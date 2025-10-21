@@ -17,11 +17,11 @@
 from lerobot.policies.rtc_smolvla.configuration_rtc_smolvla import RTCSmolVLA
 from lerobot.policies.rtc_smolvla.modeling_rtc_smolvla import (
     RTCSmolVLAPolicy,
-    VLAFlowMatchingRealTimeCorrected,
+    RTCVLAFlowMatching,
 )
 
 __all__ = [
     "RTCSmolVLA",
-    "VLAFlowMatchingRealTimeCorrected",
+    "RTCVLAFlowMatching",
     "RTCSmolVLAPolicy",
 ]
