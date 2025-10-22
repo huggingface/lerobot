@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-import gc
 import logging
 import shutil
 import tempfile
@@ -326,9 +325,14 @@ class LeRobotDatasetMetadata:
     def _save_episode_metadata(self, episode_dict: dict) -> None:
         """Buffer episode metadata and write to parquet in batches for efficiency.
 
-        This function accumulates episode metadata in a buffer and flushes it when the buffer
-        reaches the configured size. This reduces I/O overhead by writing multiple episodes
+        This function accumulates episode metadata in a buffer which is flushed at the end of the recording session
+        This reduces I/O overhead by writing multiple episodes
         at once instead of one row at a time.
+
+        It is assumed that since metadata is not large and sessions, being run by humans, can't reasonably exceed a few tens of episodes,
+        that the size of the metadata chunk will not be excessive. the decision to keep it all in memory is to support async
+        video finalization, where a batch of additional information about the video files needs to be added to the metadata
+        before it is written to a paraquet file. A new metadata chunk (file) is created with each recording session.
 
         Notes: We both need to update parquet files and HF dataset:
         - `pandas` loads parquet file in RAM
@@ -363,24 +367,6 @@ class LeRobotDatasetMetadata:
             chunk_idx = self.latest_episode["meta/episodes/chunk_index"][0]
             file_idx = self.latest_episode["meta/episodes/file_index"][0]
 
-            latest_path = (
-                self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-                if self.writer is None
-                else self.writer.where
-            )
-
-            if Path(latest_path).exists():
-                latest_size_in_mb = get_file_size_in_mb(Path(latest_path))
-                latest_num_frames = self.latest_episode["episode_index"][0]
-
-                av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
-
-                # if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
-                #     # Size limit is reached, flush buffer and prepare new parquet file
-                #     self._flush_metadata_buffer()
-                #     chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
-                #     self._close_writer()
-
             # Update the existing pandas dataframe with new row
             episode_dict["meta/episodes/chunk_index"] = [chunk_idx]
             episode_dict["meta/episodes/file_index"] = [file_idx]
@@ -390,9 +376,6 @@ class LeRobotDatasetMetadata:
         # Add to buffer
         self.metadata_buffer.append(episode_dict)
         self.latest_episode = episode_dict
-
-        # if len(self.metadata_buffer) >= self.metadata_buffer_size:
-        #     self._flush_metadata_buffer()
 
     def save_episode(
         self,
@@ -423,17 +406,17 @@ class LeRobotDatasetMetadata:
         write_stats(self.stats, self.root)
 
     def update_episode_metadata(self, episode_index: int, episode_metadata: dict) -> None:
-            """Update the metadata for a single, existing episode.
-            Args:
-                episode_index: The index of the episode to update.
-                episode_metadata: A dictionary containing the metadata fields to update.
-            """
-            for ep_dict in self.metadata_buffer:
-                # ep_dict['episode_index'] is a list with one item, e.g., [1]
-                if "episode_index" in ep_dict and ep_dict["episode_index"][0] == episode_index:
-                    logging.debug(f"Updating episode {episode_index} in metadata buffer.")
-                    ep_dict.update(episode_metadata)
-                    return
+        """Update the metadata for a single, existing episode.
+        Args:
+            episode_index: The index of the episode to update.
+            episode_metadata: A dictionary containing the metadata fields to update.
+        """
+        for ep_dict in self.metadata_buffer:
+            # ep_dict['episode_index'] is a list with one item, e.g., [1]
+            if "episode_index" in ep_dict and ep_dict["episode_index"][0] == episode_index:
+                logging.debug(f"Updating episode {episode_index} in metadata buffer.")
+                ep_dict.update(episode_metadata)
+                return
 
     def update_video_info(self, video_key: str | None = None) -> None:
         """
@@ -808,9 +791,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         upload_large_folder: bool = False,
         **card_kwargs,
     ) -> None:
-        # Finalize any pending async videos before pushing
-        if self.async_video_encoder:
-            self.stop_async_video_encoder(wait=True)
+        # Finalize any pending async or writing operations
+        self.finalize()
 
         ignore_patterns = ["images/"]
         if not push_videos:
@@ -1006,7 +988,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 query_timestamps[key] = torch.stack(timestamps).tolist()
             else:
                 query_timestamps[key] = [current_ts]
-
         return query_timestamps
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
@@ -1103,6 +1084,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Close the parquet writers. This function needs to be called after data collection/conversion, else footer metadata won't be written to the parquet files.
         The dataset won't be valid and can't be loaded as ds = LeRobotDataset(repo_id=repo, root=HF_LEROBOT_HOME.joinpath(repo))
         """
+        # Finalize any pending async videos before writing metadata
+        if self.async_video_encoder:
+            self.stop_async_video_encoder(wait=True)
         self._close_writer()
         self.meta._close_writer()
 
@@ -1407,12 +1391,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_size_in_mb = get_file_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
-        session_is_resume = self.meta.episodes is not None
-
-
         # Check if this is the very first episode being recorded for this video key.
         if episode_index == 0:
-            logging.info("Assuming first episode of dataset for {video_key}")
             # Initialize indices for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
             latest_duration_in_s = 0.0
@@ -1423,7 +1403,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             new_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(ep_path), str(new_path))
         else:
-            logging.info("Assuming non first episode of dataset for {video_key}")
             # determine the chunk and file index of the video (for this key) of the previous episode
 
             # if this is a resumed recording, self.meta.episodes will contain metadata on episodes that were recorded.
@@ -1434,13 +1413,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 # otherwise, we want to look at the chunk and file index of episode_index-1 in self.meta.metadata_buffer
                 for ep_dict in self.meta.metadata_buffer:
                     # ep_dict['episode_index'] is a list with one item, e.g., [1]
-                    if "episode_index" in ep_dict and ep_dict["episode_index"][0] == episode_index-1:
+                    if "episode_index" in ep_dict and ep_dict["episode_index"][0] == episode_index - 1:
                         prev_ep = ep_dict
                         break
 
             # It should not be necessary to convert these to ints. Is metadata getting written incorrectly?
-            chunk_idx = int(prev_ep[f"videos/{video_key}/chunk_index"])
-            file_idx = int(prev_ep[f"videos/{video_key}/file_index"])
+            if isinstance(prev_ep[f"videos/{video_key}/chunk_index"], list):
+                chunk_idx = int(prev_ep[f"videos/{video_key}/chunk_index"][0])
+                file_idx = int(prev_ep[f"videos/{video_key}/file_index"][0])
+            else:
+                chunk_idx = int(prev_ep[f"videos/{video_key}/chunk_index"])
+                file_idx = int(prev_ep[f"videos/{video_key}/file_index"])
 
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
@@ -1581,11 +1564,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 # shutil.rmtree(self._temp_dir_for_encoding, ignore_errors=True)
                 self._temp_dir_for_encoding = None
 
-    def __del__(self):
-        """Cleanup on object destruction."""
-        if hasattr(self, "async_video_encoder") and self.async_video_encoder:
-            self.stop_async_video_encoder(wait=True)
-
     @classmethod
     def create(
         cls,
@@ -1635,7 +1613,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.delta_timestamps = None
         obj.delta_indices = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
-        
+
         obj.writer = None
         obj.latest_episode = None
         obj._current_file_start_frame = None
