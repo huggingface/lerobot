@@ -20,12 +20,21 @@ from typing import Any, Dict
 from ..teleoperator import Teleoperator
 from ..bi_so101_leader.bi_so101_leader import BiSO101Leader
 from ..lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import LeKiwiBaseTeleop
-from ..xlerobot_mount_idle.teleop import XLeRobotMountIdle
+from ..xlerobot_mount_gamepad.teleop import XLeRobotMountGamepadTeleop
 from .config import XLeRobotLeaderGamepadConfig
 
 
 class XLeRobotLeaderGamepad(Teleoperator):
-    """Composite teleoperator: SO-101 leader arms + gamepad base for XLeRobot."""
+    """Composite teleoperator for XLeRobot with leader arms and gamepad control.
+
+    This teleoperator combines three input methods:
+    - BiSO101Leader: Leader arms for controlling follower arms
+    - LeKiwiBaseTeleop: Xbox gamepad left stick for base movement
+    - XLeRobotMountGamepadTeleop: Xbox gamepad right stick for mount pan/tilt
+
+    All three inputs are merged into a single action dictionary that controls
+    the complete XLeRobot system.
+    """
 
     config_class = XLeRobotLeaderGamepadConfig
     name = "xlerobot_leader_gamepad"
@@ -35,7 +44,7 @@ class XLeRobotLeaderGamepad(Teleoperator):
         self.config = config
         self.arm_teleop = BiSO101Leader(config.arms_config)
         self.base_teleop = LeKiwiBaseTeleop(config.base_config)
-        self.mount_teleop = XLeRobotMountIdle(config.mount_config)
+        self.mount_teleop = XLeRobotMountGamepadTeleop(config.mount_config)
 
     @cached_property
     def action_features(self) -> dict[str, type]:

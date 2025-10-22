@@ -105,10 +105,6 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .lekiwi_base_joycon import LeKiwiBaseJoycon
 
         return LeKiwiBaseJoycon(config)
-    elif config.type == "xlerobot_mount_idle":
-        from .xlerobot_mount_idle import XLeRobotMountIdle
-
-        return XLeRobotMountIdle(config)
     elif config.type == "xlerobot_joycon_gamepad":
         from .xlerobot_joycon_gamepad import XLeRobotJoyconGamepad
 

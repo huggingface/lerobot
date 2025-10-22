@@ -20,7 +20,34 @@ from ..config import RobotConfig
 @RobotConfig.register_subclass("xlerobot_mount")
 @dataclass
 class XLeRobotMountConfig(RobotConfig):
-    """Placeholder config for the XLeRobot top camera mount."""
+    """Configuration for XLeRobot pan/tilt mount with two Feetech servo motors.
 
+    Hardware:
+        - Pan motor: Feetech STS3215 servo (default ID: 1)
+        - Tilt motor: Feetech STS3215 servo (default ID: 2)
+        - Serial communication via USB-to-serial adapter
+
+    Safety Limits:
+        - Pan range: -90° to 90° (horizontal sweep)
+        - Tilt range: -30° to 60° (vertical adjustment)
+    """
+
+    # Serial communication
+    port: str = "/dev/ttyACM5"  # USB-to-serial port (adjust for your system)
+
+    # Motor IDs
+    pan_motor_id: int = 0
+    tilt_motor_id: int = 1
+    motor_model: str = "sts3215"  # Feetech STS3215 servo
+
+    # Feature keys for observation/action dictionaries
     pan_key: str = "mount_pan.pos"
     tilt_key: str = "mount_tilt.pos"
+
+    # Operational parameters
+    max_pan_speed_dps: float = 60.0  # Maximum pan speed in degrees per second
+    max_tilt_speed_dps: float = 45.0  # Maximum tilt speed in degrees per second
+
+    # Safety limits (degrees)
+    pan_range: tuple[float, float] = (-90.0, 90.0)  # Pan angle limits
+    tilt_range: tuple[float, float] = (-30.0, 60.0)  # Tilt angle limits

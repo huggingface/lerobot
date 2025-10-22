@@ -18,12 +18,20 @@ from typing import Any
 from ..config import TeleoperatorConfig
 from ..bi_so101_leader.config_bi_so101_leader import BiSO101LeaderConfig
 from ..lekiwi_base_gamepad.config_lekiwi_base_gamepad import LeKiwiBaseTeleopConfig
-from ..xlerobot_mount_idle.config import XLeRobotMountIdleConfig
+from ..xlerobot_mount_gamepad.config import XLeRobotMountGamepadTeleopConfig
 
 
 @TeleoperatorConfig.register_subclass("xlerobot_leader_gamepad")
 @dataclass
 class XLeRobotLeaderGamepadConfig(TeleoperatorConfig):
+    """Configuration for composite XLeRobot teleoperation with leader arms and gamepad.
+
+    This composite teleoperator combines:
+    - BiSO101Leader: Leader arms for controlling follower arms
+    - LeKiwiBaseTeleop: Xbox gamepad left stick for base control
+    - XLeRobotMountGamepadTeleop: Xbox gamepad right stick for mount control
+    """
+
     arms: dict[str, Any] = field(default_factory=dict)
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
@@ -31,7 +39,7 @@ class XLeRobotLeaderGamepadConfig(TeleoperatorConfig):
     def __post_init__(self) -> None:
         arms_cfg = self.arms if isinstance(self.arms, BiSO101LeaderConfig) else BiSO101LeaderConfig(**self.arms)
         base_cfg = self.base if isinstance(self.base, LeKiwiBaseTeleopConfig) else LeKiwiBaseTeleopConfig(**self.base)
-        mount_cfg = self.mount if isinstance(self.mount, XLeRobotMountIdleConfig) else XLeRobotMountIdleConfig(**self.mount)
+        mount_cfg = self.mount if isinstance(self.mount, XLeRobotMountGamepadTeleopConfig) else XLeRobotMountGamepadTeleopConfig(**self.mount)
         self.arms_config = arms_cfg
         self.base_config = base_cfg
         self.mount_config = mount_cfg
