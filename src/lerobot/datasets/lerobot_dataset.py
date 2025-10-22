@@ -375,11 +375,11 @@ class LeRobotDatasetMetadata:
 
                 av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
 
-                if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
-                    # Size limit is reached, flush buffer and prepare new parquet file
-                    self._flush_metadata_buffer()
-                    chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
-                    self._close_writer()
+                # if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
+                #     # Size limit is reached, flush buffer and prepare new parquet file
+                #     self._flush_metadata_buffer()
+                #     chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
+                #     self._close_writer()
 
             # Update the existing pandas dataframe with new row
             episode_dict["meta/episodes/chunk_index"] = [chunk_idx]
@@ -391,8 +391,8 @@ class LeRobotDatasetMetadata:
         self.metadata_buffer.append(episode_dict)
         self.latest_episode = episode_dict
 
-        if len(self.metadata_buffer) >= self.metadata_buffer_size:
-            self._flush_metadata_buffer()
+        # if len(self.metadata_buffer) >= self.metadata_buffer_size:
+        #     self._flush_metadata_buffer()
 
     def save_episode(
         self,
@@ -423,56 +423,17 @@ class LeRobotDatasetMetadata:
         write_stats(self.stats, self.root)
 
     def update_episode_metadata(self, episode_index: int, episode_metadata: dict) -> None:
-        """Update the metadata for a single, existing episode.
-
-        This method locates an episode by its index, updates its metadata fields with the provided
-        dictionary, and saves the changes back to the corresponding parquet file. It assumes the
-        episode and its corresponding parquet file already exist.
-
-        Args:
-            episode_index: The index of the episode to update.
-            episode_metadata: A dictionary containing the metadata fields to update.
-        """
-        if self.episodes is None:
-            raise RuntimeError("Cannot update metadata because no episodes have been saved yet.")
-
-        if not (0 <= episode_index < len(self.episodes)):
-            raise IndexError(f"episode_index {episode_index} is out of bounds.")
-
-        # Find the location of the episode's metadata from the HF dataset
-        episode_info = self.episodes[episode_index]
-        chunk_idx = episode_info["meta/episodes/chunk_index"]
-        file_idx = episode_info["meta/episodes/file_index"]
-        parquet_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-
-        if not parquet_path.exists():
-            raise FileNotFoundError(f"Parquet file for episode {episode_index} not found at {parquet_path}")
-
-        # Load the corresponding parquet file into a pandas dataframe
-        df = pd.read_parquet(parquet_path)
-        row_indices = df[df["episode_index"] == episode_index].index
-
-        if row_indices.empty:
-            raise ValueError(f"Episode index {episode_index} not found in its parquet file: {parquet_path}")
-
-        row_index = row_indices[0]
-
-        # Update the metadata in the dataframe
-        for key, value in episode_metadata.items():
-            if key not in df.columns:
-                logging.warning(f"Metadata key '{key}' not found. Adding it as a new column.")
-                df[key] = pd.NA
-            df.loc[row_index, key] = value
-
-        # Save the updated dataframe back to disk
-        df.to_parquet(parquet_path, index=False)
-
-        # Remove the cache and reload the episodes dataset to reflect changes
-        cached_dir = get_hf_dataset_cache_dir(self.episodes)
-        if cached_dir is not None and Path(cached_dir).exists():
-            shutil.rmtree(cached_dir)
-
-        self.episodes = load_episodes(self.root)
+            """Update the metadata for a single, existing episode.
+            Args:
+                episode_index: The index of the episode to update.
+                episode_metadata: A dictionary containing the metadata fields to update.
+            """
+            for ep_dict in self.metadata_buffer:
+                # ep_dict['episode_index'] is a list with one item, e.g., [1]
+                if "episode_index" in ep_dict and ep_dict["episode_index"][0] == episode_index:
+                    logging.debug(f"Updating episode {episode_index} in metadata buffer.")
+                    ep_dict.update(episode_metadata)
+                    return
 
     def update_video_info(self, video_key: str | None = None) -> None:
         """
@@ -1298,14 +1259,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def _finalize_async_videos(self):
         """
-        Process completed async video tasks sequentially.
-        Completed episode video files are concatenated into large files up to a size limit
+        Post-process completed async video tasks sequentially.
+        videos should be present in temporary directories and need to be saved
+        with appropriate metadata.
+        video files may need to be concatenated into larger files up to a size limit
+        must be called before self.meta is destroyed
         """
         if not self.async_video_encoder:
             return
-
-        # Reload the in-memory metadata about episodes
-        self.meta.episodes = load_episodes(self.root)
 
         sorted_tasks = sorted(self.async_video_encoder.get_completed_tasks(), key=lambda x: x.episode_index)
         logging.info(f"Finalizing episodes {sorted_tasks}")
@@ -1363,7 +1324,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             global_frame_index = 0
             self._current_file_start_frame = 0
             # However, if the episodes already exists
-            # It means we are resuming recording, so we need to load the latest episode
+            # It means we are recording a new episode to an existing dataset, so we need to load the latest episode
             # Update the indices to avoid overwriting the latest episode
             if self.meta.episodes is not None and len(self.meta.episodes) > 0:
                 latest_ep = self.meta.episodes[-1]
@@ -1447,10 +1408,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
         # Check if this is the very first episode being recorded for this video key.
-        if self.meta.episodes is None or (
-            f"videos/{video_key}/chunk_index" not in self.meta.episodes.column_names
-            or f"videos/{video_key}/file_index" not in self.meta.episodes.column_names
-        ):
+        if self.meta.episodes is None and not f"videos/{video_key}/chunk_index" in self.meta.latest_episode:
+            logging.info("Assuming first episode of dataset for {video_key}")
             # Initialize indices for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
             latest_duration_in_s = 0.0
@@ -1461,13 +1420,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             new_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(ep_path), str(new_path))
         else:
-            # This can assume the metadata for `episode_index - 1` is complete even in the async case
-            # because the _finalize_async_videos is processing episodes sequentially.
-            latest_ep = self.meta.episodes[episode_index - 1]
-
+            logging.info("Assuming non first episode of dataset for {video_key}")
             # It should not be necessary to convert these to ints. Is metadata getting written incorrectly?
-            chunk_idx = int(latest_ep[f"videos/{video_key}/chunk_index"])
-            file_idx = int(latest_ep[f"videos/{video_key}/file_index"])
+            chunk_idx = int(self.meta.latest_episode[f"videos/{video_key}/chunk_index"])
+            file_idx = int(self.meta.latest_episode[f"videos/{video_key}/file_index"])
 
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
