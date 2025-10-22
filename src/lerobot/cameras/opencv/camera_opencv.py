@@ -300,11 +300,12 @@ class OpenCVCamera(Camera):
         """
         found_cameras_info = []
 
+        targets_to_scan: list[str | int]
         if platform.system() == "Linux":
             possible_paths = sorted(Path("/dev").glob("video*"), key=lambda p: p.name)
             targets_to_scan = [str(p) for p in possible_paths]
         else:
-            targets_to_scan = [str(i) for i in range(MAX_OPENCV_INDEX)]
+            targets_to_scan = [int(i) for i in range(MAX_OPENCV_INDEX)]
 
         for target in targets_to_scan:
             camera = cv2.VideoCapture(target)
