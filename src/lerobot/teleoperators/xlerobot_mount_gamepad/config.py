@@ -41,13 +41,16 @@ class XLeRobotMountGamepadTeleopConfig(TeleoperatorConfig):
     max_pan_speed_dps: float = 60.0  # Maximum pan angular velocity
     max_tilt_speed_dps: float = 45.0  # Maximum tilt angular velocity
 
-    # Axis configuration for Xbox controller right stick
-    pan_axis: int = 2  # Right stick horizontal (axis 2)
-    tilt_axis: int = 3  # Right stick vertical (axis 3)
+    # Axis configuration for Xbox controller right stick. Note that pygame exposes
+    # right stick horizontal as axis 3 and right stick vertical as axis 4 on
+    # Microsoft/XInput-style gamepads (axis 2 corresponds to the left trigger and
+    # defaults to -1.0, which would introduce constant motion if used directly).
+    pan_axis: int = 3  # Right stick horizontal
+    tilt_axis: int = 4  # Right stick vertical
 
     # Axis inversion flags
     invert_pan: bool = False  # Invert pan direction if needed
-    invert_tilt: bool = True  # Invert tilt (push up = positive tilt)
+    invert_tilt: bool = False  # Invert tilt direction if needed
 
     # Safety limits (degrees) - should match robot config
     pan_range: tuple[float, float] = (-90.0, 90.0)

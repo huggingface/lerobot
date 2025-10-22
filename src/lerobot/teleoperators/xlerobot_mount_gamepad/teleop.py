@@ -68,6 +68,8 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         # Track current position for incremental control
         self._current_pan = 0.0
         self._current_tilt = 0.0
+        self._pan_bias = 0.0
+        self._tilt_bias = 0.0
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -118,6 +120,9 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         # Initialize position to center
         self._current_pan = 0.0
         self._current_tilt = 0.0
+        # Record neutral stick offsets so we can compensate for non-zero resting values
+        self._pan_bias = self._joystick.get_axis(self.config.pan_axis)
+        self._tilt_bias = self._joystick.get_axis(self.config.tilt_axis)
 
     @property
     def is_connected(self) -> bool:
@@ -170,8 +175,12 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
                 raise DeviceNotConnectedError("Gamepad disconnected.")
 
         # Read right stick axes
-        pan_input = self._joystick.get_axis(self.config.pan_axis)
-        tilt_input = self._joystick.get_axis(self.config.tilt_axis)
+        raw_pan = self._joystick.get_axis(self.config.pan_axis)
+        raw_tilt = self._joystick.get_axis(self.config.tilt_axis)
+
+        # Compensate for resting offsets (e.g., triggers default to -1)
+        pan_input = raw_pan - self._pan_bias
+        tilt_input = raw_tilt - self._tilt_bias
 
         # Apply axis inversions
         if self.config.invert_pan:
