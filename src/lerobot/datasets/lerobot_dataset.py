@@ -999,10 +999,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 if cam_val is None:
                     continue
 
+                # Convert non-tensor camera values safely
                 if not isinstance(cam_val, torch.Tensor):
                     try:
                         cam_val = torch.as_tensor(cam_val)
-                    except Exception:
+                    except (TypeError, ValueError):
                         item[cam] = self.image_transforms(cam_val)
                         continue
 
@@ -1014,7 +1015,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 if cam_val.dim() == 3 and cam_val.shape[-1] == 3:
                     cam_val = cam_val.permute(2, 0, 1)
 
-                # Multi-frame case
+                # Multi-frame case [N, C, H, W] → [N*C, H, W]
                 if cam_val.dim() == 4:
                     frames = []
                     for f_idx in range(cam_val.shape[0]):
@@ -1025,16 +1026,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                             if frame_t.dim() == 3 and frame_t.shape[-1] == 3:
                                 frame_t = frame_t.permute(2, 0, 1)
                         frames.append(frame_t)
-                    try:
-                        item[cam] = torch.cat(frames, dim=0)
-                    except Exception:
-                        stacked = torch.stack(frames, dim=0)
-                        N, C, H, W = stacked.shape
-                        item[cam] = stacked.view(N * C, H, W)
-                elif cam_val.dim() == 3:
-                    item[cam] = self.image_transforms(cam_val)
+
+                    stacked = torch.stack(frames, dim=0)
+                    N, C, H, W = stacked.shape
+                    item[cam] = stacked.view(N * C, H, W)
+
                 else:
+                    # Apply transforms for single-frame or unexpected shapes
                     item[cam] = self.image_transforms(cam_val)
+
         # Add task as a string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks.iloc[task_idx].name
