@@ -133,4 +133,6 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
 log_say("Stop recording")
 robot.disconnect()
 listener.stop()
+
+dataset.finalize()
 dataset.push_to_hub()

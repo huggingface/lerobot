@@ -104,14 +104,14 @@ LeRobot works with Python 3.10+ and PyTorch 2.2+.
 
 ### Environment Setup
 
-Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
+Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniforge`](https://conda-forge.org/download/):
 
 ```bash
 conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
-When using `miniconda`, install `ffmpeg` in your environment:
+When using `conda`, install `ffmpeg` in your environment:
 
 ```bash
 conda install ffmpeg -c conda-forge
@@ -207,13 +207,13 @@ lerobot-dataset-viz \
     --episode-index 0
 ```
 
-or from a dataset in a local folder with the `root` option and the `--local-files-only` (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
+or from a dataset in a local folder with the `root` option and the `--mode local` (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
 
 ```bash
 lerobot-dataset-viz \
     --repo-id lerobot/pusht \
     --root ./my_local_data_dir \
-    --local-files-only 1 \
+    --mode local \
     --episode-index 0
 ```
 
@@ -310,7 +310,7 @@ To upload these to the hub, run the following:
 huggingface-cli upload ${hf_user}/${repo_name} path/to/pretrained_model
 ```
 
-See [eval.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/eval.py) for an example of how other people may use your policy.
+See [lerobot_eval.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_eval.py) for an example of how other people may use your policy.
 
 ### Acknowledgment
 

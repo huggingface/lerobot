@@ -16,8 +16,9 @@
 import importlib
 
 import gymnasium as gym
+from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, XarmEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -25,8 +26,6 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return AlohaEnv(**kwargs)
     elif env_type == "pusht":
         return PushtEnv(**kwargs)
-    elif env_type == "xarm":
-        return XarmEnv(**kwargs)
     elif env_type == "libero":
         return LiberoEnv(**kwargs)
     else:
@@ -74,20 +73,38 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
+    elif "metaworld" in cfg.type:
+        from lerobot.envs.metaworld import create_metaworld_envs
 
-    package_name = f"gym_{cfg.type}"
-    try:
-        importlib.import_module(package_name)
-    except ModuleNotFoundError as e:
-        print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
-        raise e
+        if cfg.task is None:
+            raise ValueError("MetaWorld requires a task to be specified")
 
-    gym_handle = f"{package_name}/{cfg.task}"
+        return create_metaworld_envs(
+            task=cfg.task,
+            n_envs=n_envs,
+            gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+        )
+
+    if cfg.gym_id not in gym_registry:
+        print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")
+        try:
+            importlib.import_module(cfg.package_name)
+        except ModuleNotFoundError as e:
+            raise ModuleNotFoundError(
+                f"Package '{cfg.package_name}' required for env '{cfg.type}' not found. "
+                f"Please install it or check PYTHONPATH."
+            ) from e
+
+        if cfg.gym_id not in gym_registry:
+            raise gym.error.NameNotFound(
+                f"Environment '{cfg.gym_id}' not registered even after importing '{cfg.package_name}'."
+            )
 
     def _make_one():
-        return gym.make(gym_handle, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
+        return gym.make(cfg.gym_id, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
 
-    vec = env_cls([_make_one for _ in range(n_envs)])
+    vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
 
     # normalize to {suite: {task_id: vec_env}} for consistency
     suite_name = cfg.type  # e.g., "pusht", "aloha"
