@@ -9,7 +9,7 @@ from lerobot.robots.so100_follower import SO100FollowerConfig
 # these cameras must match the ones expected by the policy - find your cameras with lerobot-find-cameras
 # check the config.json on the Hub for the policy you are using to see the expected camera specs
 camera_cfg = {
-    "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+    "up": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
     "side": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30),
 }
 
@@ -21,15 +21,15 @@ follower_id = ...  # something like "follower_so100"
 
 robot_cfg = SO100FollowerConfig(port=follower_port, id=follower_id, cameras=camera_cfg)
 
-server_address = ...  # something like 127.0.0.1:8080 if using localhost
+server_address = ...  # something like "127.0.0.1:8080" if using localhost
 
 # 3. Create client configuration
 client_cfg = RobotClientConfig(
     robot=robot_cfg,
     server_address=server_address,
     policy_device="mps",
-    policy_type="smolvla",
-    pretrained_name_or_path="fracapuano/smolvla_async",
+    policy_type="act",
+    pretrained_name_or_path="fracapuano/robot_learning_tutorial_act",
     chunk_size_threshold=0.5,  # g
     actions_per_chunk=50,  # make sure this is less than the max actions of the policy
 )
