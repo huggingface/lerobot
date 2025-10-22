@@ -20,7 +20,7 @@ preprocess, postprocess = make_pre_post_processors(
     model.config,
     model_id,
     # This overrides allows to run on MPS, otherwise defaults to CUDA (if available)
-    preprocessor_overrides={"device_processor": {"device": "mps"}},
+    preprocessor_overrides={"device_processor": {"device": str(device)}},
 )
 
 # find ports using lerobot-find-port
@@ -42,8 +42,8 @@ robot_cfg = SO100FollowerConfig(port=follower_port, id=follower_id, cameras=came
 robot = SO100Follower(robot_cfg)
 robot.connect()
 
-task = ...  # something like "pick the red block"
-robot_type = ...  # something like "so100_follower" for multi-embodiment datasets
+task = ""  # something like "pick the red block"
+robot_type = ""  # something like "so100_follower" for multi-embodiment datasets
 
 # This is used to match the raw observation keys to the keys expected by the policy
 action_features = hw_to_dataset_features(robot.action_features, "action")
@@ -53,7 +53,9 @@ dataset_features = {**action_features, **obs_features}
 for _ in range(MAX_EPISODES):
     for _ in range(MAX_STEPS_PER_EPISODE):
         obs = robot.get_observation()
-        obs_frame = build_inference_frame(obs, dataset_features, device, task=task, robot_type=robot_type)
+        obs_frame = build_inference_frame(
+            observation=obs, ds_features=dataset_features, device=device, task=task, robot_type=robot_type
+        )
 
         obs = preprocess(obs_frame)
 
