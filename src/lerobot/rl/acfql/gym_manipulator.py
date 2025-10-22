@@ -509,7 +509,7 @@ def make_processors(
             ),
             GripperVelocityToJoint(
                 clip_max=cfg.processor.max_gripper_pos,
-                speed_factor=0.075,  # TODO(jpizarrom): make this configurable
+                speed_factor=cfg.processor.gripper_speed_factor,
                 discrete_gripper=False,  # TODO(jpizarrom): make this configurable
                 scale_velocity=True,  # TODO(jpizarrom): make this configurable
             ),
