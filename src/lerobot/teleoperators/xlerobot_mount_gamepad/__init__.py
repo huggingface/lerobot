@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config import XLeRobotMountIdleConfig
-from .teleop import XLeRobotMountIdle
+"""Xbox gamepad teleoperation for XLeRobot mount (pan/tilt control)."""
 
-__all__ = ["XLeRobotMountIdle", "XLeRobotMountIdleConfig"]
+from .config import XLeRobotMountGamepadTeleopConfig
+from .teleop import XLeRobotMountGamepadTeleop
+
+__all__ = [
+    "XLeRobotMountGamepadTeleop",
+    "XLeRobotMountGamepadTeleopConfig",
+]

@@ -23,7 +23,11 @@ lerobot-record \
       "wheel_radius_m": 0.05,
       "base_radius_m": 0.125
   }' \
-  --robot.mount='{}' \
+  --robot.mount='{
+      "port": "/dev/ttyACM5",
+      "pan_motor_id": 0,
+      "tilt_motor_id": 1
+  }' \
   --robot.cameras='{
       "left":  {"type": "opencv", "index_or_path": 8, "width": 640, "height": 480, "fps": 15},
       "right": {"type": "opencv", "index_or_path": 6, "width": 640, "height": 480, "fps": 15},
@@ -41,7 +45,12 @@ lerobot-record \
       "deadzone": 0.15,
       "yaw_speed_deg": 45
   }' \
-  --teleop.mount='{}' \
+  --teleop.mount='{
+      "joystick_index": 0,
+      "max_pan_speed_dps": 60.0,
+      "max_tilt_speed_dps": 45.0,
+      "deadzone": 0.15
+  }' \
   --dataset.video=true \
   --dataset.repo_id="${HF_USER}/xlerobot-get-altereco" \
   --dataset.num_episodes=20 \
