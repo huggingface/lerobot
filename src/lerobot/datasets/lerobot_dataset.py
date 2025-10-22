@@ -1407,8 +1407,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_size_in_mb = get_file_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
+        session_is_resume = self.meta.episodes is not None
+
+
         # Check if this is the very first episode being recorded for this video key.
-        if self.meta.episodes is None and not f"videos/{video_key}/chunk_index" in self.meta.latest_episode:
+        if episode_index == 0:
             logging.info("Assuming first episode of dataset for {video_key}")
             # Initialize indices for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
@@ -1421,9 +1424,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
             shutil.move(str(ep_path), str(new_path))
         else:
             logging.info("Assuming non first episode of dataset for {video_key}")
+            # determine the chunk and file index of the video (for this key) of the previous episode
+
+            # if this is a resumed recording, self.meta.episodes will contain metadata on episodes that were recorded.
+            # prior to this session. In that case we want to obtain our chunk and file index from the last episode of the previous session.
+            if self.meta.episodes is not None:
+                prev_ep = self.meta.episodes[-1]
+            else:
+                # otherwise, we want to look at the chunk and file index of episode_index-1 in self.meta.metadata_buffer
+                for ep_dict in self.meta.metadata_buffer:
+                    # ep_dict['episode_index'] is a list with one item, e.g., [1]
+                    if "episode_index" in ep_dict and ep_dict["episode_index"][0] == episode_index-1:
+                        prev_ep = ep_dict
+                        break
+
             # It should not be necessary to convert these to ints. Is metadata getting written incorrectly?
-            chunk_idx = int(self.meta.latest_episode[f"videos/{video_key}/chunk_index"])
-            file_idx = int(self.meta.latest_episode[f"videos/{video_key}/file_index"])
+            chunk_idx = int(prev_ep[f"videos/{video_key}/chunk_index"])
+            file_idx = int(prev_ep[f"videos/{video_key}/file_index"])
 
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
