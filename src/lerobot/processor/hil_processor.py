@@ -454,7 +454,7 @@ class InterventionActionProcessorStep(ProcessorStep):
                         ]
                     )
                 if self.use_gripper:
-                    action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
+                    action_list.append(teleop_action.get(GRIPPER_KEY, 0.0))
             elif isinstance(teleop_action, np.ndarray):
                 action_list = teleop_action.tolist()
             else:
