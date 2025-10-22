@@ -9,6 +9,8 @@
     title: Imitation Learning for Robots
   - local: cameras
     title: Cameras
+  - local: bring_your_own_policies
+    title: Bring Your Own Policies
   - local: integrate_hardware
     title: Bring Your Own Hardware
   - local: hilserl
