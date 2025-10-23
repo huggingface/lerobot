@@ -209,6 +209,13 @@ class RTCDatasetEvalConfig(HubMixin):
         metadata={"help": "Random seed for reproducibility"},
     )
 
+    inference_delay: int = field(
+        default=1,
+        metadata={"help": "Number of steps to skip between inferences (simulates inference delay). "
+            "inference_delay=1 means evaluate every step, inference_delay=5 means evaluate every 5th step."
+        },
+    )
+
     def __post_init__(self):
         # Parse policy path
         policy_path = parser.get_path_arg("policy")
@@ -272,16 +279,6 @@ class RTCDatasetEvaluator:
             },
         )
 
-        # Metrics storage
-        self.metrics = {
-            "rtc_vs_ground_truth_mse": [],
-            "no_rtc_vs_ground_truth_mse": [],
-            "rtc_vs_no_rtc_mse": [],
-            "rtc_consistency_prefix_mse": [],
-            "rtc_consistency_prefix_max_error": [],
-            "rtc_consistency_prefix_mean_error": [],
-        }
-
     def run_evaluation(self) -> dict:
         """Run full evaluation on dataset.
 
@@ -290,14 +287,13 @@ class RTCDatasetEvaluator:
         """
         logger.info(f"Starting evaluation on {self.cfg.num_iterations} samples")
         logger.info(f"Skip steps (inference delay simulation): {self.cfg.skip_steps}")
-        logger.info(f"Starting from episode: {self.cfg.start_episode}")
+        logger.info(f"Inference delay: {self.cfg.inference_delay}")
 
-        detailed_results = []
         batch_size = 1
         prev_actions_chunk = None
 
         # Determine actual inference delay based on skip_steps
-        inference_delay = self.cfg.skip_steps
+        inference_delay = self.cfg.inference_delay
 
         dataloader = torch.utils.data.DataLoader(
             self.dataset,
@@ -331,7 +327,7 @@ class RTCDatasetEvaluator:
             prev_chunk_left_over = None
             if prev_actions_chunk is not None:
                 # Get remaining actions from previous chunk (skip executed actions)
-                prev_chunk_left_over = prev_actions_chunk[last_inference_i:]
+                prev_chunk_left_over = prev_actions_chunk[:, last_inference_i:]
 
             # Generate actions WITHOUT RTC
             self.policy.config.rtc_config.enabled = False
@@ -352,162 +348,56 @@ class RTCDatasetEvaluator:
                     noise=noise_clone,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_chunk_left_over,
+                    execution_horizon=self.cfg.rtc.execution_horizon,
                 )
+
+            self.compare_actions(rtc_actions, no_rtc_actions, inference_delay, prev_chunk_left_over, self.cfg.rtc.execution_horizon)
 
             prev_actions_chunk = rtc_actions
-
-            # Compute RTC consistency metrics
-            if prev_chunk_left_over is not None:
-                consistency_metrics = compute_consistency_metrics(
-                    rtc_actions,
-                    prev_chunk_left_over,
-                    self.cfg.rtc.execution_horizon,
-                )
-                self.metrics["rtc_consistency_prefix_mse"].append(consistency_metrics["prefix_mse"])
-                self.metrics["rtc_consistency_prefix_max_error"].append(
-                    consistency_metrics["prefix_max_error"]
-                )
-                self.metrics["rtc_consistency_prefix_mean_error"].append(
-                    consistency_metrics["prefix_mean_error"]
-                )
-
-            # Store actions for next iteration (squeeze to remove batch dimension)
-            self.metrics["rtc_actions"] = rtc_actions.squeeze(0)
-            self.metrics["no_rtc_actions"] = no_rtc_actions.squeeze(0)
-
-            if self.cfg.verbose:
-                logger.info(f"  RTC vs GT MSE: {self.metrics['rtc_vs_ground_truth_mse']:.6f}")
-                logger.info(f"  No-RTC vs GT MSE: {self.metrics['no_rtc_vs_ground_truth_mse']:.6f}")
-                logger.info(f"  RTC vs No-RTC MSE: {self.metrics['rtc_vs_no_rtc_mse']:.6f}")
-                logger.info(
-                    f"  RTC consistency (prefix MSE): {self.metrics['rtc_consistency_prefix_mse']:.6f}"
-                )
-                logger.info(
-                    f"  RTC consistency (prefix max error): {self.metrics['rtc_consistency_prefix_max_error']:.6f}"
-                )
-                logger.info(
-                    f"  RTC consistency (prefix mean error): {self.metrics['rtc_consistency_prefix_mean_error']:.6f}"
-                )
-
             inference_times += 1
             last_inference_i += i
 
             if inference_times >= self.cfg.num_iterations:
                 break
 
-        # Compute summary statistics
-        summary = self._compute_summary()
+        return
 
-        logger.info("\n" + "=" * 80)
-        logger.info("EVALUATION SUMMARY")
-        logger.info("=" * 80)
-        self._print_summary(summary)
+    def compare_actions(self, rtc_actions: Tensor, no_rtc_actions: Tensor, inference_delay: int, prev_chunk_left_over: Tensor, execution_horizon: int) -> dict:
 
-        # Save results if output path specified
-        if self.cfg.output_path:
-            self._save_results(summary, detailed_results)
+        if prev_chunk_left_over is None:
+            return None
 
-        return {
-            "summary": summary,
-            "detailed_results": detailed_results,
-            "config": {
-                "num_iterations": len(detailed_results),
-                "skip_steps": self.cfg.skip_steps,
-                "execution_horizon": self.cfg.rtc.execution_horizon,
-                "max_guidance_weight": self.cfg.rtc.max_guidance_weight,
-                "prefix_attention_schedule": self.cfg.rtc.prefix_attention_schedule.value,
-            },
-        }
+        first_part_of_rtc_actions = rtc_actions[:, :inference_delay]
+        prev_chunk = prev_chunk_left_over[:, :inference_delay]
 
-    def _compute_summary(self) -> dict:
-        """Compute summary statistics from collected metrics."""
-        import numpy as np
+        dalay_diff=  torch.abs(first_part_of_rtc_actions - prev_chunk)
 
-        summary = {}
-        for metric_name, values in self.metrics.items():
-            if len(values) > 0:
-                summary[metric_name] = {
-                    "mean": float(np.mean(values)),
-                    "std": float(np.std(values)),
-                    "min": float(np.min(values)),
-                    "max": float(np.max(values)),
-                    "median": float(np.median(values)),
-                }
+        in_execution_horizon_diff = torch.abs(rtc_actions[:, inference_delay:execution_horizon] - no_rtc_actions[:, inference_delay:execution_horizon])
 
-        # Compute improvement metrics
-        if len(self.metrics["rtc_vs_ground_truth_mse"]) > 0:
-            rtc_mse = np.mean(self.metrics["rtc_vs_ground_truth_mse"])
-            no_rtc_mse = np.mean(self.metrics["no_rtc_vs_ground_truth_mse"])
-            improvement = ((no_rtc_mse - rtc_mse) / no_rtc_mse * 100) if no_rtc_mse > 0 else 0.0
+        after_execution_horizon_diff = torch.abs(rtc_actions[:, execution_horizon:] - no_rtc_actions[:, execution_horizon:])
 
-            summary["improvement"] = {
-                "absolute": float(no_rtc_mse - rtc_mse),
-                "relative_percent": float(improvement),
-            }
+        print("Delay diff: ", dalay_diff.mean().item(), dalay_diff.max().item(), dalay_diff.min().item())
+        print("In execution horizon diff: ", in_execution_horizon_diff.mean().item(), in_execution_horizon_diff.max().item(), in_execution_horizon_diff.min().item())
+        print("After execution horizon diff: ", after_execution_horizon_diff.mean().item(), after_execution_horizon_diff.max().item(), after_execution_horizon_diff.min().item())
 
-        return summary
 
-    def _print_summary(self, summary: dict):
-        """Pretty print summary statistics."""
-        logger.info("\nGround Truth Alignment:")
-        logger.info(
-            f"  RTC MSE:        {summary['rtc_vs_ground_truth_mse']['mean']:.6f} ± {summary['rtc_vs_ground_truth_mse']['std']:.6f}"
-        )
-        logger.info(
-            f"  No-RTC MSE:     {summary['no_rtc_vs_ground_truth_mse']['mean']:.6f} ± {summary['no_rtc_vs_ground_truth_mse']['std']:.6f}"
-        )
+        print("=" * 80)
 
-        if "improvement" in summary:
-            logger.info("\nRTC Improvement:")
-            logger.info(f"  Absolute:       {summary['improvement']['absolute']:.6f}")
-            logger.info(f"  Relative:       {summary['improvement']['relative_percent']:.2f}%")
+        print("rtc actions: ", rtc_actions)
+        print("no rtc actions: ", no_rtc_actions)
+        print("first part of rtc actions: ", first_part_of_rtc_actions)
+        print("prev chunk: ", prev_chunk)
+        print("delay diff: ", dalay_diff)
+        # print("in execution horizon diff: ", in_execution_horizon_diff)
+        # print("after execution horizon diff: ", after_execution_horizon_diff)
 
-        logger.info("\nRTC vs No-RTC Difference:")
-        logger.info(
-            f"  MSE:            {summary['rtc_vs_no_rtc_mse']['mean']:.6f} ± {summary['rtc_vs_no_rtc_mse']['std']:.6f}"
-        )
+        # print("=" * 80)
 
-        logger.info("\nRTC Consistency (Prefix Region):")
-        logger.info(
-            f"  MSE:            {summary['rtc_consistency_prefix_mse']['mean']:.6f} ± {summary['rtc_consistency_prefix_mse']['std']:.6f}"
-        )
-        logger.info(
-            f"  Mean Error:     {summary['rtc_consistency_prefix_mean_error']['mean']:.6f} ± {summary['rtc_consistency_prefix_mean_error']['std']:.6f}"
-        )
-        logger.info(
-            f"  Max Error:      {summary['rtc_consistency_prefix_max_error']['mean']:.6f} ± {summary['rtc_consistency_prefix_max_error']['std']:.6f}"
-        )
+        # print("delay diff: ", delay_diff.mean().item(), delay_diff.max().item(), delay_diff.min().item())
+        # print("in execution horizon diff: ", in_execution_horizon_diff.mean().item(), in_execution_horizon_diff.max().item(), in_execution_horizon_diff.min().item())
+        # print("after execution horizon diff: ", after_execution_horizon_diff.mean().item(), after_execution_horizon_diff.max().item(), after_execution_horizon_diff.min().item())
 
-    def _save_results(self, summary: dict, detailed_results: list):
-        """Save evaluation results to JSON file."""
-        output_path = Path(self.cfg.output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Convert tensors to lists for JSON serialization
-        serializable_results = []
-        for result in detailed_results:
-            serializable = {k: v for k, v in result.items() if k not in ["rtc_actions", "no_rtc_actions"]}
-            serializable_results.append(serializable)
-
-        results = {
-            "summary": summary,
-            "config": {
-                "policy_path": self.cfg.policy.pretrained_path,
-                "dataset_repo_id": self.cfg.dataset.repo_id,
-                "num_iterations": self.cfg.num_iterations,
-                "skip_steps": self.cfg.skip_steps,
-                "execution_horizon": self.cfg.rtc.execution_horizon,
-                "max_guidance_weight": self.cfg.rtc.max_guidance_weight,
-                "prefix_attention_schedule": self.cfg.rtc.prefix_attention_schedule.value,
-                "seed": self.cfg.seed,
-            },
-            "detailed_results": serializable_results,
-        }
-
-        with open(output_path, "w") as f:
-            json.dump(results, f, indent=2)
-
-        logger.info(f"\nResults saved to: {output_path}")
+        return
 
 
 @parser.wrap()
@@ -528,10 +418,7 @@ def main(cfg: RTCDatasetEvalConfig):
     logger.info("=" * 80)
 
     evaluator = RTCDatasetEvaluator(cfg)
-    results = evaluator.run_evaluation()
-
-    print(results)
-
+    evaluator.run_evaluation()
 
 if __name__ == "__main__":
     main()
