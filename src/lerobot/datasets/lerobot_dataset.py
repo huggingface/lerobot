@@ -860,12 +860,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return False
 
         # Check if all required video files exist
+        # Instead of checking every episode, collect unique video file paths since multiple episodes
+        # can share the same video file (episodes are concatenated into chunked video files)
         if len(self.meta.video_keys) > 0:
+            unique_video_paths = set()
             for ep_idx in requested_episodes:
                 for vid_key in self.meta.video_keys:
                     video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-                    if not video_path.exists():
-                        return False
+                    unique_video_paths.add(video_path)
+            
+            # Check existence of unique video files only
+            for video_path in unique_video_paths:
+                if not video_path.exists():
+                    return False
+
         return True
 
     def create_hf_dataset(self) -> datasets.Dataset:
