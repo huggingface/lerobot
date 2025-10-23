@@ -222,9 +222,11 @@ class RTCProcessor:
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
             # Our integration runs from time=1 -> 0, so we still want the step magnitude
             # to scale with (1 - time) to avoid overly large corrections at the start.
-            x1_t = x_t + time * v_t
+            x1_t = x_t - tau * v_t
 
             error = (prev_chunk_left_over - x1_t) * weights
+
+            print("Error calculation: prev_chunk_left_over: ", prev_chunk_left_over[:, :1, :6], " x1_t: ", x1_t[:, :1, :6])
 
             if self.verbose:
                 logger.info(self._tensor_stats(x1_t, "x1_t (predicted next state)"))
@@ -232,6 +234,8 @@ class RTCProcessor:
                 logger.info(self._tensor_stats(error, "error (weighted difference)"))
 
             correction = torch.autograd.grad(x1_t, x_t, error, retain_graph=True)[0]
+
+        # print("error: ", error[0, :3, :6], weights)
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
 
@@ -249,12 +253,7 @@ class RTCProcessor:
             logger.info(f"guidance_weight: {guidance_weight:.4f} (max={max_guidance_weight:.4f})")
             logger.info(self._tensor_stats(correction, "correction"))
 
-        result = v_t + guidance_weight * correction
-
-        if self.verbose:
-            logger.info(self._tensor_stats(result, "result (guided velocity)"))
-            logger.info(f"Correction magnitude: {(guidance_weight * correction).abs().mean().item():.6f}")
-            logger.info("=" * 80)
+        result = v_t - guidance_weight * correction
 
         # Remove the batch dimension if it was added
         if squeezed:

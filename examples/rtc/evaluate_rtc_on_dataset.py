@@ -297,7 +297,7 @@ class RTCDatasetEvaluator:
         dataloader = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=4,
         )
 
@@ -409,11 +409,13 @@ class RTCDatasetEvaluator:
 
         print("=" * 80)
 
-        print("rtc actions: ", rtc_actions)
-        print("no rtc actions: ", no_rtc_actions)
-        print("first part of rtc actions: ", first_part_of_rtc_actions)
-        print("prev chunk: ", prev_chunk)
-        print("delay diff: ", dalay_diff)
+        # print("rtc actions: ", rtc_actions)
+        # print("no rtc actions: ", no_rtc_actions)
+        print("first part of rtc actions: ", first_part_of_rtc_actions[0, :3, :6])
+        print("prev chunk: ", prev_chunk[0, :3, :6])
+        # print("delay diff: ", dalay_diff)
+
+        exit()
         # print("in execution horizon diff: ", in_execution_horizon_diff)
         # print("after execution horizon diff: ", after_execution_horizon_diff)
 
