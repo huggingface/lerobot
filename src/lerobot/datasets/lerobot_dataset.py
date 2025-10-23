@@ -861,16 +861,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Check if all required video files exist
         if len(self.meta.video_keys) > 0:
-            unique_video_paths = set()
             for ep_idx in requested_episodes:
                 for vid_key in self.meta.video_keys:
                     video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-                    unique_video_paths.add(video_path)
-
-            for video_path in unique_video_paths:
-                if not video_path.exists():
-                    return False
-
+                    if not video_path.exists():
+                        return False
         return True
 
     def create_hf_dataset(self) -> datasets.Dataset:
