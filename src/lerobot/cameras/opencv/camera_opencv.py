@@ -18,14 +18,19 @@ Provides the OpenCVCamera class for capturing frames from cameras using OpenCV.
 
 import logging
 import math
+import os
 import platform
 import time
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
 
-import cv2
-import numpy as np
+from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
+
+# Fix MSMF hardware transform compatibility for Windows before importing cv2
+if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
+    os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
+import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -117,7 +122,7 @@ class OpenCVCamera(Camera):
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
-        self.latest_frame: np.ndarray | None = None
+        self.latest_frame: NDArray[Any] | None = None
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
@@ -136,7 +141,7 @@ class OpenCVCamera(Camera):
         """Checks if the camera is currently connected and opened."""
         return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
 
-    def connect(self, warmup: bool = True):
+    def connect(self, warmup: bool = True) -> None:
         """
         Connects to the OpenCV camera specified in the configuration.
 
@@ -200,11 +205,8 @@ class OpenCVCamera(Camera):
         # Set FOURCC first (if specified) as it can affect available FPS/resolution options
         if self.config.fourcc is not None:
             self._validate_fourcc()
-
-        if self.fps is None:
-            self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
-        else:
-            self._validate_fps()
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
 
         default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -218,8 +220,19 @@ class OpenCVCamera(Camera):
         else:
             self._validate_width_and_height()
 
+        if self.fps is None:
+            self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
+        else:
+            self._validate_fps()
+
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""
+
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        if self.fps is None:
+            raise ValueError(f"{self} FPS is not set")
 
         success = self.videocapture.set(cv2.CAP_PROP_FPS, float(self.fps))
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
@@ -231,6 +244,10 @@ class OpenCVCamera(Camera):
         """Validates and sets the camera's FOURCC code."""
 
         fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)
+
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
         success = self.videocapture.set(cv2.CAP_PROP_FOURCC, fourcc_code)
         actual_fourcc_code = self.videocapture.get(cv2.CAP_PROP_FOURCC)
 
@@ -246,6 +263,12 @@ class OpenCVCamera(Camera):
 
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
+
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        if self.capture_width is None or self.capture_height is None:
+            raise ValueError(f"{self} capture_width or capture_height is not set")
 
         width_success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
         height_success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
@@ -316,7 +339,7 @@ class OpenCVCamera(Camera):
 
         return found_cameras_info
 
-    def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
         """
         Reads a single frame synchronously from the camera.
 
@@ -344,6 +367,9 @@ class OpenCVCamera(Camera):
 
         start_time = time.perf_counter()
 
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
         ret, frame = self.videocapture.read()
 
         if not ret or frame is None:
@@ -356,7 +382,7 @@ class OpenCVCamera(Camera):
 
         return processed_frame
 
-    def _postprocess_image(self, image: np.ndarray, color_mode: ColorMode | None = None) -> np.ndarray:
+    def _postprocess_image(self, image: NDArray[Any], color_mode: ColorMode | None = None) -> NDArray[Any]:
         """
         Applies color conversion, dimension validation, and rotation to a raw frame.
 
@@ -399,7 +425,7 @@ class OpenCVCamera(Camera):
 
         return processed_image
 
-    def _read_loop(self):
+    def _read_loop(self) -> None:
         """
         Internal loop run by the background thread for asynchronous reading.
 
@@ -410,6 +436,9 @@ class OpenCVCamera(Camera):
 
         Stops on DeviceNotConnectedError, logs other errors and continues.
         """
+        if self.stop_event is None:
+            raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
+
         while not self.stop_event.is_set():
             try:
                 color_image = self.read()
@@ -446,7 +475,7 @@ class OpenCVCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
         Reads the latest available frame asynchronously.
 
@@ -489,7 +518,7 @@ class OpenCVCamera(Camera):
 
         return frame
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         """
         Disconnects from the camera and cleans up resources.
 
