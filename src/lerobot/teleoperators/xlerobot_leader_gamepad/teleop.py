@@ -85,6 +85,13 @@ class XLeRobotLeaderGamepad(Teleoperator):
         self.base_teleop.configure()
         self.mount_teleop.configure()
 
+    def on_observation(self, robot_obs: dict[str, Any]) -> None:
+        if hasattr(self.mount_teleop, "on_observation"):
+            try:
+                self.mount_teleop.on_observation(robot_obs)
+            except Exception:
+                pass
+
     def get_action(self) -> Dict[str, float]:
         action = dict(self.arm_teleop.get_action())
         action.update(self.base_teleop.get_action())
