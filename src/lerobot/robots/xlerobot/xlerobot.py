@@ -175,16 +175,26 @@ class XLerobot(Robot):
 
     def disconnect(self) -> None:
         if self.base.is_connected:
-            if hasattr(self.base, "stop_base"):
-                self.base.stop_base()
-            self.base.disconnect()
+            try:
+                if hasattr(self.base, "stop_base"):
+                    self.base.stop_base()
+                self.base.disconnect()
+            except DeviceNotConnectedError:
+                logger.debug("Base already disconnected", exc_info=False)
+            except Exception:
+                logger.warning("Failed to disconnect base", exc_info=True)
         if self.mount.is_connected:
             try:
                 self.mount.disconnect()
             except DeviceNotConnectedError:
                 logger.debug("Mount already disconnected", exc_info=False)
         if self.arms.is_connected:
-            self.arms.disconnect()
+            try:
+                self.arms.disconnect()
+            except DeviceNotConnectedError:
+                logger.debug("Arms already disconnected", exc_info=False)
+            except Exception:
+                logger.warning("Failed to disconnect arms", exc_info=True)
         for cam in self.cameras.values():
             try:
                 cam.disconnect()
