@@ -83,20 +83,20 @@ accelerate launch \
 
 ### Libero Benchmark Results
 
-Gr00t has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the Gr00t N1.5 model for 20k steps on the Libero dataset and compared the results to the Gr00t reference results.
+Gr00t has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the Gr00t N1.5 model for 30k steps on the Libero dataset and compared the results to the Gr00t reference results.
 
 | Benchmark          | LeRobot Implementation | Gr00t Reference |
 | ------------------ | ---------------------- | --------------- |
-| **Libero Spatial** | 82%                    | 92.0%           |
-| **Libero Object**  | 99%                    | 92.0%           |
-| **Libero Long**    | 72%                    | 76.0%           |
-| **Average**        | 84%                    | 87.0%           |
+| **Libero Spatial** | 82.0%                  | 92.0%           |
+| **Libero Object**  | 99.0%                  | 92.0%           |
+| **Libero Long**    | 82.0%                  | 76.0%           |
+| **Average**        | 87.0%                  | 87.0%           |
 
 These results demonstrate Gr00t's strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, you can follow the instructions in the [Libero](https://huggingface.co/docs/lerobot/libero) section.
 
 ### Evaluate in your hardware setup
 
-Once you have trained your model using your parameters you can run inference in your downstream task. Follow our by following for the downstream hardware task, you can follow our instructions in [Imitation Learning for Robots](./il_robots). For example:
+Once you have trained your model using your parameters you can run inference in your downstream task. Follow the instructions in [Imitation Learning for Robots](./il_robots). For example:
 
 ```bash
 lerobot-record \
