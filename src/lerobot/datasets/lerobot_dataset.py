@@ -868,7 +868,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 for vid_key in self.meta.video_keys:
                     video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
                     unique_video_paths.add(video_path)
-            
+
             # Check existence of unique video files only
             for video_path in unique_video_paths:
                 if not video_path.exists():
