@@ -21,6 +21,7 @@ Based on Physical Intelligence's Kinetix implementation:
 https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L214
 """
 
+import logging
 import math
 
 import torch
@@ -28,6 +29,8 @@ from torch import Tensor
 
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+logger = logging.getLogger(__name__)
 
 
 class RTCProcessor:
@@ -40,7 +43,7 @@ class RTCProcessor:
     def __init__(
         self,
         rtc_config: RTCConfig,
-        device: str | torch.device = "cpu",
+        verbose: bool = False,
     ):
         """Initialize RTC processor.
 
@@ -51,9 +54,35 @@ class RTCProcessor:
                 - prefix_attention_schedule: strategy for prefix weights
                   (ZEROS, ONES, LINEAR, EXP)
                 - max_guidance_weight: upper bound applied to the guidance scale
-            device (str | torch.device): Device for storing action chunks.
+            verbose (bool): Enable verbose debug logging.
         """
         self.rtc_config = rtc_config
+        self.verbose = verbose
+
+    @staticmethod
+    def _tensor_stats(tensor: Tensor, name: str = "tensor") -> str:
+        """Generate readable statistics string for a tensor.
+
+        Args:
+            tensor: Input tensor
+            name: Name to display
+
+        Returns:
+            Formatted string with shape and statistics
+        """
+        if tensor is None:
+            return f"{name}: None"
+
+        stats = (
+            f"{name}: shape={tuple(tensor.shape)}, "
+            f"dtype={tensor.dtype}, "
+            f"device={tensor.device}, "
+            f"min={tensor.min().item():.4f}, "
+            f"max={tensor.max().item():.4f}, "
+            f"mean={tensor.mean().item():.4f}, "
+            f"std={tensor.std().item():.4f}"
+        )
+        return stats
 
     def denoise_step(
         self,
@@ -100,16 +129,23 @@ class RTCProcessor:
             https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
 
-        # In the original implementation, the time goes from 0 to 1 and 
+        # In the original implementation, the time goes from 0 to 1 and
         # In our implementation, the time goes from 1 to 0
         # So we need to invert the time
         tau = 1 - time
 
         x_t = x_t.clone().detach().requires_grad_(True)
 
-        print("X_t", x_t)
+        if self.verbose:
+            logger.info("=" * 80)
+            logger.info(
+                f"RTC denoise_step: time={time:.4f} (tau={tau:.4f}), inference_delay={inference_delay}"
+            )
+            logger.info(self._tensor_stats(x_t, "x_t"))
 
         if prev_chunk_left_over is None:
+            if self.verbose:
+                logger.info("No prev_chunk_left_over - skipping guidance (first step)")
             # First step, no guidance
             return original_denoise_step_partial(x_t)
 
@@ -128,15 +164,32 @@ class RTCProcessor:
 
         # If the previous action chunk is to short then it doesn't make sense to use long execution horizon
         # because there is nothing to merge
+        original_execution_horizon = execution_horizon
         if execution_horizon > prev_chunk_left_over.shape[1]:
             execution_horizon = prev_chunk_left_over.shape[1]
+            if self.verbose and execution_horizon != original_execution_horizon:
+                logger.info(
+                    f"Adjusted execution_horizon: {original_execution_horizon} -> {execution_horizon} "
+                    f"(limited by prev_chunk size)"
+                )
 
         batch_size = x_t.shape[0]
         action_chunk_size = x_t.shape[1]
         action_dim = x_t.shape[2]
 
+        if self.verbose:
+            logger.info(
+                f"Batch size: {batch_size}, Chunk size: {action_chunk_size}, Action dim: {action_dim}"
+            )
+            logger.info(self._tensor_stats(prev_chunk_left_over, "prev_chunk_left_over (before padding)"))
+
         if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
             # We need to pad the left over chunk with zeros
+            if self.verbose:
+                logger.info(
+                    f"Padding prev_chunk_left_over from {tuple(prev_chunk_left_over.shape)} "
+                    f"to ({batch_size}, {action_chunk_size}, {action_dim})"
+                )
             padded = torch.zeros(batch_size, action_chunk_size, action_dim).to(x_t.device)
             padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
             prev_chunk_left_over = padded
@@ -148,6 +201,13 @@ class RTCProcessor:
             x_t.device
         )
 
+        if self.verbose:
+            logger.info(
+                f"Prefix weights: schedule={self.rtc_config.prefix_attention_schedule}, "
+                f"start={inference_delay}, end={execution_horizon}, total={action_chunk_size}"
+            )
+            logger.info(self._tensor_stats(weights, "weights (1D)"))
+
         # Reshape weights to match the tensor dimensions (batch, time, action_dim)
         # weights is shape (action_chunk_size,) and needs to be (1, action_chunk_size, 1)
         weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
@@ -155,29 +215,46 @@ class RTCProcessor:
         with torch.enable_grad():
             v_t = original_denoise_step_partial(x_t)
 
+            if self.verbose:
+                logger.info(self._tensor_stats(v_t, "v_t (original velocity)"))
+
             # In the original implementation, the time goes from 0 to 1 and x_1t calculates
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
             # Our integration runs from time=1 -> 0, so we still want the step magnitude
             # to scale with (1 - time) to avoid overly large corrections at the start.
-            x1_t = x_t + tau * v_t
+            x1_t = x_t + time * v_t
 
             error = (prev_chunk_left_over - x1_t) * weights
-            print("Error", error)
-            correction = torch.autograd.grad(x1_t, x_t, error, retain_graph=False)[0]
+
+            if self.verbose:
+                logger.info(self._tensor_stats(x1_t, "x1_t (predicted next state)"))
+                logger.info(self._tensor_stats(prev_chunk_left_over, "prev_chunk_left_over (target)"))
+                logger.info(self._tensor_stats(error, "error (weighted difference)"))
+
+            correction = torch.autograd.grad(x1_t, x_t, error, retain_graph=True)[0]
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
 
-        squared_one_minus_tau = (1 - tau)**2
-        inv_r2 = (squared_one_minus_tau + tau ** 2) / (squared_one_minus_tau)
+        squared_one_minus_tau = (1 - tau) ** 2
+        inv_r2 = (squared_one_minus_tau + tau**2) / (squared_one_minus_tau)
         c = torch.nan_to_num((1 - tau) / tau, posinf=max_guidance_weight)
         guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
         guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
 
-        print("Original v_t", v_t)
-        print("Guidance weight", guidance_weight)
-        print("Correction", correction)
+        if self.verbose:
+            logger.info(
+                f"Guidance calculation: squared_one_minus_tau={squared_one_minus_tau:.4f}, "
+                f"inv_r2={inv_r2:.4f}, c={c:.4f}"
+            )
+            logger.info(f"guidance_weight: {guidance_weight:.4f} (max={max_guidance_weight:.4f})")
+            logger.info(self._tensor_stats(correction, "correction"))
 
         result = v_t + guidance_weight * correction
+
+        if self.verbose:
+            logger.info(self._tensor_stats(result, "result (guided velocity)"))
+            logger.info(f"Correction magnitude: {(guidance_weight * correction).abs().mean().item():.6f}")
+            logger.info("=" * 80)
 
         # Remove the batch dimension if it was added
         if squeezed:
