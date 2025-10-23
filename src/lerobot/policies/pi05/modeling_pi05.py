@@ -515,7 +515,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             paligemma_config,
             action_expert_config,
             use_adarms=[False, True],
-            precision=config.dtype,
+            precision=config.dtype,  # type: ignore[arg-type]
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)

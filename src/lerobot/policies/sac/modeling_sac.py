@@ -137,7 +137,7 @@ class SACPolicy(
         q_values = discrete_critic(observations, observation_features)
         return q_values
 
-    def forward(
+    def forward(  # type: ignore[override]
         self,
         batch: dict[str, Tensor | dict[str, Tensor]],
         model: Literal["actor", "critic", "temperature", "discrete_critic"] = "critic",

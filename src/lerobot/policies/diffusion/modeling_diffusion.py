@@ -130,8 +130,8 @@ class DiffusionPolicy(PreTrainedPolicy):
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         # NOTE: It's important that this happens after stacking the images into a single key.
-        self._queues = populate_queues(self._queues, batch)
         assert self._queues is not None  # for type checker
+        self._queues = populate_queues(self._queues, batch)
 
         if len(self._queues[ACTION]) == 0:
             actions = self.predict_action_chunk(batch, noise=noise)
@@ -622,8 +622,8 @@ class DiffusionConditionalUnet1d(nn.Module):
             self.down_modules.append(
                 nn.ModuleList(
                     [
-                        DiffusionConditionalResidualBlock1d(dim_in, dim_out, **common_res_block_kwargs),
-                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),
+                        DiffusionConditionalResidualBlock1d(dim_in, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
+                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
                         # Downsample as long as it is not the last block.
                         nn.Conv1d(dim_out, dim_out, 3, 2, 1) if not is_last else nn.Identity(),
                     ]
@@ -634,10 +634,10 @@ class DiffusionConditionalUnet1d(nn.Module):
         self.mid_modules = nn.ModuleList(
             [
                 DiffusionConditionalResidualBlock1d(
-                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
+                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs  # type: ignore[arg-type]
                 ),
                 DiffusionConditionalResidualBlock1d(
-                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
+                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs  # type: ignore[arg-type]
                 ),
             ]
         )
@@ -650,8 +650,8 @@ class DiffusionConditionalUnet1d(nn.Module):
                 nn.ModuleList(
                     [
                         # dim_in * 2, because it takes the encoder's skip connection as well
-                        DiffusionConditionalResidualBlock1d(dim_in * 2, dim_out, **common_res_block_kwargs),
-                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),
+                        DiffusionConditionalResidualBlock1d(dim_in * 2, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
+                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
                         # Upsample as long as it is not the last block.
                         nn.ConvTranspose1d(dim_out, dim_out, 4, 2, 1) if not is_last else nn.Identity(),
                     ]
