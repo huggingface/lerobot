@@ -16,6 +16,7 @@
 import numpy as np
 
 from lerobot.datasets.utils import load_image_as_numpy
+from lerobot.datasets.utils import DEFAULT_FEATURES
 
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
@@ -515,11 +516,26 @@ def compute_episode_stats(
         else:
             ep_ft_array = data
             axes_to_reduce = 0
-            keepdims = data.ndim == 1
+            # NOTE: to avoid lerobot dropping dimension of custom 1-dim features (like gripper width)
+            if key not in DEFAULT_FEATURES:
+                keepdims = True
+            else:
+                keepdims = data.ndim == 1
 
-        ep_stats[key] = get_feature_stats(
-            ep_ft_array, axis=axes_to_reduce, keepdims=keepdims, quantile_list=quantile_list
-        )
+        if ep_ft_array.ndim > 2 and features[key]["dtype"] not in ["image", "video"]:
+            # NOTE: since the stats tracker from lerobot cannot handle multi-dimensional non-image/video data, yet used in 
+            # our setup like (arm, data_dim). Here we have a workaround that flattens the data and computes the stats, and then
+            # reshapes the stats back to the original shape.
+            non_sample_dims = ep_ft_array.shape[1:]
+            ep_ft_array_fl = ep_ft_array.reshape(-1, np.prod(non_sample_dims))
+            ep_stats_at_key_fl = get_feature_stats(
+                ep_ft_array_fl, axis=axes_to_reduce, keepdims=keepdims, quantile_list=quantile_list
+            )
+            ep_stats[key] = {k: v.reshape(*non_sample_dims) if k != "count" else v for k, v in ep_stats_at_key_fl.items()}
+        else:
+            ep_stats[key] = get_feature_stats(
+                ep_ft_array, axis=axes_to_reduce, keepdims=keepdims, quantile_list=quantile_list
+            )
 
         if features[key]["dtype"] in ["image", "video"]:
             ep_stats[key] = {
