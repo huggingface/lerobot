@@ -36,11 +36,9 @@ Usage:
         --seed=123
 """
 
-import json
 import logging
 import random
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -210,8 +208,9 @@ class RTCDatasetEvalConfig(HubMixin):
     )
 
     inference_delay: int = field(
-        default=1,
-        metadata={"help": "Number of steps to skip between inferences (simulates inference delay). "
+        default=8,
+        metadata={
+            "help": "Number of steps to skip between inferences (simulates inference delay). "
             "inference_delay=1 means evaluate every step, inference_delay=5 means evaluate every 5th step."
         },
     )
@@ -351,7 +350,13 @@ class RTCDatasetEvaluator:
                     execution_horizon=self.cfg.rtc.execution_horizon,
                 )
 
-            self.compare_actions(rtc_actions, no_rtc_actions, inference_delay, prev_chunk_left_over, self.cfg.rtc.execution_horizon)
+            self.compare_actions(
+                rtc_actions,
+                no_rtc_actions,
+                inference_delay,
+                prev_chunk_left_over,
+                self.cfg.rtc.execution_horizon,
+            )
 
             prev_actions_chunk = rtc_actions
             inference_times += 1
@@ -362,24 +367,45 @@ class RTCDatasetEvaluator:
 
         return
 
-    def compare_actions(self, rtc_actions: Tensor, no_rtc_actions: Tensor, inference_delay: int, prev_chunk_left_over: Tensor, execution_horizon: int) -> dict:
-
+    def compare_actions(
+        self,
+        rtc_actions: Tensor,
+        no_rtc_actions: Tensor,
+        inference_delay: int,
+        prev_chunk_left_over: Tensor,
+        execution_horizon: int,
+    ) -> dict:
         if prev_chunk_left_over is None:
             return None
 
-        first_part_of_rtc_actions = rtc_actions[:, :inference_delay]
-        prev_chunk = prev_chunk_left_over[:, :inference_delay]
+        print("inference delay: ", inference_delay)
+        first_part_of_rtc_actions = rtc_actions[:, :inference_delay, :]
+        prev_chunk = prev_chunk_left_over[:, :inference_delay, :]
 
-        dalay_diff=  torch.abs(first_part_of_rtc_actions - prev_chunk)
+        dalay_diff = torch.abs(first_part_of_rtc_actions - prev_chunk)
 
-        in_execution_horizon_diff = torch.abs(rtc_actions[:, inference_delay:execution_horizon] - no_rtc_actions[:, inference_delay:execution_horizon])
+        in_execution_horizon_diff = torch.abs(
+            rtc_actions[:, inference_delay:execution_horizon, :]
+            - no_rtc_actions[:, inference_delay:execution_horizon]
+        )
 
-        after_execution_horizon_diff = torch.abs(rtc_actions[:, execution_horizon:] - no_rtc_actions[:, execution_horizon:])
+        after_execution_horizon_diff = torch.abs(
+            rtc_actions[:, execution_horizon:, :] - no_rtc_actions[:, execution_horizon:, :]
+        )
 
         print("Delay diff: ", dalay_diff.mean().item(), dalay_diff.max().item(), dalay_diff.min().item())
-        print("In execution horizon diff: ", in_execution_horizon_diff.mean().item(), in_execution_horizon_diff.max().item(), in_execution_horizon_diff.min().item())
-        print("After execution horizon diff: ", after_execution_horizon_diff.mean().item(), after_execution_horizon_diff.max().item(), after_execution_horizon_diff.min().item())
-
+        print(
+            "In execution horizon diff: ",
+            in_execution_horizon_diff.mean().item(),
+            in_execution_horizon_diff.max().item(),
+            in_execution_horizon_diff.min().item(),
+        )
+        print(
+            "After execution horizon diff: ",
+            after_execution_horizon_diff.mean().item(),
+            after_execution_horizon_diff.max().item(),
+            after_execution_horizon_diff.min().item(),
+        )
 
         print("=" * 80)
 
@@ -396,7 +422,6 @@ class RTCDatasetEvaluator:
         # print("delay diff: ", delay_diff.mean().item(), delay_diff.max().item(), delay_diff.min().item())
         # print("in execution horizon diff: ", in_execution_horizon_diff.mean().item(), in_execution_horizon_diff.max().item(), in_execution_horizon_diff.min().item())
         # print("after execution horizon diff: ", after_execution_horizon_diff.mean().item(), after_execution_horizon_diff.max().item(), after_execution_horizon_diff.min().item())
-
         return
 
 
@@ -419,6 +444,7 @@ def main(cfg: RTCDatasetEvalConfig):
 
     evaluator = RTCDatasetEvaluator(cfg)
     evaluator.run_evaluation()
+
 
 if __name__ == "__main__":
     main()
