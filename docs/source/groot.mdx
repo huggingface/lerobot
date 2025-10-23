@@ -1,6 +1,6 @@
-# Gr00t N1.5 Policy
+# GR00T N1.5 Policy
 
-Gr00t N1.5 is an open foundation model from NVIDIA designed for generalized humanoid robot reasoning and skills. It is a cross-embodiment model that accepts multimodal input, including language and images, to perform manipulation tasks in diverse environments.
+GR00T N1.5 is an open foundation model from NVIDIA designed for generalized humanoid robot reasoning and skills. It is a cross-embodiment model that accepts multimodal input, including language and images, to perform manipulation tasks in diverse environments.
 
 This document outlines the specifics of its integration and usage within the LeRobot framework.
 
@@ -22,7 +22,7 @@ This approach allows the model to be highly adaptable through post-training for 
 
 ## Installation Requirements
 
-As of today, Gr00t N1.5 requires flash attention for it's internal working.
+As of today, GR00T N1.5 requires flash attention for it's internal working.
 
 We are working on making this optional, but in the meantime that means that we require an extra installation step and it can only be used in CUDA enabled devices.
 
@@ -45,7 +45,7 @@ pip install lerobot[groot] # consider also installing libero,dev and test tags
 
 ## Usage
 
-To use Gr00t in your LeRobot configuration, specify the policy type as:
+To use GR00T in your LeRobot configuration, specify the policy type as:
 
 ```python
 policy.type=groot
@@ -55,7 +55,7 @@ policy.type=groot
 
 ### Training Command Example
 
-Here's a complete training command for finetuning the base Gr00t model on your own dataset:
+Here's a complete training command for finetuning the base GR00T model on your own dataset:
 
 ```bash
 # Using a multi-GPU setup
@@ -83,20 +83,20 @@ accelerate launch \
 
 ### Libero Benchmark Results
 
-Gr00t has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the Gr00t N1.5 model for 20k steps on the Libero dataset and compared the results to the Gr00t reference results.
+GR00T has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the GR00T N1.5 model for 30k steps on the Libero dataset and compared the results to the GR00T reference results.
 
-| Benchmark          | LeRobot Implementation | Gr00t Reference |
+| Benchmark          | LeRobot Implementation | GR00T Reference |
 | ------------------ | ---------------------- | --------------- |
-| **Libero Spatial** | 82%                    | 92.0%           |
-| **Libero Object**  | 99%                    | 92.0%           |
-| **Libero Long**    | 72%                    | 76.0%           |
-| **Average**        | 84%                    | 87.0%           |
+| **Libero Spatial** | 82.0%                  | 92.0%           |
+| **Libero Object**  | 99.0%                  | 92.0%           |
+| **Libero Long**    | 82.0%                  | 76.0%           |
+| **Average**        | 87.0%                  | 87.0%           |
 
-These results demonstrate Gr00t's strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, you can follow the instructions in the [Libero](https://huggingface.co/docs/lerobot/libero) section.
+These results demonstrate GR00T's strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, you can follow the instructions in the [Libero](https://huggingface.co/docs/lerobot/libero) section.
 
 ### Evaluate in your hardware setup
 
-Once you have trained your model using your parameters you can run inference in your downstream task. Follow our by following for the downstream hardware task, you can follow our instructions in [Imitation Learning for Robots](./il_robots). For example:
+Once you have trained your model using your parameters you can run inference in your downstream task. Follow the instructions in [Imitation Learning for Robots](./il_robots). For example:
 
 ```bash
 lerobot-record \
@@ -119,4 +119,4 @@ lerobot-record \
 
 ## License
 
-This model follows the **Apache 2.0 License**, consistent with the original [Gr00t repository](https://github.com/NVIDIA/Isaac-GR00T).
+This model follows the **Apache 2.0 License**, consistent with the original [GR00T repository](https://github.com/NVIDIA/Isaac-GR00T).
