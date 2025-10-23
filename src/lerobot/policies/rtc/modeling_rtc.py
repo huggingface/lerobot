@@ -226,7 +226,12 @@ class RTCProcessor:
 
             error = (prev_chunk_left_over - x1_t) * weights
 
-            print("Error calculation: prev_chunk_left_over: ", prev_chunk_left_over[:, :1, :6], " x1_t: ", x1_t[:, :1, :6])
+            print(
+                "Error calculation: prev_chunk_left_over: ",
+                prev_chunk_left_over[:, :1, :6],
+                " x1_t: ",
+                x1_t[:, :1, :6],
+            )
 
             if self.verbose:
                 logger.info(self._tensor_stats(x1_t, "x1_t (predicted next state)"))
