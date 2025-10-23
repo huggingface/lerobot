@@ -150,10 +150,10 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         pan_val = robot_obs.get("mount_pan.pos")
         tilt_val = robot_obs.get("mount_tilt.pos")
 
-        if self._current_pan is None and isinstance(pan_val, (int, float)):
+        if isinstance(pan_val, (int, float)):
             self._current_pan = float(pan_val)
 
-        if self._current_tilt is None and isinstance(tilt_val, (int, float)):
+        if isinstance(tilt_val, (int, float)):
             self._current_tilt = float(tilt_val)
 
     def get_action(self) -> dict[str, Any]:
@@ -252,11 +252,23 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         if self._joystick is not None:
             # Not all pygame versions expose quit() on Joystick, guard accordingly
             if hasattr(self._joystick, "quit"):
-                self._joystick.quit()
+                try:
+                    self._joystick.quit()
+                except Exception:
+                    pass
             self._joystick = None
 
         if self._pygame is not None:
-            self._pygame.joystick.quit()
+            try:
+                if hasattr(self._pygame, "joystick"):
+                    self._pygame.joystick.quit()
+            except Exception:
+                pass
+            try:
+                if hasattr(self._pygame, "quit"):
+                    self._pygame.quit()
+            except Exception:
+                pass
             self._pygame = None
 
         self._clock = None
