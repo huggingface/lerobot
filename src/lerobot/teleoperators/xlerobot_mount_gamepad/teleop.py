@@ -65,9 +65,9 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         self._joystick = None
         self._clock = None
 
-        # Track current position for incremental control
-        self._current_pan = 0.0
-        self._current_tilt = 0.0
+        # Track current position for incremental control (initialized lazily from observation)
+        self._current_pan: float | None = None
+        self._current_tilt: float | None = None
         self._pan_bias = 0.0
         self._tilt_bias = 0.0
 
@@ -117,9 +117,9 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         self._joystick.init()
         self._clock = pygame.time.Clock()
 
-        # Initialize position to center
-        self._current_pan = 0.0
-        self._current_tilt = 0.0
+        # Reset current readings; they will be synced from observations if available
+        self._current_pan = None
+        self._current_tilt = None
         # Record neutral stick offsets so we can compensate for non-zero resting values
         self._pan_bias = self._joystick.get_axis(self.config.pan_axis)
         self._tilt_bias = self._joystick.get_axis(self.config.tilt_axis)
@@ -141,6 +141,20 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
     def configure(self) -> None:
         """No configuration needed for gamepad."""
         return None
+
+    def on_observation(self, robot_obs: dict[str, Any]) -> None:
+        """Sync the internal mount position from robot observation if available."""
+        if not isinstance(robot_obs, dict):
+            return
+
+        pan_val = robot_obs.get("mount_pan.pos")
+        tilt_val = robot_obs.get("mount_tilt.pos")
+
+        if self._current_pan is None and isinstance(pan_val, (int, float)):
+            self._current_pan = float(pan_val)
+
+        if self._current_tilt is None and isinstance(tilt_val, (int, float)):
+            self._current_tilt = float(tilt_val)
 
     def get_action(self) -> dict[str, Any]:
         """Read Xbox right stick and compute pan/tilt position commands.
@@ -193,6 +207,11 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         tilt_input = self._apply_deadzone(tilt_input)
 
         # Convert to velocity and integrate (incremental control)
+        if self._current_pan is None:
+            self._current_pan = 0.0
+        if self._current_tilt is None:
+            self._current_tilt = 0.0
+
         dt = 1.0 / self.config.polling_fps
         self._current_pan += pan_input * self.config.max_pan_speed_dps * dt
         self._current_tilt += tilt_input * self.config.max_tilt_speed_dps * dt
