@@ -515,6 +515,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             paligemma_config,
             action_expert_config,
             use_adarms=[False, True],
+            # TODO(#1720): config.dtype is str but precision expects Literal["bfloat16", "float32"]
             precision=config.dtype,  # type: ignore[arg-type]
         )
 

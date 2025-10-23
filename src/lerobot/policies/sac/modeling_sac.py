@@ -137,6 +137,7 @@ class SACPolicy(
         q_values = discrete_critic(observations, observation_features)
         return q_values
 
+    # TODO(#1720): SAC intentionally overrides forward() with different signature (adds 'model' parameter)
     def forward(  # type: ignore[override]
         self,
         batch: dict[str, Tensor | dict[str, Tensor]],
@@ -665,6 +666,7 @@ class MLP(nn.Module):
                     layers.append(nn.Dropout(p=dropout_rate))
                 layers.append(nn.LayerNorm(out_dim))
                 act_cls = final_activation if is_last and final_activation else activations
+                # TODO(#1720): getattr runtime type resolution cannot be inferred by MyPy static analysis
                 act = act_cls if isinstance(act_cls, nn.Module) else getattr(nn, act_cls)()  # type: ignore[arg-type]
                 layers.append(act)
 

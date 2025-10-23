@@ -359,6 +359,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         for key in present_img_keys:
             img = batch[key][:, -1, :, :, :] if batch[key].ndim == 5 else batch[key]
             if self.config.resize_imgs_with_padding is not None:
+                # TODO(#1720): MyPy cannot infer types when unpacking config tuple with * operator
                 img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)  # type: ignore[misc]
 
             # Normalize from range [0,1] to [-1,1] as expacted by siglip

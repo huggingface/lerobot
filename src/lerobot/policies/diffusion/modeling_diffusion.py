@@ -622,6 +622,7 @@ class DiffusionConditionalUnet1d(nn.Module):
             self.down_modules.append(
                 nn.ModuleList(
                     [
+                        # TODO(#1720): MyPy cannot infer **kwargs types when unpacking dict to typed parameters
                         DiffusionConditionalResidualBlock1d(dim_in, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
                         DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
                         # Downsample as long as it is not the last block.
@@ -631,6 +632,7 @@ class DiffusionConditionalUnet1d(nn.Module):
             )
 
         # Processing in the middle of the auto-encoder.
+        # TODO(#1720): MyPy cannot infer **kwargs types when unpacking dict to typed parameters
         self.mid_modules = nn.ModuleList(
             [
                 DiffusionConditionalResidualBlock1d(
@@ -650,6 +652,7 @@ class DiffusionConditionalUnet1d(nn.Module):
                 nn.ModuleList(
                     [
                         # dim_in * 2, because it takes the encoder's skip connection as well
+                        # TODO(#1720): MyPy cannot infer **kwargs types when unpacking dict to typed parameters
                         DiffusionConditionalResidualBlock1d(dim_in * 2, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
                         DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
                         # Upsample as long as it is not the last block.

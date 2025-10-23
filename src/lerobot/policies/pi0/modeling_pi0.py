@@ -516,6 +516,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             paligemma_config,
             action_expert_config,
             use_adarms=[False, False],
+            # TODO(#1720): config.dtype is str but precision expects Literal["bfloat16", "float32"]
             precision=config.dtype,  # type: ignore[arg-type]
         )
 
@@ -534,6 +535,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
             # Also compile the main forward pass used during training
+            # TODO(#1720): torch.compile returns OptimizedModule which MyPy cannot type check for method assignment
             self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 
         msg = """An incorrect transformer version is used, please create an issue on https://github.com/huggingface/lerobot/issues"""
