@@ -222,7 +222,7 @@ class RTCProcessor:
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
             # Our integration runs from time=1 -> 0, so we still want the step magnitude
             # to scale with (1 - time) to avoid overly large corrections at the start.
-            x1_t = x_t + time * v_t
+            x1_t = x_t - time * v_t
 
             error = (prev_chunk_left_over - x1_t) * weights
 
@@ -249,7 +249,7 @@ class RTCProcessor:
             logger.info(f"guidance_weight: {guidance_weight:.4f} (max={max_guidance_weight:.4f})")
             logger.info(self._tensor_stats(correction, "correction"))
 
-        result = v_t + guidance_weight * correction
+        result = v_t - guidance_weight * correction
 
         if self.verbose:
             logger.info(self._tensor_stats(result, "result (guided velocity)"))
