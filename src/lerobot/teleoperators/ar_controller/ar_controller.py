@@ -272,11 +272,11 @@ class ARController(Teleoperator):
             return
 
         try:
-            axis_x = float(hand_payload.get("stickX", 0.0))
+            axis_x = float(hand_payload.get("thumbstickX", 0.0))
         except (TypeError, ValueError):
             axis_x = 0.0
         try:
-            axis_y = float(hand_payload.get("stickY", 0.0))
+            axis_y = float(hand_payload.get("thumbstickY", 0.0))
         except (TypeError, ValueError):
             axis_y = 0.0
 
@@ -286,8 +286,8 @@ class ARController(Teleoperator):
         x_vel = -axis_y * self.config.base_max_speed_mps
         y_vel = axis_x * self.config.base_max_speed_mps
 
-        button_x = bool(hand_payload.get("buttonX", False))
-        button_y = bool(hand_payload.get("buttonY", False))
+        button_x = bool(hand_payload.get("buttonPrimary", False))
+        button_y = bool(hand_payload.get("buttonSecondary", False))
 
         theta_vel = 0.0
         if button_x and not button_y:
@@ -305,11 +305,11 @@ class ARController(Teleoperator):
             return
 
         try:
-            axis_x = float(hand_payload.get("stickX", 0.0))
+            axis_x = float(hand_payload.get("thumbstickX", 0.0))
         except (TypeError, ValueError):
             axis_x = 0.0
         try:
-            axis_y = float(hand_payload.get("stickY", 0.0))
+            axis_y = float(hand_payload.get("thumbstickY", 0.0))
         except (TypeError, ValueError):
             axis_y = 0.0
 
