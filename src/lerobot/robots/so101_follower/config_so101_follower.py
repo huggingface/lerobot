@@ -39,3 +39,9 @@ class SO101FollowerConfig(RobotConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
+
+    urdf_path: str = field(
+        default="./src/lerobot/robots/so101_follower/sim/so101_new_calib.urdf", metadata=dict(help="Path to URDF file")
+    )
+
+    target_frame_name: str = field(default="gripper_frame_link", metadata=dict(help="Target frame name for kinematics"))
