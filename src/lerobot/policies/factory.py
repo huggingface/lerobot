@@ -30,6 +30,7 @@ from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -101,6 +102,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "groot":
+        from lerobot.policies.groot.modeling_groot import GrootPolicy
+
+        return GrootPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -142,6 +147,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SmolVLAConfig(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
+    elif policy_type == "groot":
+        return GrootConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
@@ -199,6 +206,27 @@ def make_pre_post_processors(
             policy configuration type.
     """
     if pretrained_path:
+        # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
+        if isinstance(policy_cfg, GrootConfig):
+            # GROOT handles normalization in groot_pack_inputs_v3 step
+            # Need to override both stats AND normalize_min_max since saved config might be empty
+            preprocessor_overrides = {}
+            postprocessor_overrides = {}
+            preprocessor_overrides["groot_pack_inputs_v3"] = {
+                "stats": kwargs.get("dataset_stats"),
+                "normalize_min_max": True,
+            }
+
+            # Also ensure postprocessing slices to env action dim and unnormalizes with dataset stats
+            env_action_dim = policy_cfg.output_features["action"].shape[0]
+            postprocessor_overrides["groot_action_unpack_unnormalize_v1"] = {
+                "stats": kwargs.get("dataset_stats"),
+                "normalize_min_max": True,
+                "env_action_dim": env_action_dim,
+            }
+            kwargs["preprocessor_overrides"] = preprocessor_overrides
+            kwargs["postprocessor_overrides"] = postprocessor_overrides
+
         return (
             PolicyProcessorPipeline.from_pretrained(
                 pretrained_model_name_or_path=pretrained_path,
@@ -289,6 +317,14 @@ def make_pre_post_processors(
         from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 
         processors = make_smolvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, GrootConfig):
+        from lerobot.policies.groot.processor_groot import make_groot_pre_post_processors
+
+        processors = make_groot_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

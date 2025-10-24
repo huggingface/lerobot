@@ -25,7 +25,7 @@ discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
-version = "0.3.4"
+version = "0.4.1"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -113,11 +113,22 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
-phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0"]
+phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 
 # Policies
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
+groot = [
+    "lerobot[transformers-dep]",
+    "peft>=0.13.0,<1.0.0",
+    "dm-tree>=0.1.8,<1.0.0",
+    "timm>=1.0.0,<1.1.0",
+    "safetensors>=0.4.3,<1.0.0",
+    "Pillow>=10.0.0,<13.0.0",
+    "decord>=0.6.0,<1.0.0; (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
+    "ninja>=1.11.1,<2.0.0",
+    "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
+]
 hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
@@ -145,6 +156,7 @@ all = [
     "lerobot[intelrealsense]",
     "lerobot[pi]",
     "lerobot[smolvla]",
+    # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[hilserl]",
     "lerobot[async]",
     "lerobot[dev]",
@@ -243,6 +255,7 @@ default.extend-ignore-identifiers-re = [
     "pn",
     "ser",
     "ein",
+    "thw",
     "inpt",
 ]
 
