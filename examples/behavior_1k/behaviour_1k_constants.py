@@ -1,7 +1,10 @@
-import numpy as np
-import torch as th
 from collections import OrderedDict
 
+import numpy as np
+import torch as th
+
+ROBOT_TYPE = "R1Pro"
+FPS = 30
 
 ROBOT_CAMERA_NAMES = {
     "A1": {
@@ -21,13 +24,17 @@ WRIST_RESOLUTION = (480, 480)
 # TODO: Fix A1
 CAMERA_INTRINSICS = {
     "A1": {
-        "external": np.array([[306.0, 0.0, 360.0], [0.0, 306.0, 360.0], [0.0, 0.0, 1.0]], dtype=np.float32),  # 240x240
+        "external": np.array(
+            [[306.0, 0.0, 360.0], [0.0, 306.0, 360.0], [0.0, 0.0, 1.0]], dtype=np.float32
+        ),  # 240x240
         "wrist": np.array(
             [[388.6639, 0.0, 240.0], [0.0, 388.6639, 240.0], [0.0, 0.0, 1.0]], dtype=np.float32
         ),  # 240x240
     },
     "R1Pro": {
-        "head": np.array([[306.0, 0.0, 360.0], [0.0, 306.0, 360.0], [0.0, 0.0, 1.0]], dtype=np.float32),  # 720x720
+        "head": np.array(
+            [[306.0, 0.0, 360.0], [0.0, 306.0, 360.0], [0.0, 0.0, 1.0]], dtype=np.float32
+        ),  # 720x720
         "left_wrist": np.array(
             [[388.6639, 0.0, 240.0], [0.0, 388.6639, 240.0], [0.0, 0.0, 1.0]], dtype=np.float32
         ),  # 480x480
@@ -48,7 +55,7 @@ BEHAVIOR_DATASET_FEATURES = {
     },
     # Proprioception
     "observation.state": {
-        "dtype": "float32", 
+        "dtype": "float32",
         "shape": (256,),  # Full proprioception state
         "names": None,
     },
@@ -229,7 +236,10 @@ JOINT_RANGE = {
         "gripper": (th.tensor([0.00], dtype=th.float32), th.tensor([0.03], dtype=th.float32)),
     },
     "R1Pro": {
-        "base": (th.tensor([-0.75, -0.75, -1.0], dtype=th.float32), th.tensor([0.75, 0.75, 1.0], dtype=th.float32)),
+        "base": (
+            th.tensor([-0.75, -0.75, -1.0], dtype=th.float32),
+            th.tensor([0.75, 0.75, 1.0], dtype=th.float32),
+        ),
         "torso": (
             th.tensor([-1.1345, -2.7925, -1.8326, -3.0543], dtype=th.float32),
             th.tensor([1.8326, 2.5307, 1.5708, 3.0543], dtype=th.float32),
@@ -253,8 +263,14 @@ EEF_POSITION_RANGE = {
         "0": (th.tensor([0.0, -0.7, 0.0], dtype=th.float32), th.tensor([0.7, 0.7, 0.7], dtype=th.float32)),
     },
     "R1Pro": {
-        "left": (th.tensor([0.0, -0.65, 0.0], dtype=th.float32), th.tensor([0.65, 0.65, 2.5], dtype=th.float32)),
-        "right": (th.tensor([0.0, -0.65, 0.0], dtype=th.float32), th.tensor([0.65, 0.65, 2.5], dtype=th.float32)),
+        "left": (
+            th.tensor([0.0, -0.65, 0.0], dtype=th.float32),
+            th.tensor([0.65, 0.65, 2.5], dtype=th.float32),
+        ),
+        "right": (
+            th.tensor([0.0, -0.65, 0.0], dtype=th.float32),
+            th.tensor([0.65, 0.65, 2.5], dtype=th.float32),
+        ),
     },
 }
 
@@ -317,4 +333,3 @@ TASK_NAMES_TO_INDICES = {
     "make_pizza": 49,
 }
 TASK_INDICES_TO_NAMES = {v: k for k, v in TASK_NAMES_TO_INDICES.items()}
-
