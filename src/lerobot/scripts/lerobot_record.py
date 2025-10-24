@@ -161,11 +161,16 @@ class DatasetRecordConfig:
     # Too many threads might cause unstable teleoperation fps due to main thread being blocked.
     # Not enough threads might cause low camera fps.
     num_image_writer_threads_per_camera: int = 4
-    # Number of episodes to record before batch encoding videos
-    # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
-    video_encoding_batch_size: int = 1
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    # Enable asynchronous video encoding to avoid blocking the recording thread
+    async_video_encoding: bool = True
+    gpu_video_encoding: bool = False
+    gpu_encoder_config: dict[str, Any] | None = None
+    # Number of worker threads for async video encoding
+    video_encoding_workers: int = 2
+    # Maximum number of encoding tasks in the queue
+    video_encoding_queue_size: int = 100
 
     def __post_init__(self):
         if self.single_task is None:
@@ -400,8 +405,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
-            batch_encoding_size=cfg.dataset.video_encoding_batch_size,
         )
+
+        # Start async video encoder if enabled
+        if cfg.dataset.async_video_encoding:
+            dataset.async_video_encoding = True
+            dataset.video_encoding_workers = cfg.dataset.video_encoding_workers
+            dataset.video_encoding_queue_size = cfg.dataset.video_encoding_queue_size
+            dataset.start_async_video_encoder()
 
         if hasattr(robot, "cameras") and len(robot.cameras) > 0:
             dataset.start_image_writer(
@@ -421,7 +432,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             use_videos=cfg.dataset.video,
             image_writer_processes=cfg.dataset.num_image_writer_processes,
             image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
-            batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+            async_video_encoding=cfg.dataset.async_video_encoding,
+            gpu_video_encoding=cfg.dataset.gpu_video_encoding,
+            gpu_encoder_config=cfg.dataset.gpu_encoder_config,
+            video_encoding_workers=cfg.dataset.video_encoding_workers,
+            video_encoding_queue_size=cfg.dataset.video_encoding_queue_size,
         )
 
     # Load pretrained policy
@@ -503,6 +518,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if not is_headless() and listener is not None:
         listener.stop()
+
+    # Wait for async video encoding to complete before pushing to hub
+    if cfg.dataset.async_video_encoding:
+        log_say("Waiting for video encoding to complete", cfg.play_sounds)
+        dataset.stop_async_video_encoder(wait=True)
 
     if cfg.dataset.push_to_hub:
         dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
