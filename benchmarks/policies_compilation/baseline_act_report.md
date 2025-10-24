@@ -16,17 +16,17 @@
 ## 🎯 Correctness Results
 
 - **Status**: ❌ FAILED
-- **Inference**: FAILED
+- **Inference**: PASSED
 - **Training**: FAILED
 
 ### Detailed Differences
 
-- **Max Action Difference**: 5.57e-02 (threshold: 1.00e-05)
+- **Max Action Difference**: 0.00e+00 (threshold: 1.00e-05)
 - **Loss Difference**: 8.93e-05 (threshold: 1.00e-05)
 
 ### ⚠️ Correctness Analysis
 
-- **Action diff magnitude**: 5.57e-02 (SEVERE)
+- **Action diff magnitude**: 0.00e+00 (MINOR)
 - **Loss diff magnitude**: 8.93e-05 (MINOR)
 - **Likely causes**: Graph breaks, dynamic shapes, numerical precision issues
 
@@ -34,20 +34,20 @@
 
 ### Inference Performance
 
-- **Original**: 21.75 ms/iter
-- **Compiled**: 21.46 ms/iter
-- **🚀 Speedup**: 1.01x (⚠️ INSUFFICIENT)
+- **Original**: 22.32 ms/iter
+- **Compiled**: 21.48 ms/iter
+- **🚀 Speedup**: 1.04x (⚠️ INSUFFICIENT)
 
 ### Training Performance
 
-- **Original**: 68.59 ms/iter
-- **Compiled**: 61.15 ms/iter
-- **🚀 Speedup**: 1.12x
+- **Original**: 72.74 ms/iter
+- **Compiled**: 63.96 ms/iter
+- **🚀 Speedup**: 1.14x
 
 ### Consistency Metrics
 
-- **Average Loss Difference**: 4.87e-03
-- **Average Grad Norm Difference**: 1.60e+00
+- **Average Loss Difference**: 7.22e-03
+- **Average Grad Norm Difference**: 1.68e+00
 
 ## 📋 Success Criteria Analysis
 
@@ -77,21 +77,21 @@
   "compilation_successful": true,
   "compilation_error": null,
   "correctness": {
-    "inference_correct": false,
+    "inference_correct": true,
     "training_correct": false,
-    "action_diff": 0.05568695068359375,
+    "action_diff": 0.0,
     "loss_diff": 8.934736251831055e-5
   },
   "correctness_passed": false,
   "inference_benchmarked": true,
   "training_benchmarked": true,
-  "time_original_inference": 21.745667571667582,
-  "time_compiled_inference": 21.46407115040347,
-  "speedup_inference": 1.0131194319703334,
-  "time_original_training": 68.5850445041433,
-  "time_compiled_training": 61.15469123702496,
-  "speedup_training": 1.1215009530228772,
-  "loss_consistency": 0.004866420030593872,
-  "grad_norm_consistency": 1.599840692281723
+  "time_original_inference": 22.322929948568344,
+  "time_compiled_inference": 21.476867329329252,
+  "speedup_inference": 1.0393941353860157,
+  "time_original_training": 72.73679859936237,
+  "time_compiled_training": 63.96130052395164,
+  "speedup_training": 1.137200119502332,
+  "loss_consistency": 0.007216747999191284,
+  "grad_norm_consistency": 1.6769276988506316
 }
 ```

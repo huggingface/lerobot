@@ -237,10 +237,12 @@ class TorchCompileBenchmark:
             # Reset both policies to same state
             if hasattr(policy_original, "reset"):
                 policy_original.reset()
+
+            action_original = policy_original.select_action(batch)
+
             if hasattr(policy_compiled, "reset"):
                 policy_compiled.reset()
 
-            action_original = policy_original.select_action(batch)
             action_compiled = policy_compiled.select_action(batch)
 
         action_diff = torch.abs(action_original - action_compiled).max().item()
