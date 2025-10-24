@@ -79,6 +79,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
         # Note to be compatible with the rest of the codebase,
         # we are using the new calibration method for so101 and so100
         robot_type = "so_new_calibration"
+    print(f"{cfg.robot.urdf_path=}")
     kinematics = RobotKinematics(cfg.robot.urdf_path, cfg.robot.target_frame_name)
 
     # Initialize min/max values

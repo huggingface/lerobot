@@ -1,0 +1,12 @@
+<default>
+    <default class="sts3215">
+        <geom contype="0" conaffinity="0"/>
+        <joint damping="0.60" frictionloss="0.052" armature="0.028"/>
+        <position kp="17.8" kv="0.0" forcerange="-3.35 3.35"/>
+    </default>
+    <default class="backlash">
+        <!-- +/- 0.5° of backlash -->
+        <joint damping="0.01" frictionloss="0" armature="0.01" limited="true"
+            range="-0.008726646259971648 0.008726646259971648"/>
+    </default>
+</default>
