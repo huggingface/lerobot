@@ -53,7 +53,7 @@ from lerobot.configs.types import NormalizationMode
 @dataclass
 class MyCustomPolicyConfig(PreTrainedConfig):
     """Configuration class for MyCustomPolicy.
-    
+
     Args:
         n_obs_steps: Number of observation steps to use as input
         horizon: Action prediction horizon
@@ -63,12 +63,11 @@ class MyCustomPolicyConfig(PreTrainedConfig):
     """
     # ...PreTrainedConfig fields...
     pass
-    
-    
+
     def __post_init__(self):
         super().__post_init__()
         # Add any validation logic here
-        
+
     def validate_features(self) -> None:
         """Validate input/output feature compatibility."""
         # Implement validation logic for your policy's requirements
@@ -91,7 +90,7 @@ from .configuration_my_custom_policy import MyCustomPolicyConfig
 class MyCustomPolicy(PreTrainedPolicy):
     config_class = MyCustomPolicyConfig
     name = "my_custom_policy"
-    
+
     def __init__(self, config: MyCustomPolicyConfig, dataset_stats: Dict[str, Any] = None):
         super().__init__(config, dataset_stats)
         ...
@@ -99,12 +98,13 @@ class MyCustomPolicy(PreTrainedPolicy):
 
 ## Step 4: Add Data Processors
 
-If your policy requires special data preprocessing, create processor functions:
+Create processor functions:
 
 ```python
 # processor_my_custom_policy.py
 from typing import Dict, Any
 import torch
+
 
 def make_my_custom_policy_pre_post_processors(
     config,
@@ -112,10 +112,8 @@ def make_my_custom_policy_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-
     """Create preprocessing and postprocessing functions for your policy."""
-    # Define your preprocessing and postprocessing logic here
-    pass
+    pass  # Define your preprocessing and postprocessing logic here
 
 ```
 
@@ -153,7 +151,7 @@ __all__ = [
 cd lerobot_policy_my_custom_policy
 pip install -e .
 
-# Or install from PyPI
+# Or install from PyPI if published
 pip install lerobot_policy_my_custom_policy
 ```
 
@@ -172,7 +170,6 @@ lerobot-train \
 
 Check out these example policy implementations:
 
-- [DiTFlow Policy](https://github.com/danielsanjosepro/lerobot_policy_ditflow) - Diffusion Transformer policy with flow-matching objective.
-    - Try it out in this example: [DiTFlow Example](https://github.com/danielsanjosepro/test_lerobot_policy_ditflow)
+- [DiTFlow Policy](https://github.com/danielsanjosepro/lerobot_policy_ditflow) - Diffusion Transformer policy with flow-matching objective. Try it out in this example: [DiTFlow Example](https://github.com/danielsanjosepro/test_lerobot_policy_ditflow)
 
 Share your policy implementations with the community! 🤗
