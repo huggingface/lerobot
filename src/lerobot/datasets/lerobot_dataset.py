@@ -837,7 +837,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return hf_dataset
 
     def _check_cached_episodes_sufficient(self) -> bool:
-        """Check if the cached dataset contains all requested episodes."""
+        """Check if the cached dataset contains all requested episodes and their video files."""
         if self.hf_dataset is None or len(self.hf_dataset) == 0:
             return False
 
@@ -856,7 +856,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
             requested_episodes = set(self.episodes)
 
         # Check if all requested episodes are available in cached data
-        return requested_episodes.issubset(available_episodes)
+        if not requested_episodes.issubset(available_episodes):
+            return False
+
+        # Check if all required video files exist
+        if len(self.meta.video_keys) > 0:
+            for ep_idx in requested_episodes:
+                for vid_key in self.meta.video_keys:
+                    video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+                    if not video_path.exists():
+                        return False
+
+        return True
 
     def create_hf_dataset(self) -> datasets.Dataset:
         features = get_hf_features_from_features(self.features)
