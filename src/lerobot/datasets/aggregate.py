@@ -450,7 +450,7 @@ def append_or_create_parquet_file(
     chunk_size: int,
     default_path: str,
     contains_images: bool = False,
-    aggr_root: Path = None,
+    aggr_root: Path = Path.cwd(),
 ):
     """Appends data to an existing parquet file or creates a new one based on size constraints.
 
@@ -465,7 +465,7 @@ def append_or_create_parquet_file(
         chunk_size: Maximum number of files per chunk before incrementing chunk index.
         default_path: Format string for generating file paths.
         contains_images: Whether the data contains images requiring special handling.
-        aggr_root: Root path for the aggregated dataset.
+        aggr_root: Root path for the aggregated dataset. Defaults to Path.cwd()
 
     Returns:
         dict: Updated index dictionary with current chunk and file indices.
