@@ -471,7 +471,13 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedConfig]:
     config_cls = PreTrainedConfig.get_choice_class(name)
     config_cls_name = config_cls.__name__
 
-    cls_name = config_cls_name[:-6] + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
+    model_name = config_cls_name.removesuffix("Config")  # e.g., DiffusionConfig -> Diffusion
+    if model_name == config_cls_name:
+        raise ValueError(
+            f"The config class name '{config_cls_name}' does not follow the expected naming convention."
+            f"Make sure it ends with 'Config'!"
+        )
+    cls_name = model_name + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
     module_path = config_cls.__module__.replace(
         "configuration_", "modeling_"
     )  # e.g., configuration_diffusion -> modeling_diffusion
