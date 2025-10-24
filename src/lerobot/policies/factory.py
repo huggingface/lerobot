@@ -497,7 +497,6 @@ def _make_processors_from_policy_config(
     """
 
     policy_type = config.type
-    print(policy_type)
     function_name = f"make_{policy_type}_pre_post_processors"
     module_path = config.__class__.__module__.replace(
         "configuration_", "processor_"
