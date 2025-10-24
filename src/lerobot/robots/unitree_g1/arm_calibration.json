@@ -1,0 +1,108 @@
+{
+    "kLeftShoulderPitch.pos": {
+        "id": 0,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -3,
+        "range_max": 2.6
+    },
+    "kLeftShoulderYaw.pos": {
+        "id": 1,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -2.6,
+        "range_max": 2.6
+    },
+    "kLeftShoulderRoll.pos": {
+        "id": 2,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -0.1,
+        "range_max": 2.2
+    },
+    "kLeftElbow.pos": {
+        "id": 3,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -1,
+        "range_max": 2
+    },
+    "kLeftWristRoll.pos": {
+        "id": 4,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -1.9,
+        "range_max": 1.9
+    },
+    "kLeftWristYaw.pos": {
+        "id": 5,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": 0.0,
+        "range_max": 0.0
+    },
+    "kLeftWristyaw.pos": {
+        "id": 5,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": 0.0,
+        "range_max": 0.0
+    },
+    "kLeftWristPitch.pos": {
+        "id": 6,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": 0.0,
+        "range_max": 0.0
+    },
+
+    "kRightShoulderPitch.pos": {
+        "id": 0,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -3.0,
+        "range_max": 2.6
+    },
+    "kRightShoulderYaw.pos": {
+        "id": 1,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -2.6,
+        "range_max": 2.6
+    },
+    "kRightShoulderRoll.pos": {
+        "id": 2,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -2.2,
+        "range_max": 0.1
+    },
+    "kRightElbow.pos": {
+        "id": 3,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -1,
+        "range_max": 2
+    },
+    "kRightWristRoll.pos": {
+        "id": 4,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": -1.9,
+        "range_max": 1.9
+    },
+    "kRightWristYaw.pos": {
+        "id": 5,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": 0.0,
+        "range_max": 0.0
+    },
+    "kRightWristPitch.pos": {
+        "id": 6,
+        "drive_mode": 0,
+        "homing_offset": 0,
+        "range_min": 0.0,
+        "range_max": 0.0
+    }
+}

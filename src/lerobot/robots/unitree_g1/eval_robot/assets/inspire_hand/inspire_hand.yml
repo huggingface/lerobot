@@ -1,0 +1,62 @@
+left:
+  type: DexPilot # or vector
+  urdf_path: inspire_hand/inspire_hand_left.urdf
+
+  # Target refers to the retargeting target, which is the robot hand
+  target_joint_names: 
+    [
+     'L_thumb_proximal_yaw_joint', 
+     'L_thumb_proximal_pitch_joint',
+     'L_index_proximal_joint', 
+     'L_middle_proximal_joint', 
+     'L_ring_proximal_joint', 
+     'L_pinky_proximal_joint' 
+    ]
+
+  # for DexPilot type
+  wrist_link_name: "L_hand_base_link"
+  finger_tip_link_names: [ "L_thumb_tip", "L_index_tip", "L_middle_tip", "L_ring_tip", "L_pinky_tip" ]
+  # If you do not know exactly how it is used, please leave it to None for default.
+  target_link_human_indices_dexpilot: [[ 9, 14, 19, 24, 14, 19, 24, 19, 24, 24,  0,  0,  0,  0,  0], [ 4,  4,  4,  4,  9, 9,  9, 14, 14, 19,  4,  9, 14, 19, 24]]
+
+  # for vector type
+  target_origin_link_names: [ "L_hand_base_link", "L_hand_base_link", "L_hand_base_link", "L_hand_base_link", "L_hand_base_link"]
+  target_task_link_names: [ "L_thumb_tip", "L_index_tip", "L_middle_tip", "L_ring_tip", "L_pinky_tip" ]
+  target_link_human_indices_vector: [ [ 0, 0, 0, 0, 0 ], [ 4, 9, 14, 19, 24 ] ]
+
+  # Scaling factor for vector retargeting only
+  # For example, Allegro is 1.6 times larger than normal human hand, then this scaling factor should be 1.6
+  scaling_factor: 1.20
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
+  low_pass_alpha: 0.2
+
+right:
+  type: DexPilot # or vector
+  urdf_path: inspire_hand/inspire_hand_right.urdf
+
+  # Target refers to the retargeting target, which is the robot hand
+  target_joint_names: 
+    [
+      'R_thumb_proximal_yaw_joint', 
+      'R_thumb_proximal_pitch_joint',
+      'R_index_proximal_joint', 
+      'R_middle_proximal_joint', 
+      'R_ring_proximal_joint', 
+      'R_pinky_proximal_joint' 
+    ]
+
+  # for DexPilot type
+  wrist_link_name: "R_hand_base_link"
+  finger_tip_link_names: [ "R_thumb_tip", "R_index_tip", "R_middle_tip", "R_ring_tip", "R_pinky_tip" ]
+  # If you do not know exactly how it is used, please leave it to None for
+  target_link_human_indices_dexpilot: [[ 9, 14, 19, 24, 14, 19, 24, 19, 24, 24,  0,  0,  0,  0,  0], [ 4,  4,  4,  4,  9, 9,  9, 14, 14, 19,  4,  9, 14, 19, 24]]
+
+  target_origin_link_names: [ "R_hand_base_link", "R_hand_base_link", "R_hand_base_link", "R_hand_base_link", "R_hand_base_link"]
+  target_task_link_names: [ "R_thumb_tip", "R_index_tip", "R_middle_tip", "R_ring_tip", "R_pinky_tip" ]
+  target_link_human_indices_vector: [ [ 0, 0, 0, 0, 0 ], [ 4, 9, 14, 19, 24 ] ]
+  
+  # Scaling factor for vector retargeting only
+  # For example, Allegro is 1.6 times larger than normal human hand, then this scaling factor should be 1.6
+  scaling_factor: 1.20
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
+  low_pass_alpha: 0.2
