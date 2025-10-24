@@ -135,7 +135,7 @@ def register_third_party_plugins() -> None:
     Discover and import third-party lerobot_* plugins so they can register themselves.
 
     Scans top-level modules on sys.path for packages starting with
-    'lerobot_robot_', 'lerobot_camera_', 'lerobot_teleoperator_' or "lerobot_policy_' and imports them.
+    'lerobot_robot_', 'lerobot_camera_', 'lerobot_teleoperator_' or 'lerobot_policy_' and imports them.
     """
     prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_", "lerobot_policy_")
     imported: list[str] = []
