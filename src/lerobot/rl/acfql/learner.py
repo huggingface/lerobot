@@ -682,8 +682,10 @@ def add_actor_information_and_train(
                     interaction_message=interaction_message,
                     policy=policy,
                     optimizers=optimizers,
-                    replay_buffer=replay_buffer,
-                    offline_replay_buffer=offline_replay_buffer,
+                    replay_buffer=replay_buffer if cfg.save_replay_buffer_on_checkpoint else None,
+                    offline_replay_buffer=offline_replay_buffer
+                    if cfg.save_offline_replay_buffer_on_checkpoint
+                    else None,
                     dataset_repo_id=cfg.dataset.repo_id if cfg.dataset else None,
                     fps=fps,
                     preprocessor=preprocessor,
