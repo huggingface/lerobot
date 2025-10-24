@@ -77,7 +77,7 @@ class MyCustomPolicyConfig(PreTrainedConfig):
 
 ## Step 3: Implement the Policy Class
 
-Create your policy implementation by inheriting from LeRobot's base policy class:
+Create your policy implementation by inheriting from LeRobot's base `PreTrainedPolicy` class:
 
 ```python
 # modeling_my_custom_policy.py
@@ -85,10 +85,10 @@ import torch
 import torch.nn as nn
 from typing import Dict, Any
 
-from lerobot.models.policies.base import LeRobotPolicy
+from lerobot.policies.pretrained import PreTrainedPolicy
 from .configuration_my_custom_policy import MyCustomPolicyConfig
 
-class MyCustomPolicy(LeRobotPolicy):
+class MyCustomPolicy(PreTrainedPolicy):
     config_class = MyCustomPolicyConfig
     name = "my_custom_policy"
     
