@@ -1338,12 +1338,13 @@ def initialize_offline_replay_buffer(
     Returns:
         ReplayBuffer: Initialized offline replay buffer
     """
-    if not cfg.resume:
+    dataset_offline_path = os.path.join(cfg.output_dir, "dataset_offline")
+
+    if not cfg.resume or not os.path.exists(dataset_offline_path):
         logging.info("make_dataset offline buffer")
         offline_dataset = make_dataset(cfg)
     else:
         logging.info("load offline dataset")
-        dataset_offline_path = os.path.join(cfg.output_dir, "dataset_offline")
         offline_dataset = LeRobotDataset(
             repo_id=cfg.dataset.repo_id,
             root=dataset_offline_path,
