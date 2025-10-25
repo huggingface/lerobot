@@ -30,8 +30,28 @@ from torch import Tensor
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
+import matplotlib.pyplot as plt
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
+def plot_waypoints(axs, chunk, start_from: int = 0, color: str | None = None, label: str | None = None):
+    chunk = chunk[0].cpu().numpy()
+    # Limit to 6 action dimensions to match number of subplots
+    num_dims = min(chunk.shape[-1], 6)
+    for j in range(num_dims):
+        axs[j].plot(
+            np.arange(start_from, start_from + chunk.shape[0]),
+            chunk[:, j],
+            color=color,
+            label=label,
+        )
+        axs[j].set_ylabel("Joint angle", fontsize=14)
+        axs[j].grid()
+        plt.tick_params(labelsize=14)
+        axs[j].legend(loc="upper right", fontsize=14)
+        if j == 2:
+            axs[j].set_xlabel("Step #", fontsize=16)
 
 class RTCProcessor:
     """Real-Time Chunking processor for action chunking policies.
@@ -250,11 +270,6 @@ class RTCProcessor:
             logger.info(self._tensor_stats(correction, "correction"))
 
         result = v_t - guidance_weight * correction
-
-        if self.verbose:
-            logger.info(self._tensor_stats(result, "result (guided velocity)"))
-            logger.info(f"Correction magnitude: {(guidance_weight * correction).abs().mean().item():.6f}")
-            logger.info("=" * 80)
 
         # Remove the batch dimension if it was added
         if squeezed:

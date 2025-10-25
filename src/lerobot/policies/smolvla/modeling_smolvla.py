@@ -55,12 +55,14 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 import math
 from collections import deque
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor, plot_waypoints
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
@@ -540,6 +542,11 @@ class VLAFlowMatching(nn.Module):
         self.prefix_length = self.config.prefix_length
         self.rtc_processor = rtc_processor
 
+        # For visualization of x_t during denoising
+        self.denoise_step_counter = 0
+        self.viz_fig = None
+        self.viz_axs = None
+
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
             params.requires_grad = self.config.train_state_proj
@@ -799,6 +806,38 @@ class VLAFlowMatching(nn.Module):
             # Euler step
             x_t += dt * v_t
             time += dt
+
+            # Visualize x_t using plot_waypoints - accumulate all denoise steps
+            if self.viz_fig is None:
+                # Create figure once on first denoise step
+                self.viz_fig, self.viz_axs = plt.subplots(6, 1, figsize=(12, 12))
+
+            # Define colors for different denoise steps (using a colormap)
+            colors = plt.cm.viridis(np.linspace(0, 1, self.config.num_steps))
+            color = colors[self.denoise_step_counter % len(colors)]
+
+            # Plot this denoise step
+            plot_waypoints(
+                self.viz_axs,
+                x_t,
+                start_from=0,
+                color=color,
+                label=f'Step {self.denoise_step_counter}'
+            )
+
+            self.denoise_step_counter += 1
+
+        # Save visualization of x_t denoise steps
+        if self.viz_fig is not None:
+            plt.figure(self.viz_fig.number)
+            plt.savefig('smolvla_x_t_denoise_steps.png')
+            plt.close(self.viz_fig)
+
+            # Reset for next inference
+            self.viz_fig = None
+            self.viz_axs = None
+            self.denoise_step_counter = 0
+
         return x_t
 
     def denoise_step(

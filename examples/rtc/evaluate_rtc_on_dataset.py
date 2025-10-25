@@ -55,6 +55,8 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.hub import HubMixin
+import matplotlib.pyplot as plt
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -360,14 +362,6 @@ class RTCDatasetEvaluator:
             self.plot_waypoints(no_rtc_actions[0].cpu().numpy(), label="no_rtc", color="blue")
             plt.savefig("plot.png")
 
-            self.compare_actions(
-                rtc_actions,
-                no_rtc_actions,
-                inference_delay,
-                prev_chunk_left_over,
-                self.cfg.rtc.execution_horizon,
-            )
-
             break
 
             prev_actions_chunk = rtc_actions
@@ -393,49 +387,6 @@ class RTCDatasetEvaluator:
             self.axs[j].legend(loc="upper right", fontsize=14)
             if j == 2:
                 self.axs[j].set_xlabel("Step #", fontsize=16)
-
-    def compare_actions(
-        self,
-        rtc_actions: Tensor,
-        no_rtc_actions: Tensor,
-        inference_delay: int,
-        prev_chunk_left_over: Tensor,
-        execution_horizon: int,
-    ) -> dict:
-        if prev_chunk_left_over is None:
-            return None
-
-        first_part_of_rtc_actions = rtc_actions[:, :inference_delay]
-        prev_chunk = prev_chunk_left_over[:, :inference_delay]
-
-        dalay_diff=  torch.abs(first_part_of_rtc_actions - prev_chunk)
-
-        in_execution_horizon_diff = torch.abs(rtc_actions[:, inference_delay:execution_horizon] - no_rtc_actions[:, inference_delay:execution_horizon])
-
-        after_execution_horizon_diff = torch.abs(rtc_actions[:, execution_horizon:] - no_rtc_actions[:, execution_horizon:])
-
-        print("Delay diff: ", dalay_diff.mean().item(), dalay_diff.max().item(), dalay_diff.min().item())
-        print("In execution horizon diff: ", in_execution_horizon_diff.mean().item(), in_execution_horizon_diff.max().item(), in_execution_horizon_diff.min().item())
-        print("After execution horizon diff: ", after_execution_horizon_diff.mean().item(), after_execution_horizon_diff.max().item(), after_execution_horizon_diff.min().item())
-
-
-        print("=" * 80)
-
-        print("rtc actions: ", rtc_actions)
-        print("no rtc actions: ", no_rtc_actions)
-        print("first part of rtc actions: ", first_part_of_rtc_actions)
-        print("prev chunk: ", prev_chunk)
-        print("delay diff: ", dalay_diff)
-        # print("in execution horizon diff: ", in_execution_horizon_diff)
-        # print("after execution horizon diff: ", after_execution_horizon_diff)
-
-        # print("=" * 80)
-
-        # print("delay diff: ", delay_diff.mean().item(), delay_diff.max().item(), delay_diff.min().item())
-        # print("in execution horizon diff: ", in_execution_horizon_diff.mean().item(), in_execution_horizon_diff.max().item(), in_execution_horizon_diff.min().item())
-        # print("after execution horizon diff: ", after_execution_horizon_diff.mean().item(), after_execution_horizon_diff.max().item(), after_execution_horizon_diff.min().item())
-
-        return
 
 
 @parser.wrap()
