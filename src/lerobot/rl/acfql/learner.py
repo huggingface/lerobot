@@ -362,9 +362,12 @@ def add_actor_information_and_train(
 
     log_training_info(cfg=cfg, policy=policy)
 
-    replay_buffer = initialize_replay_buffer(cfg, device, storage_device)
     batch_size = cfg.batch_size
+    replay_buffer = None
     offline_replay_buffer = None
+
+    if online_steps > 0:
+        replay_buffer = initialize_replay_buffer(cfg, device, storage_device)
 
     if cfg.dataset is not None and offline_steps > 0:
         offline_replay_buffer = initialize_offline_replay_buffer(
@@ -693,6 +696,10 @@ def add_actor_information_and_train(
                 )
 
         logging.info(f"[LEARNER] Completed offline pretraining after {offline_steps} steps")
+
+    if online_steps == 0:
+        logging.info("[LEARNER] No online steps specified, training complete.")
+        return
 
     # =============================================================================
     # PHASE 2: ONLINE FINE-TUNING
@@ -1057,8 +1064,10 @@ def add_actor_information_and_train(
                 interaction_message=interaction_message,
                 policy=policy,
                 optimizers=optimizers,
-                replay_buffer=replay_buffer,
-                offline_replay_buffer=offline_replay_buffer,
+                replay_buffer=replay_buffer if cfg.save_replay_buffer_on_checkpoint else None,
+                offline_replay_buffer=offline_replay_buffer
+                if cfg.save_offline_replay_buffer_on_checkpoint
+                else None,
                 dataset_repo_id=dataset_repo_id,
                 fps=fps,
                 preprocessor=preprocessor,
