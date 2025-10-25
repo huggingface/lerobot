@@ -37,6 +37,8 @@
     title: π₀ (Pi0)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: groot
+    title: NVIDIA GR00T N1.5
   title: "Policies"
 - sections:
   - local: il_sim
