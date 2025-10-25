@@ -1,0 +1,117 @@
+# RLBench
+
+**RLBench** is a large-scale benchmark designed to accelerate research in **robot learning**, with a strong focus on **vision-guided manipulation**. It provides a challenging and standardized environment for developing and testing algorithms that can learn complex robotic tasks.
+
+- 📄 [RLBench paper](https://arxiv.org/abs/1909.12271)
+- 💻 [Original RLBench repo](https://github.com/stepjam/RLBench)
+
+![RLBench Tasks](https://github.com/stepjam/RLBench/blob/master/readme_files/task_grid.png)
+
+## Why RLBench?
+
+- **Diverse and Challenging Tasks:** RLBench includes over 100 unique, hand-designed tasks, ranging from simple reaching and pushing to complex, multi-stage activities like opening an oven and placing a tray inside. This diversity tests an algorithm's ability to generalize across different objectives and dynamics.
+- **Rich, Multi-Modal Observations:** The benchmark provides both proprioceptive (joint states) and visual observations. Visual data comes from multiple camera angles, including over-the-shoulder cameras and wrist camera, with options for RGB, depth, and segmentation masks.
+- **Infinite Demonstrations:** A key feature of RLBench is its ability to generate an infinite supply of demonstrations for each task. These demonstrations are created using motion planners, making RLBench an ideal platform for research in imitation learning and offline reinforcement learning.
+- **Scalability and Customization:** RLBench is designed to be extensible. Researchers can easily create and contribute new tasks, helping the benchmark evolve and stay relevant.
+
+RLBench includes **eight task sets**, which consist of a collection of multiple tasks (FS=Few-Shot, MT=Multi-Task).
+
+- **`FS10_v1`** – 10 training tasks, 5 test tasks
+- **`FS25_v1`** – 25 training tasks, 5 test tasks
+- **`FS50_v1`** – 50 training tasks, 5 test tasks
+- **`FS95_v1`** – 95 training tasks, 5 test tasks
+- **`MT15_v1`** – 15 training tasks (all tasks of `FS10_v1`, training+test)
+- **`MT30_v1`** – 30 training tasks (all tasks of `FS25_v1`, training+test)
+- **`MT55_v1`** – 55 training tasks (all tasks of `FS50_v1`, training+test)
+- **`MT100_v1`** – 100 training tasks (all tasks of `FS95_v1`, training+test)
+
+For details about the tasks and task sets, please refer to the [original definition](https://github.com/stepjam/RLBench/blob/master/rlbench/tasks/__init__.py).
+
+## RLBench in LeRobot
+
+LeRobot's integration with RLBench allows you to train and evaluate policies on its rich set of tasks. The integration is designed to be seamless, leveraging LeRobot's training and evaluation pipelines.
+
+### Get started
+
+RLBench is built around CoppeliaSim v4.1.0 and [PyRep](https://github.com/stepjam/PyRep).
+
+First, install CoppeliaSim:
+```bash
+# set env variables
+export COPPELIASIM_ROOT=${HOME}/CoppeliaSim
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$COPPELIASIM_ROOT
+export QT_QPA_PLATFORM_PLUGIN_PATH=$COPPELIASIM_ROOT
+
+wget https://downloads.coppeliarobotics.com/V4_1_0/CoppeliaSim_Edu_V4_1_0_Ubuntu20_04.tar.xz
+mkdir -p $COPPELIASIM_ROOT && tar -xf CoppeliaSim_Edu_V4_1_0_Ubuntu20_04.tar.xz -C $COPPELIASIM_ROOT --strip-components 1
+rm -rf CoppeliaSim_Edu_V4_1_0_Ubuntu20_04.tar.xz
+```
+
+Next, install the necessary dependencies:
+`pip install -e ".[rlbench]"`
+
+That's it! You can now use RLBench environments within LeRobot. To run headless, check the documentation on the original [RLBench repo](https://github.com/stepjam/RLBench).
+
+### Evaluating a Policy
+
+You can evaluate a trained policy on a specific RLBench task or a suite of tasks.
+
+```bash
+export COPPELIASIM_ROOT=${HOME}/CoppeliaSim
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$COPPELIASIM_ROOT
+export QT_QPA_PLATFORM_PLUGIN_PATH=$COPPELIASIM_ROOT
+
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=rlbench \
+  --env.task=put_rubbish_in_bin \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+- `--env.task` specifies the RLBench task to evaluate on. You can also use task suites like `FS10_V1` or `MT30_V1`.
+- The evaluation script will report the success rate for the given task(s).
+
+### Training a Policy
+
+You can train a policy on RLBench tasks using the `lerobot-train` command. You'll need a dataset in the correct format.
+
+```bash
+export COPPELIASIM_ROOT=${HOME}/CoppeliaSim
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$COPPELIASIM_ROOT
+export QT_QPA_PLATFORM_PLUGIN_PATH=$COPPELIASIM_ROOT
+
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/rlbench-test \
+  --dataset.repo_id=lerobot/rlbench_put_rubbish_in_bin \
+  --env.type=rlbench \
+  --env.task=put_rubbish_in_bin \
+  --output_dir=./outputs/ \
+  --steps=100000 \
+  --batch_size=4 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval_freq=1000
+```
+
+> If running on a headless server, ensure that the CoppeliaSim environment is set up to run without a GUI.
+> Refer to the [RLBench documentation](https://github.com/stepjam/RLBench).
+
+### RLBench Datasets
+
+LeRobot expects datasets to be in a specific format. While there isn't an official `lerobot`-prepared RLBench dataset on the Hugging Face Hub yet, you can create your own by converting demonstrations from the original RLBench format.
+
+The environment expects the following observation and action keys:
+
+- **Observations:**
+  - `observation.state`: Proprioceptive features (usually joint positions + gripper).
+  - `observation.images.front_rgb`: Front RGB camera view.
+  - `observation.images.wrist_rgb`: Wrist RGB camera view.
+  - `observation.images.overhead_rgb`: Overhead RGB camera view.
+  - `observation.images.left_shoulder_rgb`: Left shoulder RGB camera view.
+  - `observation.images.right_shoulder_rgb`: Right shoulder RGB camera view.
+- **Actions:**
+  - A continuous control vector for the robot's joints and gripper (e.g. for franka, 8 dimensions: 7 joint positions + 1 gripper state).
+
+Make sure your dataset's metadata and parquet files use these keys to ensure compatibility with LeRobot's RLBench environment.
