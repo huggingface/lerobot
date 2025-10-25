@@ -233,34 +233,27 @@ class RTCProcessor:
         # weights is shape (action_chunk_size,) and needs to be (1, action_chunk_size, 1)
         weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
 
-        with torch.enable_grad():
-            v_t = original_denoise_step_partial(x_t)
-
-            if self.verbose:
-                logger.info(self._tensor_stats(v_t, "v_t (original velocity)"))
-
+        # Define function for vjp computation
+        def compute_x1_t_and_v_t(x_t_input):
+            v_t_local = original_denoise_step_partial(x_t_input)
             # In the original implementation, the time goes from 0 to 1 and x_1t calculates
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
             # Our integration runs from time=1 -> 0, so we still want the step magnitude
             # to scale with (1 - time) to avoid overly large corrections at the start.
-            x1_t = x_t - time * v_t
+            return x_t_input - time * v_t_local
 
-            error = (prev_chunk_left_over - x1_t) * weights
+        v_t = original_denoise_step_partial(x_t)
+        x1_t = x_t - time * v_t
 
-            print(
-                "Error calculation: prev_chunk_left_over: ",
-                prev_chunk_left_over[:, :1, :6],
-                " x1_t: ",
-                x1_t[:, :1, :6],
-            )
+        error = (prev_chunk_left_over - x1_t) * weights
 
-            if self.verbose:
-                logger.info(self._tensor_stats(x1_t, "x1_t (predicted next state)"))
-                logger.info(self._tensor_stats(prev_chunk_left_over, "prev_chunk_left_over (target)"))
-                logger.info(self._tensor_stats(error, "error (weighted difference)"))
+        # Use vjp to compute gradient: we want gradient of x1_t weighted by error
+        # vjp_fn takes cotangents for each output (x1_t, v_t) and returns gradient for input x_t
+        first, correction = torch.autograd.functional.vjp(
+            compute_x1_t_and_v_t, x_t, v=error, create_graph=False
+        )
 
-            correction = torch.autograd.grad(x1_t, x_t, error, retain_graph=True)[0]
-
+        print(first, correction)
         # print("error: ", error[0, :3, :6], weights)
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
@@ -279,13 +272,17 @@ class RTCProcessor:
             logger.info(f"guidance_weight: {guidance_weight:.4f} (max={max_guidance_weight:.4f})")
             logger.info(self._tensor_stats(correction, "correction"))
 
-        result = v_t - guidance_weight * correction
+        final_correction = guidance_weight * correction
+        result = v_t - final_correction
 
         # Remove the batch dimension if it was added
         if squeezed:
             result = result.squeeze(0)
+            final_correction = final_correction.squeeze(0)
+            x1_t = x1_t.squeeze(0)
+            error = error.squeeze(0)
 
-        return result
+        return result, correction, x1_t, error
 
     def get_prefix_weights(self, start, end, total):
         start = min(start, end)

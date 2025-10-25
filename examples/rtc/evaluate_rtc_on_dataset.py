@@ -163,8 +163,8 @@ class RTCDatasetEvalConfig(HubMixin):
     rtc: RTCConfig = field(
         default_factory=lambda: RTCConfig(
             enabled=True,
-            execution_horizon=10,
-            max_guidance_weight=10.0,
+            execution_horizon=20,
+            max_guidance_weight=5.0,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
         )
     )
@@ -209,7 +209,7 @@ class RTCDatasetEvalConfig(HubMixin):
     )
 
     inference_delay: int = field(
-        default=8,
+        default=4,
         metadata={
             "help": "Number of steps to skip between inferences (simulates inference delay). "
             "inference_delay=1 means evaluate every step, inference_delay=5 means evaluate every 5th step."
@@ -305,10 +305,9 @@ class RTCDatasetEvaluator:
         inference_times = 0
         last_inference_i = 0
 
-        for i, batch in enumerate(dataloader):
-            if i % self.cfg.skip_steps != 0:
-                continue
+        prev_chunk_left_over = None
 
+        for i, batch in enumerate(dataloader):
             for key, value in batch.items():
                 if isinstance(value, torch.Tensor):
                     batch[key] = value.unsqueeze(0).to(self.device)
@@ -323,14 +322,26 @@ class RTCDatasetEvaluator:
             noise = self.policy.model.sample_noise(noise_size, self.device)
             noise_clone = noise.clone()
 
-            # Get left over actions for RTC
-            prev_chunk_left_over = None
-            if prev_actions_chunk is not None:
-                # Get remaining actions from previous chunk (skip executed actions)
-                prev_chunk_left_over = prev_actions_chunk[:, last_inference_i:]
-            prev_chunk_left_over = preprocessed_batch["action"][0, :, :25]
+            if i % 2 == 0:
+                prev_chunk_left_over = preprocessed_batch["action"][0, :, :25]
+                continue
 
-            # Generate actions WITHOUT RTC
+            # Create side-by-side figures for denoising visualization
+            # x_t denoising: No RTC (left) vs RTC (right)
+            fig_xt, axs_xt = plt.subplots(6, 2, figsize=(24, 12))
+            fig_xt.suptitle("x_t Denoising: No RTC (left) vs RTC (right)", fontsize=16)
+
+            # v_t denoising: No RTC (left) vs RTC (right)
+            fig_vt, axs_vt = plt.subplots(6, 2, figsize=(24, 12))
+            fig_vt.suptitle("v_t Denoising: No RTC (left) vs RTC (right)", fontsize=16)
+
+            # x1_t denoising: Only RTC has this (left empty, right shows x1_t + error)
+            fig_x1t, axs_x1t = plt.subplots(6, 2, figsize=(24, 12))
+            fig_x1t.suptitle(
+                "x1_t Predicted State & Error: No RTC (left - empty) vs RTC (right)", fontsize=16
+            )
+
+            # Generate actions WITHOUT RTC (plot on left column)
             self.policy.config.rtc_config.enabled = False
             with torch.no_grad():
                 no_rtc_actions = self.policy.predict_action_chunk(
@@ -338,26 +349,78 @@ class RTCDatasetEvaluator:
                     noise=noise,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_chunk_left_over,
+                    viz_xt_axs=axs_xt[:, 0],  # Left column for x_t
+                    viz_vt_axs=axs_vt[:, 0],  # Left column for v_t
                 )
 
-            # Generate actions WITH RTC
+            # Generate actions WITH RTC (plot on right column)
             self.policy.config.rtc_config.enabled = True
             with torch.no_grad():
-                # print(prev_chunk_left_over)
                 rtc_actions = self.policy.predict_action_chunk(
                     preprocessed_batch,
                     noise=noise_clone,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_chunk_left_over,
                     execution_horizon=self.cfg.rtc.execution_horizon,
+                    viz_xt_axs=axs_xt[:, 1],  # Right column for x_t
+                    viz_vt_axs=axs_vt[:, 1],  # Right column for v_t
+                    viz_x1t_axs=axs_x1t[:, 1],  # Right column for x1_t
                 )
 
-            _, axs = plt.subplots(6, figsize=(15, 10))
-            self.axs = axs.T.flatten()
-            self.plot_waypoints(prev_chunk_left_over[0].cpu().numpy(), label="gt", color="green")
-            self.plot_waypoints(rtc_actions[0].cpu().numpy(), label="rtc", color="red")
-            self.plot_waypoints(no_rtc_actions[0].cpu().numpy(), label="no_rtc", color="blue")
-            plt.savefig("plot.png")
+            # Set titles for denoising plots
+            for ax in axs_xt[:, 0]:
+                ax.set_title("No RTC" if ax == axs_xt[0, 0] else "", fontsize=12)
+            for ax in axs_xt[:, 1]:
+                ax.set_title("RTC" if ax == axs_xt[0, 1] else "", fontsize=12)
+
+            for ax in axs_vt[:, 0]:
+                ax.set_title("No RTC" if ax == axs_vt[0, 0] else "", fontsize=12)
+            for ax in axs_vt[:, 1]:
+                ax.set_title("RTC" if ax == axs_vt[0, 1] else "", fontsize=12)
+
+            for ax in axs_x1t[:, 0]:
+                ax.set_title("No RTC (N/A)" if ax == axs_x1t[0, 0] else "", fontsize=12)
+            for ax in axs_x1t[:, 1]:
+                ax.set_title("RTC" if ax == axs_x1t[0, 1] else "", fontsize=12)
+
+            # Save denoising plots
+            fig_xt.tight_layout()
+            fig_xt.savefig("denoising_xt_comparison.png", dpi=150)
+            logger.info("Saved x_t denoising comparison to denoising_xt_comparison.png")
+            plt.close(fig_xt)
+
+            fig_vt.tight_layout()
+            fig_vt.savefig("denoising_vt_comparison.png", dpi=150)
+            logger.info("Saved v_t denoising comparison to denoising_vt_comparison.png")
+            plt.close(fig_vt)
+
+            fig_x1t.tight_layout()
+            fig_x1t.savefig("denoising_x1t_comparison.png", dpi=150)
+            logger.info("Saved x1_t predicted state & error comparison to denoising_x1t_comparison.png")
+            plt.close(fig_x1t)
+
+            # Create side-by-side comparison: No RTC (left) vs RTC (right)
+            fig, axs = plt.subplots(6, 2, figsize=(24, 12))
+            fig.suptitle("Final Action Comparison: No RTC (left) vs RTC (right)", fontsize=16)
+
+            # Plot on left column (No RTC)
+            self.axs = axs[:, 0]
+            self.plot_waypoints(prev_chunk_left_over[0].cpu().numpy(), label="Ground Truth", color="green")
+            self.plot_waypoints(no_rtc_actions[0].cpu().numpy(), label="No RTC", color="blue")
+            for ax in self.axs:
+                ax.set_title("No RTC", fontsize=12)
+
+            # Plot on right column (RTC)
+            self.axs = axs[:, 1]
+            self.plot_waypoints(prev_chunk_left_over[0].cpu().numpy(), label="Ground Truth", color="green")
+            self.plot_waypoints(rtc_actions[0].cpu().numpy(), label="RTC", color="red")
+            for ax in self.axs:
+                ax.set_title("RTC", fontsize=12)
+
+            plt.tight_layout()
+            plt.savefig("final_actions_comparison.png", dpi=150)
+            logger.info("Saved final actions comparison to final_actions_comparison.png")
+            plt.close(fig)
 
             break
 

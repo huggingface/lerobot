@@ -745,9 +745,21 @@ class VLAFlowMatching(nn.Module):
     def sample_actions(
         self, images, img_masks, lang_tokens, lang_masks, state, noise=None, **kwargs
     ) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)
+
+        Args:
+            viz_xt_axs: Optional matplotlib axes for plotting x_t trajectories (array of 6 axes)
+            viz_vt_axs: Optional matplotlib axes for plotting v_t trajectories (array of 6 axes)
+            viz_x1t_axs: Optional matplotlib axes for plotting x1_t predicted state and error (array of 6 axes)
+                         When RTC is enabled, plots both x1_t (solid line) and error (orange dashed line)
+        """
         bsize = state.shape[0]
         device = state.device
+
+        # Extract visualization axes from kwargs
+        viz_xt_axs = kwargs.pop("viz_xt_axs", None)
+        viz_vt_axs = kwargs.pop("viz_vt_axs", None)
+        viz_x1t_axs = kwargs.pop("viz_x1t_axs", None)
 
         if noise is None:
             actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
@@ -772,6 +784,10 @@ class VLAFlowMatching(nn.Module):
 
         x_t = noise
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        correction = None
+        x1_t = None
+        error = None
+        use_provided_axes = viz_xt_axs is not None and viz_vt_axs is not None
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
 
@@ -780,19 +796,21 @@ class VLAFlowMatching(nn.Module):
             # I want to pass `x_t` as positionan argument to the partial call, because
             # it could have different naming in different models, and the rest of parameters
             # as named arguments
-            denoise_step_partial_call = lambda input_x_t: self.denoise_step(  # noqa: E731
-                x_t=input_x_t,
-                prefix_pad_masks=prefix_pad_masks,
-                past_key_values=past_key_values,
-                timestep=expanded_time,  # noqa: B023
-            )
+            def denoise_step_partial_call(input_x_t):
+                result = self.denoise_step(
+                    x_t=input_x_t,
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    timestep=expanded_time,
+                )
+                return result
 
             if self.config.rtc_config is not None and self.config.rtc_config.enabled:
                 inference_delay = kwargs.get("inference_delay")
                 prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
                 execution_horizon = kwargs.get("execution_horizon", self.config.rtc_config.execution_horizon)
 
-                v_t = self.rtc_processor.denoise_step(
+                v_t, correction, x1_t, error = self.rtc_processor.denoise_step(
                     x_t=x_t,
                     prev_chunk_left_over=prev_chunk_left_over,
                     inference_delay=inference_delay,
@@ -808,29 +826,71 @@ class VLAFlowMatching(nn.Module):
             time += dt
 
             # Visualize x_t using plot_waypoints - accumulate all denoise steps
-            if self.viz_fig is None:
-                # Create figure once on first denoise step
-                self.viz_fig, self.viz_axs = plt.subplots(6, 1, figsize=(12, 12))
-                self.viz_v_fig, self.viz_v_axs = plt.subplots(6, 1, figsize=(12, 12))
+            # Use provided axes or create new ones
+            if not use_provided_axes:
+                if self.viz_fig is None:
+                    # Create figure once on first denoise step
+                    self.viz_fig, self.viz_axs = plt.subplots(6, 1, figsize=(12, 12))
+                    self.viz_v_fig, self.viz_v_axs = plt.subplots(6, 1, figsize=(12, 12))
+                xt_axs = self.viz_axs
+                vt_axs = self.viz_v_axs
+            else:
+                xt_axs = viz_xt_axs
+                vt_axs = viz_vt_axs
 
             # Define colors for different denoise steps (using a colormap)
             colors = plt.cm.viridis(np.linspace(0, 1, self.config.num_steps))
             color = colors[self.denoise_step_counter % len(colors)]
 
             # Plot this denoise step
-            plot_waypoints(
-                self.viz_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}"
-            )
+            plot_waypoints(xt_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
 
             # Plot this denoise step
-            plot_waypoints(
-                self.viz_v_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}"
-            )
+            plot_waypoints(vt_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
+
+            if correction is not None:
+                plot_waypoints(
+                    vt_axs,
+                    correction,
+                    start_from=0,
+                    color="red",
+                    label=f"Step corr {self.denoise_step_counter}",
+                )
+
+            # Plot x1_t if axes provided and RTC is enabled
+            if viz_x1t_axs is not None and x1_t is not None:
+                plot_waypoints(
+                    viz_x1t_axs,
+                    x1_t,
+                    start_from=0,
+                    color=color,
+                    label=f"x1_t Step {self.denoise_step_counter}",
+                )
+
+                # Plot error on the same axes with different color
+                if error is not None:
+                    # Use orange color for error
+                    # Handle batch dimension if present
+                    if len(error.shape) == 3:
+                        error_chunk = error[0].cpu().numpy()
+                    else:
+                        error_chunk = error.cpu().numpy()
+
+                    num_dims = min(error_chunk.shape[-1], 6)
+                    for j in range(num_dims):
+                        viz_x1t_axs[j].plot(
+                            np.arange(0, error_chunk.shape[0]),
+                            error_chunk[:, j],
+                            color="orange",
+                            linestyle="--",
+                            alpha=0.7,
+                            label=f"error Step {self.denoise_step_counter}",
+                        )
 
             self.denoise_step_counter += 1
 
-        # Save visualization of x_t denoise steps
-        if self.viz_fig is not None:
+        # Save visualization of x_t denoise steps (only if using internal figures)
+        if not use_provided_axes and self.viz_fig is not None:
             plt.figure(self.viz_fig.number)
 
             xt_name = "smolvla_x_t_denoise_steps.png"
@@ -861,6 +921,27 @@ class VLAFlowMatching(nn.Module):
 
             self.viz_v_fig = None
             self.viz_v_axs = None
+
+        # Plot ground truth on provided axes if available
+        if use_provided_axes:
+            prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+            if (
+                prev_chunk_left_over is not None
+                and self.config.rtc_config is not None
+                and self.config.rtc_config.enabled
+            ):
+                plot_waypoints(
+                    viz_xt_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                )
+                # Also plot ground truth on x1_t axes if provided
+                if viz_x1t_axs is not None:
+                    plot_waypoints(
+                        viz_x1t_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                    )
+
+        # Reset counter when using provided axes (for next call)
+        if use_provided_axes:
+            self.denoise_step_counter = 0
 
         return x_t
 
