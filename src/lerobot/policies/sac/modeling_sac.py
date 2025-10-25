@@ -45,8 +45,9 @@ class SACPolicy(
     def __init__(
         self,
         config: SACConfig | None = None,
-    ):
+    ) -> None:
         super().__init__(config)
+        assert config is not None  # for type checker
         config.validate_features()
         self.config = config
 
@@ -71,7 +72,7 @@ class SACPolicy(
             optim_params["discrete_critic"] = self.discrete_critic.parameters()
         return optim_params
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset the policy"""
         pass
 
@@ -136,7 +137,8 @@ class SACPolicy(
         q_values = discrete_critic(observations, observation_features)
         return q_values
 
-    def forward(
+    # TODO(#1720): SAC intentionally overrides forward() with different signature (adds 'model' parameter)
+    def forward(  # type: ignore[override]
         self,
         batch: dict[str, Tensor | dict[str, Tensor]],
         model: Literal["actor", "critic", "temperature", "discrete_critic"] = "critic",
@@ -183,10 +185,10 @@ class SACPolicy(
 
         if model == "discrete_critic" and self.config.num_discrete_actions is not None:
             # Extract critic-specific components
-            rewards: Tensor = batch["reward"]
-            next_observations: dict[str, Tensor] = batch["next_state"]
-            done: Tensor = batch["done"]
-            next_observation_features: Tensor = batch.get("next_observation_feature")
+            rewards = batch["reward"]
+            next_observations = batch["next_state"]
+            done = batch["done"]
+            next_observation_features = batch.get("next_observation_feature")
             complementary_info = batch.get("complementary_info")
             loss_discrete_critic = self.compute_loss_discrete_critic(
                 observations=observations,
@@ -217,7 +219,7 @@ class SACPolicy(
 
         raise ValueError(f"Unknown model type: {model}")
 
-    def update_target_networks(self):
+    def update_target_networks(self) -> None:
         """Update target networks with exponential moving average"""
         for target_param, param in zip(
             self.critic_target.parameters(),
@@ -239,7 +241,7 @@ class SACPolicy(
                     + target_param.data * (1.0 - self.config.critic_target_update_weight)
                 )
 
-    def update_temperature(self):
+    def update_temperature(self) -> None:
         self.temperature = self.log_alpha.exp().item()
 
     def compute_loss_critic(
@@ -282,7 +284,7 @@ class SACPolicy(
             # NOTE: We only want to keep the continuous action part
             # In the buffer we have the full action space (continuous + discrete)
             # We need to split them before concatenating them in the critic forward
-            actions: Tensor = actions[:, :DISCRETE_DIMENSION_INDEX]
+            actions = actions[:, :DISCRETE_DIMENSION_INDEX]
         q_preds = self.critic_forward(
             observations=observations,
             actions=actions,
@@ -323,7 +325,7 @@ class SACPolicy(
 
         discrete_penalties: Tensor | None = None
         if complementary_info is not None:
-            discrete_penalties: Tensor | None = complementary_info.get("discrete_penalty")
+            discrete_penalties = complementary_info.get("discrete_penalty")
 
         with torch.no_grad():
             # For DQN, select actions using online network, evaluate with target network
@@ -647,7 +649,7 @@ class MLP(nn.Module):
         activate_final: bool = False,
         dropout_rate: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
-    ):
+    ) -> None:
         super().__init__()
         layers: list[nn.Module] = []
         in_dim = input_dim
@@ -664,7 +666,8 @@ class MLP(nn.Module):
                     layers.append(nn.Dropout(p=dropout_rate))
                 layers.append(nn.LayerNorm(out_dim))
                 act_cls = final_activation if is_last and final_activation else activations
-                act = act_cls if isinstance(act_cls, nn.Module) else getattr(nn, act_cls)()
+                # TODO(#1720): getattr runtime type resolution cannot be inferred by MyPy static analysis
+                act = act_cls if isinstance(act_cls, nn.Module) else getattr(nn, act_cls)()  # type: ignore[arg-type]
                 layers.append(act)
 
             in_dim = out_dim
@@ -685,7 +688,7 @@ class CriticHead(nn.Module):
         dropout_rate: float | None = None,
         init_final: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.net = MLP(
             input_dim=input_dim,
@@ -723,7 +726,7 @@ class CriticEnsemble(nn.Module):
         encoder: SACObservationEncoder,
         ensemble: list[CriticHead],
         init_final: float | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.encoder = encoder
         self.init_final = init_final
@@ -765,7 +768,7 @@ class DiscreteCritic(nn.Module):
         dropout_rate: float | None = None,
         init_final: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.encoder = encoder
         self.output_dim = output_dim
@@ -807,7 +810,7 @@ class Policy(nn.Module):
         init_final: float | None = None,
         use_tanh_squash: bool = False,
         encoder_is_shared: bool = False,
-    ):
+    ) -> None:
         super().__init__()
         self.encoder: SACObservationEncoder = encoder
         self.network = network
