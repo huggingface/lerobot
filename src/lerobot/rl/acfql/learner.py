@@ -1315,7 +1315,7 @@ def initialize_replay_buffer(
             # root=cfg.online_dataset.path,
         )
     else:
-        logging.info("Make an empty online replay buffer")
+        logging.info(f"Make an empty online replay buffer with capacity {cfg.policy.online_buffer_capacity}")
         return ReplayBuffer(
             capacity=cfg.policy.online_buffer_capacity,
             device=device,
@@ -1324,6 +1324,9 @@ def initialize_replay_buffer(
             optimize_memory=True,
         )
 
+    logging.info(
+        f"Convert to a online replay buffer with {len(dataset)} samples and capacity {cfg.policy.online_buffer_capacity}"
+    )
     return ReplayBuffer.from_lerobot_dataset(
         lerobot_dataset=dataset,
         capacity=cfg.policy.online_buffer_capacity,
@@ -1361,7 +1364,9 @@ def initialize_offline_replay_buffer(
             root=dataset_offline_path,
         )
 
-    logging.info("Convert to a offline replay buffer")
+    logging.info(
+        f"Convert to a offline replay buffer with {len(offline_dataset)} samples and capacity {cfg.policy.offline_buffer_capacity}"
+    )
     offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
         offline_dataset,
         device=device,
