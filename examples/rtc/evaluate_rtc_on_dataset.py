@@ -40,6 +40,7 @@ import logging
 import random
 from dataclasses import dataclass, field
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import Tensor
@@ -266,7 +267,7 @@ class RTCDatasetEvaluator:
 
         # Load dataset
         logger.info(f"Loading dataset: {cfg.dataset.repo_id}")
-        self.dataset = LeRobotDataset(cfg.dataset.repo_id)
+        self.dataset = LeRobotDataset(cfg.dataset.repo_id, delta_timestamps={"action": np.arange(50) / 30})
         logger.info(f"Dataset loaded: {len(self.dataset)} samples, {self.dataset.num_episodes} episodes")
 
         # Create preprocessor/postprocessor
@@ -327,6 +328,7 @@ class RTCDatasetEvaluator:
             if prev_actions_chunk is not None:
                 # Get remaining actions from previous chunk (skip executed actions)
                 prev_chunk_left_over = prev_actions_chunk[:, last_inference_i:]
+            prev_chunk_left_over = preprocessed_batch["action"][0, :, :25]
 
             # Generate actions WITHOUT RTC
             self.policy.config.rtc_config.enabled = False
@@ -341,7 +343,7 @@ class RTCDatasetEvaluator:
             # Generate actions WITH RTC
             self.policy.config.rtc_config.enabled = True
             with torch.no_grad():
-                print(prev_chunk_left_over)
+                # print(prev_chunk_left_over)
                 rtc_actions = self.policy.predict_action_chunk(
                     preprocessed_batch,
                     noise=noise_clone,
@@ -350,13 +352,14 @@ class RTCDatasetEvaluator:
                     execution_horizon=self.cfg.rtc.execution_horizon,
                 )
 
-            self.compare_actions(
-                rtc_actions,
-                no_rtc_actions,
-                inference_delay,
-                prev_chunk_left_over,
-                self.cfg.rtc.execution_horizon,
-            )
+            _, axs = plt.subplots(6, figsize=(15, 10))
+            self.axs = axs.T.flatten()
+            self.plot_waypoints(prev_chunk_left_over[0].cpu().numpy(), label="gt", color="green")
+            self.plot_waypoints(rtc_actions[0].cpu().numpy(), label="rtc", color="red")
+            self.plot_waypoints(no_rtc_actions[0].cpu().numpy(), label="no_rtc", color="blue")
+            plt.savefig("plot.png")
+
+            break
 
             prev_actions_chunk = rtc_actions
             inference_times += 1
@@ -367,64 +370,20 @@ class RTCDatasetEvaluator:
 
         return
 
-    def compare_actions(
-        self,
-        rtc_actions: Tensor,
-        no_rtc_actions: Tensor,
-        inference_delay: int,
-        prev_chunk_left_over: Tensor,
-        execution_horizon: int,
-    ) -> dict:
-        if prev_chunk_left_over is None:
-            return None
-
-        print("inference delay: ", inference_delay)
-        first_part_of_rtc_actions = rtc_actions[:, :inference_delay, :]
-        prev_chunk = prev_chunk_left_over[:, :inference_delay, :]
-
-        dalay_diff = torch.abs(first_part_of_rtc_actions - prev_chunk)
-
-        in_execution_horizon_diff = torch.abs(
-            rtc_actions[:, inference_delay:execution_horizon, :]
-            - no_rtc_actions[:, inference_delay:execution_horizon]
-        )
-
-        after_execution_horizon_diff = torch.abs(
-            rtc_actions[:, execution_horizon:, :] - no_rtc_actions[:, execution_horizon:, :]
-        )
-
-        print("Delay diff: ", dalay_diff.mean().item(), dalay_diff.max().item(), dalay_diff.min().item())
-        print(
-            "In execution horizon diff: ",
-            in_execution_horizon_diff.mean().item(),
-            in_execution_horizon_diff.max().item(),
-            in_execution_horizon_diff.min().item(),
-        )
-        print(
-            "After execution horizon diff: ",
-            after_execution_horizon_diff.mean().item(),
-            after_execution_horizon_diff.max().item(),
-            after_execution_horizon_diff.min().item(),
-        )
-
-        print("=" * 80)
-
-        # print("rtc actions: ", rtc_actions)
-        # print("no rtc actions: ", no_rtc_actions)
-        print("first part of rtc actions: ", first_part_of_rtc_actions[0, :3, :6])
-        print("prev chunk: ", prev_chunk[0, :3, :6])
-        # print("delay diff: ", dalay_diff)
-
-        exit()
-        # print("in execution horizon diff: ", in_execution_horizon_diff)
-        # print("after execution horizon diff: ", after_execution_horizon_diff)
-
-        # print("=" * 80)
-
-        # print("delay diff: ", delay_diff.mean().item(), delay_diff.max().item(), delay_diff.min().item())
-        # print("in execution horizon diff: ", in_execution_horizon_diff.mean().item(), in_execution_horizon_diff.max().item(), in_execution_horizon_diff.min().item())
-        # print("after execution horizon diff: ", after_execution_horizon_diff.mean().item(), after_execution_horizon_diff.max().item(), after_execution_horizon_diff.min().item())
-        return
+    def plot_waypoints(self, chunk, start_from: int = 0, color: str | None = None, label: str | None = None):
+        for j in range(chunk.shape[-1]):
+            self.axs[j].plot(
+                np.arange(start_from, start_from + chunk.shape[0]),
+                chunk[:, j],
+                color=color,
+                label=label,
+            )
+            self.axs[j].set_ylabel("Joint angle", fontsize=14)
+            self.axs[j].grid()
+            plt.tick_params(labelsize=14)
+            self.axs[j].legend(loc="upper right", fontsize=14)
+            if j == 2:
+                self.axs[j].set_xlabel("Step #", fontsize=16)
 
 
 @parser.wrap()

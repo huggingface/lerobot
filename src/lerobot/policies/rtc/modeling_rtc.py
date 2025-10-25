@@ -24,6 +24,8 @@ https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/sr
 import logging
 import math
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -31,6 +33,25 @@ from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 logger = logging.getLogger(__name__)
+
+
+def plot_waypoints(axs, chunk, start_from: int = 0, color: str | None = None, label: str | None = None):
+    chunk = chunk[0].cpu().numpy()
+    # Limit to 6 action dimensions to match number of subplots
+    num_dims = min(chunk.shape[-1], 6)
+    for j in range(num_dims):
+        axs[j].plot(
+            np.arange(start_from, start_from + chunk.shape[0]),
+            chunk[:, j],
+            color=color,
+            label=label,
+        )
+        axs[j].set_ylabel("Joint angle", fontsize=14)
+        axs[j].grid()
+        plt.tick_params(labelsize=14)
+        axs[j].legend(loc="upper right", fontsize=14)
+        if j == 2:
+            axs[j].set_xlabel("Step #", fontsize=16)
 
 
 class RTCProcessor:
@@ -222,7 +243,7 @@ class RTCProcessor:
             # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
             # Our integration runs from time=1 -> 0, so we still want the step magnitude
             # to scale with (1 - time) to avoid overly large corrections at the start.
-            x1_t = x_t - tau * v_t
+            x1_t = x_t - time * v_t
 
             error = (prev_chunk_left_over - x1_t) * weights
 
