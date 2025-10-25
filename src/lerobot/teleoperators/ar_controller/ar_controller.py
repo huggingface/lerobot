@@ -331,7 +331,7 @@ class ARController(Teleoperator):
             tilt = float(self._mount_state.get(tilt_key, 0.0))
 
             pan += axis_x * self.config.mount_pan_speed_deg * dt
-            tilt += axis_y * self.config.mount_tilt_speed_deg * dt
+            tilt += -axis_y * self.config.mount_tilt_speed_deg * dt
 
             pan = self._clamp(pan, self.config.mount_pan_limits)
             tilt = self._clamp(tilt, self.config.mount_tilt_limits)
