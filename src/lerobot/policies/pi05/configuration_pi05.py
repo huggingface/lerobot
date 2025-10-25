@@ -20,6 +20,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 
 @PreTrainedConfig.register_subclass("pi05")
@@ -80,6 +81,9 @@ class PI05Config(PreTrainedConfig):
     scheduler_decay_lr: float = 2.5e-6
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
+
+    # Real Time Chunking configuration
+    rtc_config: RTCConfig = RTCConfig()
 
     def __post_init__(self):
         super().__post_init__()

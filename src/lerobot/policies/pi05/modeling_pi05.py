@@ -42,6 +42,7 @@ else:
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy, T
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -502,9 +503,10 @@ class PaliGemmaWithExpertModel(
 class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
-    def __init__(self, config: PI05Config):
+    def __init__(self, config: PI05Config, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
+        self.rtc_processor = rtc_processor
 
         paligemma_config = get_gemma_config(config.paligemma_variant)
         action_expert_config = get_gemma_config(config.action_expert_variant)
@@ -731,7 +733,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return F.mse_loss(u_t, v_t, reduction="none")
 
     @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
-    def sample_actions(self, images, img_masks, tokens, masks, noise=None, num_steps=None) -> Tensor:
+    def sample_actions(
+        self, images, img_masks, tokens, masks, noise=None, num_steps=None, **kwargs
+    ) -> Tensor:
         """Do a full inference forward and compute the action."""
         if num_steps is None:
             num_steps = self.config.num_inference_steps
@@ -770,12 +774,32 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
+
+            # Partial call of the denoise step function for RTC
+            denoise_step_partial_call = lambda input_x_t: self.denoise_step(  # noqa: E731
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
+                x_t=input_x_t,
+                timestep=expanded_time,  # noqa: B023
             )
+
+            if self.config.rtc_config is not None and self.config.rtc_config.enabled:
+                # Use RTC processor for denoising
+                inference_delay = kwargs.get("inference_delay")
+                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+                execution_horizon = kwargs.get("execution_horizon", self.config.rtc_config.execution_horizon)
+
+                v_t = self.rtc_processor.denoise_step(
+                    x_t=x_t,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    inference_delay=inference_delay,
+                    time=time,
+                    original_denoise_step_partial=denoise_step_partial_call,
+                    execution_horizon=execution_horizon,
+                )
+            else:
+                v_t = denoise_step_partial_call(x_t)
+
             x_t = x_t + dt * v_t
             time += dt
 
@@ -837,9 +861,10 @@ class PI05Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
+        self.init_rtc_processor()
 
         # Initialize the core PI05 model
-        self.model = PI05Pytorch(config)
+        self.model = PI05Pytorch(config, rtc_processor=self.rtc_processor)
 
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
@@ -1035,6 +1060,26 @@ class PI05Policy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
+    def init_rtc_processor(self, verbose: bool = False):
+        """Initialize RTC processor with optional verbose logging.
+
+        Args:
+            verbose: Enable verbose debug logging in RTCProcessor
+        """
+        self.rtc_processor = None
+
+        if self.config.rtc_config is not None and self.config.rtc_config.enabled:
+            self.rtc_processor = RTCProcessor(self.config.rtc_config, verbose=verbose)
+
+            # In case of calling init_rtc_processor after the model is created
+            # We need to set the rtc_processor to the model
+            # During the normal initialization process the model is not created yet
+            if hasattr(self, "model") and self.model is not None:
+                self.model.rtc_processor = self.rtc_processor
+
+    def _rtc_enabled(self) -> bool:
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
+
     def _preprocess_images(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], list[Tensor]]:
         """Preprocess images for the model.
 
@@ -1109,6 +1154,10 @@ class PI05Policy(PreTrainedPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
+        assert not self._rtc_enabled(), (
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
+
         self.eval()
 
         # Action queue logic for n_action_steps > 1
@@ -1120,7 +1169,7 @@ class PI05Policy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
@@ -1129,7 +1178,7 @@ class PI05Policy(PreTrainedPolicy):
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         # Sample actions using the model (no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks)
+        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
 
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]

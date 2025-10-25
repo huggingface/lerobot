@@ -811,6 +811,7 @@ class VLAFlowMatching(nn.Module):
             if self.viz_fig is None:
                 # Create figure once on first denoise step
                 self.viz_fig, self.viz_axs = plt.subplots(6, 1, figsize=(12, 12))
+                self.viz_v_fig, self.viz_v_axs = plt.subplots(6, 1, figsize=(12, 12))
 
             # Define colors for different denoise steps (using a colormap)
             colors = plt.cm.viridis(np.linspace(0, 1, self.config.num_steps))
@@ -818,11 +819,12 @@ class VLAFlowMatching(nn.Module):
 
             # Plot this denoise step
             plot_waypoints(
-                self.viz_axs,
-                x_t,
-                start_from=0,
-                color=color,
-                label=f'Step {self.denoise_step_counter}'
+                self.viz_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}"
+            )
+
+            # Plot this denoise step
+            plot_waypoints(
+                self.viz_v_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}"
             )
 
             self.denoise_step_counter += 1
@@ -830,13 +832,35 @@ class VLAFlowMatching(nn.Module):
         # Save visualization of x_t denoise steps
         if self.viz_fig is not None:
             plt.figure(self.viz_fig.number)
-            plt.savefig('smolvla_x_t_denoise_steps.png')
+
+            xt_name = "smolvla_x_t_denoise_steps.png"
+            v_name = "smolvla_v_denoise_steps.png"
+
+            if self.config.rtc_config is not None and self.config.rtc_config.enabled:
+                xt_name = "smolvla_x_t_with_rtc_denoise_steps.png"
+                v_name = "smolvla_v_with_rtc_denoise_steps.png"
+
+                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+
+                if prev_chunk_left_over is not None:
+                    plot_waypoints(
+                        self.viz_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                    )
+
+            plt.savefig(xt_name)
             plt.close(self.viz_fig)
 
             # Reset for next inference
             self.viz_fig = None
             self.viz_axs = None
             self.denoise_step_counter = 0
+
+            plt.figure(self.viz_v_fig.number)
+            plt.savefig(v_name)
+            plt.close(self.viz_v_fig)
+
+            self.viz_v_fig = None
+            self.viz_v_axs = None
 
         return x_t
 
