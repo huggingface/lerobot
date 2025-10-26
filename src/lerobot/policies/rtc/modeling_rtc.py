@@ -155,7 +155,7 @@ class RTCProcessor:
         # So we need to invert the time
         tau = 1 - time
 
-        x_t = x_t.clone().detach().requires_grad_(True)
+        # x_t = x_t.clone().detach().requires_grad_(True)
 
         if self.verbose:
             logger.info("=" * 80)
@@ -222,13 +222,6 @@ class RTCProcessor:
             x_t.device
         )
 
-        if self.verbose:
-            logger.info(
-                f"Prefix weights: schedule={self.rtc_config.prefix_attention_schedule}, "
-                f"start={inference_delay}, end={execution_horizon}, total={action_chunk_size}"
-            )
-            logger.info(self._tensor_stats(weights, "weights (1D)"))
-
         # Reshape weights to match the tensor dimensions (batch, time, action_dim)
         # weights is shape (action_chunk_size,) and needs to be (1, action_chunk_size, 1)
         weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
@@ -243,17 +236,22 @@ class RTCProcessor:
             return x_t_input - time * v_t_local
 
         v_t = original_denoise_step_partial(x_t)
-        x1_t = x_t - time * v_t
 
-        error = (prev_chunk_left_over - x1_t) * weights
+        if self.verbose:
+            logger.info(self._tensor_stats(v_t, "v_t (original velocity)"))
 
-        # Use vjp to compute gradient: we want gradient of x1_t weighted by error
-        # vjp_fn takes cotangents for each output (x1_t, v_t) and returns gradient for input x_t
-        first, correction = torch.autograd.functional.vjp(
-            compute_x1_t_and_v_t, x_t, v=error, create_graph=False
-        )
+        with torch.enable_grad():
+            x_t = x_t.requires_grad_(True)
 
-        print(first, correction)
+            x1_t = x_t - time * v_t
+
+            error = (prev_chunk_left_over - x1_t) * weights
+
+            # Use vjp to compute gradient: we want gradient of x1_t weighted by error
+            # vjp_fn takes cotangents for each output (x1_t, v_t) and returns gradient for input x_t
+            first, correction = torch.autograd.functional.vjp(
+                compute_x1_t_and_v_t, x_t, v=error, create_graph=False
+            )
         # print("error: ", error[0, :3, :6], weights)
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
@@ -282,7 +280,7 @@ class RTCProcessor:
             x1_t = x1_t.squeeze(0)
             error = error.squeeze(0)
 
-        return result, correction, x1_t, error
+        return result, x_t, final_correction, x1_t, error
 
     def get_prefix_weights(self, start, end, total):
         start = min(start, end)
