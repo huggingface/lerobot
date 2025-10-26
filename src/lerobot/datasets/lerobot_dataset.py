@@ -91,8 +91,8 @@ class LeRobotDatasetMetadata:
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
-        self.writer = None
-        self.latest_episode = None
+        self.writer: pq.ParquetWriter | None = None
+        self.latest_episode: dict | None = None
         self.metadata_buffer: list[dict] = []
         self.metadata_buffer_size = metadata_buffer_size
 
@@ -113,7 +113,7 @@ class LeRobotDatasetMetadata:
         if not hasattr(self, "metadata_buffer") or len(self.metadata_buffer) == 0:
             return
 
-        combined_dict = {}
+        combined_dict: dict[str, list] = {}
         for episode_dict in self.metadata_buffer:
             for key, value in episode_dict.items():
                 if key not in combined_dict:

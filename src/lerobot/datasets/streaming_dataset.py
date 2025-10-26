@@ -84,7 +84,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         root: str | Path | None = None,
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
-        delta_timestamps: dict[list[float]] | None = None,
+        delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
         force_cache_sync: bool = False,
@@ -130,7 +130,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.buffer_size = buffer_size
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
-        self.video_decoder_cache = None
+        self.video_decoder_cache: VideoDecoderCache | None = None
 
         self.root.mkdir(exist_ok=True, parents=True)
 
@@ -205,7 +205,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # the logic is to add 2 levels of randomness:
         # (1) sample one shard at random from the ones available, and
         # (2) sample one frame from the shard sampled at (1)
-        frames_buffer = []
+        frames_buffer: list[dict] = []
         while available_shards := list(idx_to_backtrack_dataset.keys()):
             shard_key = next(self._infinite_generator_over_elements(rng, available_shards))
             backtrack_dataset = idx_to_backtrack_dataset[shard_key]  # selects which shard to iterate on
@@ -257,6 +257,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     def _make_timestamps_from_indices(
         self, start_ts: float, indices: dict[str, list[int]] | None = None
     ) -> dict[str, list[float]]:
+        assert self.delta_timestamps is not None  # self.delta_timestamps has a default value of None
         if indices is not None:
             return {
                 key: (
@@ -365,6 +366,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     ) -> dict[str, list[float]]:
         query_timestamps = {}
         keys_to_timestamps = self._make_timestamps_from_indices(current_ts, query_indices)
+        assert (
+            episode_boundaries_ts is not None
+        )  # TODO(#1722): Rewrite this method without adding a default value of None to episode_boundaries_ts
         for key in self.meta.video_keys:
             if query_indices is not None and key in query_indices:
                 timestamps = keys_to_timestamps[key]
@@ -413,6 +417,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # Prepare results
         query_result = {}
         padding = {}
+
+        assert self.delta_indices is not None
 
         for key, delta_indices in self.delta_indices.items():
             if key in self.meta.video_keys:
@@ -507,7 +513,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         return query_result, padding
 
-    def _validate_delta_timestamp_keys(self, delta_timestamps: dict[list[float]]) -> None:
+    def _validate_delta_timestamp_keys(self, delta_timestamps: dict[str, list[float]]) -> None:
         """
         Validate that all keys in delta_timestamps correspond to actual features in the dataset.
 

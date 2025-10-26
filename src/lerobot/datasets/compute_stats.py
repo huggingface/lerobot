@@ -32,10 +32,10 @@ class RunningQuantileStats:
 
     def __init__(self, quantile_list: list[float] | None = None, num_quantile_bins: int = 5000):
         self._count = 0
-        self._mean: np.ndarray = None
+        self._mean: np.ndarray | None = None
         self._mean_of_squares = None
-        self._min: np.ndarray = None
-        self._max: np.ndarray = None
+        self._min: np.ndarray | None = None
+        self._max: np.ndarray | None = None
         self._histograms: list[np.ndarray] | None = None
         self._bin_edges: list[np.ndarray] | None = None
         self._num_quantile_bins = num_quantile_bins
@@ -63,6 +63,10 @@ class RunningQuantileStats:
                 for i in range(vector_length)
             ]
         else:
+            assert self._mean is not None
+            assert self._min is not None
+            assert self._max is not None
+
             if vector_length != self._mean.size:
                 raise ValueError("The length of new vectors does not match the initialized vector length.")
 
@@ -100,6 +104,10 @@ class RunningQuantileStats:
         """
         if self._count < 2:
             raise ValueError("Cannot compute statistics for less than 2 vectors.")
+
+        assert self._mean is not None
+        assert self._min is not None
+        assert self._max is not None
 
         variance = self._mean_of_squares - self._mean**2
 
@@ -179,9 +187,9 @@ class RunningQuantileStats:
         idx = np.searchsorted(cumsum, target_count)
 
         if idx == 0:
-            return edges[0]
+            return float(edges[0])
         if idx >= len(cumsum):
-            return edges[-1]
+            return float(edges[-1])
 
         # If not edge case, interpolate within the bin
         count_before = cumsum[idx - 1]
@@ -247,6 +255,7 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
 
         images[i] = img
 
+    assert images is not None
     return images
 
 
@@ -323,7 +332,7 @@ def _reshape_for_feature_stats(value: np.ndarray, keepdims: bool) -> np.ndarray:
 
 def _reshape_for_global_stats(
     value: np.ndarray, keepdims: bool, original_shape: tuple[int, ...]
-) -> np.ndarray | float:
+) -> np.ndarray:
     """Reshape statistics for global reduction (axis=None)."""
     if keepdims:
         target_shape = tuple(1 for _ in original_shape)
@@ -334,7 +343,7 @@ def _reshape_for_global_stats(
 
 def _reshape_single_stat(
     value: np.ndarray, axis: int | tuple[int, ...] | None, keepdims: bool, original_shape: tuple[int, ...]
-) -> np.ndarray | float:
+) -> np.ndarray:
     """Apply appropriate reshaping to a single statistic array.
 
     This function transforms statistic arrays to match expected output shapes
@@ -515,6 +524,7 @@ def compute_episode_stats(
 
         axes_to_reduce: int | tuple[int, ...] | None
         if features[key]["dtype"] in ["image", "video"]:
+            assert isinstance(data, list)
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)
             keepdims = True
@@ -569,7 +579,7 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
                 _validate_stat_value(stat_value, stat_key, feature_key)
 
 
-def aggregate_feature_stats(stats_ft_list: list[dict[str, float]]) -> dict[str, dict[str, np.ndarray]]:
+def aggregate_feature_stats(stats_ft_list: list[dict[str, float]]) -> dict[str, np.ndarray]:
     """Aggregates stats for a single feature."""
     means = np.stack([s["mean"] for s in stats_ft_list])
     variances = np.stack([s["std"] ** 2 for s in stats_ft_list])
