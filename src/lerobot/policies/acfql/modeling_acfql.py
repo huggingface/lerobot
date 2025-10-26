@@ -381,8 +381,12 @@ class ACFQLPolicy(
         td_target_duplicate = einops.repeat(td_target, "b -> e b", e=q_preds.shape[0])
         # You compute the mean loss of the batch for each critic and then to compute the final loss you sum them up
 
-        # # TD loss
-        td_loss = (((q_preds - td_target_duplicate) ** 2) * valid[:, -1]).mean(dim=1).sum()
+        # Mask out invalid timesteps
+        q_preds = q_preds * valid[:, -1]
+        td_target_duplicate = td_target_duplicate * valid[:, -1]
+
+        # TD loss
+        td_loss = ((q_preds - td_target_duplicate) ** 2).mean(dim=1).sum()
 
         # Total critic loss
         critics_loss = td_loss
