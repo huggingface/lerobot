@@ -104,6 +104,7 @@ def process_single_episode(dataset: LeRobotDataset, episode_idx: int) -> dict:
             continue
 
         data = torch.stack(data_list).cpu().numpy()
+        axes_to_reduce: int | tuple[int, int, int]
         if dataset.features[key]["dtype"] in ["image", "video"]:
             if data.dtype == np.uint8:
                 data = data.astype(np.float32) / 255.0
