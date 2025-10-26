@@ -40,7 +40,7 @@ python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} i
 3. Install LeRobot by running:
 
 ```bash
-pip install lerobot[groot] # consider also installing libero,dev and test tags
+pip install lerobot[groot]
 ```
 
 ## Usage
@@ -82,6 +82,9 @@ accelerate launch \
 ## Performance Results
 
 ### Libero Benchmark Results
+
+> [!NOTE]
+> Follow our instructions for Libero usage: [Libero](./libero)
 
 GR00T has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the GR00T N1.5 model for 30k steps on the Libero dataset and compared the results to the GR00T reference results.
 
