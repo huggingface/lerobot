@@ -95,6 +95,7 @@ from lerobot.microphones import (
     MicrophoneConfig,  # noqa: F401
 )
 from lerobot.microphones.portaudio.configuration_portaudio import PortAudioMicrophoneConfig  # noqa: F401
+from lerobot.microphones.touchlab.configuration_touchlab import TouchLabSensorConfig  # noqa: F401
 from lerobot.microphones.utils import (
     async_microphones_start_recording,
     async_microphones_stop_recording,
