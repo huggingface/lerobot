@@ -1398,7 +1398,11 @@ def get_observation_features(
         tuple: observation_features, next_observation_features
     """
 
-    if policy.config.vision_encoder_name is None or not policy.config.freeze_vision_encoder:
+    if (
+        policy.config.vision_encoder_name is None
+        or not policy.config.freeze_vision_encoder
+        or not policy.config.cache_observation_features
+    ):
         return None, None
 
     with torch.no_grad():
