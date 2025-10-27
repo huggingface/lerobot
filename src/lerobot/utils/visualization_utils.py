@@ -152,22 +152,25 @@ def log_rerun_data(
                     for i, vi in enumerate(arr):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
                 elif arr.ndim == 2:
-                    rr.send_columns(
-                        "audio/" + key,
-                        indexes=[
-                            rr.TimeSecondsColumn(
-                                "episode_time",
-                                times=log_time
-                                + np.linspace(
-                                    -DEFAULT_AUDIO_CHUNK_DURATION,
-                                    0,
-                                    len(observation[key]),
-                                    endpoint=False,
-                                ),
-                            )
-                        ],
-                        columns=rr.Scalar.columns(scalar=np.mean(observation[key], axis=1)),
-                    )
+                    for i, channel_arr in enumerate(arr.T):
+                        rr.send_columns(
+                            "audio/"
+                            + key
+                            + f"_channel_{i}",  # TODO(CarolinePascal): Get actual channel number/name
+                            indexes=[
+                                rr.TimeSecondsColumn(
+                                    "episode_time",
+                                    times=log_time
+                                    + np.linspace(
+                                        -DEFAULT_AUDIO_CHUNK_DURATION,
+                                        0,
+                                        len(channel_arr),
+                                        endpoint=False,
+                                    ),
+                                )
+                            ],
+                            columns=rr.Scalar.columns(scalar=channel_arr),
+                        )
                 elif arr.ndim == 3:
                     rr.log(key, rr.Image(arr), static=True)
                 else:
