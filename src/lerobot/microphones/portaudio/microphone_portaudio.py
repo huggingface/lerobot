@@ -95,7 +95,6 @@ class PortAudioMicrophone(Microphone):
         self.audio_callback_start_event = process_Event()
 
         # Process-safe concurrent queue to send audio from the recording process to the writing process/thread
-        # TODO(CarolinePascal): replace by a Pipe (more efficient !)
         self.write_queue = process_Queue()
 
         # SharedArray to store audio from the recording process.
@@ -107,6 +106,9 @@ class PortAudioMicrophone(Microphone):
         self.write_is_started_event = None
 
         self.logs = {}
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}({self.microphone_index})"
 
     @property
     def is_connected(self) -> bool:
