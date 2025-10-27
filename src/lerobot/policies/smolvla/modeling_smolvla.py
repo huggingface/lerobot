@@ -789,27 +789,46 @@ class VLAFlowMatching(nn.Module):
         error = None
         use_provided_axes = viz_xt_axs is not None and viz_vt_axs is not None
 
-        if self.config.rtc_config is not None and self.config.rtc_config.enabled:
-            inference_delay = kwargs.get("inference_delay")
-            prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-            execution_horizon = kwargs.get("execution_horizon", self.config.rtc_config.execution_horizon)
+        while time >= -dt / 2:
+            expanded_time = time.expand(bsize)
 
-            all_v_t, x_t, all_correction, all_x1_t, all_error, all_x_t = self.rtc_alternative_denoise(
-                x_t=x_t,
-                bsize=bsize,
-                dt=dt,
-                prefix_pad_masks=prefix_pad_masks,
-                past_key_values=past_key_values,
-                device=device,
-                rtc_t=execution_horizon,
-                rtc_d=inference_delay,
-                rtc_soft_mask_length=-1,
-                prev_chunk=prev_chunk_left_over,
-            )
+            # Partial call of the function, I used `partial` package at the beginning
+            # but it was not working as expected, so I used a lambda function instead
+            # I want to pass `x_t` as positionan argument to the partial call, because
+            # it could have different naming in different models, and the rest of parameters
+            # as named arguments
+            denoise_step_partial_call = lambda input_x_t: self.denoise_step(
+                    x_t=input_x_t,
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    timestep=expanded_time,
+                )
 
-            # Visualize RTC alternative denoise results (all steps like regular denoising)
+            if self.config.rtc_config is not None and self.config.rtc_config.enabled:
+                inference_delay = kwargs.get("inference_delay")
+                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+                execution_horizon = kwargs.get("execution_horizon", self.config.rtc_config.execution_horizon)
+
+                v_t, x_t, correction, x1_t, error = self.rtc_processor.denoise_step(
+                    x_t=x_t,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    inference_delay=inference_delay,
+                    time=time,
+                    original_denoise_step_partial=denoise_step_partial_call,
+                    execution_horizon=execution_horizon,
+                )
+            else:
+                v_t = denoise_step_partial_call(x_t)
+
+            # Euler step
+            x_t += dt * v_t
+            time += dt
+
+            # Visualize x_t using plot_waypoints - accumulate all denoise steps
+            # Use provided axes or create new ones
             if not use_provided_axes:
                 if self.viz_fig is None:
+                    # Create figure once on first denoise step
                     self.viz_fig, self.viz_axs = plt.subplots(6, 1, figsize=(12, 12))
                     self.viz_v_fig, self.viz_v_axs = plt.subplots(6, 1, figsize=(12, 12))
                 xt_axs = self.viz_axs
@@ -819,159 +838,55 @@ class VLAFlowMatching(nn.Module):
                 vt_axs = viz_vt_axs
 
             # Define colors for different denoise steps (using a colormap)
-            colors = plt.cm.viridis(np.linspace(0, 1, len(all_x_t)))
+            colors = plt.cm.viridis(np.linspace(0, 1, self.config.num_steps))
+            color = colors[self.denoise_step_counter % len(colors)]
 
-            # Plot all denoising steps
-            for step_idx in range(len(all_x_t)):
-                color = colors[step_idx]
+            # Plot this denoise step
+            plot_waypoints(xt_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
 
-                # Plot x_t for this step
-                if step_idx < len(all_x_t):
-                    plot_waypoints(
-                        xt_axs, all_x_t[step_idx], start_from=0, color=color, label=f"RTC Alt Step {step_idx}"
-                    )
+            # Plot this denoise step
+            plot_waypoints(vt_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
 
-                # Plot v_t for this step
-                if step_idx < len(all_v_t):
-                    plot_waypoints(
-                        vt_axs, all_v_t[step_idx], start_from=0, color=color, label=f"RTC Alt v_t {step_idx}"
-                    )
+            if correction is not None:
+                plot_waypoints(
+                    vt_axs,
+                    correction,
+                    start_from=0,
+                    color="red",
+                    label=f"Step corr {self.denoise_step_counter}",
+                )
 
-                # Plot correction for this step
-                if step_idx < len(all_correction):
-                    plot_waypoints(
-                        vt_axs,
-                        all_correction[step_idx],
-                        start_from=0,
-                        color="red",
-                        label=f"RTC Alt corr {step_idx}",
-                    )
+            # Plot x1_t if axes provided and RTC is enabled
+            if viz_x1t_axs is not None and x1_t is not None:
+                plot_waypoints(
+                    viz_x1t_axs,
+                    x1_t,
+                    start_from=0,
+                    color=color,
+                    label=f"x1_t Step {self.denoise_step_counter}",
+                )
 
-                # Plot x1_t if axes provided
-                if viz_x1t_axs is not None and step_idx < len(all_x1_t):
-                    plot_waypoints(
-                        viz_x1t_axs, all_x1_t[step_idx], start_from=0, color=color, label=f"RTC Alt x1_t {step_idx}"
-                    )
+                # Plot error on the same axes with different color
+                if error is not None:
+                    # Use orange color for error
+                    # Handle batch dimension if present
+                    if len(error.shape) == 3:
+                        error_chunk = error[0].cpu().numpy()
+                    else:
+                        error_chunk = error.cpu().numpy()
 
-                    # Plot error on the same axes
-                    if step_idx < len(all_error):
-                        error_step = all_error[step_idx]
-                        if len(error_step.shape) == 3:
-                            error_chunk = error_step[0].cpu().numpy()
-                        else:
-                            error_chunk = error_step.cpu().numpy()
+                    num_dims = min(error_chunk.shape[-1], 6)
+                    for j in range(num_dims):
+                        viz_x1t_axs[j].plot(
+                            np.arange(0, error_chunk.shape[0]),
+                            error_chunk[:, j],
+                            color="orange",
+                            linestyle="--",
+                            alpha=0.7,
+                            label=f"error Step {self.denoise_step_counter}",
+                        )
 
-                        num_dims = min(error_chunk.shape[-1], 6)
-                        for j in range(num_dims):
-                            viz_x1t_axs[j].plot(
-                                np.arange(0, error_chunk.shape[0]),
-                                error_chunk[:, j],
-                                color="orange",
-                                linestyle="--",
-                                label=f"RTC Alt err {step_idx}",
-                            )
-
-        else:
-            while time >= -dt / 2:
-                expanded_time = time.expand(bsize)
-
-                # Partial call of the function, I used `partial` package at the beginning
-                # but it was not working as expected, so I used a lambda function instead
-                # I want to pass `x_t` as positionan argument to the partial call, because
-                # it could have different naming in different models, and the rest of parameters
-                # as named arguments
-                def denoise_step_partial_call(input_x_t):
-                    result = self.denoise_step(
-                        x_t=input_x_t,
-                        prefix_pad_masks=prefix_pad_masks,
-                        past_key_values=past_key_values,
-                        timestep=expanded_time,
-                    )
-                    return result
-
-                if self.config.rtc_config is not None and self.config.rtc_config.enabled:
-                    inference_delay = kwargs.get("inference_delay")
-                    prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                    execution_horizon = kwargs.get("execution_horizon", self.config.rtc_config.execution_horizon)
-
-                    v_t, x_t, correction, x1_t, error = self.rtc_processor.denoise_step(
-                        x_t=x_t,
-                        prev_chunk_left_over=prev_chunk_left_over,
-                        inference_delay=inference_delay,
-                        time=time,
-                        original_denoise_step_partial=denoise_step_partial_call,
-                        execution_horizon=execution_horizon,
-                    )
-                else:
-                    v_t = denoise_step_partial_call(x_t)
-
-                # Euler step
-                x_t += dt * v_t
-                time += dt
-
-                # Visualize x_t using plot_waypoints - accumulate all denoise steps
-                # Use provided axes or create new ones
-                if not use_provided_axes:
-                    if self.viz_fig is None:
-                        # Create figure once on first denoise step
-                        self.viz_fig, self.viz_axs = plt.subplots(6, 1, figsize=(12, 12))
-                        self.viz_v_fig, self.viz_v_axs = plt.subplots(6, 1, figsize=(12, 12))
-                    xt_axs = self.viz_axs
-                    vt_axs = self.viz_v_axs
-                else:
-                    xt_axs = viz_xt_axs
-                    vt_axs = viz_vt_axs
-
-                # Define colors for different denoise steps (using a colormap)
-                colors = plt.cm.viridis(np.linspace(0, 1, self.config.num_steps))
-                color = colors[self.denoise_step_counter % len(colors)]
-
-                # Plot this denoise step
-                plot_waypoints(xt_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
-
-                # Plot this denoise step
-                plot_waypoints(vt_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
-
-                if correction is not None:
-                    plot_waypoints(
-                        vt_axs,
-                        correction,
-                        start_from=0,
-                        color="red",
-                        label=f"Step corr {self.denoise_step_counter}",
-                    )
-
-                # Plot x1_t if axes provided and RTC is enabled
-                if viz_x1t_axs is not None and x1_t is not None:
-                    plot_waypoints(
-                        viz_x1t_axs,
-                        x1_t,
-                        start_from=0,
-                        color=color,
-                        label=f"x1_t Step {self.denoise_step_counter}",
-                    )
-
-                    # Plot error on the same axes with different color
-                    if error is not None:
-                        # Use orange color for error
-                        # Handle batch dimension if present
-                        if len(error.shape) == 3:
-                            error_chunk = error[0].cpu().numpy()
-                        else:
-                            error_chunk = error.cpu().numpy()
-
-                        num_dims = min(error_chunk.shape[-1], 6)
-                        for j in range(num_dims):
-                            viz_x1t_axs[j].plot(
-                                np.arange(0, error_chunk.shape[0]),
-                                error_chunk[:, j],
-                                color="orange",
-                                linestyle="--",
-                                alpha=0.7,
-                                label=f"error Step {self.denoise_step_counter}",
-                            )
-
-                self.denoise_step_counter += 1
+            self.denoise_step_counter += 1
 
         # Save visualization of x_t denoise steps (only if using internal figures)
         if not use_provided_axes and self.viz_fig is not None:
@@ -1029,33 +944,8 @@ class VLAFlowMatching(nn.Module):
 
         return x_t
 
-    def make_soft_mask(self, d: int, s: int, H: int, device) -> torch.Tensor:  # noqa: N803 # using upper case for H to match RTC paper
-        """
-        Soft-mask W (Eq. 5, RTC paper).
-        Returns shape (H,) on `device`.
-        """
-        i = torch.arange(H, device=device, dtype=torch.float32)
-
-        # region masks
-        first = i < d
-        middle = (i >= d) & (i < s)
-
-        # allocate
-        w = torch.zeros(H, device=device, dtype=torch.float32)
-
-        # first d steps → 1
-        w[first] = 1.0
-
-        # middle region → c_i * (e^{c_i} − 1) / (e − 1)
-        if middle.any():
-            c = (s - i[middle]) / (s - d + 1)  # c_i ∈ (0,1]
-            w[middle] = c * (torch.exp(c) - 1.0) / (math.e - 1.0)
-
-        # last s steps already 0
-        return w
-
     def rtc_alternative_denoise(
-        self, x_t, bsize, dt, prefix_pad_masks, past_key_values, device, rtc_t, rtc_d, rtc_soft_mask_length, prev_chunk_left_over
+        self, x_t, bsize, dt, prefix_pad_masks, past_key_values, device, execution_horizon, inference_delay, prev_chunk_left_over
     ):
         """
         Real-time chunking (RTC) denoising.
@@ -1073,141 +963,8 @@ class VLAFlowMatching(nn.Module):
         https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
 
-        # tau = 1 - time
 
-        # # x_t = x_t.clone().detach().requires_grad_(True)
-
-        # if prev_chunk_left_over is None:
-        #     return original_denoise_step_partial(x_t)
-
-        # squeezed = False
-        # if len(x_t.shape) < 3:
-        #     # Add batch dimension
-        #     x_t = x_t.unsqueeze(0)
-        #     squeezed = True
-
-        # if len(prev_chunk_left_over.shape) < 3:
-        #     # Add batch dimension
-        #     prev_chunk_left_over = prev_chunk_left_over.unsqueeze(0)
-
-        # if execution_horizon is None:
-        #     execution_horizon = self.rtc_config.execution_horizon
-
-        # # If the previous action chunk is to short then it doesn't make sense to use long execution horizon
-        # # because there is nothing to merge
-        # original_execution_horizon = execution_horizon
-        # if execution_horizon > prev_chunk_left_over.shape[1]:
-        #     execution_horizon = prev_chunk_left_over.shape[1]
-        #     if self.verbose and execution_horizon != original_execution_horizon:
-        #         logger.info(
-        #             f"Adjusted execution_horizon: {original_execution_horizon} -> {execution_horizon} "
-        #             f"(limited by prev_chunk size)"
-        #         )
-
-        # batch_size = x_t.shape[0]
-        # action_chunk_size = x_t.shape[1]
-        # action_dim = x_t.shape[2]
-
-        # if self.verbose:
-        #     logger.info(
-        #         f"Batch size: {batch_size}, Chunk size: {action_chunk_size}, Action dim: {action_dim}"
-        #     )
-        #     logger.info(self._tensor_stats(prev_chunk_left_over, "prev_chunk_left_over (before padding)"))
-
-        # if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
-        #     # We need to pad the left over chunk with zeros
-        #     if self.verbose:
-        #         logger.info(
-        #             f"Padding prev_chunk_left_over from {tuple(prev_chunk_left_over.shape)} "
-        #             f"to ({batch_size}, {action_chunk_size}, {action_dim})"
-        #         )
-        #     padded = torch.zeros(batch_size, action_chunk_size, action_dim).to(x_t.device)
-        #     padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
-        #     prev_chunk_left_over = padded
-
-        # assert prev_chunk_left_over.shape == x_t.shape, (
-        #     "The padded previous chunk must be the same size as the input tensor"
-        # )
-        # weights = self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size).to(
-        #     x_t.device
-        # )
-
-        # # Reshape weights to match the tensor dimensions (batch, time, action_dim)
-        # # weights is shape (action_chunk_size,) and needs to be (1, action_chunk_size, 1)
-        # weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
-
-        # # Compute v_t once for the base velocity
-        # v_t = original_denoise_step_partial(x_t)
-
-        # if self.verbose:
-        #     logger.info(self._tensor_stats(v_t, "v_t (original velocity)"))
-
-        # # Enable gradients and recompute v_t to build computational graph
-        # x_t.requires_grad_(True)
-        # with torch.enable_grad():
-        #     # Recompute v_t inside gradient context so gradients flow through model
-        #     v_t_grad = original_denoise_step_partial(x_t)
-
-        #     # Compute x1_t using recomputed v_t
-        #     x1_t = x_t - time * v_t_grad
-
-        #     # Compute weighted error
-        #     error = (prev_chunk_left_over - x1_t) * weights
-
-        #     # Compute gradient using torch.autograd.grad (same as rtc_alternative_denoise)
-        #     grad_outputs = error.clone().detach()
-        #     correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=True)[0]
-
-        # # Detach x_t for next iteration
-        # x_t = x_t.detach()
-
-        # # print("error: ", error[0, :3, :6], weights)
-
-        # max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
-
-        # squared_one_minus_tau = (1 - tau) ** 2
-        # inv_r2 = (squared_one_minus_tau + tau**2) / (squared_one_minus_tau)
-        # c = torch.nan_to_num((1 - tau) / tau, posinf=max_guidance_weight)
-        # guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
-        # guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
-
-        # Pad prev_chunk to max_action_dim to match the model's internal action dimension
-        # prev_chunk comes with original action_dim, but model works with max_action_dim
-        prev_chunk_padded = pad_vector(prev_chunk_left_over, self.config.max_action_dim)
-
-        H = self.config.chunk_size  # noqa: N806
-
-        # Prepare the previous chunk for guidance.
-        # If prev_chunk is already truncated (leftover only), pad it to full chunk_size
-        # Otherwise, rotate it by rtc_t steps
-        if prev_chunk_padded.shape[1] < H:
-            # prev_chunk is already the leftover part, pad it to full chunk_size
-            # Add zeros at the end to reach chunk_size
-            chunk_pad = torch.zeros(
-                (prev_chunk_padded.shape[0], H - prev_chunk_padded.shape[1], prev_chunk_padded.shape[2]),
-                dtype=prev_chunk_padded.dtype,
-                device=prev_chunk_padded.device,
-            )
-            A_prev = torch.cat([prev_chunk_padded, chunk_pad], dim=1)  # noqa: N806
-        else:
-            # prev_chunk is the full chunk, rotate it by rtc_t steps
-            pad = torch.zeros_like(prev_chunk_padded[:, :rtc_t])
-            A_prev = torch.cat([prev_chunk_padded[:, rtc_t:], pad], dim=1)  # noqa: N806
-
-        # s is the number of steps in the end to not blend with the previous chunk
-        if rtc_soft_mask_length == -1:
-            rtc_s = rtc_t
-        else:
-            rtc_s = max(0, H - rtc_d - rtc_soft_mask_length)
-
-        # Prepare the guidance mask
-        W = self.make_soft_mask(rtc_d, rtc_s, H, device)  # noqa: N806
-        # broadcast to (B,H,M)
-        W_row = W[None, :, None]  # noqa: N806
-
-        # A^0  ~ 𝒩(0,I)
-        A_tau = x_t  # noqa: N806
-        t = torch.tensor(1.0, device=device)
+        time = torch.tensor(1.0, device=device)
 
         # Lists to track values from ALL denoising steps for plotting
         all_v_t = []
@@ -1216,46 +973,66 @@ class VLAFlowMatching(nn.Module):
         all_correction = []
         all_error = []
 
-        while t >= -dt / 2:
-            tau = 1 - t  # tau goes from 0 to 1, to be consistent with the paper
+        while time >= -dt / 2:
+            tau = 1 - time  # tau goes from 0 to 1, to be consistent with the paper
             # ΠGDM guidance
-            v_pi = -self.denoise_step(prefix_pad_masks, past_key_values, A_tau, t.expand(bsize))
 
-            A_tau.requires_grad_(True)
-            with torch.enable_grad():
-                # Â¹_tau   Eq. 3
-                A_hat = A_tau + (1 - tau) * v_pi  # noqa: N806
-                err = (A_prev - A_hat) * W_row
-                grad_outputs = err.clone().detach()
-                g = torch.autograd.grad(A_hat, A_tau, grad_outputs, retain_graph=True)[0]
+            batch_size = x_t.shape[0]
+            action_chunk_size = x_t.shape[1]
+            action_dim = x_t.shape[2]
 
-            r_sq = (1 - tau) ** 2 / (tau**2 + (1 - tau) ** 2)  # Eq. 4
-            scale = min(self.config.rtc_config.max_guidance_weight, (1 - tau) / (tau * r_sq))  # Eq.2
+            if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
+                padded = torch.zeros(batch_size, action_chunk_size, action_dim).to(x_t.device)
+                padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
+                prev_chunk_left_over = padded
+
+            weights = self.rtc_processor.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size).to(
+                x_t.device
+            )
+
+            weights = weights.unsqueeze(0).unsqueeze(-1)
+
+            def denoise_step_partial_call(input_x_t):
+                result = self.denoise_step(
+                    x_t=input_x_t,
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    timestep=time.expand(batch_size),
+                )
+                return result
+
+            x_t = x_t.detach()  # noqa: N806
+
+
+            v_t, x_t, correction, x1_t, err = self.rtc_processor.denoise_step(
+                x_t=x_t,
+                prev_chunk_left_over=prev_chunk_left_over,
+                inference_delay=inference_delay,
+                time=time,
+                original_denoise_step_partial=denoise_step_partial_call,
+                execution_horizon=execution_horizon,
+            )
+
 
             # Store values from this step for plotting
-            all_v_t.append(-v_pi.detach())  # Negate back to get original v_t
-            all_x1_t.append(A_hat.detach())
-            all_correction.append((scale * g).detach())
+            all_v_t.append(-v_t.detach())  # Negate back to get original v_t
+            all_x1_t.append(x1_t.detach())
+            all_correction.append(correction.detach())
             all_error.append(err.detach())
 
             # integration step  Eq. 1
-            A_tau = A_tau - dt * (v_pi + scale * g)  # noqa: N806
-            # stop grads before next step
-            A_tau = A_tau.detach()  # noqa: N806
+            # x_t += dt * v_t
+            # time += dt
+
+            x_t += dt * v_t 
+   
 
             # Store x_t after the integration step
-            all_x_t.append(A_tau.clone())
+            all_x_t.append(x_t.clone())
 
-            t += dt
+            time += dt
 
-        # sanity check: the first d steps of A_prev should be the similar to the first d steps of A_tau because of masking
-        A_tau_d_err = (A_prev[:, :rtc_d] - A_tau[:, :rtc_d]).norm()  # noqa: N806
-        if A_tau_d_err > 0.5:
-            print(
-                f"WARNING: [RTC] The first {rtc_d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}"
-            )
-
-        return all_v_t, A_tau, all_correction, all_x1_t, all_error, all_x_t
+        return all_v_t, x_t, all_correction, all_x1_t, all_error, all_x_t
 
     def denoise_step(
         self,

@@ -413,7 +413,7 @@ class RTCDatasetEvaluator:
             # Plot on right column (RTC)
             self.axs = axs[:, 1]
             self.plot_waypoints(prev_chunk_left_over[0].cpu().numpy(), label="Ground Truth", color="green")
-            self.plot_waypoints(rtc_actions[0].cpu().numpy(), label="RTC", color="red")
+            self.plot_waypoints(rtc_actions[0].detach().cpu().numpy(), label="RTC", color="red")
             for ax in self.axs:
                 ax.set_title("RTC", fontsize=12)
 

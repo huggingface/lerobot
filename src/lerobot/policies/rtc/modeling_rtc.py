@@ -157,13 +157,6 @@ class RTCProcessor:
 
         # x_t = x_t.clone().detach().requires_grad_(True)
 
-        if self.verbose:
-            logger.info("=" * 80)
-            logger.info(
-                f"RTC denoise_step: time={time:.4f} (tau={tau:.4f}), inference_delay={inference_delay}"
-            )
-            logger.info(self._tensor_stats(x_t, "x_t"))
-
         if prev_chunk_left_over is None:
             if self.verbose:
                 logger.info("No prev_chunk_left_over - skipping guidance (first step)")
@@ -198,12 +191,6 @@ class RTCProcessor:
         action_chunk_size = x_t.shape[1]
         action_dim = x_t.shape[2]
 
-        if self.verbose:
-            logger.info(
-                f"Batch size: {batch_size}, Chunk size: {action_chunk_size}, Action dim: {action_dim}"
-            )
-            logger.info(self._tensor_stats(prev_chunk_left_over, "prev_chunk_left_over (before padding)"))
-
         if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
             # We need to pad the left over chunk with zeros
             if self.verbose:
@@ -220,57 +207,40 @@ class RTCProcessor:
         )
         weights = self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size).to(
             x_t.device
-        )
+        ).unsqueeze(0).unsqueeze(-1)
 
-        # Reshape weights to match the tensor dimensions (batch, time, action_dim)
-        # weights is shape (action_chunk_size,) and needs to be (1, action_chunk_size, 1)
-        weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
-
-        # Compute v_t once for the base velocity
         v_t = original_denoise_step_partial(x_t)
 
-        if self.verbose:
-            logger.info(self._tensor_stats(v_t, "v_t (original velocity)"))
-
-        # Enable gradients and recompute v_t to build computational graph
         x_t.requires_grad_(True)
         with torch.enable_grad():
-            # Recompute v_t inside gradient context so gradients flow through model
-            v_t_grad = original_denoise_step_partial(x_t)
+            x1_t = x_t - time * v_t  # noqa: N806
+            err = (prev_chunk_left_over - x1_t) * weights
+            grad_outputs = err.clone().detach()
+            correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
 
-            # Compute x1_t using recomputed v_t
-            x1_t = x_t - time * v_t_grad
+        # x_t.requires_grad_(True)
+        # with torch.enable_grad():
+        #     # Recompute v_t inside gradient context so gradients flow through model
+        #     v_t = original_denoise_step_partial(x_t)
 
-            # Compute weighted error
-            error = (prev_chunk_left_over - x1_t) * weights
+        #     # Compute x1_t using recomputed v_t
+        #     x1_t = x_t - time * v_t
 
-            # Compute gradient using torch.autograd.grad (same as rtc_alternative_denoise)
-            grad_outputs = error.clone().detach()
-            correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=True)[0]
+        #     # Compute weighted error
+        #     err = (prev_chunk_left_over - x1_t) * weights
 
-        # Detach x_t for next iteration
-        x_t = x_t.detach()
-
-        # print("error: ", error[0, :3, :6], weights)
+        #     # Compute gradient using torch.autograd.grad (same as rtc_alternative_denoise)
+        #     grad_outputs = err.clone().detach()
+        #     correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=True)[0]
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
-
         squared_one_minus_tau = (1 - tau) ** 2
         inv_r2 = (squared_one_minus_tau + tau**2) / (squared_one_minus_tau)
         c = torch.nan_to_num((1 - tau) / tau, posinf=max_guidance_weight)
         guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
         guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
 
-        if self.verbose:
-            logger.info(
-                f"Guidance calculation: squared_one_minus_tau={squared_one_minus_tau:.4f}, "
-                f"inv_r2={inv_r2:.4f}, c={c:.4f}"
-            )
-            logger.info(f"guidance_weight: {guidance_weight:.4f} (max={max_guidance_weight:.4f})")
-            logger.info(self._tensor_stats(correction, "correction"))
-
-        final_correction = guidance_weight * correction
-        result = v_t - final_correction
+        result = v_t - guidance_weight * correction
 
         # Remove the batch dimension if it was added
         if squeezed:
@@ -279,7 +249,7 @@ class RTCProcessor:
             x1_t = x1_t.squeeze(0)
             error = error.squeeze(0)
 
-        return result, x_t, final_correction, x1_t, error
+        return result, x_t, correction, x1_t, err
 
     def get_prefix_weights(self, start, end, total):
         start = min(start, end)
