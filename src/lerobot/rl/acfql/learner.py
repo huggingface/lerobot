@@ -489,6 +489,7 @@ def add_actor_information_and_train(
                     "reward": batch["reward"],
                     "terminal": batch.get("terminals"),
                     "mask": batch.get("masks"),
+                    "truncated": batch.get("truncateds"),
                     "valid": batch.get("valid"),
                     "next_state": next_observations,
                     "observation_feature": observation_features,
@@ -579,9 +580,10 @@ def add_actor_information_and_train(
             # Create a batch dictionary with all required elements for the forward method
             forward_batch = {
                 "state": observations,
-                "action": actions,
+                ACTION: actions,
                 "reward": batch["reward"],
                 "terminal": batch.get("terminals"),
+                "truncated": batch.get("truncateds"),
                 "mask": batch.get("masks"),
                 "valid": batch.get("valid"),
                 "next_state": next_observations,
@@ -786,7 +788,6 @@ def add_actor_information_and_train(
 
             # Extract n-step batch components
             actions = batch[ACTION]  # [B, h, action_dim]
-            rewards = batch["reward"]
             observations = batch["state"]
             next_observations = batch["next_state"]
             # done = batch["done"]
@@ -848,11 +849,12 @@ def add_actor_information_and_train(
 
             # Create a batch dictionary with all required elements for the forward method
             forward_batch = {
-                ACTION: actions,
-                "reward": rewards,
                 "state": observations,
-                "terminal": batch["terminals"],
-                "mask": batch["masks"],
+                ACTION: actions,
+                "reward": batch["reward"],
+                "terminal": batch.get("terminals"),
+                "mask": batch.get("masks"),
+                "truncated": batch.get("truncateds"),
                 "valid": batch["valid"],
                 "next_state": next_observations,
                 # "done": done,
@@ -887,7 +889,6 @@ def add_actor_information_and_train(
 
         # Extract n-step batch components
         actions = batch[ACTION]  # [B, h, action_dim]
-        rewards = batch["reward"]
         observations = batch["state"]
         next_observations = batch["next_state"]
 
@@ -941,11 +942,12 @@ def add_actor_information_and_train(
 
         # Create a batch dictionary with all required elements for the forward method
         forward_batch = {
-            ACTION: actions,
-            "reward": rewards,
             "state": observations,
+            ACTION: actions,
+            "reward": batch["reward"],
             "terminal": batch.get("terminals"),
             "mask": batch.get("masks"),
+            "truncated": batch.get("truncateds"),
             "valid": batch.get("valid"),
             "next_state": next_observations,
             # "done": done,

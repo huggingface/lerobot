@@ -206,6 +206,7 @@ class ACFQLPolicy(
             rewards: Tensor = batch["reward"]
             next_observations: dict[str, Tensor] = batch["next_state"]
             done: Tensor = batch["mask"]
+            truncated: Tensor = batch["truncated"]
             next_observation_features: Tensor = batch.get("next_observation_feature")
 
             loss_critic, info = self.compute_loss_critic(
@@ -214,6 +215,7 @@ class ACFQLPolicy(
                 rewards=rewards,
                 next_observations=next_observations,
                 done=done,
+                truncated=truncated,
                 valid=valid,
                 observation_features=observation_features,
                 next_observation_features=next_observation_features,
@@ -241,6 +243,7 @@ class ACFQLPolicy(
             rewards: Tensor = batch["reward"]
             next_observations: dict[str, Tensor] = batch["next_state"]
             done: Tensor = batch["mask"]
+            truncated: Tensor = batch["truncated"]
             valid: Tensor = batch["valid"]
             next_observation_features: Tensor = batch.get("next_observation_feature")
 
@@ -250,6 +253,7 @@ class ACFQLPolicy(
                 rewards=rewards,
                 next_observations=next_observations,
                 done=done,
+                truncated=truncated,
                 valid=valid,
                 observation_features=observation_features,
                 next_observation_features=next_observation_features,
@@ -279,6 +283,7 @@ class ACFQLPolicy(
         rewards,
         next_observations,
         done,
+        truncated,
         valid,
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
@@ -290,6 +295,7 @@ class ACFQLPolicy(
             rewards=rewards,
             next_observations=next_observations,
             done=done,
+            truncated=truncated,
             valid=valid,
             observation_features=observation_features,
             next_observation_features=next_observation_features,
@@ -331,6 +337,7 @@ class ACFQLPolicy(
         rewards,
         next_observations,
         done,
+        truncated,
         valid,
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
@@ -387,7 +394,11 @@ class ACFQLPolicy(
         valid_rewards = rewards[valid[:, -1].bool(), -1]
 
         # TD loss
-        td_loss = ((q_preds - td_target_duplicate) ** 2).mean(dim=1).sum()
+        td_loss = (q_preds - td_target_duplicate) ** 2
+        td_loss = (
+            td_loss * (1 - truncated[valid[:, -1].bool(), -1])[None, :]
+        )  # Mask out truncated transitions
+        td_loss = td_loss.mean(dim=1).sum()
 
         # Total critic loss
         critics_loss = td_loss

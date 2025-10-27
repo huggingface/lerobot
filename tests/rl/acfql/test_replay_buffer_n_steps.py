@@ -290,6 +290,7 @@ def test_sparse_reward_computation():
     assert batch["masks"].equal(torch.tensor([[1, 1, 1, 0]], dtype=torch.float32))
     assert batch["valid"].equal(torch.tensor([[1, 1, 1, 1]], dtype=torch.bool))
     assert batch["terminals"].equal(torch.tensor([[0, 0, 0, 1]], dtype=torch.float32))
+    assert batch["truncateds"].equal(torch.tensor([[0, 0, 0, 0]], dtype=torch.float32))
 
     buffer.rewards.copy_(torch.tensor([0, 0, 0, 0, 0, 0, 0, 1, 0, 0], dtype=torch.float32))
     buffer.dones.copy_(torch.tensor([0, 0, 0, 0, 0, 0, 0, 1, 0, 0], dtype=torch.bool))
@@ -302,6 +303,7 @@ def test_sparse_reward_computation():
     assert batch["masks"].equal(torch.tensor([[1, 1, 1, 1]], dtype=torch.float32))
     assert batch["valid"].equal(torch.tensor([[1, 1, 1, 1]], dtype=torch.bool))
     assert batch["terminals"].equal(torch.tensor([[0, 0, 0, 1]], dtype=torch.float32))
+    assert batch["truncateds"].equal(torch.tensor([[0, 0, 0, 1]], dtype=torch.float32))
 
     buffer.rewards.copy_(torch.tensor([0, 0, 0, 1, 1, 0, 1, 0, 0, 0], dtype=torch.float32))
     buffer.dones.copy_(torch.tensor([0, 0, 0, 1, 1, 0, 1, 0, 0, 0], dtype=torch.bool))
@@ -314,6 +316,7 @@ def test_sparse_reward_computation():
     assert batch["masks"].equal(torch.tensor([[1, 0, 0, 0]], dtype=torch.float32))
     assert batch["valid"].equal(torch.tensor([[1, 1, 0, 0]], dtype=torch.bool))
     assert batch["terminals"].equal(torch.tensor([[0, 1, 1, 1]], dtype=torch.float32))
+    assert batch["truncateds"].equal(torch.tensor([[0, 0, 0, 0]], dtype=torch.float32))
 
     buffer.rewards.copy_(torch.tensor([0, 0, 0, 1, 0, 0, 1, 0, 0, 0], dtype=torch.float32))
     buffer.dones.copy_(torch.tensor([0, 0, 0, 1, 0, 0, 0, 0, 0, 0], dtype=torch.bool))
@@ -326,6 +329,7 @@ def test_sparse_reward_computation():
     assert batch["masks"].equal(torch.tensor([[1, 0, 0, 0]], dtype=torch.float32))
     assert batch["valid"].equal(torch.tensor([[1, 1, 0, 0]], dtype=torch.bool))
     assert batch["terminals"].equal(torch.tensor([[0, 1, 1, 1]], dtype=torch.float32))
+    assert batch["truncateds"].equal(torch.tensor([[0, 0, 1, 1]], dtype=torch.float32))
 
     buffer.rewards.copy_(torch.tensor([0, 0, 0, 1, 0, 1, 0, 0, 0, 0], dtype=torch.float32))
     buffer.dones.copy_(torch.tensor([0, 0, 0, 1, 0, 1, 0, 0, 0, 0], dtype=torch.bool))
@@ -338,6 +342,7 @@ def test_sparse_reward_computation():
     assert batch["masks"].equal(torch.tensor([[1, 0, 0, 0]], dtype=torch.float32))
     assert batch["valid"].equal(torch.tensor([[1, 1, 0, 0]], dtype=torch.bool))
     assert batch["terminals"].equal(torch.tensor([[0, 1, 1, 1]], dtype=torch.float32))
+    assert batch["truncateds"].equal(torch.tensor([[0, 0, 1, 1]], dtype=torch.float32))
 
     buffer.rewards.copy_(torch.tensor([0, 0, 0, 0, 1, 1, 0, 0, 0, 0], dtype=torch.float32))
     buffer.dones.copy_(torch.tensor([0, 0, 0, 0, 1, 1, 0, 0, 0, 0], dtype=torch.bool))
@@ -350,3 +355,4 @@ def test_sparse_reward_computation():
     assert batch["masks"].equal(torch.tensor([[1, 1, 0, 0]], dtype=torch.float32))
     assert batch["valid"].equal(torch.tensor([[1, 1, 0, 0]], dtype=torch.bool))
     assert batch["terminals"].equal(torch.tensor([[0, 1, 1, 1]], dtype=torch.float32))
+    assert batch["truncateds"].equal(torch.tensor([[0, 1, 1, 1]], dtype=torch.float32))

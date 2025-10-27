@@ -36,6 +36,7 @@ class BatchTransitionNSteps(TypedDict):
     next_state: dict[str, torch.Tensor]
     masks: torch.Tensor
     terminals: torch.Tensor
+    truncateds: torch.Tensor
     valid: torch.Tensor
     complementary_info: dict[str, torch.Tensor | float | int] | None = None
 
@@ -193,6 +194,7 @@ class ReplayBufferNSteps(ReplayBuffer):
         masks = torch.ones((batch_size, n_steps), dtype=torch.float32, device=self.device)
         terminals = torch.zeros((batch_size, n_steps), dtype=torch.float32, device=self.device)
         valid = torch.ones((batch_size, n_steps), dtype=torch.float32, device=self.device)
+        truncateds = torch.zeros((batch_size, n_steps), dtype=torch.float32, device=self.device)
 
         discount_powers = gamma ** torch.arange(n_steps, device=self.device, dtype=torch.float32)
 
@@ -200,12 +202,16 @@ class ReplayBufferNSteps(ReplayBuffer):
         rewards[:, 0] = reward_seq[:, 0]
         masks[:, 0] = 1.0 - terminated_seq[:, 0]  # masks = 1.0 - terminated
         terminals[:, 0] = done_seq[:, 0]  # terminals = float(done)
+        truncateds[:, 0] = truncated_seq[:, 0]  # truncateds = float(truncated)
 
         # Subsequent steps
         for i in range(1, n_steps):
             rewards[:, i] = rewards[:, i - 1] + reward_seq[:, i] * discount_powers[i]
             masks[:, i] = torch.minimum(masks[:, i - 1], 1.0 - terminated_seq[:, i])  # Cumulative masks
             terminals[:, i] = torch.maximum(terminals[:, i - 1], done_seq[:, i])  # Cumulative terminals
+            truncateds[:, i] = torch.maximum(
+                truncateds[:, i - 1], truncated_seq[:, i]
+            )  # Cumulative truncateds
             valid[:, i] = 1.0 - terminals[:, i - 1]  # Valid mask
 
         # Sample complementary_info if available
@@ -222,6 +228,7 @@ class ReplayBufferNSteps(ReplayBuffer):
             next_state=batch_next_state_nsteps,
             masks=masks,
             terminals=terminals,
+            truncateds=truncateds,
             valid=valid,
             complementary_info=batch_complementary_info,
         )
@@ -635,6 +642,9 @@ def concatenate_batch_transitions_nstep(
     )
     left_batch_transitions["terminals"] = torch.cat(
         [left_batch_transitions["terminals"], right_batch_transition["terminals"]], dim=0
+    )
+    left_batch_transitions["truncateds"] = torch.cat(
+        [left_batch_transitions["truncateds"], right_batch_transition["truncateds"]], dim=0
     )
     left_batch_transitions["valid"] = torch.cat(
         [left_batch_transitions["valid"], right_batch_transition["valid"]], dim=0
