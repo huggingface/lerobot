@@ -27,6 +27,10 @@ def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfig
             from .portaudio import PortAudioMicrophone
 
             microphones[key] = PortAudioMicrophone(cfg)
+        elif cfg.type == "touchlab":
+            from .touchlab import TouchLabSensor
+
+            microphones[key] = TouchLabSensor(cfg)
         else:
             raise ValueError(f"The microphone type '{cfg.type}' is not valid.")
 
