@@ -56,6 +56,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     so100_follower,
+    so101_follower,
 )
 from lerobot.robots.robot import Robot
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -151,7 +152,7 @@ class RobotEnv(gym.Env):
         self.episode_data = None
 
         self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors]
-        self._image_keys = self.robot.cameras.keys()
+        self._image_keys = self.robot.image_keys
 
         self.reset_pose = reset_pose
         self.reset_time_s = reset_time_s
@@ -168,7 +169,8 @@ class RobotEnv(gym.Env):
         obs_dict = self.robot.get_observation()
         raw_joint_joint_position = {f"{name}.pos": obs_dict[f"{name}.pos"] for name in self._joint_names}
         joint_positions = np.array([raw_joint_joint_position[f"{name}.pos"] for name in self._joint_names])
-
+        print(f"{obs_dict=}")
+        print(f"{self._image_keys=}")
         images = {key: obs_dict[key] for key in self._image_keys}
 
         return {"agent_pos": joint_positions, "pixels": images, **raw_joint_joint_position}

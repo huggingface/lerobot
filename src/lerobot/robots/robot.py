@@ -183,3 +183,13 @@ class Robot(abc.ABC):
     def disconnect(self) -> None:
         """Disconnect from the robot and perform any necessary cleanup."""
         pass
+
+    @property
+    def image_keys(self) -> list[str]:
+        """Return the keys of available camera images."""
+        cameras = getattr(getattr(self, "config", None), "cameras", None)
+
+        if cameras is None:
+            raise RuntimeError("Camera configuration not properly initialized")
+
+        return list(cameras.keys())

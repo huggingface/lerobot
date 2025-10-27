@@ -1,5 +1,7 @@
 {
     "env": {
+        "name": "lerobot",
+        "fps": 30,
         "robot": {
             "type": "so101_follower",
             "port": "/dev/ttyACM1",
@@ -19,7 +21,9 @@
                     "height": 720,
                     "fps": 30
                 }
-            }
+            },
+            "urdf_path": "./src/lerobot/robots/so100_follower/SO101/so101_new_calib.urdf",
+            "target_frame_name": "gripper_frame_link"
         },
         "teleop": {
             "type": "so101_leader",
@@ -27,43 +31,43 @@
             "id": "leader_arm"
         },
         "processor": {
-            "control_mode": "gamepad",
+            "control_mode": "leader",
             "observation": {
                 "display_cameras": true,
                 "add_joint_velocity_to_observation": true,
-                "add_current_to_observation": true,
-                "add_ee_pose_to_observation": true
+                "add_current_to_observation": true
             },
             "image_preprocessing": {
                 "crop_params_dict": {
-                  "observation.images.top": [49, 189, 262, 305]
+                  "observation.images.wrist": [30, 100, 400, 380],
+                  "observation.images.head_rgb": [100, 100, 580, 580],
+                  "observation.images.head_depth": [100, 100, 580, 580]
                 },
                 "resize_size": [128, 128]
             },
             "gripper": {
                 "use_gripper": true,
-                "gripper_penalty": -0.02,
-                "gripper_penalty_in_reward": false
+                "gripper_penalty": 0
             },
             "reset": {
                 "fixed_reset_joint_positions": [
-                    0.0,
-                    0.0,
-                    0.0,
-                    90.0,
-                    0.0,
-                    30.0
+                    3.4840621948242188,
+                    -99.40602111816406,
+                    19.78221321105957,
+                    99.30374145507812,
+                    -53.28620147705078,
+                    1.26262629032135
                 ],
                 "reset_time_s": 30,
-                "control_time_s": 20.0,
+                "control_time_s": 30.0,
                 "terminate_on_success": true
             },
             "inverse_kinematics": {
-                "urdf_path": "./src/lerobot/robots/so100_follower/SO101/so101_new_calib.urdf",
+                "urdf_path": "./src/lerobot/robots/so101_follower/sim/so101_new_calib.urdf",
                 "target_frame_name": "gripper_frame_link",
                 "end_effector_bounds": {
-                    "min": [0.0803, -0.0357, 0.0192],
-                    "max": [0.4277, 0.3321, 0.4509]
+                    "min": [0.0704, -0.1517, 0.0053],
+                    "max": [0.4292, 0.3503, 0.4122]
                 },
                 "end_effector_step_sizes": {
                     "x": 0.02,
@@ -76,22 +80,17 @@
                 "success_threshold": 0.5,
                 "success_reward": 1.0
             },
-            "max_gripper_pos": 30
-        },
-        "name": "real_robot",
-        "fps": 10
+            "max_gripper_pos": 100
+        }
     },
     "dataset": {
         "repo_id": "${HF_USER}/lerobot-serl-test",
         "root": null,
-        "task": "",
+        "task": "Test SERL in cardbox perturbation",
         "num_episodes_to_record": 2,
-        "replay_episode": null,
-        "push_to_hub": true,
-        "episode_time_s": 60,
-        "single_task": "Test SERL in cardbox perturbation"
+        "replay_episode": 0,
+        "push_to_hub": true
     },
-    "mode": null,
-    "device": "gpu",
-    "play_sounds": false
+    "mode": "record",
+    "device": "cuda"
 }

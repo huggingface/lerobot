@@ -65,6 +65,10 @@ class SO101Follower(Robot):
         return {f"{motor}.pos": float for motor in self.bus.motors}
 
     @property
+    def image_keys(self) -> list[str]:
+        return list(self._cameras_ft.keys())
+
+    @property
     def _cameras_ft(self) -> dict[str, tuple]:
         """Generate camera features with multi-modal support."""
         features = {}
