@@ -106,18 +106,22 @@ class GPUVideoEncoder:
         if self.config.encoder_type == "auto":
             # Try hardware encoders first, then software
             for encoder_type in ["nvenc", "qsv", "vce", "software"]:
-                if encoder_type in self._detected_encoders:
-                    if self.config.codec in self._detected_encoders[encoder_type]:
-                        return encoder_type, self.config.codec
+                if (
+                    encoder_type in self._detected_encoders
+                    and self.config.codec in self._detected_encoders[encoder_type]
+                ):
+                    return encoder_type, self.config.codec
 
             # Fallback to H.264 if requested codec not available
             for encoder_type in ["nvenc", "qsv", "vce", "software"]:
-                if encoder_type in self._detected_encoders:
-                    if "h264" in self._detected_encoders[encoder_type]:
-                        logger.warning(
-                            f"Requested codec {self.config.codec} not available, falling back to H.264"
-                        )
-                        return encoder_type, "h264"
+                if (
+                    encoder_type in self._detected_encoders
+                    and "h264" in self._detected_encoders[encoder_type]
+                ):
+                    logger.warning(
+                        f"Requested codec {self.config.codec} not available, falling back to H.264"
+                    )
+                    return encoder_type, "h264"
 
         elif self.config.encoder_type in self._detected_encoders:
             if self.config.codec in self._detected_encoders[self.config.encoder_type]:

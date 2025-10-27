@@ -627,7 +627,6 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-
         # Finalize the dataset to properly close all writers
         self.dataset.finalize()
         # Clean up episode images if recording was interrupted
