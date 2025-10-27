@@ -14,7 +14,6 @@ DEFAULT_FPS = 30
 # the test should create a dataset with one combination, and resume it with another combination.
 
 # [sync, async]
-# [gpu_encode, cpu_encode]
 # [1 ep in session, 2 eps in session]
 
 
@@ -53,7 +52,6 @@ def test_resume_recording(tmp_path, async_encode, two_eps, resume_async_encode, 
         use_videos=True,
         video_backend=video_backend,
         async_video_encoding=async_encode,
-        gpu_video_encoding=False,  # todo, add parameter for testing this when env is CUDA
     )
 
     episodes_to_record_in_session = 2 if two_eps else 1
@@ -104,7 +102,6 @@ def test_resume_recording(tmp_path, async_encode, two_eps, resume_async_encode, 
         root=tmp_path,
         video_backend=video_backend,
         async_video_encoding=resume_async_encode,
-        gpu_video_encoding=False,
     )
 
     episodes_to_record_in_session = 2 if resume_two_eps else 1

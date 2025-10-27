@@ -19,7 +19,6 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import datasets
 import numpy as np
@@ -564,8 +563,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_encoding_workers: int = 2,
         video_encoding_queue_size: int = 100,
         vcodec: str = "libsvtav1",
-        gpu_video_encoding: bool = False,
-        gpu_encoder_config: dict[str, Any] | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -684,10 +681,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 If the limit is reached, save_episode() will become blocking again.
             vcodec (str, optional): video codec to use. One of ["h264", "hevc", "libsvtav1"].
                 libsvtav1 is the default but has a greater up front cost for a smaller file size. h264 is much faster up front to encode by perhaps 4x, but makes a larger file.
-            gpu_video_encoding: bool = False,
-                When enabled attempt to use video encoding accelerated on an nvidia GPU. default false. Can be used with async encoding.
-            gpu_encoder_config: dict[str, Any] | None
-                Dict of arguments to GPUEncoderConfig. if this is not set, reasonable defaults are chosen. vcodec does not override this. specify the codec used for GPU encoding independently if using gpu encoding
         """
         super().__init__()
         self.repo_id = repo_id
@@ -747,24 +740,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.async_video_encoder = None
         self._temp_dir_for_encoding = None
         self.vcodec = vcodec
-
-        # Initialize sync GPU encoder if needed
-        self.gpu_video_encoding = gpu_video_encoding
-        self.gpu_encoder_config = gpu_encoder_config or {}
-        if self.gpu_video_encoding:
-            from .gpu_video_encoder import GPUVideoEncoder, create_gpu_encoder_config
-
-            config = gpu_encoder_config or {}
-            self.gpu_encoder_config = create_gpu_encoder_config(
-                encoder_type=config.get("encoder_type", "auto"),
-                codec=config.get("codec", "h264"),
-                preset=config.get("preset", "fast"),
-                quality=config.get("quality", 23),
-                bitrate=config.get("bitrate"),
-                gpu_id=config.get("gpu_id", 0),
-                enable_logging=True,
-            )
-            self.gpu_encoder = GPUVideoEncoder(self.gpu_encoder_config)
 
     def _close_writer(self) -> None:
         """Close and cleanup the parquet writer if it exists."""
@@ -1523,13 +1498,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         temp_path = Path(tempfile.mkdtemp(dir=self.root)) / f"{video_key}_{episode_index:03d}.mp4"
         img_dir = self._get_image_file_dir(episode_index, video_key)
 
-        # Use GPU-accelerated encoding if enabled
-        if self.gpu_video_encoding and self.sync_gpu_encoder:
-            success = self.gpu_encoder.encode_video(input_dir=img_dir, output_path=temp_path, fps=self.fps)
-            if not success:
-                encode_video_frames(img_dir, temp_path, self.fps, overwrite=True, vcodec=self.vcodec)
-        else:
-            encode_video_frames(img_dir, temp_path, self.fps, overwrite=True, vcodec=self.vcodec)
+        encode_video_frames(img_dir, temp_path, self.fps, overwrite=True, vcodec=self.vcodec)
 
         shutil.rmtree(img_dir)
         return temp_path
@@ -1543,8 +1512,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             num_workers=self.video_encoding_workers,
             max_queue_size=self.video_encoding_queue_size,
             vcodec=self.vcodec,
-            gpu_video_encoding=self.gpu_video_encoding,
-            gpu_encoder_config=self.gpu_encoder_config,
         )
         self.async_video_encoder.start()
         logging.info(f"Started async video encoder. Temporary files will be in {self._temp_dir_for_encoding}")
@@ -1581,8 +1548,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_encoding_workers: int = 2,
         video_encoding_queue_size: int = 100,
         vcodec: str = "libsvtav1",
-        gpu_video_encoding: bool = False,
-        gpu_encoder_config: dict[str, Any] | None = None,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1630,24 +1595,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.async_video_encoder = None
         obj._temp_dir_for_encoding = None
         obj.vcodec = vcodec
-
-        # Initialize sync GPU encoder if needed
-        obj.gpu_video_encoding = gpu_video_encoding
-        obj.gpu_encoder_config = gpu_encoder_config or {}
-        if obj.gpu_video_encoding:
-            from .gpu_video_encoder import GPUVideoEncoder, create_gpu_encoder_config
-
-            config = gpu_encoder_config or {}
-            obj.gpu_encoder_config = create_gpu_encoder_config(
-                encoder_type=config.get("encoder_type", "auto"),
-                codec=config.get("codec", "h264"),
-                preset=config.get("preset", "fast"),
-                quality=config.get("quality", 23),
-                bitrate=config.get("bitrate"),
-                gpu_id=config.get("gpu_id", 0),
-                enable_logging=True,
-            )
-            obj.gpu_encoder = GPUVideoEncoder(obj.gpu_encoder_config)
 
         return obj
 
