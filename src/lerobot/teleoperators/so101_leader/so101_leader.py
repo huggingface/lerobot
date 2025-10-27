@@ -15,7 +15,11 @@
 # limitations under the License.
 
 import logging
+import os
+import sys
 import time
+from queue import Queue
+from typing import Any
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -25,9 +29,27 @@ from lerobot.motors.feetech import (
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
+from ..utils import TeleopEvents
+
 from .config_so101_leader import SO101LeaderConfig
 
 logger = logging.getLogger(__name__)
+
+
+PYNPUT_AVAILABLE = True
+try:
+    if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
+        logging.info("No DISPLAY set. Skipping pynput import.")
+        raise ImportError("pynput blocked intentionally due to no display.")
+
+    from pynput import keyboard
+except ImportError:
+    keyboard = None
+    PYNPUT_AVAILABLE = False
+except Exception as e:
+    keyboard = None
+    PYNPUT_AVAILABLE = False
+    logging.info(f"Could not import pynput: {e}")
 
 
 class SO101Leader(Teleoperator):
@@ -54,6 +76,28 @@ class SO101Leader(Teleoperator):
             },
             calibration=self.calibration,
         )
+        # Initialize keyboard event handling
+        self.misc_keys_queue = Queue()
+        self._setup_keyboard_listener()
+
+    def _setup_keyboard_listener(self):
+        """Set up keyboard listener for teleoperation events."""
+        if not PYNPUT_AVAILABLE:
+            logging.info("pynput not available - keyboard events will not work for SO101Leader")
+            return
+
+        def on_press(key):
+            # Only process event keys, not movement keys
+            try:
+                if hasattr(key, 'char') and key.char in ['s', 'r', 'q', ' ']:
+                    self.misc_keys_queue.put(key)
+                elif key == keyboard.Key.esc:
+                    self.misc_keys_queue.put(key)
+            except AttributeError:
+                pass
+
+        self.keyboard_listener = keyboard.Listener(on_press=on_press)
+        self.keyboard_listener.start()
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -149,8 +193,87 @@ class SO101Leader(Teleoperator):
         raise NotImplementedError
 
     def disconnect(self) -> None:
+        """Disconnect the SO101 leader arm and clean up keyboard listener."""
+        # Stop keyboard listener if running
+        if hasattr(self, "keyboard_listener") and self.keyboard_listener.is_alive():
+            self.keyboard_listener.stop()
+
         if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         self.bus.disconnect()
-        logger.info(f"{self} disconnected.")
+        logging.info(f"{self} disconnected.")
+
+    def get_teleop_events(self) -> dict[str, Any]:
+        """
+        Get extra control events from the keyboard for SO101 leader arm.
+
+        Keyboard mappings for events (based on official tutorial):
+        - 's' key = success (terminate episode successfully)
+        - 'r' key = rerecord episode (terminate and rerecord)
+        - 'q' key = quit episode (terminate without success)
+        - 'space' key = intervention (take over/give back control)
+        - 'esc' key = failure/terminate episode
+
+        Note: SO101 leader arm uses hardware for motion control, keyboard is only used for events.
+
+        Returns:
+            Dictionary containing:
+                - is_intervention: bool - Whether human is currently intervening
+                - terminate_episode: bool - Whether to terminate the current episode
+                - success: bool - Whether the episode was successful
+                - rerecord_episode: bool - Whether to rerecord the episode
+        """
+        if not self.is_connected:
+            return {
+                TeleopEvents.IS_INTERVENTION: False,
+                TeleopEvents.TERMINATE_EPISODE: False,
+                TeleopEvents.SUCCESS: False,
+                TeleopEvents.RERECORD_EPISODE: False,
+            }
+
+        # Initialize event states
+        is_intervention = False
+        terminate_episode = False
+        success = False
+        rerecord_episode = False
+
+        # Process any pending misc keys from the queue
+        while not self.misc_keys_queue.empty():
+            try:
+                key = self.misc_keys_queue.get_nowait()
+
+                # Handle character keys
+                if hasattr(key, "char") and key.char:
+                    if key.char == "s":
+                        # Success - terminate episode successfully
+                        success = True
+                        terminate_episode = True
+                    elif key.char == "r":
+                        # Rerecord - terminate and rerecord episode
+                        rerecord_episode = True
+                        terminate_episode = True
+                    elif key.char == "q":
+                        # Quit - terminate without success
+                        terminate_episode = True
+                        success = False
+                    elif key.char == " ":
+                        # Space - intervention (take over/give back control)
+                        is_intervention = True
+
+                # Handle special keys
+                elif key == keyboard.Key.esc:
+                    # ESC - terminate episode (failure)
+                    terminate_episode = True
+                    success = False
+
+            except Exception as e:
+                logging.debug(f"Error processing keyboard event: {e}")
+                continue
+
+        return {
+            TeleopEvents.IS_INTERVENTION: is_intervention,
+            TeleopEvents.TERMINATE_EPISODE: terminate_episode,
+            TeleopEvents.SUCCESS: success,
+            TeleopEvents.RERECORD_EPISODE: rerecord_episode,
+        }

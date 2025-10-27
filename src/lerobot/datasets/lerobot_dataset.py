@@ -15,6 +15,7 @@
 # limitations under the License.
 import contextlib
 import gc
+import json
 import logging
 import shutil
 import tempfile
@@ -184,7 +185,21 @@ class LeRobotDatasetMetadata:
     @property
     def video_keys(self) -> list[str]:
         """Keys to access visual modalities stored as videos."""
-        return [key for key, ft in self.features.items() if ft["dtype"] == "video"]
+        video_keys_list = []
+
+        for key, ft in self.features.items():
+            # Skip features that don't have the expected dictionary structure
+            if not isinstance(ft, dict):
+                continue
+
+            # Skip features without dtype field
+            if "dtype" not in ft:
+                continue
+
+            if ft["dtype"] == "video":
+                video_keys_list.append(key)
+
+        return video_keys_list
 
     @property
     def camera_keys(self) -> list[str]:
@@ -446,15 +461,31 @@ class LeRobotDatasetMetadata:
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
-        features = {**features, **DEFAULT_FEATURES}
+        print(f"{features=}")
+
+        # Merge fixed features
+        features = {**DEFAULT_FEATURES, **features}
         _validate_feature_names(features)
 
         obj.tasks = None
         obj.episodes = None
         obj.stats = None
-        obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, features, use_videos, robot_type)
+        obj.info = create_empty_dataset_info(
+            CODEBASE_VERSION, fps, features, use_videos, robot_type
+        )
+
+        # Add debug information - print the info content before writing
+        print("=== DEBUG: obj.info content ===")
+        print(f"obj.info type: {type(obj.info)}")
+        try:
+            print(f"obj.info content: {json.dumps(obj.info, indent=2, default=str)}")
+        except Exception as e:
+            print(f"JSON serialization failed: {e}")
+            print(f"Raw obj.info: {obj.info}")
+
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError()
+
         write_json(obj.info, obj.root / INFO_PATH)
         obj.revision = None
         return obj
@@ -910,6 +941,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self._get_image_file_path(episode_index, image_key, frame_index=0).parent
 
     def _save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path) -> None:
+        print(f"=== DEBUG: In _save_image ===")
+        print(f"Image path: {fpath}")
+        print(f"Image type: {type(image)}")
+        if hasattr(image, "shape"):
+            print(f"Image shape: {image.shape}")
+        if hasattr(image, "dtype"):
+            print(f"Image dtype: {image.dtype}")
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
                 image = image.cpu().numpy()

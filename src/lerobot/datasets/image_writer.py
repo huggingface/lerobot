@@ -45,7 +45,7 @@ def image_array_to_pil_image(
     Convert numpy array to PIL Image with support for both 2D and 3D arrays.
 
     Args:
-        image_array: Input image array, can be 2D (H, W) or 3D (H, W, C)
+        image_array: Input image array, can be 2D (H, W) or 3D (C, H, W) or (H, W, C)
         range_check: Whether to validate value ranges for float arrays
 
     Returns:
@@ -66,39 +66,62 @@ def image_array_to_pil_image(
             else:
                 image_array = (image_array * 255).astype(np.uint8)
         elif image_array.dtype == np.uint16:
-            # Depth maps in uint16 - keep as is or scale down to uint8
-            # Option 1: Keep as uint16 (requires mode "I;16")
             return PIL.Image.fromarray(image_array, mode="I;16")
         else:
-            # Other 2D arrays (uint8, etc.)
             image_array = image_array.astype(np.uint8)
 
         return PIL.Image.fromarray(image_array, mode="L")
 
-    # Handle 3D arrays (existing logic for RGB images)
+    # Handle 3D arrays - improved logic to handle both (C, H, W) and (H, W, C)
     elif image_array.ndim == 3:
-        if image_array.shape[0] == 3:
-            # Transpose from pytorch convention (C, H, W) to (H, W, C)
-            image_array = image_array.transpose(1, 2, 0)
-        elif image_array.shape[-1] != 3:
+        # Determine the channel dimension
+        channels_dim = None
+        spatial_dims = []
+
+        for i, dim in enumerate(image_array.shape):
+            if dim in [1, 3, 4]:  # Possible channel counts
+                if channels_dim is None:
+                    channels_dim = i
+                else:
+                    spatial_dims.append(dim)
+            else:
+                spatial_dims.append(dim)
+
+        # If we found a channel dimension and it's not the last dimension, transpose
+        if channels_dim is not None and channels_dim != 2:
+            # Transpose from (C, H, W) to (H, W, C)
+            if channels_dim == 0:
+                image_array = image_array.transpose(1, 2, 0)
+            elif channels_dim == 1:
+                image_array = image_array.transpose(0, 2, 1)
+
+        # Now image_array should be in (H, W, C) format
+        channels = image_array.shape[2]
+
+        # Handle different channel counts
+        if channels == 1:
+            # Single channel image (depth, grayscale)
+            image_array = image_array[:, :, 0]  # Convert to 2D
+            return image_array_to_pil_image(image_array, range_check)
+        elif channels == 3:
+            # RGB image
+            if image_array.dtype != np.uint8:
+                if range_check:
+                    max_ = image_array.max().item()
+                    min_ = image_array.min().item()
+                    if max_ > 1.0 or min_ < 0.0:
+                        raise ValueError(
+                            "The image data type is float, which requires values in the range [0.0, 1.0]. "
+                            f"However, the provided range is [{min_}, {max_}]. Please adjust the range or "
+                            "provide a uint8 image with values in the range [0, 255]."
+                        )
+                image_array = (image_array * 255).astype(np.uint8)
+            return PIL.Image.fromarray(image_array)
+        else:
             raise NotImplementedError(
-                f"The image has {image_array.shape[-1]} channels, but 3 is required for RGB images."
+                f"The image has {channels} channels, but 1 or 3 is required. "
+                f"Shape: {image_array.shape}"
             )
-
-        if image_array.dtype != np.uint8:
-            if range_check:
-                max_ = image_array.max().item()
-                min_ = image_array.min().item()
-                if max_ > 1.0 or min_ < 0.0:
-                    raise ValueError(
-                        "The image data type is float, which requires values in the range [0.0, 1.0]. "
-                        f"However, the provided range is [{min_}, {max_}]. Please adjust the range or "
-                        "provide a uint8 image with values in the range [0, 255]."
-                    )
-
-            image_array = (image_array * 255).astype(np.uint8)
-
-        return PIL.Image.fromarray(image_array)
 
     else:
         raise ValueError(

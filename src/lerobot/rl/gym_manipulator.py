@@ -26,6 +26,7 @@ import torch
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
@@ -602,11 +603,18 @@ def control_loop(
     dataset = None
     if cfg.mode == "record":
         action_features = teleop_device.action_features
+        dataset_action_features = hw_to_dataset_features(action_features, ACTION, use_video=True)
         features = {
-            ACTION: action_features,
+            # **dataset_action_features,
+            "action": {
+                "dtype": "float32",
+                "shape": (4,),
+                "names": ["x", "y", "z", "gripper"],
+            },
             REWARD: {"dtype": "float32", "shape": (1,), "names": None},
             DONE: {"dtype": "bool", "shape": (1,), "names": None},
         }
+        print(f"{features=}")
         if use_gripper:
             features["complementary_info.discrete_penalty"] = {
                 "dtype": "float32",
@@ -627,6 +635,7 @@ def control_loop(
                     "shape": value.squeeze(0).shape,
                     "names": ["channels", "height", "width"],
                 }
+                print(f"----------------------{key} : {features[key]}")
 
         # Create dataset
         dataset = LeRobotDataset.create(
@@ -668,6 +677,17 @@ def control_loop(
                 for k, v in transition[TransitionKey.OBSERVATION].items()
                 if isinstance(v, torch.Tensor)
             }
+
+            print("=== DEBUG: Checking image data shapes ===")
+            image_keys_in_features = []
+            for feature_key in features.keys():
+                if 'image' in feature_key:
+                    # 提取实际的observation key（去掉前缀）
+                    if feature_key.startswith('observation.images.'):
+                        obs_key = feature_key.replace('observation.images.', '')
+                        image_keys_in_features.append(obs_key)
+                        print(f"Image feature: {feature_key} -> expects {obs_key} with shape {features[feature_key]['shape']}")
+
             # Use teleop_action if available, otherwise use the action from the transition
             action_to_record = transition[TransitionKey.COMPLEMENTARY_DATA].get(
                 "teleop_action", transition[TransitionKey.ACTION]
@@ -678,6 +698,7 @@ def control_loop(
                 REWARD: np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
                 DONE: np.array([terminated or truncated], dtype=bool),
             }
+            print(f"------------------\n{frame[ACTION]=}")
             if use_gripper:
                 discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
                 frame["complementary_info.discrete_penalty"] = np.array([discrete_penalty], dtype=np.float32)

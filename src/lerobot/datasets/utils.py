@@ -563,6 +563,7 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
     """
     hf_features = {}
     for key, ft in features.items():
+        print(f"{key}:{ft=}")
         if ft["dtype"] == "video":
             continue
         elif ft["dtype"] == "image":

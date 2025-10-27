@@ -55,39 +55,66 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
     def _process_single_image(self, img: np.ndarray) -> Tensor:
         """
         Processes a single NumPy image array into a channel-first, normalized tensor.
+        Supports both 2D (depth/grayscale) and 3D (RGB) images.
 
         Args:
-            img: A NumPy array representing the image, expected to be in channel-last
-                 (H, W, C) format with a `uint8` dtype.
+            img: A NumPy array representing the image. Can be:
+                 - 2D array (H, W) for depth/grayscale images
+                 - 3D array (H, W, C) for RGB images with `uint8` dtype
 
         Returns:
             A `float32` PyTorch tensor in channel-first (B, C, H, W) format, with
-            pixel values normalized to the [0, 1] range.
+            pixel values normalized appropriately:
+            - [0, 1] range for uint8 images
+            - Original scale for depth maps (preserving metric values)
 
         Raises:
-            ValueError: If the input image does not appear to be in channel-last
-                        format or is not of `uint8` dtype.
+            ValueError: If the input image has invalid dimensions or format.
         """
         # Convert to tensor
         img_tensor = torch.from_numpy(img)
 
-        # Add batch dimension if needed
-        if img_tensor.ndim == 3:
+        # Handle 2D images (depth maps, grayscale)
+        if img_tensor.ndim == 2:
+            # Add channel and batch dimensions: (H, W) -> (1, 1, H, W)
+            img_tensor = img_tensor.unsqueeze(0).unsqueeze(0)  # (B=1, C=1, H, W)
+
+            # For depth maps, preserve original values (don't normalize to [0,1])
+            # Depth maps typically have meaningful metric values
+            if img.dtype in [np.float32, np.float64, np.uint16]:
+                # Keep depth values as-is for metric preservation
+                img_tensor = img_tensor.type(torch.float32)
+            else:
+                # For other 2D images (grayscale), normalize to [0,1]
+                img_tensor = img_tensor.type(torch.float32) / 255.0
+
+        # Handle 3D images (RGB, channel-last)
+        elif img_tensor.ndim == 3:
+            # Add batch dimension: (H, W, C) -> (1, H, W, C)
             img_tensor = img_tensor.unsqueeze(0)
 
-        # Validate image format
-        _, h, w, c = img_tensor.shape
-        if not (c < h and c < w):
-            raise ValueError(f"Expected channel-last images, but got shape {img_tensor.shape}")
+            # Validate image format
+            _, h, w, c = img_tensor.shape
+            if not (c < h and c < w):
+                raise ValueError(
+                    f"Expected channel-last images, but got shape {img_tensor.shape}"
+                )
 
-        if img_tensor.dtype != torch.uint8:
-            raise ValueError(f"Expected torch.uint8 images, but got {img_tensor.dtype}")
+            if img_tensor.dtype != torch.uint8:
+                raise ValueError(
+                    f"Expected torch.uint8 for RGB images, but got {img_tensor.dtype}"
+                )
 
-        # Convert to channel-first format
-        img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous()
+            # Convert to channel-first format: (B, H, W, C) -> (B, C, H, W)
+            img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous()
 
-        # Convert to float32 and normalize to [0, 1]
-        img_tensor = img_tensor.type(torch.float32) / 255.0
+            # Convert to float32 and normalize to [0, 1]
+            img_tensor = img_tensor.type(torch.float32) / 255.0
+
+        else:
+            raise ValueError(
+                f"Unsupported image dimensions: {img_tensor.ndim}. Expected 2D or 3D array."
+            )
 
         return img_tensor
 

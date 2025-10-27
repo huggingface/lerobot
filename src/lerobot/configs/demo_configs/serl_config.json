@@ -6,6 +6,7 @@
             "type": "so101_follower",
             "port": "/dev/ttyACM1",
             "id": "follower_arm",
+            "use_degrees": true,
             "cameras": {
                 "wrist": {
                     "type": "opencv",
@@ -28,7 +29,8 @@
         "teleop": {
             "type": "so101_leader",
             "port": "/dev/ttyACM0",
-            "id": "leader_arm"
+            "id": "leader_arm",
+            "use_degrees": true
         },
         "processor": {
             "control_mode": "leader",
@@ -58,8 +60,8 @@
                     -53.28620147705078,
                     1.26262629032135
                 ],
-                "reset_time_s": 30,
-                "control_time_s": 30.0,
+                "reset_time_s": 5,
+                "control_time_s": 15.0,
                 "terminate_on_success": true
             },
             "inverse_kinematics": {
@@ -84,10 +86,10 @@
         }
     },
     "dataset": {
-        "repo_id": "${HF_USER}/lerobot-serl-test",
+        "repo_id": "weiwenliu/lerobot-serl-test",
         "root": null,
         "task": "Test SERL in cardbox perturbation",
-        "num_episodes_to_record": 2,
+        "num_episodes_to_record": 1,
         "replay_episode": 0,
         "push_to_hub": true
     },
