@@ -798,11 +798,11 @@ class VLAFlowMatching(nn.Module):
             # it could have different naming in different models, and the rest of parameters
             # as named arguments
             denoise_step_partial_call = lambda input_x_t: self.denoise_step(
-                    x_t=input_x_t,
-                    prefix_pad_masks=prefix_pad_masks,
-                    past_key_values=past_key_values,
-                    timestep=expanded_time,
-                )
+                x_t=input_x_t,
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
+                timestep=expanded_time,
+            )
 
             if self.config.rtc_config is not None and self.config.rtc_config.enabled:
                 inference_delay = kwargs.get("inference_delay")
@@ -945,7 +945,16 @@ class VLAFlowMatching(nn.Module):
         return x_t
 
     def rtc_alternative_denoise(
-        self, x_t, bsize, dt, prefix_pad_masks, past_key_values, device, execution_horizon, inference_delay, prev_chunk_left_over
+        self,
+        x_t,
+        bsize,
+        dt,
+        prefix_pad_masks,
+        past_key_values,
+        device,
+        execution_horizon,
+        inference_delay,
+        prev_chunk_left_over,
     ):
         """
         Real-time chunking (RTC) denoising.
@@ -962,7 +971,6 @@ class VLAFlowMatching(nn.Module):
         Reference:
         https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
-
 
         time = torch.tensor(1.0, device=device)
 
@@ -981,14 +989,19 @@ class VLAFlowMatching(nn.Module):
             action_chunk_size = x_t.shape[1]
             action_dim = x_t.shape[2]
 
-            if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
+            if (
+                prev_chunk_left_over.shape[1] < action_chunk_size
+                or prev_chunk_left_over.shape[2] < action_dim
+            ):
                 padded = torch.zeros(batch_size, action_chunk_size, action_dim).to(x_t.device)
-                padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
+                padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = (
+                    prev_chunk_left_over
+                )
                 prev_chunk_left_over = padded
 
-            weights = self.rtc_processor.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size).to(
-                x_t.device
-            )
+            weights = self.rtc_processor.get_prefix_weights(
+                inference_delay, execution_horizon, action_chunk_size
+            ).to(x_t.device)
 
             weights = weights.unsqueeze(0).unsqueeze(-1)
 
@@ -1003,7 +1016,6 @@ class VLAFlowMatching(nn.Module):
 
             x_t = x_t.detach()  # noqa: N806
 
-
             v_t, x_t, correction, x1_t, err = self.rtc_processor.denoise_step(
                 x_t=x_t,
                 prev_chunk_left_over=prev_chunk_left_over,
@@ -1012,7 +1024,6 @@ class VLAFlowMatching(nn.Module):
                 original_denoise_step_partial=denoise_step_partial_call,
                 execution_horizon=execution_horizon,
             )
-
 
             # Store values from this step for plotting
             all_v_t.append(-v_t.detach())  # Negate back to get original v_t
@@ -1024,8 +1035,7 @@ class VLAFlowMatching(nn.Module):
             # x_t += dt * v_t
             # time += dt
 
-            x_t += dt * v_t 
-   
+            x_t += dt * v_t
 
             # Store x_t after the integration step
             all_x_t.append(x_t.clone())

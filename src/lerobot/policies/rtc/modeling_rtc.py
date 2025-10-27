@@ -205,9 +205,12 @@ class RTCProcessor:
         assert prev_chunk_left_over.shape == x_t.shape, (
             "The padded previous chunk must be the same size as the input tensor"
         )
-        weights = self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size).to(
-            x_t.device
-        ).unsqueeze(0).unsqueeze(-1)
+        weights = (
+            self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
+            .to(x_t.device)
+            .unsqueeze(0)
+            .unsqueeze(-1)
+        )
 
         v_t = original_denoise_step_partial(x_t)
 
