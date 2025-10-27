@@ -226,32 +226,31 @@ class RTCProcessor:
         # weights is shape (action_chunk_size,) and needs to be (1, action_chunk_size, 1)
         weights = weights.unsqueeze(0).unsqueeze(-1)  # Add batch and action dimensions
 
-        # Define function for vjp computation
-        def compute_x1_t_and_v_t(x_t_input):
-            v_t_local = original_denoise_step_partial(x_t_input)
-            # In the original implementation, the time goes from 0 to 1 and x_1t calculates
-            # as velocity * (1 - time). https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L234
-            # Our integration runs from time=1 -> 0, so we still want the step magnitude
-            # to scale with (1 - time) to avoid overly large corrections at the start.
-            return x_t_input - time * v_t_local
-
+        # Compute v_t once for the base velocity
         v_t = original_denoise_step_partial(x_t)
 
         if self.verbose:
             logger.info(self._tensor_stats(v_t, "v_t (original velocity)"))
 
+        # Enable gradients and recompute v_t to build computational graph
+        x_t.requires_grad_(True)
         with torch.enable_grad():
-            x_t = x_t.requires_grad_(True)
+            # Recompute v_t inside gradient context so gradients flow through model
+            v_t_grad = original_denoise_step_partial(x_t)
 
-            x1_t = x_t - time * v_t
+            # Compute x1_t using recomputed v_t
+            x1_t = x_t - time * v_t_grad
 
+            # Compute weighted error
             error = (prev_chunk_left_over - x1_t) * weights
 
-            # Use vjp to compute gradient: we want gradient of x1_t weighted by error
-            # vjp_fn takes cotangents for each output (x1_t, v_t) and returns gradient for input x_t
-            first, correction = torch.autograd.functional.vjp(
-                compute_x1_t_and_v_t, x_t, v=error, create_graph=False
-            )
+            # Compute gradient using torch.autograd.grad (same as rtc_alternative_denoise)
+            grad_outputs = error.clone().detach()
+            correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=True)[0]
+
+        # Detach x_t for next iteration
+        x_t = x_t.detach()
+
         # print("error: ", error[0, :3, :6], weights)
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
