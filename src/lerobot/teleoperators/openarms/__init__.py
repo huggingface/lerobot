@@ -14,11 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .motors_bus import (
-    Motor,
-    MotorCalibration,
-    MotorNormMode,
-    MotorsBus,  # Backward compatibility (alias for SerialMotorsBus)
-    MotorsBusBase,
-    SerialMotorsBus,
-)
+from .config_openarms_leader import OpenArmsLeaderConfig
+from .openarms_leader import OpenArmsLeader
+
+__all__ = ["OpenArmsLeader", "OpenArmsLeaderConfig"]
