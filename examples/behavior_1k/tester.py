@@ -46,7 +46,35 @@ from lerobot.utils.utils import init_logging
 # TASK = 1
 NEW_ROOT = Path("/fsx/jade_choghari/tmp/bb")
 from lerobot.datasets.utils import load_info
-def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
+def get_total_episodes_task(local_dir: Path, task_id: int, task_ranges: dict, step) -> int:
+    """
+    Calculates the total number of episodes for a single, specified task.
+    """
+    # Simply load the episodes for the task and count them.
+    episodes = legacy_load_episodes_task(
+        local_dir=local_dir, 
+        task_id=task_id, 
+        task_ranges=task_ranges, 
+        step=step
+    )
+    return len(episodes)
+
+NUM_CAMERAS = 9
+def get_total_frames_task(local_dir, meta_path, task_id: int, task_ranges: dict, step: int) -> int:
+    episodes_metadata = legacy_load_episodes_task(
+        local_dir=local_dir, 
+        task_id=task_id, 
+        task_ranges=task_ranges, 
+        step=step
+    )
+    total_frames = 0
+    # like 'duration'
+    for ep in episodes_metadata.values():
+        duration_s = ep["length"]
+        total_frames += int(duration_s)
+    return total_frames
+
+def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb, meta_path, task_id: int, task_ranges, step):
     info = load_info(root)
     info["codebase_version"] = "v3.0"
     del info["total_videos"]
@@ -60,13 +88,11 @@ def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
             # already has fps in video_info
             continue
         info["features"][key]["fps"] = info["fps"]
-    info["total_episodes"] = get_total_episodes_task()
-    info["total_frames"] = get_total_frames_task
-    info["total_tasks"] = 1
-    info["total_videos"] = get_total_videos_task()
-    info["chunks_size"] = 
     
-    breakpoint()
+    info["total_episodes"] = get_total_episodes_task(root, task_id, task_ranges, step)
+    info["total_videos"] = info["total_episodes"] * NUM_CAMERAS
+    info["total_frames"] = get_total_frames_task(root, meta_path, task_id, task_ranges, step)
+    info["total_tasks"] = 1
     write_info(info, new_root)
 
 # convert_info(DATA_PATH, 12, 24)
@@ -198,11 +224,11 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
         # Check if adding this episode would exceed the limit
         if size_in_mb + ep_size_in_mb >= video_file_size_in_mb and len(paths_to_cat) > 0:
             # Size limit would be exceeded, save current accumulation WITHOUT this episode
-            # concatenate_video_files(
-            #     paths_to_cat,
-            #     new_root
-            #     / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
-            # )
+            concatenate_video_files(
+                paths_to_cat,
+                new_root
+                / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
+            )
 
             # Update episodes metadata for the file we just saved
             for i, _ in enumerate(paths_to_cat):
@@ -483,12 +509,12 @@ def convert_dataset_local(
     print(f"🔹 Starting conversion for task {task_id}")
     print(f"Input root: {root}")
     print(f"Output root: {new_root}")
-
+    STEP = 10
     # Infer task episode ranges
     EPISODES_META_PATH = DATA_PATH / "meta" / "episodes.jsonl"
     task_ranges = infer_task_episode_ranges(EPISODES_META_PATH)
-
-    convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb)
+    # def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb, meta_path, task_id: int, task_ranges, step):
+    convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb, EPISODES_META_PATH, task_id, task_ranges, STEP)
     convert_tasks(root, new_root, task_id)
     episodes_metadata = convert_data(root, new_root, data_file_size_in_mb, task_index=task_id)
     episodes_videos_metadata = convert_videos(root, new_root, video_file_size_in_mb, task_id=task_id)
