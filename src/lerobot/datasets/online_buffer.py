@@ -108,7 +108,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
         self._buffer_capacity = buffer_capacity
         data_spec = self._make_data_spec(data_spec, buffer_capacity)
         Path(write_dir).mkdir(parents=True, exist_ok=True)
-        self._data = {}
+        self._data: dict[str, Any] = {}
         for k, v in data_spec.items():
             self._data[k] = _make_memmap_safe(
                 filename=Path(write_dir) / k,

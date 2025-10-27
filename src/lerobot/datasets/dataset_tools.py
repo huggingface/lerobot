@@ -27,6 +27,7 @@ import logging
 import shutil
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import datasets
 import numpy as np
@@ -166,10 +167,11 @@ def split_dataset(
     if all(isinstance(v, float) for v in splits.values()):
         splits = _fractions_to_episode_indices(dataset.meta.total_episodes, splits)
 
-    all_episodes = set()
+    all_episodes: set[int] = set()
     for split_name, episodes in splits.items():
         if not episodes:
             raise ValueError(f"Split '{split_name}' has no episodes")
+        assert not isinstance(episodes, float)
         episode_set = set(episodes)
         if episode_set & all_episodes:
             raise ValueError("Episodes cannot appear in multiple splits")
@@ -186,6 +188,7 @@ def split_dataset(
     result_datasets = {}
 
     for split_name, episodes in splits.items():
+        assert not isinstance(episodes, float)
         logging.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
 
         split_repo_id = f"{dataset.repo_id}_{split_name}"
@@ -840,7 +843,7 @@ def _copy_and_reindex_episodes_metadata(
         #   array([array([array([0.])]), array([array([0.])]), array([array([0.])])])
         # This happens particularly with image/video statistics. We need to detect and flatten
         # these nested structures back to proper (3, 1, 1) arrays so aggregate_stats can process them.
-        episode_stats = {}
+        episode_stats: dict[str, Any] = {}
         for key in src_episode_full:
             if key.startswith("stats/"):
                 stat_key = key.replace("stats/", "")
