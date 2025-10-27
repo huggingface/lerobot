@@ -25,9 +25,9 @@ This module provides utilities for:
 
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import datasets
 import numpy as np
@@ -141,7 +141,7 @@ def delete_episodes(
 
 def split_dataset(
     dataset: LeRobotDataset,
-    splits: dict[str, float | list[int]],
+    splits: Mapping[str, float | list[int]],
     output_dir: str | Path | None = None,
 ) -> dict[str, LeRobotDataset]:
     """Split a LeRobotDataset into multiple smaller datasets.
@@ -165,7 +165,7 @@ def split_dataset(
         raise ValueError("No splits provided")
 
     if all(isinstance(v, float) for v in splits.values()):
-        splits = _fractions_to_episode_indices(dataset.meta.total_episodes, splits)
+        splits = _fractions_to_episode_indices(dataset.meta.total_episodes, cast(dict[str, float], splits))
 
     all_episodes: set[int] = set()
     for split_name, episodes in splits.items():
@@ -444,8 +444,8 @@ def remove_feature(
 
 def _fractions_to_episode_indices(
     total_episodes: int,
-    splits: dict[str, float],
-) -> dict[str, list[int]]:
+    splits: Mapping[str, float],
+) -> Mapping[str, list[int]]:
     """Convert split fractions to episode indices."""
     if sum(splits.values()) > 1.0:
         raise ValueError("Split fractions must sum to <= 1.0")
