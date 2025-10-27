@@ -273,3 +273,44 @@ def test_use_drq_early_truncation(
     assert batch["next_state"]["observation.image"].max() == base_idx + n_steps
     assert batch["next_state"]["observation.state"].shape == (1, 4)
     assert batch["next_state"]["observation.state"].max() == base_idx + n_steps
+
+
+def test_sparse_reward_computation():
+    buffer = create_empty_replay_buffer(use_drq=False, optimize_memory=False)
+    fill_buffer(buffer, length=10, done_at=3)
+
+    buffer.rewards.copy_(torch.tensor([0, 0, 0, 0, 0, 1, 0, 0, 0, 0], dtype=torch.float32))
+    buffer.dones.copy_(torch.tensor([0, 0, 0, 0, 0, 1, 0, 0, 0, 0], dtype=torch.bool))
+    buffer.truncateds.copy_(torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=torch.bool))
+
+    batch = buffer.sample_nstep_full_for_indices(torch.tensor([2]), batch_size=1, gamma=0.99, n_steps=4)
+    assert torch.allclose(
+        batch["reward"], torch.tensor([[0.0000, 0.0000, 0.0000, 0.9703]]), rtol=1e-4, atol=1e-4
+    )
+    assert batch["masks"].equal(torch.tensor([[1, 1, 1, 0]], dtype=torch.float32))
+    assert batch["valid"].equal(torch.tensor([[1, 1, 1, 1]], dtype=torch.bool))
+    assert batch["terminals"].equal(torch.tensor([[0, 0, 0, 1]], dtype=torch.float32))
+
+    buffer.rewards.copy_(torch.tensor([0, 0, 0, 1, 1, 0, 1, 0, 0, 0], dtype=torch.float32))
+    buffer.dones.copy_(torch.tensor([0, 0, 0, 1, 1, 0, 1, 0, 0, 0], dtype=torch.bool))
+    buffer.truncateds.copy_(torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=torch.bool))
+
+    batch = buffer.sample_nstep_full_for_indices(torch.tensor([2]), batch_size=1, gamma=0.99, n_steps=4)
+    assert torch.allclose(
+        batch["reward"], torch.tensor([[0.0000, 0.9900, 1.9701, 1.970]]), rtol=1e-4, atol=1e-4
+    )
+    assert batch["masks"].equal(torch.tensor([[1, 0, 0, 0]], dtype=torch.float32))
+    assert batch["valid"].equal(torch.tensor([[1, 1, 0, 0]], dtype=torch.bool))
+    assert batch["terminals"].equal(torch.tensor([[0, 1, 1, 1]], dtype=torch.float32))
+
+    buffer.rewards.copy_(torch.tensor([0, 0, 0, 1, 0, 0, 1, 0, 0, 0], dtype=torch.float32))
+    buffer.dones.copy_(torch.tensor([0, 0, 0, 1, 0, 0, 0, 0, 0, 0], dtype=torch.bool))
+    buffer.truncateds.copy_(torch.tensor([0, 0, 0, 0, 1, 0, 0, 0, 0, 0], dtype=torch.bool))
+
+    batch = buffer.sample_nstep_full_for_indices(torch.tensor([2]), batch_size=1, gamma=0.99, n_steps=4)
+    assert torch.allclose(
+        batch["reward"], torch.tensor([[0.0000, 0.9900, 0.9900, 0.9900]]), rtol=1e-4, atol=1e-4
+    )
+    assert batch["masks"].equal(torch.tensor([[1, 0, 0, 0]], dtype=torch.float32))
+    assert batch["valid"].equal(torch.tensor([[1, 1, 0, 0]], dtype=torch.bool))
+    assert batch["terminals"].equal(torch.tensor([[0, 1, 1, 1]], dtype=torch.float32))
