@@ -25,7 +25,7 @@ discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
-version = "0.3.4"
+version = "0.4.1"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -81,8 +81,8 @@ dependencies = [
     "torchvision>=0.21.0,<0.23.0", # TODO: Bumb dependency
 
     "draccus==0.10.0", # TODO: Remove ==
-    "gymnasium>=1.0.0",
-    "rerun-sdk>=0.21.0,<0.23.0", # TODO: Bumb dependency
+    "gymnasium>=1.1.1,<2.0.0",
+    "rerun-sdk>=0.24.0,<0.27.0",
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
@@ -113,12 +113,23 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
-phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0"]
+phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
 
 # Policies
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
-hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.11,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
+groot = [
+    "lerobot[transformers-dep]",
+    "peft>=0.13.0,<1.0.0",
+    "dm-tree>=0.1.8,<1.0.0",
+    "timm>=1.0.0,<1.1.0",
+    "safetensors>=0.4.3,<1.0.0",
+    "Pillow>=10.0.0,<13.0.0",
+    "decord>=0.6.0,<1.0.0; (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
+    "ninja>=1.11.1,<2.0.0",
+    "flash-attn>=2.5.9,<3.0.0 ; sys_platform != 'darwin'"
+]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3,<4.0.0"]
@@ -132,7 +143,7 @@ video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 aloha = ["gym-aloha>=0.1.2,<0.2.0"]
 pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
-metaworld = ["metaworld>=3.0.0"]
+metaworld = ["metaworld==3.0.0"]
 
 # All
 all = [
@@ -145,6 +156,7 @@ all = [
     "lerobot[intelrealsense]",
     "lerobot[pi]",
     "lerobot[smolvla]",
+    # "lerobot[groot]", TODO(Steven): Gr00t requires specific installation instructions for flash-attn
     "lerobot[hilserl]",
     "lerobot[async]",
     "lerobot[dev]",
@@ -229,9 +241,6 @@ exclude_dirs = [
     "tests",
     "benchmarks",
     "src/lerobot/datasets/push_dataset_to_hub",
-    "src/lerobot/datasets/v2/convert_dataset_v1_to_v2",
-    "src/lerobot/policies/pi0/conversion_scripts",
-    "src/lerobot/scripts/push_dataset_to_hub.py",
 ]
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
@@ -246,6 +255,8 @@ default.extend-ignore-identifiers-re = [
     "pn",
     "ser",
     "ein",
+    "thw",
+    "inpt",
 ]
 
 # TODO: Uncomment when ready to use
@@ -284,7 +295,6 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "lerobot.envs.*"
-# Enable type checking only for the envs module
 ignore_errors = false
 
 
@@ -292,17 +302,22 @@ ignore_errors = false
 # module = "lerobot.utils.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.configs.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.configs.*"
+ignore_errors = false
+
+# extra strictness for configs
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.optim.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.model.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.model.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.processor.*"
@@ -312,9 +327,9 @@ ignore_errors = false
 # module = "lerobot.datasets.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.cameras.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.cameras.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.motors.*"

@@ -132,17 +132,15 @@ print(f"\n{dataset[0][camera_key].shape=}")  # (4, c, h, w)
 print(f"{dataset[0]['observation.state'].shape=}")  # (6, c)
 print(f"{dataset[0]['action'].shape=}\n")  # (64, c)
 
-# Finally, our datasets are fully compatible with PyTorch dataloaders and samplers because they are just
-# PyTorch datasets.
-dataloader = torch.utils.data.DataLoader(
-    dataset,
-    num_workers=4,
-    batch_size=32,
-    shuffle=True,
-)
-
-for batch in dataloader:
-    print(f"{batch[camera_key].shape=}")  # (32, 4, c, h, w)
-    print(f"{batch['observation.state'].shape=}")  # (32, 6, c)
-    print(f"{batch['action'].shape=}")  # (32, 64, c)
-    break
+if __name__ == "__main__":
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        num_workers=4,
+        batch_size=32,
+        shuffle=True,
+    )
+    for batch in dataloader:
+        print(f"{batch[camera_key].shape=}")  # (32, 4, c, h, w)
+        print(f"{batch['observation.state'].shape=}")  # (32, 6, c)
+        print(f"{batch['action'].shape=}")  # (32, 64, c)
+        break
