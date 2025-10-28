@@ -27,6 +27,7 @@ from transformers import AutoModel, AutoTokenizer
 import torchvision.transforms as T
 
 from lerobot.policies.rewind.configuration_rewind import ReWiNDConfig
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.datasets.video_sampler import sample_video_feature, sample_reverse_video_feature
 
 
@@ -173,7 +174,7 @@ class ReWiNDTransformer(nn.Module):
         return progress_preds
 
 
-class ReWiNDRewardModel(nn.Module):
+class ReWiNDRewardModel(PreTrainedPolicy):
     """
     ReWiND Reward Model for computing task completion rewards from video and text.
     
@@ -183,9 +184,12 @@ class ReWiNDRewardModel(nn.Module):
     - ReWiNDTransformer for predicting task progress
     """
     
-    def __init__(self, config: ReWiNDConfig):
-        super().__init__()
+    name = "rewind"
+    
+    def __init__(self, config: ReWiNDConfig, dataset_stats: dict | None = None):
+        super().__init__(config, dataset_stats)
         self.config = config
+        self.dataset_stats = dataset_stats
         self.device = torch.device(config.device if config.device else "cuda" if torch.cuda.is_available() else "cpu")
         
         # Initialize DINO encoder for images
@@ -469,11 +473,119 @@ class ReWiNDRewardModel(nn.Module):
     def eval(self):
         """Set evaluation mode."""
         return self.train(False)
+    
+    def parameters(self):
+        """Return trainable parameters (only ReWiND transformer, not encoders)."""
+        return self.rewind_transformer.parameters()
+    
+    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+        """
+        This method is required by PreTrainedPolicy but not used for rewind.
+        The rewind model is not an actor and does not select actions.
+        """
+        raise NotImplementedError("Rewind model does not select actions")
+    
+    def forward(self, batch):
+        """
+        Forward pass compatible with lerobot training pipeline.
+
+        Args:
+            batch: Dictionary containing:
+                - 'video_features': Pre-encoded video features (B, T, 768)
+                - 'text_features': Pre-encoded text features (B, 384)
+                - Optional: 'misaligned_video_features', 'misaligned_text_features'
+        
+        Returns:
+            loss: Total training loss
+            output_dict: Dictionary of loss components for logging
+        """
+        # Use train_step_fn but without optimizer step (that's handled by training pipeline)
+        video_features = batch['video_features'].to(self.device)
+        text_features = batch['text_features'].to(self.device)
+        
+        batch_size = video_features.shape[0]
+        max_length = self.config.max_length
+        
+        # Process videos (with potential rewind augmentation)
+        import random
+        from lerobot.datasets.video_sampler import sample_video_feature, sample_reverse_video_feature
+        
+        processed_videos = []
+        progress_targets = []
+        
+        for i in range(batch_size):
+            if random.random() < 0.5:  # 50% chance of rewind
+                # Apply video rewind augmentation
+                rewound_video, progress = sample_reverse_video_feature(
+                    video_features[i],
+                    max_length=max_length,
+                    random_sample=True
+                )
+                processed_videos.append(rewound_video)
+                progress_targets.append(progress)
+            else:
+                # Normal video sampling
+                sampled_video = sample_video_feature(
+                    video_features[i],
+                    max_length=max_length,
+                    random_sample=True
+                )
+                processed_videos.append(sampled_video)
+                # Linear progress from 0 to 1
+                progress = torch.linspace(0, 1, max_length, device=self.device)
+                progress_targets.append(progress)
+        
+        processed_videos = torch.stack(processed_videos)
+        progress_targets = torch.stack(progress_targets)
+        
+        # Compute progress loss
+        progress_loss = compute_progress_loss(
+            self.rewind_transformer,
+            processed_videos,
+            text_features,
+            progress_targets
+        )
+        
+        total_loss = progress_loss
+        output_dict = {'progress_loss': progress_loss.item()}
+        
+        # Compute misaligned loss if requested
+        if random.random() < 0.5:  # 50% chance of adding misalignment loss
+            if 'misaligned_video_features' in batch and 'misaligned_text_features' in batch:
+                misaligned_videos = batch['misaligned_video_features'].to(self.device)
+                misaligned_texts = batch['misaligned_text_features'].to(self.device)
+            else:
+                # Create misaligned pairs by shuffling
+                shuffle_idx = torch.randperm(batch_size)
+                misaligned_videos = processed_videos[shuffle_idx]
+                misaligned_texts = text_features
+            
+            # Sample misaligned videos
+            misaligned_videos_sampled = []
+            for i in range(batch_size):
+                sampled = sample_video_feature(
+                    misaligned_videos[i],
+                    max_length=max_length,
+                    random_sample=True
+                )
+                misaligned_videos_sampled.append(sampled)
+            misaligned_videos_sampled = torch.stack(misaligned_videos_sampled)
+            
+            misaligned_loss = compute_misaligned_loss(
+                self.rewind_transformer,
+                misaligned_videos_sampled,
+                misaligned_texts
+            )
+            
+            total_loss = total_loss + misaligned_loss
+            output_dict['misaligned_loss'] = misaligned_loss.item()
+        
+        output_dict['total_loss'] = total_loss.item()
+        
+        return total_loss, output_dict
 
 
-# Training utilities
-
-
+# Loss utilities
 def compute_progress_loss(
     model: ReWiNDTransformer,
     video_features: torch.Tensor,
@@ -538,171 +650,3 @@ def compute_misaligned_loss(
     loss = F.mse_loss(progress_preds, target_zeros)
     
     return loss
-
-
-def train_step_fn(
-    model: ReWiNDRewardModel,
-    batch: Dict[str, torch.Tensor],
-    optimizer: torch.optim.Optimizer,
-    use_rewind: bool = True,
-    rewind_prob: float = 0.5,
-    misaligned_prob: float = 0.5,
-    gradient_clip: float = 1.0
-) -> Dict[str, float]:
-    """
-    Perform a single training step for the ReWiND model.
-    
-    This function implements the training logic from the ReWiND paper, including:
-    - Progress prediction on aligned video-text pairs
-    - Video rewind augmentation for learning to decrease rewards
-    - Misaligned video-text pairs for learning to output zero rewards
-    
-    Args:
-        model: ReWiNDRewardModel instance
-        batch: Dictionary containing:
-            - 'video_features': Pre-computed video embeddings (batch_size, num_frames, 768)
-            - 'text_features': Pre-computed text embeddings (batch_size, 384)
-            - 'misaligned_video_features': Optional misaligned videos
-            - 'misaligned_text_features': Optional misaligned texts
-        optimizer: Optimizer for updating model parameters
-        use_rewind: Whether to use video rewind augmentation
-        rewind_prob: Probability of applying rewind to each sample
-        misaligned_prob: Probability of including misaligned loss
-        gradient_clip: Gradient clipping value
-        
-    Returns:
-        Dictionary of loss values for logging
-    """
-    model.train()
-    optimizer.zero_grad()
-    
-    # Get features from batch
-    video_features = batch['video_features'].to(model.device)
-    text_features = batch['text_features'].to(model.device)
-    
-    batch_size = video_features.shape[0]
-    max_length = model.config.max_length
-    
-    # Process videos (with potential rewind augmentation)
-    processed_videos = []
-    progress_targets = []
-    
-    for i in range(batch_size):
-        if use_rewind and random.random() < rewind_prob:
-            # Apply video rewind augmentation
-            rewound_video, progress = sample_reverse_video_feature(
-                video_features[i],
-                max_length=max_length,
-                random_sample=True
-            )
-            processed_videos.append(rewound_video)
-            progress_targets.append(progress)
-        else:
-            # Normal video sampling
-            sampled_video = sample_video_feature(
-                video_features[i],
-                max_length=max_length,
-                random_sample=True
-            )
-            processed_videos.append(sampled_video)
-            # Linear progress from 0 to 1
-            progress = torch.linspace(0, 1, max_length, device=model.device)
-            progress_targets.append(progress)
-    
-    processed_videos = torch.stack(processed_videos)
-    progress_targets = torch.stack(progress_targets)
-    
-    # Compute progress loss
-    progress_loss = compute_progress_loss(
-        model.rewind_transformer,
-        processed_videos,
-        text_features,
-        progress_targets
-    )
-    
-    total_loss = progress_loss
-    losses = {'progress_loss': progress_loss.item()}
-    
-    # Compute misaligned loss if requested
-    if random.random() < misaligned_prob:
-        if 'misaligned_video_features' in batch and 'misaligned_text_features' in batch:
-            misaligned_videos = batch['misaligned_video_features'].to(model.device)
-            misaligned_texts = batch['misaligned_text_features'].to(model.device)
-        else:
-            # Create misaligned pairs by shuffling
-            shuffle_idx = torch.randperm(batch_size)
-            misaligned_videos = processed_videos[shuffle_idx]
-            misaligned_texts = text_features
-        
-        # Sample misaligned videos
-        misaligned_videos_sampled = []
-        for i in range(batch_size):
-            sampled = sample_video_feature(
-                misaligned_videos[i],
-                max_length=max_length,
-                random_sample=True
-            )
-            misaligned_videos_sampled.append(sampled)
-        misaligned_videos_sampled = torch.stack(misaligned_videos_sampled)
-        
-        misaligned_loss = compute_misaligned_loss(
-            model.rewind_transformer,
-            misaligned_videos_sampled,
-            misaligned_texts
-        )
-        
-        total_loss = total_loss + misaligned_loss
-        losses['misaligned_loss'] = misaligned_loss.item()
-    
-    # Backward pass
-    total_loss.backward()
-    
-    # Gradient clipping
-    if gradient_clip > 0:
-        torch.nn.utils.clip_grad_norm_(model.rewind_transformer.parameters(), gradient_clip)
-    
-    # Optimizer step
-    optimizer.step()
-    
-    losses['total_loss'] = total_loss.item()
-    
-    return losses
-
-
-def create_training_batch(
-    model: ReWiNDRewardModel,
-    videos: np.ndarray,
-    texts: List[str],
-    batch_size: int = 32,
-    encode_on_the_fly: bool = True
-) -> Dict[str, torch.Tensor]:
-    """
-    Create a training batch from raw videos and texts.
-    
-    Args:
-        model: ReWiNDRewardModel instance (for encoding if needed)
-        videos: Raw video frames (batch_size, num_frames, H, W, C)
-        texts: List of text descriptions
-        batch_size: Batch size for encoding
-        encode_on_the_fly: If True, encode videos and texts. If False, assume pre-encoded.
-        
-    Returns:
-        Dictionary containing video and text features
-    """
-    if encode_on_the_fly:
-        # Encode videos using DINO
-        video_features = model.encode_images(videos)
-        video_features = torch.tensor(video_features, dtype=torch.float32)
-        
-        # Encode texts using MiniLM
-        text_features = model.encode_text(texts)
-        text_features = torch.tensor(text_features, dtype=torch.float32)
-    else:
-        # Assume videos and texts are already encoded
-        video_features = torch.tensor(videos, dtype=torch.float32)
-        text_features = torch.tensor(texts, dtype=torch.float32)
-    
-    return {
-        'video_features': video_features,
-        'text_features': text_features
-    }

@@ -14,9 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.optim import OptimizerConfig
+from lerobot.optim.schedulers import LRSchedulerConfig
 
 
 @PreTrainedConfig.register_subclass("rewind")
@@ -54,6 +56,20 @@ class ReWiNDConfig(PreTrainedConfig):
     # Dropout
     dropout: float = 0.1  # Dropout rate for transformer
     
+    # Processor settings (for automatic preprocessing)
+    image_key: str = "observation.images.top"  # Key for images in dataset
+    task_description: str = "perform the task"  # Default task description
+    encode_on_the_fly: bool = True  # Encode images/text during training
+    
+    # Features (required by PreTrainedPolicy)
+    input_features: dict = field(default_factory=lambda: {
+        "video_features": {"shape": [768], "dtype": "float32"},
+        "text_features": {"shape": [384], "dtype": "float32"}
+    })
+    output_features: dict = field(default_factory=lambda: {
+        "progress": {"shape": [1], "dtype": "float32"}
+    })
+    
     def __post_init__(self):
         super().__post_init__()
         
@@ -68,4 +84,24 @@ class ReWiNDConfig(PreTrainedConfig):
         
         if self.dropout < 0 or self.dropout >= 1:
             raise ValueError(f"dropout must be in [0, 1), got {self.dropout}")
+    
+    def get_optimizer_preset(self) -> OptimizerConfig:
+        """Get default optimizer configuration for ReWiND training."""
+        return OptimizerConfig(
+            name="adamw",
+            lr=3e-4,
+            weight_decay=1e-4,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            grad_clip_norm=1.0
+        )
+    
+    def get_scheduler_preset(self) -> LRSchedulerConfig:
+        """Get default learning rate scheduler configuration."""
+        return LRSchedulerConfig(
+            name="cosine",
+            warmup_steps=1000,
+            T_max=100000,  # Will be overridden by training steps
+            eta_min=3e-5
+        )
 

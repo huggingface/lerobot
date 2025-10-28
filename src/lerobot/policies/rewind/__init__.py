@@ -18,19 +18,17 @@ from lerobot.policies.rewind.configuration_rewind import ReWiNDConfig
 from lerobot.policies.rewind.modeling_rewind import (
     ReWiNDRewardModel,
     ReWiNDTransformer,
-    train_step_fn,
-    create_training_batch,
-    compute_progress_loss,
-    compute_misaligned_loss,
+)
+from lerobot.policies.rewind.processor_rewind import (
+    ReWiNDEncodingProcessorStep,
+    make_rewind_pre_post_processors,
 )
 
 __all__ = [
     "ReWiNDConfig",
     "ReWiNDRewardModel",
     "ReWiNDTransformer",
-    "train_step_fn",
-    "create_training_batch",
-    "compute_progress_loss",
-    "compute_misaligned_loss",
+    "ReWiNDEncodingProcessorStep",
+    "make_rewind_pre_post_processors",
 ]
 
