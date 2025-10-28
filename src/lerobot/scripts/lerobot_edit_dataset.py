@@ -294,9 +294,16 @@ def handle_add_feature(cfg: EditDatasetConfig) -> None:
         # Extract feature info (dtype, shape, names)
         shape = feature_config.get("shape")
         dtype = feature_config.get("dtype")
-        # Convert list to tuple if needed
+        # Convert and validate shape before assignment
         if isinstance(shape, list):
             shape = tuple(shape)
+        elif isinstance(shape, tuple) or shape is None:
+            pass  # shape is already valid
+        else:
+            raise ValueError(
+                f"Feature '{feature_name}' has invalid shape type: {type(shape).__name__}. "
+                "Shape must be a list, tuple, or None."
+            )
         # Validate required metadata fields
         if dtype is None:
             raise ValueError(f"Feature '{feature_name}' must specify a 'dtype' (data type)")
