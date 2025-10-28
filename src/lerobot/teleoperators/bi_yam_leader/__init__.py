@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import bi_yam_follower
-from .config import RobotConfig
-from .robot import Robot
-from .utils import make_robot_from_config
+from .bi_yam_leader import BiYamLeader
+from .config_bi_yam_leader import BiYamLeaderConfig
+
