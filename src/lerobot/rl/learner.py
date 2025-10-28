@@ -80,6 +80,7 @@ from lerobot.transport.utils import (
     state_to_bytes,
 )
 from lerobot.utils.constants import (
+    ACTION,
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
@@ -100,8 +101,6 @@ from lerobot.utils.utils import (
 )
 
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
-
-LOG_PREFIX = "[LEARNER]"
 
 
 @parser.wrap()
@@ -402,7 +401,7 @@ def add_actor_information_and_train(
                     left_batch_transitions=batch, right_batch_transition=batch_offline
                 )
 
-            actions = batch["action"]
+            actions = batch[ACTION]
             rewards = batch["reward"]
             observations = batch["state"]
             next_observations = batch["next_state"]
@@ -415,7 +414,7 @@ def add_actor_information_and_train(
 
             # Create a batch dictionary with all required elements for the forward method
             forward_batch = {
-                "action": actions,
+                ACTION: actions,
                 "reward": rewards,
                 "state": observations,
                 "next_state": next_observations,
@@ -460,7 +459,7 @@ def add_actor_information_and_train(
                 left_batch_transitions=batch, right_batch_transition=batch_offline
             )
 
-        actions = batch["action"]
+        actions = batch[ACTION]
         rewards = batch["reward"]
         observations = batch["state"]
         next_observations = batch["next_state"]
@@ -474,7 +473,7 @@ def add_actor_information_and_train(
 
         # Create a batch dictionary with all required elements for the forward method
         forward_batch = {
-            "action": actions,
+            ACTION: actions,
             "reward": rewards,
             "state": observations,
             "next_state": next_observations,
@@ -1155,7 +1154,7 @@ def process_transitions(
             # Skip transitions with NaN values
             if check_nan_in_transition(
                 observations=transition["state"],
-                actions=transition["action"],
+                actions=transition[ACTION],
                 next_state=transition["next_state"],
             ):
                 logging.warning("[LEARNER] NaN detected in transition, skipping")

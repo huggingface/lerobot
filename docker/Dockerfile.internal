@@ -75,6 +75,14 @@ RUN uv venv --python python${PYTHON_VERSION}
 # Install Python dependencies for caching
 COPY --chown=user_lerobot:user_lerobot pyproject.toml README.md MANIFEST.in ./
 COPY --chown=user_lerobot:user_lerobot src/ src/
+
+ARG UNBOUND_DEPS=false
+
+RUN if [ "$UNBOUND_DEPS" = "true" ]; then \
+    sed -i 's/,[[:space:]]*<[0-9\.]*//g' pyproject.toml; \
+    echo "Dependencies unbound:" && cat pyproject.toml; \
+    fi
+
 RUN uv pip install --no-cache ".[all]"
 
 # Copy the rest of the application source code

@@ -28,6 +28,7 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.utils.constants import ACTION
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
@@ -66,7 +67,7 @@ robot_ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotOb
 dataset = LeRobotDataset(HF_REPO_ID, episodes=[EPISODE_IDX])
 # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
 episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == EPISODE_IDX)
-actions = episode_frames.select_columns("action")
+actions = episode_frames.select_columns(ACTION)
 
 # Connect to the robot
 robot.connect()
@@ -81,7 +82,7 @@ for idx in range(len(episode_frames)):
 
     # Get recorded action from dataset
     ee_action = {
-        name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
+        name: float(actions[idx][ACTION][i]) for i, name in enumerate(dataset.features[ACTION]["names"])
     }
 
     # Get robot observation
