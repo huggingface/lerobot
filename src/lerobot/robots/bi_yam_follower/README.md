@@ -36,21 +36,28 @@ ip link show can_leader_l
 
 ### Install Dependencies
 
-Install LeRobot with Yam support:
+**Step 1: Clone with submodules**
+```bash
+# If you haven't cloned yet:
+git clone --recursive https://github.com/huggingface/lerobot.git
+
+# If you already cloned without --recursive:
+git submodule update --init --recursive
+```
+
+**Step 2: Install i2rt library** (required for the server processes)
+```bash
+cd i2rt
+pip install -e .
+cd ..
+```
+
+**Step 3: Install LeRobot with Yam support**
 ```bash
 pip install -e ".[yam]"
 ```
 
-This will install:
-- `portal` library for client-server communication
-- `i2rt` library for low-level motor control of Yam arms
-
-**Note**: If `i2rt` is not available on PyPI, you may need to install it separately from source:
-```bash
-pip install git+https://github.com/your-org/i2rt.git
-# OR from a local clone:
-# cd /path/to/i2rt && pip install -e .
-```
+This will install the `portal` library for client-server communication.
 
 ## Running the System
 

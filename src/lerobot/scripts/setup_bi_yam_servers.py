@@ -80,7 +80,9 @@ def find_i2rt_script():
             return script_path
     except ImportError:
         raise RuntimeError(
-            "Could not import i2rt. Please install it with: pip install -e '.[yam]'"
+            "Could not import i2rt. Please install it separately:\n"
+            "  cd i2rt && pip install -e . && cd ..\n"
+            "Then install LeRobot: pip install -e '.[yam]'"
         )
 
     raise RuntimeError(

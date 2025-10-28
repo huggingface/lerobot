@@ -114,10 +114,7 @@ intelrealsense = [
     "pyrealsense2-macosx>=2.54,<2.55.0 ; sys_platform == 'darwin'",
 ]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0"]
-yam = [
-    "i2rt>=0.0.1",
-    "portal>=3.7.0,<4.0.0",
-]
+yam = ["portal>=3.7.0,<4.0.0"]
 
 # Policies
 pi = ["transformers @ git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi"]
