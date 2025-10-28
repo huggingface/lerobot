@@ -293,12 +293,18 @@ def handle_add_feature(cfg: EditDatasetConfig) -> None:
     for feature_name, feature_config in cfg.operation.features.items():
         # Extract feature info (dtype, shape, names)
         shape = feature_config.get("shape")
+        dtype = feature_config.get("dtype")
         # Convert list to tuple if needed
         if isinstance(shape, list):
             shape = tuple(shape)
+        # Validate required metadata fields
+        if dtype is None:
+            raise ValueError(f"Feature '{feature_name}' must specify a 'dtype' (data type)")
+        if shape is None:
+            raise ValueError(f"Feature '{feature_name}' must specify a 'shape'")
 
         feature_info = {
-            "dtype": feature_config.get("dtype"),
+            "dtype": dtype,
             "shape": shape,
             "names": feature_config.get("names"),
         }
