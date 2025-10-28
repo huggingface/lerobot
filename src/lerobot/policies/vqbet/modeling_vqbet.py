@@ -19,6 +19,7 @@
 import warnings
 from collections import deque
 from collections.abc import Callable
+from typing import Any
 
 import einops
 import numpy as np
@@ -47,7 +48,7 @@ class VQBeTPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: VQBeTConfig | None = None,
-    ):
+    ) -> None:
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -56,6 +57,7 @@ class VQBeTPolicy(PreTrainedPolicy):
                 that they will be passed with a call to `load_state_dict` before the policy is used.
         """
         super().__init__(config)
+        assert config is not None  # for type checker
         config.validate_features()
         self.config = config
 
@@ -63,7 +65,7 @@ class VQBeTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> list[dict[str, Any]]:
         vqvae_params = (
             list(self.vqbet.action_head.vqvae_model.encoder.parameters())
             + list(self.vqbet.action_head.vqvae_model.decoder.parameters())
@@ -103,12 +105,12 @@ class VQBeTPolicy(PreTrainedPolicy):
             },
         ]
 
-    def reset(self):
+    def reset(self) -> None:
         """
         Clear observation and action queues. Should be called on `env.reset()`
         queues are populated during rollout of the policy, they contain the n latest observations and actions
         """
-        self._queues = {
+        self._queues: dict[str, deque] = {
             OBS_IMAGES: deque(maxlen=self.config.n_obs_steps),
             OBS_STATE: deque(maxlen=self.config.n_obs_steps),
             ACTION: deque(maxlen=self.config.action_chunk_size),
@@ -201,7 +203,7 @@ class SpatialSoftmax(nn.Module):
     linear mapping (in_channels, H, W) -> (num_kp, H, W).
     """
 
-    def __init__(self, input_shape, num_kp=None):
+    def __init__(self, input_shape: tuple[int, int, int], num_kp: int | None = None) -> None:
         """
         Args:
             input_shape (list): (C, H, W) input feature map shape.
@@ -308,7 +310,7 @@ class VQBeTModel(nn.Module):
                                                       ONLY this chunk is used in rollout!
     """
 
-    def __init__(self, config: VQBeTConfig):
+    def __init__(self, config: VQBeTConfig) -> None:
         super().__init__()
         self.config = config
 
@@ -373,7 +375,7 @@ class VQBeTModel(nn.Module):
         features = self.policy(input_tokens)
         # len(self.config.input_features) is the number of different observation modes.
         # this line gets the index of action prompt tokens.
-        historical_act_pred_index = np.arange(0, n_obs_steps) * (len(self.config.input_features) + 1) + len(
+        historical_act_pred_index: np.ndarray = np.arange(0, n_obs_steps) * (len(self.config.input_features) + 1) + len(
             self.config.input_features
         )
 
@@ -402,7 +404,7 @@ class VQBeTModel(nn.Module):
 
 
 class VQBeTHead(nn.Module):
-    def __init__(self, config: VQBeTConfig):
+    def __init__(self, config: VQBeTConfig) -> None:
         """
         VQBeTHead takes output of GPT layers, and pass the feature through bin prediction head (`self.map_to_cbet_preds_bin`), and offset prediction head (`self.map_to_cbet_preds_offset`)
 
@@ -652,7 +654,7 @@ class VQBeTRgbEncoder(nn.Module):
     Same with DiffusionRgbEncoder from modeling_diffusion.py
     """
 
-    def __init__(self, config: VQBeTConfig):
+    def __init__(self, config: VQBeTConfig) -> None:
         super().__init__()
         # Set up optional preprocessing.
         if config.crop_shape is not None:

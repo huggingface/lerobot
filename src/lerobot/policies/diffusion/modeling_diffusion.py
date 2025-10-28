@@ -23,6 +23,7 @@ TODO(alexander-soare):
 import math
 from collections import deque
 from collections.abc import Callable
+from typing import Any
 
 import einops
 import numpy as np
@@ -56,7 +57,7 @@ class DiffusionPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: DiffusionConfig,
-    ):
+    ) -> None:
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -69,7 +70,7 @@ class DiffusionPolicy(PreTrainedPolicy):
         self.config = config
 
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
-        self._queues = None
+        self._queues: dict[str, deque] | None = None
 
         self.diffusion = DiffusionModel(config)
 
@@ -78,7 +79,7 @@ class DiffusionPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.diffusion.parameters()
 
-    def reset(self):
+    def reset(self) -> None:
         """Clear observation and action queues. Should be called on `env.reset()`"""
         self._queues = {
             OBS_STATE: deque(maxlen=self.config.n_obs_steps),
@@ -93,6 +94,7 @@ class DiffusionPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         # stack n latest observations from the queue
+        assert self._queues is not None  # for type checker
         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
         actions = self.diffusion.generate_actions(batch, noise=noise)
 
@@ -128,6 +130,7 @@ class DiffusionPolicy(PreTrainedPolicy):
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         # NOTE: It's important that this happens after stacking the images into a single key.
+        assert self._queues is not None  # for type checker
         self._queues = populate_queues(self._queues, batch)
 
         if len(self._queues[ACTION]) == 0:
@@ -147,7 +150,7 @@ class DiffusionPolicy(PreTrainedPolicy):
         return loss, None
 
 
-def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
+def _make_noise_scheduler(name: str, **kwargs: Any) -> DDPMScheduler | DDIMScheduler:
     """
     Factory for noise scheduler instances of the requested type. All kwargs are passed
     to the scheduler.
@@ -161,7 +164,7 @@ def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMSche
 
 
 class DiffusionModel(nn.Module):
-    def __init__(self, config: DiffusionConfig):
+    def __init__(self, config: DiffusionConfig) -> None:
         super().__init__()
         self.config = config
 
@@ -388,7 +391,7 @@ class SpatialSoftmax(nn.Module):
     linear mapping (in_channels, H, W) -> (num_kp, H, W).
     """
 
-    def __init__(self, input_shape, num_kp=None):
+    def __init__(self, input_shape: tuple[int, int, int], num_kp: int | None = None) -> None:
         """
         Args:
             input_shape (list): (C, H, W) input feature map shape.
@@ -442,7 +445,7 @@ class DiffusionRgbEncoder(nn.Module):
     Includes the ability to normalize and crop the image first.
     """
 
-    def __init__(self, config: DiffusionConfig):
+    def __init__(self, config: DiffusionConfig) -> None:
         super().__init__()
         # Set up optional preprocessing.
         if config.crop_shape is not None:
@@ -548,7 +551,7 @@ def _replace_submodules(
 class DiffusionSinusoidalPosEmb(nn.Module):
     """1D sinusoidal positional embeddings as in Attention is All You Need."""
 
-    def __init__(self, dim: int):
+    def __init__(self, dim: int) -> None:
         super().__init__()
         self.dim = dim
 
@@ -565,7 +568,7 @@ class DiffusionSinusoidalPosEmb(nn.Module):
 class DiffusionConv1dBlock(nn.Module):
     """Conv1d --> GroupNorm --> Mish"""
 
-    def __init__(self, inp_channels, out_channels, kernel_size, n_groups=8):
+    def __init__(self, inp_channels: int, out_channels: int, kernel_size: int, n_groups: int = 8) -> None:
         super().__init__()
 
         self.block = nn.Sequential(
@@ -574,7 +577,7 @@ class DiffusionConv1dBlock(nn.Module):
             nn.Mish(),
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         return self.block(x)
 
 
@@ -584,7 +587,7 @@ class DiffusionConditionalUnet1d(nn.Module):
     Note: this removes local conditioning as compared to the original diffusion policy code.
     """
 
-    def __init__(self, config: DiffusionConfig, global_cond_dim: int):
+    def __init__(self, config: DiffusionConfig, global_cond_dim: int) -> None:
         super().__init__()
 
         self.config = config
@@ -619,8 +622,9 @@ class DiffusionConditionalUnet1d(nn.Module):
             self.down_modules.append(
                 nn.ModuleList(
                     [
-                        DiffusionConditionalResidualBlock1d(dim_in, dim_out, **common_res_block_kwargs),
-                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),
+                        # TODO(#1720): MyPy cannot infer **kwargs types when unpacking dict to typed parameters
+                        DiffusionConditionalResidualBlock1d(dim_in, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
+                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
                         # Downsample as long as it is not the last block.
                         nn.Conv1d(dim_out, dim_out, 3, 2, 1) if not is_last else nn.Identity(),
                     ]
@@ -628,13 +632,14 @@ class DiffusionConditionalUnet1d(nn.Module):
             )
 
         # Processing in the middle of the auto-encoder.
+        # TODO(#1720): MyPy cannot infer **kwargs types when unpacking dict to typed parameters
         self.mid_modules = nn.ModuleList(
             [
                 DiffusionConditionalResidualBlock1d(
-                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
+                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs  # type: ignore[arg-type]
                 ),
                 DiffusionConditionalResidualBlock1d(
-                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
+                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs  # type: ignore[arg-type]
                 ),
             ]
         )
@@ -647,8 +652,9 @@ class DiffusionConditionalUnet1d(nn.Module):
                 nn.ModuleList(
                     [
                         # dim_in * 2, because it takes the encoder's skip connection as well
-                        DiffusionConditionalResidualBlock1d(dim_in * 2, dim_out, **common_res_block_kwargs),
-                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),
+                        # TODO(#1720): MyPy cannot infer **kwargs types when unpacking dict to typed parameters
+                        DiffusionConditionalResidualBlock1d(dim_in * 2, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
+                        DiffusionConditionalResidualBlock1d(dim_out, dim_out, **common_res_block_kwargs),  # type: ignore[arg-type]
                         # Upsample as long as it is not the last block.
                         nn.ConvTranspose1d(dim_out, dim_out, 4, 2, 1) if not is_last else nn.Identity(),
                     ]
@@ -660,7 +666,7 @@ class DiffusionConditionalUnet1d(nn.Module):
             nn.Conv1d(config.down_dims[0], config.action_feature.shape[0], 1),
         )
 
-    def forward(self, x: Tensor, timestep: Tensor | int, global_cond=None) -> Tensor:
+    def forward(self, x: Tensor, timestep: Tensor | int, global_cond: Tensor | None = None) -> Tensor:
         """
         Args:
             x: (B, T, input_dim) tensor for input to the Unet.
@@ -718,7 +724,7 @@ class DiffusionConditionalResidualBlock1d(nn.Module):
         # Set to True to do scale modulation with FiLM as well as bias modulation (defaults to False meaning
         # FiLM just modulates bias).
         use_film_scale_modulation: bool = False,
-    ):
+    ) -> None:
         super().__init__()
 
         self.use_film_scale_modulation = use_film_scale_modulation
