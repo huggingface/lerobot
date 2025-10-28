@@ -170,8 +170,7 @@ class RobotEnv(gym.Env):
         obs_dict = self.robot.get_observation()
         raw_joint_joint_position = {f"{name}.pos": obs_dict[f"{name}.pos"] for name in self._joint_names}
         joint_positions = np.array([raw_joint_joint_position[f"{name}.pos"] for name in self._joint_names])
-        print(f"{obs_dict=}")
-        print(f"{self._image_keys=}")
+
         images = {key: obs_dict[key] for key in self._image_keys}
 
         return {"agent_pos": joint_positions, "pixels": images, **raw_joint_joint_position}
@@ -614,7 +613,6 @@ def control_loop(
             REWARD: {"dtype": "float32", "shape": (1,), "names": None},
             DONE: {"dtype": "bool", "shape": (1,), "names": None},
         }
-        print(f"{features=}")
         if use_gripper:
             features["complementary_info.discrete_penalty"] = {
                 "dtype": "float32",
@@ -635,7 +633,6 @@ def control_loop(
                     "shape": value.squeeze(0).shape,
                     "names": ["channels", "height", "width"],
                 }
-                print(f"----------------------{key} : {features[key]}")
 
         # Create dataset
         dataset = LeRobotDataset.create(
@@ -677,17 +674,6 @@ def control_loop(
                 for k, v in transition[TransitionKey.OBSERVATION].items()
                 if isinstance(v, torch.Tensor)
             }
-
-            print("=== DEBUG: Checking image data shapes ===")
-            image_keys_in_features = []
-            for feature_key in features.keys():
-                if 'image' in feature_key:
-                    # 提取实际的observation key（去掉前缀）
-                    if feature_key.startswith('observation.images.'):
-                        obs_key = feature_key.replace('observation.images.', '')
-                        image_keys_in_features.append(obs_key)
-                        print(f"Image feature: {feature_key} -> expects {obs_key} with shape {features[feature_key]['shape']}")
-
             # Use teleop_action if available, otherwise use the action from the transition
             action_to_record = transition[TransitionKey.COMPLEMENTARY_DATA].get(
                 "teleop_action", transition[TransitionKey.ACTION]
@@ -698,7 +684,6 @@ def control_loop(
                 REWARD: np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
                 DONE: np.array([terminated or truncated], dtype=bool),
             }
-            print(f"------------------\n{frame[ACTION]=}")
             if use_gripper:
                 discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
                 frame["complementary_info.discrete_penalty"] = np.array([discrete_penalty], dtype=np.float32)
