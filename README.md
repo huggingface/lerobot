@@ -8,7 +8,7 @@
 > - Verified with Nintendo Switch Joy-Con controller integration  
 > - Verified with Quest 3 AR control
 
-Networking / multidevice / mode swtiching support is in this [repo](https://github.com/bingogome/brainbot)
+Wireless networking / multidevice / mode swtiching support is in this [repo](https://github.com/bingogome/brainbot)
 
 ---
 
