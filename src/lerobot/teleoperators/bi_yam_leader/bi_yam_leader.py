@@ -75,6 +75,27 @@ class YamLeaderClient:
         if self._client is None:
             raise RuntimeError("Client not connected")
         return self._client.get_observations().result()
+    
+    def get_gripper_from_encoder(self) -> float:
+        """
+        Try to get gripper state from teaching handle encoder button.
+        Returns a value between 0 (closed) and 1 (open).
+        Falls back to 1.0 (open) if not available.
+        """
+        if self._client is None:
+            raise RuntimeError("Client not connected")
+        try:
+            # Try to get encoder state if the server exposes it
+            # This requires custom method in the i2rt server
+            obs = self._client.get_observations().result()
+            # Check if encoder button data is available in observations
+            # The encoder button state might be in io_inputs or similar field
+            if "io_inputs" in obs:
+                # Button pressed = closed gripper (0), not pressed = open (1)
+                return 0.0 if obs["io_inputs"][0] > 0.5 else 1.0
+            return 1.0  # Default to open if no encoder data
+        except Exception:
+            return 1.0  # Default to open on any error
 
 
 class BiYamLeader(Teleoperator):
@@ -184,8 +205,8 @@ class BiYamLeader(Teleoperator):
         """
         Get action from both leader arms by reading their current joint positions.
         
-        For teaching handles (no physical gripper), we add a default gripper position
-        to match the follower arm's expected 7 DOFs (6 joints + 1 gripper).
+        For teaching handles (no physical gripper), we try to read encoder button state
+        to control the gripper, falling back to fully open if not available.
 
         Returns:
             Dictionary with joint positions for both arms (including gripper)
@@ -196,12 +217,13 @@ class BiYamLeader(Teleoperator):
         left_obs = self.left_arm.get_observations()
         left_joint_pos = left_obs["joint_pos"]
         
-        # If no gripper (teaching handle), add default gripper position (fully open = 1.0)
+        # Handle gripper: either from physical gripper or teaching handle encoder
         if "gripper_pos" in left_obs:
             left_joint_pos = np.concatenate([left_joint_pos, left_obs["gripper_pos"]])
         else:
-            # Teaching handle: add default gripper value (1.0 = fully open)
-            left_joint_pos = np.concatenate([left_joint_pos, [1.0]])
+            # Teaching handle: try to get gripper from encoder button
+            left_gripper = self.left_arm.get_gripper_from_encoder()
+            left_joint_pos = np.concatenate([left_joint_pos, [left_gripper]])
 
         # Add with "left_" prefix
         for i, pos in enumerate(left_joint_pos):
@@ -211,12 +233,13 @@ class BiYamLeader(Teleoperator):
         right_obs = self.right_arm.get_observations()
         right_joint_pos = right_obs["joint_pos"]
         
-        # If no gripper (teaching handle), add default gripper position (fully open = 1.0)
+        # Handle gripper: either from physical gripper or teaching handle encoder
         if "gripper_pos" in right_obs:
             right_joint_pos = np.concatenate([right_joint_pos, right_obs["gripper_pos"]])
         else:
-            # Teaching handle: add default gripper value (1.0 = fully open)
-            right_joint_pos = np.concatenate([right_joint_pos, [1.0]])
+            # Teaching handle: try to get gripper from encoder button
+            right_gripper = self.right_arm.get_gripper_from_encoder()
+            right_joint_pos = np.concatenate([right_joint_pos, [right_gripper]])
 
         # Add with "right_" prefix
         for i, pos in enumerate(right_joint_pos):
