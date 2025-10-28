@@ -809,7 +809,7 @@ class VLAFlowMatching(nn.Module):
                 prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
                 execution_horizon = kwargs.get("execution_horizon", self.config.rtc_config.execution_horizon)
 
-                v_t, x_t, correction, x1_t, error = self.rtc_processor.denoise_step(
+                v_t, correction, x1_t, error = self.rtc_processor.denoise_step(
                     x_t=x_t,
                     prev_chunk_left_over=prev_chunk_left_over,
                     inference_delay=inference_delay,
@@ -943,106 +943,6 @@ class VLAFlowMatching(nn.Module):
             self.denoise_step_counter = 0
 
         return x_t
-
-    def rtc_alternative_denoise(
-        self,
-        x_t,
-        bsize,
-        dt,
-        prefix_pad_masks,
-        past_key_values,
-        device,
-        execution_horizon,
-        inference_delay,
-        prev_chunk_left_over,
-    ):
-        """
-        Real-time chunking (RTC) denoising.
-        Parameters:
-        - noise: the initial noise to denoise
-        - bsize: batch size
-        - dt: time step
-        - prefix_pad_masks: the padding masks for the prefix
-        - past_key_values: the past key values for the prefix
-        - device: the device to run the denoising on
-        - t: number of steps since the start of the previous chunk
-        - d: number of steps to not blend with the previous chunk (set to inference latency)
-        - soft_mask_length: number of steps to blend with the previous chunk
-        Reference:
-        https://www.physicalintelligence.company/download/real_time_chunking.pdf
-        """
-
-        time = torch.tensor(1.0, device=device)
-
-        # Lists to track values from ALL denoising steps for plotting
-        all_v_t = []
-        all_x_t = []
-        all_x1_t = []
-        all_correction = []
-        all_error = []
-
-        while time >= -dt / 2:
-            tau = 1 - time  # tau goes from 0 to 1, to be consistent with the paper
-            # ΠGDM guidance
-
-            batch_size = x_t.shape[0]
-            action_chunk_size = x_t.shape[1]
-            action_dim = x_t.shape[2]
-
-            if (
-                prev_chunk_left_over.shape[1] < action_chunk_size
-                or prev_chunk_left_over.shape[2] < action_dim
-            ):
-                padded = torch.zeros(batch_size, action_chunk_size, action_dim).to(x_t.device)
-                padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = (
-                    prev_chunk_left_over
-                )
-                prev_chunk_left_over = padded
-
-            weights = self.rtc_processor.get_prefix_weights(
-                inference_delay, execution_horizon, action_chunk_size
-            ).to(x_t.device)
-
-            weights = weights.unsqueeze(0).unsqueeze(-1)
-
-            def denoise_step_partial_call(input_x_t):
-                result = self.denoise_step(
-                    x_t=input_x_t,
-                    prefix_pad_masks=prefix_pad_masks,
-                    past_key_values=past_key_values,
-                    timestep=time.expand(batch_size),
-                )
-                return result
-
-            x_t = x_t.detach()  # noqa: N806
-
-            v_t, x_t, correction, x1_t, err = self.rtc_processor.denoise_step(
-                x_t=x_t,
-                prev_chunk_left_over=prev_chunk_left_over,
-                inference_delay=inference_delay,
-                time=time,
-                original_denoise_step_partial=denoise_step_partial_call,
-                execution_horizon=execution_horizon,
-            )
-
-            # Store values from this step for plotting
-            all_v_t.append(-v_t.detach())  # Negate back to get original v_t
-            all_x1_t.append(x1_t.detach())
-            all_correction.append(correction.detach())
-            all_error.append(err.detach())
-
-            # integration step  Eq. 1
-            # x_t += dt * v_t
-            # time += dt
-
-            x_t += dt * v_t
-
-            # Store x_t after the integration step
-            all_x_t.append(x_t.clone())
-
-            time += dt
-
-        return all_v_t, x_t, all_correction, all_x1_t, all_error, all_x_t
 
     def denoise_step(
         self,

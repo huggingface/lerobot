@@ -34,6 +34,14 @@ from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 logger = logging.getLogger(__name__)
 
+# Optional import for gradient visualization
+try:
+    from torchviz import make_dot
+    TORCHVIZ_AVAILABLE = True
+except ImportError:
+    TORCHVIZ_AVAILABLE = False
+    logger.debug("torchviz not available - gradient visualization disabled")
+
 
 def plot_waypoints(axs, chunk, start_from: int = 0, color: str | None = None, label: str | None = None):
     chunk = chunk[0].cpu().numpy()
@@ -65,6 +73,8 @@ class RTCProcessor:
         self,
         rtc_config: RTCConfig,
         verbose: bool = False,
+        visualize_gradients: bool = False,
+        viz_output_dir: str = ".",
     ):
         """Initialize RTC processor.
 
@@ -76,9 +86,20 @@ class RTCProcessor:
                   (ZEROS, ONES, LINEAR, EXP)
                 - max_guidance_weight: upper bound applied to the guidance scale
             verbose (bool): Enable verbose debug logging.
+            visualize_gradients (bool): Enable gradient visualization using torchviz.
+            viz_output_dir (str): Directory to save gradient visualizations.
         """
         self.rtc_config = rtc_config
         self.verbose = verbose
+        self.visualize_gradients = visualize_gradients and TORCHVIZ_AVAILABLE
+        self.viz_output_dir = viz_output_dir
+        self._viz_counter = 0
+
+        if visualize_gradients and not TORCHVIZ_AVAILABLE:
+            logger.warning(
+                "visualize_gradients=True but torchviz is not installed. "
+                "Install it with: uv pip install torchviz graphviz"
+            )
 
     @staticmethod
     def _tensor_stats(tensor: Tensor, name: str = "tensor") -> str:
@@ -104,6 +125,76 @@ class RTCProcessor:
             f"std={tensor.std().item():.4f}"
         )
         return stats
+
+    def _visualize_correction_graph(self, correction, x_t, v_t, x1_t, err, time, weights, prev_chunk):
+        """Visualize the computational graph for the correction term.
+
+        Args:
+            correction: The correction gradient tensor
+            x_t: Current latent/state
+            v_t: Velocity from denoiser
+            x1_t: Denoised prediction (x_t - time * v_t)
+            err: Weighted error term
+            time: Time parameter
+            weights: Prefix attention weights
+            prev_chunk: Previous chunk leftover
+
+        Saves two PNG files:
+            1. rtc_correction_forward_graph_<counter>.png - Shows forward computation to err
+            2. rtc_correction_gradient_graph_<counter>.png - Shows gradient computation
+        """
+        if not TORCHVIZ_AVAILABLE:
+            return
+
+        import os
+        os.makedirs(self.viz_output_dir, exist_ok=True)
+
+        # Visualize the forward graph leading to the error term
+        try:
+            dot_forward = make_dot(
+                err.mean(),
+                params={
+                    'x_t': x_t,
+                    'v_t': v_t,
+                    'x1_t': x1_t,
+                    'prev_chunk': prev_chunk,
+                    'weights': weights,
+                },
+                show_attrs=True,
+                show_saved=True
+            )
+            dot_forward.format = 'png'
+            forward_path = os.path.join(
+                self.viz_output_dir,
+                f'rtc_correction_forward_graph_{self._viz_counter}'
+            )
+            dot_forward.render(forward_path, cleanup=True)
+            logger.info(f"Forward graph saved to {forward_path}.png")
+        except Exception as e:
+            logger.warning(f"Failed to create forward graph: {e}")
+
+        # Visualize the correction gradient itself
+        try:
+            dot_correction = make_dot(
+                correction.mean(),
+                params={
+                    'x_t': x_t,
+                    'correction': correction,
+                },
+                show_attrs=True,
+                show_saved=True
+            )
+            dot_correction.format = 'png'
+            correction_path = os.path.join(
+                self.viz_output_dir,
+                f'rtc_correction_gradient_graph_{self._viz_counter}'
+            )
+            dot_correction.render(correction_path, cleanup=True)
+            logger.info(f"Correction gradient graph saved to {correction_path}.png")
+        except Exception as e:
+            logger.warning(f"Failed to create correction gradient graph: {e}")
+
+        self._viz_counter += 1
 
     def denoise_step(
         self,
@@ -155,7 +246,7 @@ class RTCProcessor:
         # So we need to invert the time
         tau = 1 - time
 
-        # x_t = x_t.clone().detach().requires_grad_(True)
+        x_t = x_t.clone().detach()
 
         if prev_chunk_left_over is None:
             if self.verbose:
@@ -205,6 +296,7 @@ class RTCProcessor:
         assert prev_chunk_left_over.shape == x_t.shape, (
             "The padded previous chunk must be the same size as the input tensor"
         )
+
         weights = (
             self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
             .to(x_t.device)
@@ -212,29 +304,27 @@ class RTCProcessor:
             .unsqueeze(-1)
         )
 
-        v_t = original_denoise_step_partial(x_t)
-
-        x_t.requires_grad_(True)
         with torch.enable_grad():
+            v_t = original_denoise_step_partial(x_t)
+            x_t.requires_grad_(True)
+
             x1_t = x_t - time * v_t  # noqa: N806
             err = (prev_chunk_left_over - x1_t) * weights
             grad_outputs = err.clone().detach()
             correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
 
-        # x_t.requires_grad_(True)
-        # with torch.enable_grad():
-        #     # Recompute v_t inside gradient context so gradients flow through model
-        #     v_t = original_denoise_step_partial(x_t)
-
-        #     # Compute x1_t using recomputed v_t
-        #     x1_t = x_t - time * v_t
-
-        #     # Compute weighted error
-        #     err = (prev_chunk_left_over - x1_t) * weights
-
-        #     # Compute gradient using torch.autograd.grad (same as rtc_alternative_denoise)
-        #     grad_outputs = err.clone().detach()
-        #     correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=True)[0]
+        # Visualize correction gradient graph if enabled
+        if self.visualize_gradients:
+            self._visualize_correction_graph(
+                correction=correction,
+                x_t=x_t,
+                v_t=v_t,
+                x1_t=x1_t,
+                err=err,
+                time=time,
+                weights=weights,
+                prev_chunk=prev_chunk_left_over
+            )
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
         squared_one_minus_tau = (1 - tau) ** 2
@@ -252,7 +342,7 @@ class RTCProcessor:
             x1_t = x1_t.squeeze(0)
             error = error.squeeze(0)
 
-        return result, x_t, correction, x1_t, err
+        return result, correction, x1_t, err
 
     def get_prefix_weights(self, start, end, total):
         start = min(start, end)
