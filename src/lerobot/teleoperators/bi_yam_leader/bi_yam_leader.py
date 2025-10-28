@@ -183,17 +183,25 @@ class BiYamLeader(Teleoperator):
     def get_action(self) -> dict[str, float]:
         """
         Get action from both leader arms by reading their current joint positions.
+        
+        For teaching handles (no physical gripper), we add a default gripper position
+        to match the follower arm's expected 7 DOFs (6 joints + 1 gripper).
 
         Returns:
-            Dictionary with joint positions for both arms
+            Dictionary with joint positions for both arms (including gripper)
         """
         action_dict = {}
 
         # Get left arm observations
         left_obs = self.left_arm.get_observations()
         left_joint_pos = left_obs["joint_pos"]
+        
+        # If no gripper (teaching handle), add default gripper position (fully open = 1.0)
         if "gripper_pos" in left_obs:
             left_joint_pos = np.concatenate([left_joint_pos, left_obs["gripper_pos"]])
+        else:
+            # Teaching handle: add default gripper value (1.0 = fully open)
+            left_joint_pos = np.concatenate([left_joint_pos, [1.0]])
 
         # Add with "left_" prefix
         for i, pos in enumerate(left_joint_pos):
@@ -202,8 +210,13 @@ class BiYamLeader(Teleoperator):
         # Get right arm observations
         right_obs = self.right_arm.get_observations()
         right_joint_pos = right_obs["joint_pos"]
+        
+        # If no gripper (teaching handle), add default gripper position (fully open = 1.0)
         if "gripper_pos" in right_obs:
             right_joint_pos = np.concatenate([right_joint_pos, right_obs["gripper_pos"]])
+        else:
+            # Teaching handle: add default gripper value (1.0 = fully open)
+            right_joint_pos = np.concatenate([right_joint_pos, [1.0]])
 
         # Add with "right_" prefix
         for i, pos in enumerate(right_joint_pos):
