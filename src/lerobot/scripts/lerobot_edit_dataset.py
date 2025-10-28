@@ -281,11 +281,8 @@ def handle_add_feature(cfg: EditDatasetConfig) -> None:
         raise ValueError("features must be specified for add_feature operation")
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
-
-    # Get base directory (parent of dataset root)
-    base_dir = dataset.root.parent if cfg.root else None
     output_repo_id, output_dir = get_output_path(
-        cfg.repo_id, cfg.new_repo_id, base_dir
+        cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
     )
 
     if cfg.new_repo_id is None:
