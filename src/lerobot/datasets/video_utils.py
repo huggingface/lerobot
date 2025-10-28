@@ -30,7 +30,6 @@ import pyarrow as pa
 import torch
 import torchvision
 from datasets.features.features import register_feature
-from PIL import Image
 
 
 def get_safe_default_codec():
@@ -312,7 +311,12 @@ def encode_video_frames(
     log_level: int | None = av.logging.ERROR,
     overwrite: bool = False,
 ) -> None:
-    """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
+    """More info on ffmpeg arguments tuning on `benchmark/video/README.md`.
+
+    This implementation uses direct ffmpeg commands via subprocess instead of pyav bindings.
+    """
+    import subprocess
+
     # Check encoder availability
     if vcodec not in ["h264", "hevc", "libsvtav1"]:
         raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: h264, hevc, libsvtav1.")
@@ -321,7 +325,7 @@ def encode_video_frames(
     imgs_dir = Path(imgs_dir)
 
     if video_path.exists() and not overwrite:
-        logging.warning(f"Video file already exists: {video_path}. Skipping encoding.")
+        logging.warning("Video file already exists: %s. Skipping encoding.", video_path)
         return
 
     video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -329,7 +333,8 @@ def encode_video_frames(
     # Encoders/pixel formats incompatibility check
     if (vcodec == "libsvtav1" or vcodec == "hevc") and pix_fmt == "yuv444p":
         logging.warning(
-            f"Incompatible pixel format 'yuv444p' for codec {vcodec}, auto-selecting format 'yuv420p'"
+            "Incompatible pixel format 'yuv444p' for codec %s, auto-selecting format 'yuv420p'",
+            vcodec,
         )
         pix_fmt = "yuv420p"
 
@@ -339,55 +344,94 @@ def encode_video_frames(
         glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
     )
 
-    # Define video output frame size (assuming all input frames are the same size)
+    # Check if input frames exist
     if len(input_list) == 0:
         raise FileNotFoundError(f"No images found in {imgs_dir}.")
-    with Image.open(input_list[0]) as dummy_image:
-        width, height = dummy_image.size
 
-    # Define video codec options
-    video_options = {}
+    # Build ffmpeg command
+    # Input pattern for sequential frames
+    input_pattern = str(imgs_dir / "frame-%06d.png")
 
+    # Start building the command
+    cmd = ["ffmpeg"]
+
+    # Set log level for ffmpeg
+    ffmpeg_log_level = "quiet"
+    if log_level is not None:
+        # Map pyav log levels to ffmpeg log levels
+        log_level_map = {
+            av.logging.PANIC: "panic",
+            av.logging.FATAL: "fatal",
+            av.logging.ERROR: "error",
+            av.logging.WARNING: "warning",
+            av.logging.INFO: "info",
+            av.logging.VERBOSE: "verbose",
+            av.logging.DEBUG: "debug",
+        }
+        ffmpeg_log_level = log_level_map.get(log_level, "error")
+    cmd.extend(["-loglevel", ffmpeg_log_level])
+
+    # Overwrite output file if needed
+    if overwrite:
+        cmd.append("-y")
+    else:
+        cmd.append("-n")
+
+    # Input options
+    cmd.extend(
+        [
+            "-framerate",
+            str(fps),
+            "-i",
+            input_pattern,
+        ]
+    )
+
+    # Video codec
+    cmd.extend(["-c:v", vcodec])
+
+    # Pixel format
+    cmd.extend(["-pix_fmt", pix_fmt])
+
+    # GOP size (keyframe interval)
     if g is not None:
-        video_options["g"] = str(g)
+        cmd.extend(["-g", str(g)])
 
+    # CRF (Constant Rate Factor) for quality
     if crf is not None:
-        video_options["crf"] = str(crf)
+        cmd.extend(["-crf", str(crf)])
 
-    if fast_decode:
-        key = "svtav1-params" if vcodec == "libsvtav1" else "tune"
-        value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
-        video_options[key] = value
+    # Codec-specific options
+    if vcodec == "libsvtav1":
+        # Build svtav1-params string
+        svtav1_params = ""  # Empty for now
+        if fast_decode:
+            svtav1_params += f"fast-decode={fast_decode}"
+        cmd.extend(["-svtav1-params", svtav1_params])
+    elif fast_decode and vcodec in ["h264", "hevc"]:
+        cmd.extend(["-tune", "fastdecode"])
 
-    # Set logging level
-    if log_level is not None:
-        # "While less efficient, it is generally preferable to modify logging with Python's logging"
-        logging.getLogger("libav").setLevel(log_level)
+    # Output file
+    cmd.append(str(video_path))
 
-    # Create and open output file (overwrite by default)
-    with av.open(str(video_path), "w") as output:
-        output_stream = output.add_stream(vcodec, fps, options=video_options)
-        output_stream.pix_fmt = pix_fmt
-        output_stream.width = width
-        output_stream.height = height
-
-        # Loop through input frames and encode them
-        for input_data in input_list:
-            with Image.open(input_data) as input_image:
-                input_image = input_image.convert("RGB")
-                input_frame = av.VideoFrame.from_image(input_image)
-                packet = output_stream.encode(input_frame)
-                if packet:
-                    output.mux(packet)
-
-        # Flush the encoder
-        packet = output_stream.encode()
-        if packet:
-            output.mux(packet)
-
-    # Reset logging level
-    if log_level is not None:
-        av.logging.restore_default_callback()
+    # Run ffmpeg command
+    try:
+        subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise OSError(
+            f"Video encoding failed with return code {e.returncode}.\n"
+            f"Command: {' '.join(cmd)}\n"
+            f"Error output: {e.stderr}"
+        ) from e
+    except FileNotFoundError:
+        raise OSError(
+            "ffmpeg command not found. Please ensure ffmpeg is installed and available in PATH."
+        ) from None
 
     if not video_path.exists():
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")
