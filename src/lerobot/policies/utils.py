@@ -25,7 +25,7 @@ from torch import nn
 from lerobot.datasets.utils import build_dataset_frame
 from lerobot.processor import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
-
+from lerobot.configs.types import FeatureType
 
 def populate_queues(
     queues: dict[str, deque], batch: dict[str, torch.Tensor], exclude_keys: list[str] | None = None
@@ -198,3 +198,35 @@ def make_robot_action(action_tensor: PolicyAction, ds_features: dict[str, dict])
         f"{name}": float(action_tensor[i]) for i, name in enumerate(action_names)
     }
     return act_processed_policy
+
+def raise_feature_mismatch_error(provided_features, expected_features):
+    """
+    Raises a standardized ValueError for feature mismatches between dataset/environment and policy config.
+    """
+    missing = expected_features - provided_features
+    extra = provided_features - expected_features
+    # TODO (jadechoghari): provide a dynamic rename map suggestion to the user.
+    raise ValueError(
+        f"Feature mismatch between dataset/environment and policy config.\n"
+        f"- Missing features: {sorted(missing) if missing else 'None'}\n"
+        f"- Extra features: {sorted(extra) if extra else 'None'}\n\n"
+        f"Please ensure your dataset and policy use consistent feature names.\n"
+        f"If your dataset uses different observation keys (e.g., cameras named differently), "
+        f"use the `--rename_map` argument, for example:\n"
+        f'  --rename_map=\'{{"observation.images.left": "observation.images.camera1", '
+        f'"observation.images.top": "observation.images.camera2"}}\''
+    )
+
+def check_visuals(cfg, features):
+    expected_visuals = {k for k, v in cfg.input_features.items() if v.type == FeatureType.VISUAL}
+    provided_visuals = {k for k, v in features.items() if v.type == FeatureType.VISUAL}
+
+    if cfg.type in ["smolvla", "pi0", "pi05"]:
+        missing_visuals = expected_visuals - provided_visuals
+        if len(missing_visuals) != getattr(cfg, "empty_cameras", 0):
+            raise ValueError(
+                f"Expected {cfg.empty_cameras} missing visual features but found {len(missing_visuals)}.\n"
+                f"Missing visuals: {sorted(missing_visuals)}"
+            )
+    if not expected_visuals.issubset(provided_visuals):
+        raise_feature_mismatch_error(provided_visuals, expected_visuals)
