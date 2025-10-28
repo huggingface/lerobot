@@ -119,6 +119,16 @@ lerobot-record \
 - `teleop.right_arm_port`: Server port for right leader arm (default: 5001)
 - `teleop.server_host`: Server hostname (default: "localhost")
 
+## Gripper Control with Teaching Handles
+
+The teaching handles don't have physical grippers, but they have an **encoder knob** that controls the follower gripper:
+
+- **Turn the encoder knob**: Controls gripper position (0 = closed, 1 = open)
+- The encoder position is automatically read by the enhanced leader server
+- The follower grippers will mirror your encoder movements in real-time
+
+The `setup_bi_yam_servers.py` script automatically uses an enhanced server for leader arms that exposes encoder data through the RPC interface.
+
 ## Architecture
 
 ### Data Flow

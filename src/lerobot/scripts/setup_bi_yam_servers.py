@@ -91,13 +91,23 @@ def find_i2rt_script():
     )
 
 
-def launch_server_process(can_channel, gripper, mode, server_port):
+def launch_server_process(can_channel, gripper, mode, server_port, use_encoder_server=False):
     """Launch a single server process for a Yam arm."""
-    try:
-        script_path = find_i2rt_script()
-    except RuntimeError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    if use_encoder_server:
+        # Use enhanced server with encoder support for teaching handles
+        script_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "yam_server_with_encoder.py"
+        )
+        if not os.path.exists(script_path):
+            print(f"Error: Enhanced server script not found at {script_path}")
+            sys.exit(1)
+    else:
+        # Use standard i2rt server for followers
+        try:
+            script_path = find_i2rt_script()
+        except RuntimeError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
 
     cmd = [
         sys.executable,
@@ -112,7 +122,8 @@ def launch_server_process(can_channel, gripper, mode, server_port):
         str(server_port),
     ]
 
-    print(f"Starting: {' '.join(cmd)}")
+    server_type = "Enhanced (Encoder)" if use_encoder_server else "Standard"
+    print(f"Starting [{server_type}]: {' '.join(cmd)}")
 
     try:
         process = subprocess.Popen(cmd)
@@ -133,33 +144,37 @@ def main():
 
         # Define the server processes to launch
         server_configs = [
-            # Right follower arm
+            # Right follower arm (standard server)
             {
                 "can_channel": "can_follower_r",
                 "gripper": "linear_4310",
                 "mode": "follower",
                 "server_port": 1234,
+                "use_encoder_server": False,
             },
-            # Left follower arm
+            # Left follower arm (standard server)
             {
                 "can_channel": "can_follower_l",
                 "gripper": "linear_4310",
                 "mode": "follower",
                 "server_port": 1235,
+                "use_encoder_server": False,
             },
-            # Right leader arm (teaching handle)
+            # Right leader arm (enhanced server with encoder support)
             {
                 "can_channel": "can_leader_r",
                 "gripper": "yam_teaching_handle",
-                "mode": "follower",  # Note: We use follower mode to expose as a read-only server
+                "mode": "follower",
                 "server_port": 5001,
+                "use_encoder_server": True,  # Use enhanced server for encoder data
             },
-            # Left leader arm (teaching handle)
+            # Left leader arm (enhanced server with encoder support)
             {
                 "can_channel": "can_leader_l",
                 "gripper": "yam_teaching_handle",
-                "mode": "follower",  # Note: We use follower mode to expose as a read-only server
+                "mode": "follower",
                 "server_port": 5002,
+                "use_encoder_server": True,  # Use enhanced server for encoder data
             },
         ]
 
