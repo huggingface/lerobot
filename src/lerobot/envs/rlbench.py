@@ -24,17 +24,34 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from rlbench.environment import Environment
 from rlbench.backend.task import Task
 from rlbench.gym import RLBenchEnv as RLBenchGymEnv
-from rlbench.observation_config import ObservationConfig
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import JointPosition
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.utils import name_to_task_class
 from rlbench.tasks import (FS10_V1, FS25_V1, FS50_V1, FS95_V1, MT15_V1, MT30_V1, MT55_V1, MT100_V1)
 
-os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+class AbsoluteJointPositionActionMode(MoveArmThenGripper):
+    """Absolute joint position action mode for arm and gripper.
+    
+    The arm action is first applied, followed by the gripper action.
+    """
+
+    def __init__(self):
+        # Call super
+        super(AbsoluteJointPositionActionMode, self).__init__(
+            JointPosition(absolute_mode=True),   # Arm in absolute joint positions
+            Discrete()  # Gripper in discrete open/close (<0.5 → close, >=0.5 → open)
+        )
+
+    def action_bounds(self):
+        """Returns the min and max of the action mode.
+        
+        Range is [- 2*pi, 2*pi] for each joint and [0.0, 1.0] for the gripper.
+        """
+        return np.array([-2 * np.pi] * 7 + [0.0]), np.array([2 * np.pi] * 7 + [1.0])
 
 # ---- Load configuration data from the external JSON file ----
 CONFIG_PATH = Path(__file__).parent / "rlbench_config.json"
@@ -144,7 +161,7 @@ class RLBenchEnv(gym.Env):
         self.camera_name_mapping = camera_name_mapping
 
         self._env = self._make_envs_task(self.task)
-        self._max_episode_steps = 500   # TODO: make configurable depending on task suite
+        self._max_episode_steps = 500   # TODO: make configurable depending on task suite?
         self.task_description = TASK_DESCRIPTIONS.get(self.task, "")
 
         images = {}
@@ -156,7 +173,7 @@ class RLBenchEnv(gym.Env):
                 dtype=np.uint8,
             )
 
-        if self.obs_type == "state":    # TODO: This can be implemented in RLBench!
+        if self.obs_type == "state":    # TODO: This can be implemented in RLBench, because the observation contains joint positions and gripper pose
             raise (
                 "The 'state' observation type is not supported in RLBench. "
                 "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
@@ -202,15 +219,12 @@ class RLBenchEnv(gym.Env):
         """
         return self._env.render()
 
-    def _make_envs_task(self, task: Task) -> RLBenchGymEnv:
+    def _make_envs_task(self, task: Task):
         return RLBenchGymEnv(
             task,
             observation_mode="vision",
             render_mode=self.render_mode,
-            action_mode=MoveArmThenGripper(
-                JointPosition(absolute_mode=True),   # Arm in absolute joint positions
-                Discrete()  # Gripper in discrete open/close (<0.5 → close, >=0.5 → open)
-            )
+            action_mode=AbsoluteJointPositionActionMode()
         )
 
     def _format_raw_obs(self, raw_obs: dict) -> dict[str, Any]:
@@ -226,7 +240,7 @@ class RLBenchEnv(gym.Env):
             [raw_obs["gripper_open"]],
         )
 
-        if self.obs_type == "state":    # TODO: REMOVE?
+        if self.obs_type == "state":    # TODO: this can be implemented in RLBench, because the observation contains joint positions and gripper pose
             raise NotImplementedError(
                 "'state' obs_type not implemented for RLBench. Use pixel modes instead."
             )
@@ -390,7 +404,7 @@ def create_rlbench_envs(
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 
-        for tid in selected:
+        for tid in selected:    # FIXME: this breaks!
             fns = _make_env_fns(
                 suite=suite,
                 task=suite['train'][tid],
