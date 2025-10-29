@@ -456,9 +456,9 @@ class ACFQLPolicy(
         q_vals = q_preds.mean(dim=0)
         q_loss = -q_vals.mean()
 
-        # TODO (jpizarrom): make this configurable
-        lam = 1.0 / q_preds.abs().mean().detach()
-        q_loss = lam * q_loss
+        if self.config.normalize_q_loss:
+            lam = 1.0 / q_vals.abs().mean().detach()
+            q_loss = lam * q_loss
 
         # Total loss: alpha * distillation + q_loss
         actor_onestep_flow_loss = self.config.alpha * distill_loss + q_loss
