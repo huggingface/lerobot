@@ -41,7 +41,9 @@ from pathlib import Path
 import numpy as np
 import torch
 from huggingface_hub import HfApi
-from requests import HTTPError
+
+# TODO(#1722): Install library stubs for requests
+from requests import HTTPError  # type: ignore[import-untyped]
 from tqdm import tqdm
 
 from lerobot.datasets.compute_stats import DEFAULT_QUANTILES, aggregate_stats, get_feature_stats
@@ -104,6 +106,7 @@ def process_single_episode(dataset: LeRobotDataset, episode_idx: int) -> dict:
             continue
 
         data = torch.stack(data_list).cpu().numpy()
+        axes_to_reduce: int | tuple[int, int, int]
         if dataset.features[key]["dtype"] in ["image", "video"]:
             if data.dtype == np.uint8:
                 data = data.astype(np.float32) / 255.0
@@ -257,4 +260,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()

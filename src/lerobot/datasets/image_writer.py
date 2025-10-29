@@ -144,7 +144,7 @@ class AsyncImageWriter:
     def __init__(self, num_processes: int = 0, num_threads: int = 1):
         self.num_processes = num_processes
         self.num_threads = num_threads
-        self.queue = None
+        self.queue: queue.Queue | multiprocessing.JoinableQueue | None = None
         self.threads = []
         self.processes = []
         self._stopped = False
@@ -170,6 +170,7 @@ class AsyncImageWriter:
                 self.processes.append(p)
 
     def save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path):
+        assert self.queue is not None
         if isinstance(image, torch.Tensor):
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()

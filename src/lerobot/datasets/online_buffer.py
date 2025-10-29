@@ -73,8 +73,8 @@ class OnlineBuffer(torch.utils.data.Dataset):
     def __init__(
         self,
         write_dir: str | Path,
-        data_spec: dict[str, Any] | None,
-        buffer_capacity: int | None,
+        data_spec: dict[str, Any],
+        buffer_capacity: int,
         fps: float | None = None,
         delta_timestamps: dict[str, list[float]] | dict[str, np.ndarray] | None = None,
     ):
@@ -98,16 +98,17 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 converted to dict[str, np.ndarray] for optimization purposes.
 
         """
+        self._delta_timestamps: dict[str, np.ndarray] | None = None
         self.set_delta_timestamps(delta_timestamps)
         self._fps = fps
         # Tolerance in seconds used to discard loaded frames when their timestamps are not close enough from
         # the requested frames. It is only used when `delta_timestamps` is provided.
         # minus 1e-4 to account for possible numerical error
-        self.tolerance_s = 1 / self.fps - 1e-4 if fps is not None else None
+        self.tolerance_s = 1 / self.fps - 1e-4 if self.fps is not None else None
         self._buffer_capacity = buffer_capacity
         data_spec = self._make_data_spec(data_spec, buffer_capacity)
         Path(write_dir).mkdir(parents=True, exist_ok=True)
-        self._data = {}
+        self._data: dict[str, Any] = {}
         for k, v in data_spec.items():
             self._data[k] = _make_memmap_safe(
                 filename=Path(write_dir) / k,
@@ -120,7 +121,7 @@ class OnlineBuffer(torch.utils.data.Dataset):
     def delta_timestamps(self) -> dict[str, np.ndarray] | None:
         return self._delta_timestamps
 
-    def set_delta_timestamps(self, value: dict[str, list[float]] | None):
+    def set_delta_timestamps(self, value: dict[str, list[float]] | dict[str, np.ndarray] | None):
         """Set delta_timestamps converting the values to numpy arrays.
 
         The conversion is for an optimization in the __getitem__. The loop is much slower if the arrays
@@ -194,10 +195,10 @@ class OnlineBuffer(torch.utils.data.Dataset):
             data[OnlineBuffer.INDEX_KEY] += last_data_index + 1
 
         # Insert the new data starting from next_index. It may be necessary to wrap around to the start.
-        n_surplus = max(0, new_data_length - (self._buffer_capacity - next_index))
+        n_surplus: int = max(0, new_data_length - (self._buffer_capacity - next_index))
         for k in self.data_keys:
             if n_surplus == 0:
-                slc = slice(next_index, next_index + new_data_length)
+                slc: slice = slice(next_index, next_index + new_data_length)
                 self._data[k][slc] = data[k]
                 self._data[OnlineBuffer.OCCUPANCY_MASK_KEY][slc] = True
             else:
@@ -335,7 +336,7 @@ def compute_sampler_weights(
     weights = []
 
     if len(offline_dataset) > 0:
-        offline_data_mask_indices = []
+        offline_data_mask_indices: list[int] = []
         for start_index, end_index in zip(
             offline_dataset.meta.episodes["dataset_from_index"],
             offline_dataset.meta.episodes["dataset_to_index"],
@@ -353,7 +354,7 @@ def compute_sampler_weights(
         )
 
     if online_dataset is not None and len(online_dataset) > 0:
-        online_data_mask_indices = []
+        online_data_mask_indices: list[int] = []
         episode_indices = online_dataset.get_data_by_key("episode_index")
         for episode_idx in torch.unique(episode_indices):
             where_episode = torch.where(episode_indices == episode_idx)
