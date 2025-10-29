@@ -40,6 +40,7 @@ from lerobot.processor import (
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     JointVelocityProcessorStep,
+    LeaderArmInterventionProcessorStep,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
     MotorCurrentProcessorStep,
@@ -77,7 +78,10 @@ from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
 from lerobot.utils.robot_utils import busy_wait
-from lerobot.utils.utils import log_say
+from lerobot.utils.utils import log_say, get_shape_as_tuple
+from lerobot.utils.control_utils import (
+    sanity_check_dataset_robot_compatibility,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -102,6 +106,7 @@ class GymManipulatorConfig:
     dataset: DatasetConfig
     mode: str | None = None  # Either "record", "replay", None
     device: str = "cpu"
+    resume: bool = False    # Resume recording on an existing dataset.
 
 
 def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> None:
@@ -464,7 +469,7 @@ def make_processors(
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
         AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
-        InterventionActionProcessorStep(
+        LeaderArmInterventionProcessorStep(
             use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
             terminate_on_success=terminate_on_success,
         ),
@@ -507,6 +512,113 @@ def make_processors(
     )
 
 
+def debug_observation_structure(transition: EnvTransition) -> dict:
+    """
+    Analyze and print the complete structure of observation data.
+    Returns a summary dictionary for further analysis.
+    """
+    observation = transition.get(TransitionKey.OBSERVATION, {})
+
+    print(f"\n=== OBSERVATION STRUCTURE DEBUG ===")
+    print(f"Total observation keys: {len(observation)}")
+
+    # Print all keys and their properties
+    for key, value in observation.items():
+        print(f"\n--- {key} ---")
+
+        # Handle different data types
+        if isinstance(value, (torch.Tensor, np.ndarray)):
+            print(f"  Type: {type(value)}")
+            print(f"  Shape: {value.shape}")
+            print(f"  Dtype: {value.dtype}")
+            if hasattr(value, "numel"):
+                print(f"  Num elements: {value.numel()}")
+
+            # Print sample values for small tensors
+            if hasattr(value, "numel") and value.numel() <= 10:
+                print(
+                    f"  Values: {value.tolist() if hasattr(value, 'tolist') else value}"
+                )
+            elif (
+                hasattr(value, "shape")
+                and len(value.shape) == 1
+                and value.shape[0] <= 10
+            ):
+                print(
+                    f"  Values: {value.tolist() if hasattr(value, 'tolist') else value}"
+                )
+
+        elif isinstance(value, dict):
+            print(f"  Type: dict with keys: {list(value.keys())}")
+            # Print first few items if it's a nested dict
+            for sub_key, sub_value in list(value.items())[:3]:
+                print(f"    {sub_key}: {type(sub_value)}")
+
+        else:
+            print(f"  Type: {type(value)}")
+            print(f"  Value: {value}")
+
+    # Categorize keys
+    image_keys = [k for k in observation.keys() if "image" in k.lower()]
+    state_keys = [k for k in observation.keys() if "state" in k.lower()]
+    joint_keys = [
+        k
+        for k in observation.keys()
+        if any(term in k.lower() for term in ["joint", "qpos", "angle", "position"])
+    ]
+    ee_keys = [
+        k
+        for k in observation.keys()
+        if any(term in k.lower() for term in ["ee", "end_effector", "tool", "tcp"])
+    ]
+
+    print(f"\n=== CATEGORIZED KEYS ===")
+    print(f"Image keys: {image_keys}")
+    print(f"State keys: {state_keys}")
+    print(f"Joint keys: {joint_keys}")
+    print(f"EE keys: {ee_keys}")
+
+    # Analyze observation.state in detail if it exists
+    if "observation.state" in observation:
+        state = observation["observation.state"]
+        print(f"\n=== DETAILED observation.state ANALYSIS ===")
+        if isinstance(state, torch.Tensor):
+            state_size = state.numel()
+            print(f"State vector size: {state_size}")
+
+            # Try to interpret the state vector
+            if state_size == 18:  # Based on your dataset features
+                print("State appears to be 18-dimensional")
+                print("Possible interpretation:")
+                print("  Elements 0-3: EE position (x,y,z) + gripper?")
+                print("  Elements 4-9: 6 joint positions?")
+                print("  Elements 10-17: Other state information (velocity, etc.)?")
+
+                # Print actual values
+                state_list = state.tolist()
+                print(f"First 10 elements: {state_list[:10]}")
+
+            elif state_size == 6:  # Possibly just joint positions
+                print("State appears to be 6-dimensional (possibly joint positions)")
+                print(f"Values: {state.tolist()}")
+
+            else:
+                print(f"Unknown state structure with {state_size} elements")
+                print(f"All values: {state.tolist()}")
+
+    print("=== END OBSERVATION DEBUG ===\n")
+
+    # Return summary for programmatic use
+    return {
+        "all_keys": list(observation.keys()),
+        "image_keys": image_keys,
+        "state_keys": state_keys,
+        "joint_keys": joint_keys,
+        "ee_keys": ee_keys,
+        "has_observation_state": "observation.state" in observation,
+    }
+
+
 def step_env_and_process_transition(
     env: gym.Env,
     transition: EnvTransition,
@@ -533,6 +645,7 @@ def step_env_and_process_transition(
     transition[TransitionKey.OBSERVATION] = (
         env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
     )
+
     processed_action_transition = action_processor(transition)
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
@@ -602,7 +715,7 @@ def control_loop(
     dataset = None
     if cfg.mode == "record":
         action_features = teleop_device.action_features
-        dataset_action_features = hw_to_dataset_features(action_features, ACTION, use_video=True)
+        # dataset_action_features = hw_to_dataset_features(action_features, ACTION, use_video=True)
         features = {
             # **dataset_action_features,
             "action": {
@@ -624,26 +737,33 @@ def control_loop(
             if key == OBS_STATE:
                 features[key] = {
                     "dtype": "float32",
-                    "shape": value.squeeze(0).shape,
+                    "shape": get_shape_as_tuple(value),
                     "names": None,
                 }
             if "image" in key:
                 features[key] = {
                     "dtype": "video",
-                    "shape": value.squeeze(0).shape,
+                    "shape": get_shape_as_tuple(value),
                     "names": ["channels", "height", "width"],
                 }
 
-        # Create dataset
-        dataset = LeRobotDataset.create(
-            cfg.dataset.repo_id,
-            cfg.env.fps,
-            root=cfg.dataset.root,
-            use_videos=True,
-            image_writer_threads=4,
-            image_writer_processes=0,
-            features=features,
-        )
+        if cfg.resume:
+            dataset = LeRobotDataset(
+                cfg.dataset.repo_id,
+                root=cfg.dataset.root,
+            )
+            sanity_check_dataset_robot_compatibility(dataset, None, cfg.env.fps, features)
+        else:
+            # Create dataset
+            dataset = LeRobotDataset.create(
+                cfg.dataset.repo_id,
+                cfg.env.fps,
+                root=cfg.dataset.root,
+                use_videos=True,
+                image_writer_threads=4,
+                image_writer_processes=0,
+                features=features,
+            )
 
     episode_idx = 0
     episode_step = 0

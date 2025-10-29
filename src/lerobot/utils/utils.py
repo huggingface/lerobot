@@ -48,6 +48,14 @@ def auto_select_torch_device() -> torch.device:
         return torch.device("cpu")
 
 
+def get_shape_as_tuple(tensor):
+    """Extract tensor shape and ensure it returns as a tuple."""
+    shape = tensor.squeeze(0).shape
+    if isinstance(shape, torch.Size):
+        return tuple(shape)
+    return shape
+
+
 # TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
 def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""

@@ -1,6 +1,6 @@
 {
     "env": {
-        "name": "lerobot",
+        "name": "real_robot",
         "fps": 30,
         "robot": {
             "type": "so101_follower",
@@ -60,8 +60,8 @@
                     -53.28620147705078,
                     1.26262629032135
                 ],
-                "reset_time_s": 5,
-                "control_time_s": 15.0,
+                "reset_time_s": 15,
+                "control_time_s": 60.0,
                 "terminate_on_success": true
             },
             "inverse_kinematics": {
@@ -94,5 +94,6 @@
         "push_to_hub": true
     },
     "mode": "record",
-    "device": "cuda"
+    "device": "cuda",
+    "resume": true
 }

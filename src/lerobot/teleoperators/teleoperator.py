@@ -53,6 +53,7 @@ class Teleoperator(abc.ABC):
         self.calibration: dict[str, MotorCalibration] = {}
         if self.calibration_fpath.is_file():
             self._load_calibration()
+        self._is_intervention_active = False    # Track intervention state
 
     def __str__(self) -> str:
         return f"{self.id} {self.__class__.__name__}"

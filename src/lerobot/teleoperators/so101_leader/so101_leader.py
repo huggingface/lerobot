@@ -30,7 +30,6 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
-
 from .config_so101_leader import SO101LeaderConfig
 
 logger = logging.getLogger(__name__)
@@ -89,9 +88,11 @@ class SO101Leader(Teleoperator):
         def on_press(key):
             # Only process event keys, not movement keys
             try:
-                if hasattr(key, 'char') and key.char in ['s', 'r', 'q', ' ']:
-                    self.misc_keys_queue.put(key)
-                elif key == keyboard.Key.esc:
+                print(f"key: {key} pressed")
+                if hasattr(key, "char") and key.char is not None:
+                    if key.char in ["s", "r", "q"]:
+                        self.misc_keys_queue.put(key)
+                elif key in [keyboard.Key.space, keyboard.Key.esc]:
                     self.misc_keys_queue.put(key)
             except AttributeError:
                 pass
@@ -233,7 +234,7 @@ class SO101Leader(Teleoperator):
             }
 
         # Initialize event states
-        is_intervention = False
+        is_intervention = self._is_intervention_active  # Use persisted state
         terminate_episode = False
         success = False
         rerecord_episode = False
@@ -242,6 +243,7 @@ class SO101Leader(Teleoperator):
         while not self.misc_keys_queue.empty():
             try:
                 key = self.misc_keys_queue.get_nowait()
+                print(f"SO101Leader: Processing key: {key}")
 
                 # Handle character keys
                 if hasattr(key, "char") and key.char:
@@ -257,15 +259,18 @@ class SO101Leader(Teleoperator):
                         # Quit - terminate without success
                         terminate_episode = True
                         success = False
-                    elif key.char == " ":
-                        # Space - intervention (take over/give back control)
-                        is_intervention = True
 
                 # Handle special keys
                 elif key == keyboard.Key.esc:
                     # ESC - terminate episode (failure)
                     terminate_episode = True
                     success = False
+
+                elif key == keyboard.Key.space:
+                    # Space - intervention (take over/give back control)
+                    # Space - TOGGLE intervention (take over/give back control)
+                    self._is_intervention_active = not self._is_intervention_active
+                    is_intervention = self._is_intervention_active
 
             except Exception as e:
                 logging.debug(f"Error processing keyboard event: {e}")

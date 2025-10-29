@@ -46,6 +46,7 @@ from .hil_processor import (
     GripperPenaltyProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
+    LeaderArmInterventionProcessorStep,
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
@@ -95,6 +96,7 @@ __all__ = [
     "InfoProcessorStep",
     "InterventionActionProcessorStep",
     "JointVelocityProcessorStep",
+    "LeaderArmInterventionProcessorStep",
     "make_default_processors",
     "make_default_teleop_action_processor",
     "make_default_robot_action_processor",
