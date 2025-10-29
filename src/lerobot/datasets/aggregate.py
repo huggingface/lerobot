@@ -493,3 +493,62 @@ def finalize_aggregation(aggr_meta, all_metadata):
     logging.info("write stats")
     aggr_meta.stats = aggregate_stats([m.stats for m in all_metadata])
     write_stats(aggr_meta.stats, aggr_meta.root)
+
+
+def merge_grab_datasets():
+    """Merge grab1-record-test and grab2-record-test datasets using aggregate_datasets."""
+    
+    # Dataset paths
+    grab1_path = Path("/Users/chenz/.cache/huggingface/lerobot/ywu67/grab1-record-test")
+    grab2_path = Path("/Users/chenz/.cache/huggingface/lerobot/ywu67/grab2-record-test")
+    output_path = Path("/Users/chenz/.cache/huggingface/lerobot/ywu67/grab-merged")
+    
+    # Repository IDs
+    repo_ids = ["ywu67/grab1-record-test", "ywu67/grab2-record-test"]
+    aggr_repo_id = "ywu67/grab-merged"
+    
+    # Root paths for the datasets
+    roots = [grab1_path, grab2_path]
+    
+    logging.info(f"Merging grab datasets:")
+    logging.info(f"  Dataset 1: {grab1_path}")
+    logging.info(f"  Dataset 2: {grab2_path}")
+    logging.info(f"  Output: {output_path}")
+    logging.info(f"  Merged repo ID: {aggr_repo_id}")
+    
+    # Validate that both datasets exist
+    if not grab1_path.exists():
+        raise FileNotFoundError(f"Dataset grab1-record-test not found at: {grab1_path}")
+    if not grab2_path.exists():
+        raise FileNotFoundError(f"Dataset grab2-record-test not found at: {grab2_path}")
+    
+    # Call the existing aggregate_datasets function
+    aggregate_datasets(
+        repo_ids=repo_ids,
+        aggr_repo_id=aggr_repo_id,
+        roots=roots,
+        aggr_root=output_path,
+    )
+    
+    logging.info(f"Successfully merged datasets to: {output_path}")
+
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Aggregate or merge LeRobot datasets")
+    parser.add_argument("--merge-grab", action="store_true", help="Merge grab1 and grab2 datasets")
+    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    
+    args = parser.parse_args()
+    
+    # Setup logging
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    if args.merge_grab:
+        merge_grab_datasets()
+    else:
+        parser.print_help()

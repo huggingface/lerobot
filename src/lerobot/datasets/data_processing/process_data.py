@@ -18,100 +18,148 @@ def parse_arguments():
     """Parse command line arguments for the video processing script."""
     parser = argparse.ArgumentParser(
         description="Process and merge clipped robot dataset videos",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     parser.add_argument(
-        "--repo_id", 
-        type=str, 
+        "--repo_id",
+        type=str,
         default="ywu67/record-test30",
-        help="Source HuggingFace repository ID"
+        help="Source HuggingFace repository ID",
     )
 
     parser.add_argument(
-        "--clip_second", 
-        type=float, 
+        "--clip_second",
+        type=float,
         default=10.0,
-        help="Duration in seconds to clip from each episode"
+        help="Duration in seconds to clip from each episode",
     )
 
     parser.add_argument(
-        "--output_dir", 
-        type=str, 
+        "--output_dir",
+        type=str,
         default="clipped_dataset",
-        help="Directory to save clipped dataset files"
+        help="Directory to save clipped dataset files",
     )
 
     parser.add_argument(
-        "--refined_dir", 
-        type=str, 
+        "--refined_dir",
+        type=str,
         default="refined_dataset",
-        help="Directory to save refined/merged dataset files"
+        help="Directory to save refined/merged dataset files",
     )
 
     parser.add_argument(
-        "--new_repo_id", 
-        type=str, 
+        "--new_repo_id",
+        type=str,
         default="ywu67/record-test-new",
-        help="New HuggingFace repository ID to save processed dataset"
+        help="New HuggingFace repository ID to save processed dataset",
     )
 
     parser.add_argument(
         "--process_videos",
         action="store_true",
-        help="Enable video downloading and processing (default: False, only process parquet data)"
+        help="Enable video downloading and processing (default: False, only process parquet data)",
     )
 
     parser.add_argument(
         "--local_data_path",
         type=str,
         default=None,
-        help="Path to local dataset directory containing data, meta, and video folders. If provided, will use local data instead of downloading from HuggingFace"
+        help="Path to local dataset directory containing data, meta, and video folders. If provided, will use local data instead of downloading from HuggingFace",
     )
 
     parser.add_argument(
         "--verify_clipping",
         action="store_true",
-        help="Enable verification of clipping results after processing (default: False)"
+        help="Enable verification of clipping results after processing (default: False)",
+    )
+
+    parser.add_argument(
+        "--delete_episodes",
+        type=str,
+        default=None,
+        help="Comma-separated list of episode indices to delete (e.g., '0,2,5' or '1-3,7'). Use with --delete_episodes_only flag.",
+    )
+
+    parser.add_argument(
+        "--delete_episodes_only",
+        action="store_true",
+        help="Only perform episode deletion without other processing. Requires --delete_episodes.",
+    )
+
+    parser.add_argument(
+        "--clean_up_local",
+        action="store_true",
+        help="Clean up video files from local refined dataset after successful upload (default: False)",
     )
 
     return parser.parse_args()
 
 
+def parse_episode_indices(episode_string):
+    """
+    Parse episode indices from a string format.
+
+    Args:
+        episode_string: String containing episode indices like "0,2,5" or "1-3,7,10-12"
+
+    Returns:
+        List of episode indices
+    """
+    if not episode_string:
+        return []
+
+    indices = []
+    parts = episode_string.split(",")
+
+    for part in parts:
+        part = part.strip()
+        if "-" in part:
+            # Handle range like "1-3"
+            try:
+                start, end = map(int, part.split("-"))
+                indices.extend(range(start, end + 1))
+            except ValueError:
+                raise ValueError(
+                    f"Invalid episode range format: '{part}'. Expected format like '1-3'"
+                )
+        else:
+            # Handle single episode index
+            try:
+                indices.append(int(part))
+            except ValueError:
+                raise ValueError(f"Invalid episode index: '{part}'. Expected integer.")
+
+    return sorted(list(set(indices)))  # Remove duplicates and sort
+
+
 def load_local_data(local_data_path):
     """Load dataset and metadata from local files instead of HuggingFace."""
     local_path = Path(local_data_path)
-    
     # Assert that the local data path exists
     assert local_path.exists(), f"Local data path does not exist: {local_data_path}"
     assert local_path.is_dir(), f"Local data path is not a directory: {local_data_path}"
-    
     # Assert that required directories exist
     required_dirs = ["data", "meta"]
     for dir_name in required_dirs:
         dir_path = local_path / dir_name
         assert dir_path.exists(), f"Required directory not found: {dir_path}"
         assert dir_path.is_dir(), f"Required path is not a directory: {dir_path}"
-    
     # Check for videos directory (optional warning since it might not be needed if process_videos=False)
     videos_dir = local_path / "videos"
     if not videos_dir.exists():
         print(f"Warning: Videos directory not found: {videos_dir} (will only affect video processing)")
-    
     # Assert that metadata file exists
     meta_path = local_path / "meta" / "info.json"
     assert meta_path.exists(), f"Required metadata file not found: {meta_path}"
     assert meta_path.is_file(), f"Metadata path is not a file: {meta_path}"
-    
     with open(meta_path, "r") as f:
         meta = json.load(f)
-    
     # Assert that data directory contains dataset files
     data_dir = local_path / "data"
-    
     # Try to find parquet files first
     parquet_files = list(data_dir.rglob("*.parquet"))
-    
     if parquet_files:
         # Load parquet files
         all_dataframes = []
@@ -125,9 +173,9 @@ def load_local_data(local_data_path):
         # Try to load from episodes.jsonl (original format)
         episodes_file = local_path / "episodes.jsonl"
         if episodes_file.exists():
-            assert episodes_file.is_file(), f"Episodes path is not a file: {episodes_file}"
+            assert (episodes_file.is_file()), f"Episodes path is not a file: {episodes_file}"
             episodes_data = []
-            with open(episodes_file, 'r') as f:
+            with open(episodes_file, "r") as f:
                 for line in f:
                     episodes_data.append(json.loads(line))
             combined_df = pd.DataFrame(episodes_data)
@@ -136,23 +184,17 @@ def load_local_data(local_data_path):
             # Check for other possible dataset files
             task_file = local_path / "tasks.jsonl"
             episode_stats_file = local_path / "episode_stats.jsonl"
-            
             available_files = []
             if task_file.exists():
                 available_files.append("tasks.jsonl")
             if episode_stats_file.exists():
                 available_files.append("episode_stats.jsonl")
-            
             if available_files:
                 print(f"Found other dataset files: {available_files}, but no main dataset file (episodes.jsonl or parquet files)")
-            
             assert False, f"No dataset files found in {data_dir}. Expected parquet files or episodes.jsonl"
-    
+
     # Assert that dataset is not empty
-    assert len(combined_df) > 0, f"Dataset is empty. Loaded dataframe has 0 rows"
-    
-    print(f"Loaded local metadata from: {meta_path}")
-    
+    assert len(combined_df) > 0, f"Dataset is empty. Loaded dataframe has 0 rows"    
     return meta, combined_df
 
 
@@ -179,10 +221,6 @@ def verify_clipping_results(args, target_clip_duration):
         args: Command line arguments containing paths
         target_clip_duration: Expected duration per episode in seconds
     """
-    print("=" * 60)
-    print("VERIFYING CLIPPING RESULTS")
-    print("=" * 60)
-    
     refined_dir = Path(args.refined_dir)
     
     # Check if refined dataset exists
@@ -207,14 +245,13 @@ def verify_clipping_results(args, target_clip_duration):
         df = dataset.to_pandas()
         
         print(f"✓ Loaded dataset with {len(df)} total frames")
-        print(f"✓ Target clip duration: {target_clip_duration} seconds")
         
         # Get all episode indices
         episode_indices = sorted(df['episode_index'].unique())
         total_episodes = len(episode_indices)
-        
+
         print(f"✓ Found {total_episodes} episodes")
-        
+
         # Sample episodes to check (max 10 or all if less than 10)
         max_episodes_to_check = min(10, total_episodes)
         if total_episodes <= 10:
@@ -225,7 +262,6 @@ def verify_clipping_results(args, target_clip_duration):
             print(f"✓ Randomly sampling {max_episodes_to_check} episodes to check: {episodes_to_check}")
         
         # Verify episode durations in dataset
-        print("\nDATA VERIFICATION:")
         fps = meta.get("fps", 30)
         all_passed = True
         
@@ -254,7 +290,6 @@ def verify_clipping_results(args, target_clip_duration):
                 all_passed = False
         
         # Verify video files if they exist
-        print("\nVIDEO VERIFICATION:")
         cameras = ["left", "top"]
         video_dir = refined_dir / "videos"
         
@@ -332,7 +367,9 @@ def clip_split_hf_videos(args, df, fps):
         clipped_group["frame_index"] = range(num_frames)
         clipped_group["index"] = range(num_frames)
         # Save individual Parquet for each episode
-        parquet_path = os.path.join(args.output_dir, "data", "chunk-000", f"file-{ep_idx:03d}.parquet")
+        parquet_path = os.path.join(
+            args.output_dir, "data", "chunk-000", f"file-{ep_idx:03d}.parquet"
+        )
         clipped_group.to_parquet(parquet_path)
         clipped_groups.append(clipped_group)
         total_frames += num_frames
@@ -370,7 +407,6 @@ def clip_split_hf_videos(args, df, fps):
                 # Number of frames to clip (based on timestamp <=10)
                 clipped_group = group[group["timestamp"] < args.clip_second]
                 num_clipped_frames = len(clipped_group)
-                print(num_clipped_frames)
 
                 # Compute start and end times in the original video
                 start_time = start_frame / fps
@@ -394,17 +430,19 @@ def merge_clipped_videos_to_hub(args, meta, fps):
     Merge all clipped videos into one large video while preserving metadata,
     then upload to new repository
     """
-    print("Starting video merging process...")
     print(f"Process videos flag is set to: {args.process_videos}")
 
     # Create refined dataset directory
     os.makedirs(os.path.join(args.refined_dir, "data", "chunk-000"), exist_ok=True)
-    os.makedirs(os.path.join(args.refined_dir, "videos", "left", "chunk-000"), exist_ok=True)
-    os.makedirs(os.path.join(args.refined_dir, "videos", "top", "chunk-000"), exist_ok=True)
+    os.makedirs(
+        os.path.join(args.refined_dir, "videos", "left", "chunk-000"), exist_ok=True
+    )
+    os.makedirs(
+        os.path.join(args.refined_dir, "videos", "top", "chunk-000"), exist_ok=True
+    )
     os.makedirs(os.path.join(args.refined_dir, "meta"), exist_ok=True)
 
     # Merge parquet data from all episodes
-    print("Merging parquet data...")
     all_clipped_data = []
     total_merged_frames = 0
 
@@ -432,20 +470,16 @@ def merge_clipped_videos_to_hub(args, meta, fps):
     if args.process_videos:
         cameras = ["left", "top"]
         for camera in cameras:
-            print(f"Merging {camera} camera videos...")
-
             # Get all clipped video files for this camera
             clipped_video_dir = Path(args.output_dir) / "videos" / camera / "chunk-000"
 
             # Check if directory exists first
             if not clipped_video_dir.exists():
-                print(f"Video directory does not exist for camera {camera}: {clipped_video_dir}")
                 continue
 
             video_files = sorted(clipped_video_dir.glob("file-*.mp4"))
 
             if not video_files:
-                print(f"No video files found for camera {camera} in {clipped_video_dir}")
                 continue
 
             print(f"Found {len(video_files)} video files for {camera}: {[f.name for f in video_files]}")
@@ -458,16 +492,11 @@ def merge_clipped_videos_to_hub(args, meta, fps):
             merged_video_path = merged_video_path.resolve()
 
             print(f"merged_video_path={merged_video_path}")
-            print(f"absolute_video_files={absolute_video_files}")
 
             # Use the concatenate_video_files function from video_utils
             concatenate_video_files(absolute_video_files, merged_video_path, overwrite=True)
             print(f"Merged {len(absolute_video_files)} videos into {merged_video_path}")
 
-            # Verify merged video info
-            video_info = get_video_info(merged_video_path)
-            print(f"Merged {camera} video info: {video_info.get('video.fps')} fps, "
-                  f"{video_info.get('video.width')}x{video_info.get('video.height')}")
     else:
         print("Video merging skipped (process_videos=False)")
 
@@ -477,7 +506,9 @@ def merge_clipped_videos_to_hub(args, meta, fps):
 
     # Update frame counts in metadata
     updated_meta["total_frames"] = total_merged_frames
-    updated_meta["num_episodes"] = len(parquet_files)  # Number of original episodes that were clipped
+    updated_meta["num_episodes"] = len(
+        parquet_files
+    )  # Number of original episodes that were clipped
 
     # Calculate new duration
     merged_duration_seconds = total_merged_frames / fps
@@ -490,7 +521,7 @@ def merge_clipped_videos_to_hub(args, meta, fps):
         "original_duration_seconds": duration_seconds,
         "clip_duration_seconds": args.clip_second,
         "frames_per_episode_clipped": args.clip_second * fps,
-        "processing_date": pd.Timestamp.now().isoformat()
+        "processing_date": pd.Timestamp.now().isoformat(),
     }
     return merged_df, updated_meta, merged_parquet_path
 
@@ -502,11 +533,6 @@ def upload_to_hf(args, merged_df, updated_meta, merged_parquet_path):
     with open(updated_meta_path, "w") as f:
         json.dump(updated_meta, f, indent=2)
     print(f"Saved updated metadata to {updated_meta_path}")
-
-    # Create dataset info for HuggingFace
-    print("Preparing dataset for upload...")
-
-    # Create the HuggingFace dataset from merged parquet
     dataset = Dataset.from_pandas(merged_df)
 
     # Save dataset to disk in HuggingFace format
@@ -525,10 +551,7 @@ def upload_to_hf(args, merged_df, updated_meta, merged_parquet_path):
         # Create the repository if it doesn't exist
         try:
             api.create_repo(
-                repo_id=repo_id,
-                repo_type="dataset",
-                exist_ok=True,
-                private=False
+                repo_id=repo_id, repo_type="dataset", exist_ok=True, private=False
             )
             print(f"Created/verified repository: {repo_id}")
         except Exception as e:
@@ -539,7 +562,7 @@ def upload_to_hf(args, merged_df, updated_meta, merged_parquet_path):
             path_or_fileobj=updated_meta_path,
             path_in_repo="meta/info.json",
             repo_id=repo_id,
-            repo_type="dataset"
+            repo_type="dataset",
         )
 
         # Upload merged parquet data
@@ -547,19 +570,22 @@ def upload_to_hf(args, merged_df, updated_meta, merged_parquet_path):
             path_or_fileobj=merged_parquet_path,
             path_in_repo="data/chunk-000/file-000.parquet",
             repo_id=repo_id,
-            repo_type="dataset"
+            repo_type="dataset",
         )
 
         # Upload merged videos (only if they exist)
         if args.process_videos:
             for camera in cameras:
-                merged_video_path = Path(args.refined_dir) / f"videos/{camera}/chunk-000/file-000-new.mp4"
+                merged_video_path = (
+                    Path(args.refined_dir)
+                    / f"videos/{camera}/chunk-000/file-000-new.mp4"
+                )
                 if merged_video_path.exists():
                     api.upload_file(
                         path_or_fileobj=str(merged_video_path),
                         path_in_repo=f"videos/observation.images.{camera}/chunk-000/file-000-new.mp4",
                         repo_id=repo_id,
-                        repo_type="dataset"
+                        repo_type="dataset",
                     )
                     print(f"Uploaded merged {camera} video")
         else:
@@ -570,13 +596,13 @@ def upload_to_hf(args, merged_df, updated_meta, merged_parquet_path):
             folder_path=dataset_path,
             path_in_repo="dataset",
             repo_id=repo_id,
-            repo_type="dataset"
+            repo_type="dataset",
         )
 
         print(f"Successfully uploaded refined dataset to {repo_id}")
 
-        # Clean up video files after successful upload
-        if args.process_videos:
+        # Clean up video files after successful upload (based on clean_up_local flag)
+        if args.process_videos and args.clean_up_local:
             print("Cleaning up video files from local refined_dataset...")
             videos_dir = Path(args.refined_dir) / "videos"
             if videos_dir.exists():
@@ -584,47 +610,365 @@ def upload_to_hf(args, merged_df, updated_meta, merged_parquet_path):
                 print("✓ Removed all video files from refined_dataset/videos")
             else:
                 print("No videos directory found to clean up")
+        elif args.process_videos and not args.clean_up_local:
+            print("Video files kept in local refined_dataset (clean_up_local=False)")
         else:
             print("No video cleanup needed (process_videos=False)")
 
     except Exception as e:
         print(f"Error uploading to HuggingFace Hub: {e}")
         print("Dataset files are saved locally in 'refined_dataset' directory")
-        print("Video files NOT removed due to upload error")
+        if args.clean_up_local:
+            print("Video files NOT removed due to upload error")
+        else:
+            print("Video files kept locally (clean_up_local=False)")
 
     return args.refined_dir
+
+
+def delete_episodes_from_dataset(args, episode_indices_to_delete):
+    """
+    Delete specified episodes from the dataset including videos, data, and metadata.
+
+    Args:
+        args: Command line arguments containing paths and settings
+        episode_indices_to_delete: List of episode indices to delete
+
+    Returns:
+        dict: Summary of deletion results
+    """
+    if not episode_indices_to_delete:
+        print("No episodes specified for deletion.")
+        return {"deleted_episodes": [], "status": "no_episodes"}
+
+    episode_indices_to_delete = sorted(
+        set(episode_indices_to_delete)
+    )  # Remove duplicates and sort
+    print(f"Episodes to delete: {episode_indices_to_delete}")
+
+    # Load dataset information
+    if args.local_data_path:
+        print("Loading data from local files...")
+        meta, df = load_local_data(args.local_data_path)
+        data_path = Path(args.local_data_path)
+    else:
+        print("Loading data from HuggingFace...")
+        # Download metadata from HuggingFace
+        meta_src = hf_hub_download(
+            repo_id=args.repo_id, filename="meta/info.json", repo_type="dataset"
+        )
+        with open(meta_src, "r") as f:
+            meta = json.load(f)
+
+        # Load the dataset from HuggingFace
+        ds = load_dataset(args.repo_id)
+        df = pd.DataFrame(ds["train"])
+        data_path = Path(args.output_dir)  # Use output directory for processing
+
+    # Get available episode indices
+    available_episodes = sorted(df["episode_index"].unique())
+    print(f"Available episodes: {available_episodes}")
+
+    # Validate episode indices to delete
+    invalid_episodes = [
+        ep for ep in episode_indices_to_delete if ep not in available_episodes
+    ]
+    if invalid_episodes:
+        print(
+            f"Warning: Episodes {invalid_episodes} not found in dataset. Skipping them."
+        )
+        episode_indices_to_delete = [
+            ep for ep in episode_indices_to_delete if ep in available_episodes
+        ]
+
+    if not episode_indices_to_delete:
+        print("No valid episodes found for deletion.")
+        return {"deleted_episodes": [], "status": "no_valid_episodes"}
+
+    print(f"Valid episodes to delete: {episode_indices_to_delete}")
+
+    deletion_summary = {
+        "deleted_episodes": episode_indices_to_delete,
+        "deleted_data_files": [],
+        "deleted_video_files": [],
+        "original_episodes": len(available_episodes),
+        "remaining_episodes": len(available_episodes) - len(episode_indices_to_delete),
+        "status": "success",
+    }
+
+    try:
+        # 1. Backup and delete data files
+        print("\n1. Processing data files...")
+        remaining_df_list = []
+
+        for ep_idx in available_episodes:
+            if ep_idx in episode_indices_to_delete:
+                # Delete episode data
+                episode_data = df[df["episode_index"] == ep_idx]
+                if len(episode_data) > 0:
+                    # Backup data before deletion
+                    deletion_summary["deleted_data_files"].append(
+                        f"episode_{ep_idx:03d}"
+                    )
+                else:
+                    print(f"  Episode {ep_idx}: No data found")
+            else:
+                # Keep episode data
+                episode_data = df[df["episode_index"] == ep_idx].copy()
+                remaining_df_list.append(episode_data)
+
+        # 2. Delete video files
+        print("\n2. Processing video files...")
+        cameras = ["left", "top"]
+
+        for camera in cameras:
+            camera_video_dir = data_path / "videos" / camera / "chunk-000"
+            if camera_video_dir.exists():
+                for ep_idx in episode_indices_to_delete:
+                    video_file = camera_video_dir / f"file-{ep_idx:03d}.mp4"
+                    if video_file.exists():
+                        # Delete video file
+                        video_file.unlink()
+                        print(f"  Deleted {camera} video for episode {ep_idx}")
+                        deletion_summary["deleted_video_files"].append(
+                            f"episode_{ep_idx:03d}_{camera}.mp4"
+                        )
+                    else:
+                        print(f"  Episode {ep_idx}: {camera} video not found")
+            else:
+                print(f"  {camera} camera directory not found: {camera_video_dir}")
+
+        # 3. Reindex remaining episodes to be continuous
+        print("\n3. Reindexing remaining episodes...")
+        if remaining_df_list:
+            # Combine remaining data
+            combined_df = pd.concat(remaining_df_list, ignore_index=True)
+
+            # Create mapping from old episode indices to new ones
+            old_episode_indices = sorted(combined_df["episode_index"].unique())
+            episode_mapping = {
+                old_idx: new_idx for new_idx, old_idx in enumerate(old_episode_indices)
+            }
+            print(f"  Episode mapping: {episode_mapping}")
+
+            # Update episode indices in the dataframe
+            combined_df["episode_index"] = combined_df["episode_index"].map(
+                episode_mapping
+            )
+
+            # Update frame indices to be continuous
+            combined_df["frame_index"] = range(len(combined_df))
+            combined_df["index"] = range(len(combined_df))
+
+            # Save updated data
+            updated_data_dir = data_path / "data" / "chunk-000"
+            updated_data_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save as single file or split by episode
+            if args.refined_dir:
+                # Save to refined directory as single merged file
+                refined_data_dir = Path(args.refined_dir) / "data" / "chunk-000"
+                refined_data_dir.mkdir(parents=True, exist_ok=True)
+                merged_file = refined_data_dir / "file-000.parquet"
+                combined_df.to_parquet(merged_file)
+                print(f"  Saved merged data to: {merged_file}")
+            else:
+                # Save split by new episode indices
+                for new_ep_idx in sorted(combined_df["episode_index"].unique()):
+                    episode_data = combined_df[
+                        combined_df["episode_index"] == new_ep_idx
+                    ]
+                    # Reset frame indices within episode
+                    episode_data = episode_data.copy()
+                    episode_data["frame_index"] = range(len(episode_data))
+
+                    output_file = updated_data_dir / f"file-{new_ep_idx:03d}.parquet"
+                    episode_data.to_parquet(output_file)
+                    print(f"  Saved episode {new_ep_idx} data to: {output_file}")
+
+        # 4. Rename video files to match new episode indices
+        print("\n4. Renaming video files...")
+        if remaining_df_list:
+            old_episode_indices = sorted(
+                [ep for ep in available_episodes if ep not in episode_indices_to_delete]
+            )
+
+            for camera in cameras:
+                camera_video_dir = data_path / "videos" / camera / "chunk-000"
+                if camera_video_dir.exists():
+                    # Create temporary directory for renaming
+                    temp_video_dir = camera_video_dir / "temp_rename"
+                    temp_video_dir.mkdir(exist_ok=True)
+
+                    # Move files to temporary directory with new names
+                    for new_idx, old_idx in enumerate(old_episode_indices):
+                        old_video_file = camera_video_dir / f"file-{old_idx:03d}.mp4"
+                        if old_video_file.exists():
+                            temp_video_file = temp_video_dir / f"file-{new_idx:03d}.mp4"
+                            shutil.move(old_video_file, temp_video_file)
+                            print(
+                                f"  Renamed {camera} video: episode {old_idx} -> {new_idx}"
+                            )
+
+                    # Move files back to original directory
+                    for video_file in temp_video_dir.glob("*.mp4"):
+                        shutil.move(video_file, camera_video_dir / video_file.name)
+
+                    # Remove temporary directory
+                    temp_video_dir.rmdir()
+
+        # 5. Update metadata
+        print("\n5. Updating metadata...")
+        original_total_frames = meta.get("total_frames", 0)
+        original_total_episodes = meta.get("total_episodes", 0)
+
+        # Calculate new totals
+        if remaining_df_list:
+            new_total_frames = len(combined_df)
+            new_total_episodes = len(combined_df["episode_index"].unique())
+        else:
+            new_total_frames = 0
+            new_total_episodes = 0
+
+        deleted_frames = original_total_frames - new_total_frames
+
+        # Update metadata
+        meta["total_frames"] = new_total_frames
+        meta["total_episodes"] = new_total_episodes
+
+        if "splits" in meta:
+            meta["splits"] = {"train": f"0:{new_total_episodes}"}
+
+        # Add deletion information to metadata
+        meta["deletion_info"] = {
+            "deleted_episodes": episode_indices_to_delete,
+            "original_total_episodes": original_total_episodes,
+            "original_total_frames": original_total_frames,
+            "deleted_frames": deleted_frames,
+            "deletion_date": pd.Timestamp.now().isoformat(),
+        }
+
+        # Calculate new duration
+        fps = meta.get("fps", 30)
+        new_duration_seconds = new_total_frames / fps
+        meta["total_seconds"] = new_duration_seconds
+
+        # Save updated metadata
+        meta_dir = (Path(args.refined_dir) if args.refined_dir else data_path) / "meta"
+        meta_dir.mkdir(exist_ok=True)
+        updated_meta_path = meta_dir / "info.json"
+
+        with open(updated_meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+
+        print(f"  Updated metadata saved to: {updated_meta_path}")
+        print(f"  Original episodes: {original_total_episodes}")
+        print(f"  Remaining episodes: {new_total_episodes}")
+        print(f"  Original frames: {original_total_frames}")
+        print(f"  Remaining frames: {new_total_frames}")
+        print(f"  Deleted frames: {deleted_frames}")
+
+        deletion_summary.update(
+            {
+                "original_frames": original_total_frames,
+                "remaining_frames": new_total_frames,
+                "deleted_frames": deleted_frames,
+            }
+        )
+
+    except Exception as e:
+        print(f"❌ Error during episode deletion: {e}")
+        print("Check backup directory for any backed up data.")
+        deletion_summary["status"] = "error"
+        deletion_summary["error"] = str(e)
+        return deletion_summary
+
+    # Summary
+    print("DELETION COMPLETE")
+    print(f"✅ Successfully deleted {len(episode_indices_to_delete)} episodes")
+    print(
+        f"📊 Updated dataset: {new_total_episodes} episodes, {new_total_frames} frames"
+    )
+    return deletion_summary
 
 
 def main():
     """Main function to process the dataset with command line arguments."""
     args = parse_arguments()
-    print(f"Processing dataset with the following settings:")
+    
+    # Track whether episode deletion was performed
+    episodes_deleted = False
+
+    # Handle episode deletion
+    if args.delete_episodes or args.delete_episodes_only:
+        if not args.delete_episodes:
+            print(
+                "Error: --delete_episodes_only requires --delete_episodes to specify which episodes to delete"
+            )
+            return
+
+        try:
+            episode_indices_to_delete = parse_episode_indices(args.delete_episodes)
+        except ValueError as e:
+            print(f"Error parsing episode indices: {e}")
+            return
+
+        print(f"Episodes to delete: {episode_indices_to_delete}")
+
+        # Perform episode deletion
+        deletion_result = delete_episodes_from_dataset(args, episode_indices_to_delete)
+
+        if deletion_result["status"] == "success":
+            print(f"\n✅ Episode deletion completed successfully!")
+            episodes_deleted = True
+        else:
+            print(
+                f"\n❌ Episode deletion failed: {deletion_result.get('error', 'Unknown error')}"
+            )
+
+        # If delete_episodes_only is set, exit after deletion
+        if args.delete_episodes_only:
+            return
+
+        print("\nContinuing with regular dataset processing...")
+
     print(f"  Source repository: {args.repo_id}")
     print(f"  Clip duration: {args.clip_second} seconds")
     print(f"  Output directory: {args.output_dir}")
     print(f"  Refined directory: {args.refined_dir}")
     print(f"  New repository: {args.new_repo_id}")
     print(f"  Process videos: {args.process_videos}")
+    print(f"  Clean up local videos: {args.clean_up_local}")
     if args.local_data_path:
         print(f"  Using local data from: {args.local_data_path}")
 
-    if args.local_data_path:
+    # Load dataset based on whether episodes were deleted
+    if episodes_deleted:
+        # Load the updated dataset from refined_dir after episode deletion
+        print("Loading updated dataset after episode deletion...")
+        refined_meta_path = Path(args.refined_dir) / "meta" / "info.json"
+        refined_data_path = Path(args.refined_dir) / "data" / "chunk-000" / "file-000.parquet"
+        
+        if refined_meta_path.exists() and refined_data_path.exists():
+            with open(refined_meta_path, "r") as f:
+                meta = json.load(f)
+            df = pd.read_parquet(refined_data_path)
+            print(f"Loaded updated dataset: {len(df)} frames, {len(df['episode_index'].unique())} episodes")
+        else:
+            print(f"Error: Could not find updated dataset files after deletion")
+            return
+    elif args.local_data_path:
         # Load from local data
-        print("Loading data from local files...")
         meta, df = load_local_data(args.local_data_path)
     else:
         # Download and load metadata from HuggingFace
-        print("Downloading metadata from HuggingFace...")
         meta_src = hf_hub_download(
-            repo_id=args.repo_id,
-            filename="meta/info.json",
-            repo_type="dataset"
+            repo_id=args.repo_id, filename="meta/info.json", repo_type="dataset"
         )
         with open(meta_src, "r") as f:
             meta = json.load(f)
 
         # Load the dataset from HuggingFace
-        print("Loading dataset from HuggingFace...")
         ds = load_dataset(args.repo_id)
         df = pd.DataFrame(ds["train"])  # Convert train split to DataFrame
 
@@ -646,14 +990,11 @@ def main():
     # Create output directories
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(os.path.join(args.output_dir, "data", "chunk-000"), exist_ok=True)
-    os.makedirs(os.path.join(args.output_dir, "videos", "left", "chunk-000"), exist_ok=True)
+    os.makedirs( os.path.join(args.output_dir, "videos", "left", "chunk-000"), exist_ok=True)
     os.makedirs(os.path.join(args.output_dir, "videos", "top", "chunk-000"), exist_ok=True)
 
     # Create refined directory
     os.makedirs(args.refined_dir, exist_ok=True)
-
-    print("All keys (columns) in the groups:")
-    # each episode index: ['action', 'observation.state', 'timestamp', 'frame_index', 'episode_index', 'index', 'task_index']
 
     # Process the clipped data first
     clip_split_hf_videos(args, df, fps)
