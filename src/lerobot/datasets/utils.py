@@ -1034,9 +1034,10 @@ def validate_feature_dtype_and_shape(
     expected_dtype = feature["dtype"]
     expected_shape = feature["shape"]
     if is_valid_numpy_dtype_string(expected_dtype):
-        assert isinstance(value, np.ndarray)
+        assert isinstance(value, (np.ndarray, np.number, float))
         return validate_feature_numpy_array(name, expected_dtype, expected_shape, value)
     elif expected_dtype in ["image", "video"]:
+        assert isinstance(value, (np.ndarray, PILImage.Image))
         return validate_feature_image_or_video(name, expected_shape, value)
     elif expected_dtype == "string":
         assert isinstance(value, str)
@@ -1046,7 +1047,7 @@ def validate_feature_dtype_and_shape(
 
 
 def validate_feature_numpy_array(
-    name: str, expected_dtype: str, expected_shape: list[int], value: np.ndarray
+    name: str, expected_dtype: str, expected_shape: list[int], value: np.ndarray | np.number | float
 ) -> str:
     """Validate a feature that is expected to be a numpy array.
 
