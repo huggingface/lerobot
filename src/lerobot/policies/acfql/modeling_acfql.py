@@ -480,8 +480,15 @@ class ACFQLPolicy(
             lam = 1.0 / q_vals.abs().mean().detach()
             q_loss = lam * q_loss
 
+        elif self.config.normalize_q_loss == "q_vals_plus_eps":
+            lam = 1.0 / (q_vals.abs().mean().detach() + 1e-6)
+            q_loss = lam * q_loss
+
         elif self.config.normalize_q_loss == "q_preds":
             lam = 1.0 / q_preds.abs().mean().detach()
+            q_loss = lam * q_loss
+        elif self.config.normalize_q_loss == "q_preds_plus_eps":
+            lam = 1.0 / (q_preds.abs().mean().detach() + 1e-6)
             q_loss = lam * q_loss
         else:
             raise ValueError(f"Unknown normalize_q_loss option: {self.config.normalize_q_loss}")
