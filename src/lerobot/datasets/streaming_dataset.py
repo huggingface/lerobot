@@ -33,10 +33,7 @@ from lerobot.datasets.utils import (
     item_to_torch,
     safe_shard,
 )
-from lerobot.datasets.video_utils import (
-    VideoDecoderCache,
-    decode_video_frames_torchcodec,
-)
+from lerobot.datasets.video_utils import VideoDecoderCache, decode_video_frames_torchcodec
 from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
 
 
@@ -257,8 +254,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     def _make_timestamps_from_indices(
         self, start_ts: float, indices: dict[str, list[int]] | None = None
     ) -> dict[str, list[float]]:
-        assert self.delta_timestamps is not None  # self.delta_timestamps has a default value of None
         if indices is not None:
+            assert self.delta_timestamps is not None  # self.delta_timestamps has a default value of None
             return {
                 key: (
                     start_ts + torch.tensor(indices[key]) / self.fps
@@ -366,9 +363,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     ) -> dict[str, list[float]]:
         query_timestamps = {}
         keys_to_timestamps = self._make_timestamps_from_indices(current_ts, query_indices)
-        assert (
-            episode_boundaries_ts is not None
-        )  # TODO(#1722): Rewrite this method without adding a default value of None to episode_boundaries_ts
+        # TODO(#1722): Rewrite this method without adding a default value of None to episode_boundaries_ts
+        assert episode_boundaries_ts is not None
         for key in self.meta.video_keys:
             if query_indices is not None and key in query_indices:
                 timestamps = keys_to_timestamps[key]

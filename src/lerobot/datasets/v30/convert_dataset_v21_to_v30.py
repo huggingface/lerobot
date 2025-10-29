@@ -54,7 +54,9 @@ import pyarrow as pa
 import tqdm
 from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
-from requests import HTTPError
+
+# TODO(#1722): Install library stubs for requests
+from requests import HTTPError  # type: ignore[import-untyped]
 
 from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
@@ -568,4 +570,5 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    convert_dataset(**vars(args))
     convert_dataset(**vars(args))

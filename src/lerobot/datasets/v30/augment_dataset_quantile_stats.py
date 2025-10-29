@@ -41,7 +41,9 @@ from pathlib import Path
 import numpy as np
 import torch
 from huggingface_hub import HfApi
-from requests import HTTPError
+
+# TODO(#1722): Install library stubs for requests
+from requests import HTTPError  # type: ignore[import-untyped]
 from tqdm import tqdm
 
 from lerobot.datasets.compute_stats import DEFAULT_QUANTILES, aggregate_stats, get_feature_stats
@@ -258,4 +260,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()

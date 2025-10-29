@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import glob
-import importlib
+import importlib.util
 import logging
 import shutil
 import tempfile
@@ -174,7 +174,7 @@ def decode_video_frames_torchvision(
 class VideoDecoderCache:
     """Thread-safe cache for video decoders to avoid expensive re-initialization."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cache: dict[str, tuple[Any, Any]] = {}
         self._lock = Lock()
 
