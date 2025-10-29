@@ -404,7 +404,9 @@ def encode_video_frames(
     # Codec-specific options
     if vcodec == "libsvtav1":
         # Build svtav1-params string
-        svtav1_params = ""  # Empty for now
+        # preset=13 is the fastest preset
+        # lp=6 is the highest level of parallelism
+        svtav1_params = "preset=13:lp=6"
         if fast_decode:
             svtav1_params += f"fast-decode={fast_decode}"
         cmd.extend(["-svtav1-params", svtav1_params])
