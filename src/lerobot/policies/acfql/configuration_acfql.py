@@ -133,8 +133,6 @@ class ACFQLConfig(PreTrainedConfig):
     image_encoder_hidden_dim: int = 32
     # Whether to use a shared encoder for actor and critic
     shared_encoder: bool = True
-    # Number of discrete actions, eg for gripper actions
-    num_discrete_actions: int | None = None
     # Dimension of the image embedding pooling
     image_embedding_pooling_dim: int = 8
 
