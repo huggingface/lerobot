@@ -73,7 +73,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         port: str,
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
-        can_interface: str = "socketcan",
+        can_interface: str = "auto",
     ):
         """
         Initialize the Damiao motors bus.
@@ -82,7 +82,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             port: CAN interface name (e.g., "can0" for Linux, "/dev/cu.usbmodem*" for macOS)
             motors: Dictionary mapping motor names to Motor objects
             calibration: Optional calibration data
-            can_interface: CAN interface type - "socketcan" (Linux) or "slcan" (macOS/serial)
+            can_interface: CAN interface type - "auto" (default), "socketcan" (Linux), or "slcan" (macOS/serial)
         """
         super().__init__(port, motors, calibration)
         self.port = port
@@ -94,7 +94,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         self._motor_can_ids = {}
         self._recv_id_to_motor = {}
         
-        # Store motor types
+        # Store motor types and recv IDs
         self._motor_types = {}
         for name, motor in self.motors.items():
             if hasattr(motor, "motor_type"):
@@ -102,6 +102,10 @@ class DamiaoMotorsBus(MotorsBusBase):
             else:
                 # Default to DM4310 if not specified
                 self._motor_types[name] = MotorType.DM4310
+            
+            # Map recv_id to motor name for filtering responses
+            if hasattr(motor, "recv_id"):
+                self._recv_id_to_motor[motor.recv_id] = name
 
     @property
     def is_connected(self) -> bool:
@@ -206,18 +210,20 @@ class DamiaoMotorsBus(MotorsBusBase):
     def _enable_motor(self, motor: NameOrID) -> None:
         """Enable a single motor."""
         motor_id = self._get_motor_id(motor)
+        recv_id = self._get_motor_recv_id(motor)
         data = [0xFF] * 7 + [CAN_CMD_ENABLE]
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
-        self._recv_motor_response()
+        self._recv_motor_response(expected_recv_id=recv_id)
 
     def _disable_motor(self, motor: NameOrID) -> None:
         """Disable a single motor."""
         motor_id = self._get_motor_id(motor)
+        recv_id = self._get_motor_recv_id(motor)
         data = [0xFF] * 7 + [CAN_CMD_DISABLE]
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
-        self._recv_motor_response()
+        self._recv_motor_response(expected_recv_id=recv_id)
 
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         """Enable torque on selected motors."""
@@ -250,26 +256,54 @@ class DamiaoMotorsBus(MotorsBusBase):
         motors = self._get_motors_list(motors)
         for motor in motors:
             motor_id = self._get_motor_id(motor)
+            recv_id = self._get_motor_recv_id(motor)
             data = [0xFF] * 7 + [CAN_CMD_SET_ZERO]
             msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
             self.canbus.send(msg)
-            self._recv_motor_response()
+            self._recv_motor_response(expected_recv_id=recv_id)
             time.sleep(0.01)
 
-    def _refresh_motor(self, motor: NameOrID) -> None:
-        """Refresh motor status."""
+    def _refresh_motor(self, motor: NameOrID) -> Optional[can.Message]:
+        """Refresh motor status and return the response."""
         motor_id = self._get_motor_id(motor)
+        recv_id = self._get_motor_recv_id(motor)
         data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
         msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False)
         self.canbus.send(msg)
-        self._recv_motor_response()
+        return self._recv_motor_response(expected_recv_id=recv_id)
 
-    def _recv_motor_response(self, timeout: float = 0.1) -> Optional[can.Message]:
-        """Receive a response from a motor."""
+    def _recv_motor_response(self, expected_recv_id: Optional[int] = None, timeout: float = 0.5) -> Optional[can.Message]:
+        """
+        Receive a response from a motor.
+        
+        Args:
+            expected_recv_id: If provided, only return messages from this CAN ID
+            timeout: Timeout in seconds
+        
+        Returns:
+            CAN message if received, None otherwise
+        """
         try:
-            msg = self.canbus.recv(timeout=timeout)
-            if msg:
-                return msg
+            start_time = time.time()
+            messages_seen = []
+            while time.time() - start_time < timeout:
+                msg = self.canbus.recv(timeout=0.01)  # Short timeout for polling
+                if msg:
+                    messages_seen.append(f"0x{msg.arbitration_id:02X}")
+                    # If no filter specified, return any message
+                    if expected_recv_id is None:
+                        return msg
+                    # Otherwise, only return if it matches the expected recv_id
+                    if msg.arbitration_id == expected_recv_id:
+                        return msg
+                    else:
+                        logger.debug(f"Ignoring message from CAN ID 0x{msg.arbitration_id:02X}, expected 0x{expected_recv_id:02X}")
+            
+            # Log what we saw for debugging
+            if messages_seen:
+                logger.warning(f"Received {len(messages_seen)} message(s) from IDs {set(messages_seen)}, but expected 0x{expected_recv_id:02X}")
+            else:
+                logger.warning(f"No CAN messages received (expected from 0x{expected_recv_id:02X})")
         except Exception as e:
             logger.debug(f"Failed to receive CAN message: {e}")
         return None
@@ -325,7 +359,8 @@ class DamiaoMotorsBus(MotorsBusBase):
         
         msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
         self.canbus.send(msg)
-        self._recv_motor_response()
+        recv_id = self._get_motor_recv_id(motor)
+        self._recv_motor_response(expected_recv_id=recv_id)
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
@@ -384,12 +419,15 @@ class DamiaoMotorsBus(MotorsBusBase):
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
         # Refresh motor to get latest state
-        self._refresh_motor(motor)
-        
-        # Read response
-        msg = self._recv_motor_response()
+        msg = self._refresh_motor(motor)
         if msg is None:
-            raise ConnectionError(f"No response from motor {motor}")
+            motor_id = self._get_motor_id(motor)
+            recv_id = self._get_motor_recv_id(motor)
+            raise ConnectionError(
+                f"No response from motor '{motor}' (send ID: 0x{motor_id:02X}, recv ID: 0x{recv_id:02X}). "
+                f"Check that: 1) Motor is powered (24V), 2) CAN wiring is correct, "
+                f"3) Motor IDs are configured correctly using Damiao Debugging Tools"
+            )
         
         motor_type = self._motor_types.get(motor, MotorType.DM4310)
         position_degrees, velocity_deg_per_sec, torque, t_mos, t_rotor = self._decode_motor_state(msg.data, motor_type)
@@ -578,6 +616,14 @@ class DamiaoMotorsBus(MotorsBusBase):
                 if m.id == motor:
                     return name
             raise ValueError(f"Unknown motor ID: {motor}")
+    
+    def _get_motor_recv_id(self, motor: NameOrID) -> Optional[int]:
+        """Get motor recv_id from name or ID."""
+        motor_name = self._get_motor_name(motor)
+        motor_obj = self.motors.get(motor_name)
+        if motor_obj and hasattr(motor_obj, "recv_id"):
+            return motor_obj.recv_id
+        return None
 
     @cached_property
     def is_calibrated(self) -> bool:
