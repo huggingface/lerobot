@@ -320,6 +320,7 @@ class MetaworldEnv(EnvConfig):
             "render_mode": self.render_mode,
         }
 
+
 @EnvConfig.register_subclass("rlbench")
 @dataclass
 class RLBenchEnv(EnvConfig):

@@ -13,45 +13,44 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from functools import partial
-import json, os
+import json
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from functools import partial
 from pathlib import Path
-from typing import Any, Mapping
-import numpy as np
+from typing import Any
 
 import gymnasium as gym
+import numpy as np
 from gymnasium import spaces
-
-from rlbench.backend.task import Task
-from rlbench.gym import RLBenchEnv as RLBenchGymEnv
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import JointPosition
 from rlbench.action_modes.gripper_action_modes import Discrete
-from rlbench.utils import name_to_task_class
-from rlbench.tasks import (FS10_V1, FS25_V1, FS50_V1, FS95_V1, MT15_V1, MT30_V1, MT55_V1, MT100_V1)
+from rlbench.backend.task import Task
+from rlbench.gym import RLBenchEnv as RLBenchGymEnv
+from rlbench.tasks import FS10_V1, FS25_V1, FS50_V1, FS95_V1, MT15_V1, MT30_V1, MT55_V1, MT100_V1
 
 
 class AbsoluteJointPositionActionMode(MoveArmThenGripper):
     """Absolute joint position action mode for arm and gripper.
-    
+
     The arm action is first applied, followed by the gripper action.
     """
 
     def __init__(self):
         # Call super
-        super(AbsoluteJointPositionActionMode, self).__init__(
-            JointPosition(absolute_mode=True),   # Arm in absolute joint positions
-            Discrete()  # Gripper in discrete open/close (<0.5 → close, >=0.5 → open)
+        super().__init__(
+            JointPosition(absolute_mode=True),  # Arm in absolute joint positions
+            Discrete(),  # Gripper in discrete open/close (<0.5 → close, >=0.5 → open)
         )
 
     def action_bounds(self):
         """Returns the min and max of the action mode.
-        
+
         Range is [- 2*pi, 2*pi] for each joint and [0.0, 1.0] for the gripper.
         """
         return np.array([-2 * np.pi] * 7 + [0.0]), np.array([2 * np.pi] * 7 + [1.0])
+
 
 # ---- Load configuration data from the external JSON file ----
 CONFIG_PATH = Path(__file__).parent / "rlbench_config.json"
@@ -77,6 +76,7 @@ TASK_NAME_TO_ID: dict[str, int] = data.get("TASK_NAME_TO_ID", {})
 ACTION_DIM = 8  # 7 joints + 1 gripper  # NOTE: RLBench supports also EEF pose+gripper (dim=8, [x,y,z,rx,ry,rz,gripper])
 OBS_DIM = 8  # 7 joints + 1 gripper
 
+
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     """Normalize camera_name into a non-empty list of strings."""
     if isinstance(camera_name, str):
@@ -89,9 +89,10 @@ def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
         raise ValueError("camera_name resolved to an empty list.")
     return cams
 
+
 def _get_suite(name: str) -> dict[str, list[Task]]:
     """Instantiate a RLBench suite by name with clear validation."""
-    
+
     suites = {
         "FS10_V1": FS10_V1,
         "FS25_V1": FS25_V1,
@@ -110,6 +111,7 @@ def _get_suite(name: str) -> dict[str, list[Task]]:
     if not suite.get("train", None) and not suite.get("test", None):
         raise ValueError(f"Suite '{name}' has no tasks.")
     return suite
+
 
 def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[int]:
     """Validate/normalize task ids. If None → all tasks."""
@@ -147,7 +149,7 @@ class RLBenchEnv(gym.Env):
         self.visualization_width = visualization_width
         self.visualization_height = visualization_height
         self.camera_name = _parse_camera_names(camera_name)
-        
+
         # Map raw camera names to "image1" and "image2".
         # The preprocessing step `preprocess_observation` will then prefix these with `.images.*`,
         # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
@@ -161,8 +163,9 @@ class RLBenchEnv(gym.Env):
         self.camera_name_mapping = camera_name_mapping
 
         self._env = self._make_envs_task(self.task)
-        self._max_episode_steps = 500   # TODO: make configurable depending on task suite?
-        self.task_description = TASK_DESCRIPTIONS.get(self.task, "")
+        self._max_episode_steps = 500  # TODO: make configurable depending on task suite?
+        task_name = self.task.get_name() if self.task is not None else ""
+        self.task_description = TASK_DESCRIPTIONS.get(task_name, "")
 
         images = {}
         for cam in self.camera_name:
@@ -173,12 +176,14 @@ class RLBenchEnv(gym.Env):
                 dtype=np.uint8,
             )
 
-        if self.obs_type == "state":    # TODO: This can be implemented in RLBench, because the observation contains joint positions and gripper pose
-            raise (
+        if (
+            self.obs_type == "state"
+        ):  # TODO: This can be implemented in RLBench, because the observation contains joint positions and gripper pose
+            raise ValueError(
                 "The 'state' observation type is not supported in RLBench. "
                 "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
             )
-            
+
         elif self.obs_type == "pixels":
             self.observation_space = spaces.Dict(
                 {
@@ -224,23 +229,24 @@ class RLBenchEnv(gym.Env):
             task,
             observation_mode="vision",
             render_mode=self.render_mode,
-            action_mode=AbsoluteJointPositionActionMode()
+            action_mode=AbsoluteJointPositionActionMode(),
         )
 
     def _format_raw_obs(self, raw_obs: dict) -> dict[str, Any]:
-        
         images = {}
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
             image = image[::-1, ::-1]  # rotate 180 degrees
             images[self.camera_name_mapping[camera_name]] = image
-        
+
         agent_pos = np.concatenate(
             raw_obs["joint_positions"],
             [raw_obs["gripper_open"]],
         )
 
-        if self.obs_type == "state":    # TODO: this can be implemented in RLBench, because the observation contains joint positions and gripper pose
+        if (
+            self.obs_type == "state"
+        ):  # TODO: this can be implemented in RLBench, because the observation contains joint positions and gripper pose
             raise NotImplementedError(
                 "'state' obs_type not implemented for RLBench. Use pixel modes instead."
             )
@@ -354,7 +360,7 @@ def _make_env_fns(
     for _ in range(n_envs):
         fns.append(partial(_make_env, **gym_kwargs))
     return fns
-    
+
 
 # ---- Main API ----------------------------------------------------------------
 
@@ -376,7 +382,7 @@ def create_rlbench_envs(
         - `task` can be a single suite or a comma-separated list of suites.
         - You may pass `task_names` (list[str]) inside `gym_kwargs` to restrict tasks per suite.
     """
-    
+
     if env_cls is None or not callable(env_cls):
         raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
     if not isinstance(n_envs, int) or n_envs <= 0:
@@ -384,7 +390,7 @@ def create_rlbench_envs(
 
     gym_kwargs = dict(gym_kwargs or {})
     task_ids_filter = gym_kwargs.pop("task_ids", None)  # optional: limit to specific tasks
-    
+
     camera_names = _parse_camera_names(camera_name)
     suite_names = [s.strip() for s in str(task).split(",") if s.strip()]
     if not suite_names:
@@ -398,16 +404,16 @@ def create_rlbench_envs(
 
     for suite_name in suite_names:
         suite = _get_suite(suite_name)
-        total = len(suite['train'])
+        total = len(suite["train"])
         selected = _select_task_ids(total, task_ids_filter)
 
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 
-        for tid in selected:    # FIXME: this breaks!
+        for tid in selected:  # FIXME: this breaks!
             fns = _make_env_fns(
                 suite=suite,
-                task=suite['train'][tid],
+                task=suite["train"][tid],
                 n_envs=n_envs,
                 camera_names=camera_names,
                 gym_kwargs=gym_kwargs,
