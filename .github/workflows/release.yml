@@ -82,6 +82,14 @@ jobs:
             exit 1
           fi
 
+      - name: Remove Tags with Git dependencies
+        # TODO(Steven): Temporary patch to remove libero and pi from PyPi 0.4.0 release due to its reliance on git dependencies.
+        run: |
+          echo "::info:: Checking for Git dependencies to remove from pyproject.toml..."
+          grep -E '@ git\+https|lerobot\[pi\]|lerobot\[libero\]' pyproject.toml | sed 's/^/::warning:: Removing line: /' || true
+          sed -E -i '/@ git\+https|lerobot\[pi\]|lerobot\[libero\]/d' pyproject.toml
+          echo "::info:: Git dependencies removed. Proceeding with build."
+
       - name: Install build dependencies
         run: python -m pip install build
 
