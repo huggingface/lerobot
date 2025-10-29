@@ -45,7 +45,7 @@ class DiffusionConfig(PreTrainedConfig):
     Args:
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
-        horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
+        chunk_size: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
         n_action_steps: The number of action steps to run in the environment for one invocation of the policy.
             See `DiffusionPolicy.select_action` for more details.
         input_shapes: A dictionary defining the shapes of the input data for the policy. The key represents
@@ -105,7 +105,7 @@ class DiffusionConfig(PreTrainedConfig):
 
     # Inputs / output structure.
     n_obs_steps: int = 2
-    horizon: int = 16
+    chunk_size: int = 16
     n_action_steps: int = 8
 
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -118,7 +118,7 @@ class DiffusionConfig(PreTrainedConfig):
 
     # The original implementation doesn't sample frames for the last 7 steps,
     # which avoids excessive padding and leads to improved training results.
-    drop_n_last_frames: int = 7  # horizon - n_action_steps - n_obs_steps + 1
+    drop_n_last_frames: int = 7  # chunk_size - n_action_steps - n_obs_steps + 1
 
     # Architecture / modeling.
     # Vision backbone.
@@ -180,13 +180,13 @@ class DiffusionConfig(PreTrainedConfig):
                 f"Got {self.noise_scheduler_type}."
             )
 
-        # Check that the horizon size and U-Net downsampling is compatible.
+        # Check that the chunk size and U-Net downsampling is compatible.
         # U-Net downsamples by 2 with each stage.
         downsampling_factor = 2 ** len(self.down_dims)
-        if self.horizon % downsampling_factor != 0:
+        if self.chunk_size % downsampling_factor != 0:
             raise ValueError(
-                "The horizon should be an integer multiple of the downsampling factor (which is determined "
-                f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
+                "The chunk_size should be an integer multiple of the downsampling factor (which is determined "
+                f"by `len(down_dims)`). Got {self.chunk_size=} and {self.down_dims=}"
             )
 
     def get_optimizer_preset(self) -> AdamConfig:
@@ -231,7 +231,7 @@ class DiffusionConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
+        return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.chunk_size))
 
     @property
     def reward_delta_indices(self) -> None:
