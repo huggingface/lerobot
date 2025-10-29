@@ -131,6 +131,13 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
 class AddTeleopEventsAsInfoStep(InfoProcessorStep):
     """
     Adds teleoperator control events (e.g., terminate, success) to the transition's info.
+
+    This step extracts control events from teleoperators that support event-based
+    interaction, making these signals available to other parts of the system.
+
+    Attributes:
+        teleop_device: An instance of a teleoperator that implements the
+                       `HasTeleopEvents` protocol.
     """
 
     teleop_device: TeleopWithEvents
@@ -144,55 +151,51 @@ class AddTeleopEventsAsInfoStep(InfoProcessorStep):
     def info(self, info: dict) -> dict:
         """
         Retrieves teleoperator events and updates the info dictionary.
+
+        Args:
+            info: The incoming info dictionary.
+
+        Returns:
+            A new dictionary including the teleoperator events.
         """
         self._debug_frame_count += 1
 
-        # 获取teleop事件
         teleop_events = self.teleop_device.get_teleop_events()
 
-        # 深入调试：检查teleop设备的内部状态
         if self._debug_frame_count % 30 == 30:  # Disable now
             print(
                 f"\n=== DEEP DEBUG TELEOP EVENTS (Frame {self._debug_frame_count}) ==="
             )
             print(f"1. Raw teleop_events: {teleop_events}")
-
-            # 检查teleop设备的类型和具体实现
             print(f"2. Teleop device details:")
             print(f"   Type: {type(self.teleop_device)}")
             print(f"   Module: {self.teleop_device.__class__.__module__}")
 
-            # 尝试多种方式检查space键状态
             print(f"3. Space key detection (multiple methods):")
 
-            # 方法1: 直接调用设备方法
             if hasattr(self.teleop_device, "is_space_pressed"):
                 space_pressed = self.teleop_device.is_space_pressed()
                 print(f"   is_space_pressed(): {space_pressed}")
             else:
                 print(f"   is_space_pressed(): Method not available")
 
-            # 方法2: 检查干预触发
             if hasattr(self.teleop_device, "is_intervention_triggered"):
                 intervention_triggered = self.teleop_device.is_intervention_triggered()
                 print(f"   is_intervention_triggered(): {intervention_triggered}")
             else:
                 print(f"   is_intervention_triggered(): Method not available")
 
-            # 方法3: 检查设备状态
             if hasattr(self.teleop_device, "get_state"):
                 state = self.teleop_device.get_state()
                 print(f"   get_state(): {state}")
             else:
                 print(f"   get_state(): Method not available")
 
-            # 方法4: 检查是否有任何按钮状态
             if hasattr(self.teleop_device, "buttons"):
                 print(f"   buttons: {self.teleop_device.buttons}")
             else:
                 print(f"   buttons: Attribute not available")
 
-            # 方法5: 检查键盘事件
             if hasattr(self.teleop_device, "key_events"):
                 print(f"   key_events: {self.teleop_device.key_events}")
             else:
@@ -451,7 +454,7 @@ class InterventionActionProcessorStep(ProcessorStep):
 
     use_gripper: bool = False
     terminate_on_success: bool = True
-    _debug_frame_count: int = 0  # 添加调试计数器
+    _debug_frame_count: int = 0
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """

@@ -66,13 +66,16 @@ def image_array_to_pil_image(
             else:
                 image_array = (image_array * 255).astype(np.uint8)
         elif image_array.dtype == np.uint16:
+            # Depth maps in uint16 - keep as is or scale down to uint8
+            # Option 1: Keep as uint16 (requires mode "I;16")
             return PIL.Image.fromarray(image_array, mode="I;16")
         else:
+            # Other 2D arrays (uint8, etc.)
             image_array = image_array.astype(np.uint8)
 
         return PIL.Image.fromarray(image_array, mode="L")
 
-    # Handle 3D arrays - improved logic to handle both (C, H, W) and (H, W, C)
+    # Handle 3D arrays to handle both (C, H, W) and (H, W, C)
     elif image_array.ndim == 3:
         # Determine the channel dimension
         channels_dim = None
