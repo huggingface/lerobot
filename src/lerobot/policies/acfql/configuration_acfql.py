@@ -177,7 +177,7 @@ class ACFQLConfig(PreTrainedConfig):
     # Number of steps for the flow in the ACFQL algorithm
     flow_steps: int = 10
     # Whether to normalize the Q-loss
-    normalize_q_loss: bool = False
+    normalize_q_loss: None | str = None
     # Update-to-data ratio for the UTD algorithm (If you want enable utd_ratio, you need to set it to >1)
     utd_ratio: int = 2
     # Dimension of the latent space

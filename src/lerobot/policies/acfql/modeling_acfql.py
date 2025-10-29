@@ -474,9 +474,17 @@ class ACFQLPolicy(
         q_vals = q_preds.mean(dim=0)
         q_loss = -q_vals.mean()
 
-        if self.config.normalize_q_loss:
+        if self.config.normalize_q_loss is None:
+            pass
+        elif self.config.normalize_q_loss == "q_vals":
             lam = 1.0 / q_vals.abs().mean().detach()
             q_loss = lam * q_loss
+
+        elif self.config.normalize_q_loss == "q_preds":
+            lam = 1.0 / q_preds.abs().mean().detach()
+            q_loss = lam * q_loss
+        else:
+            raise ValueError(f"Unknown normalize_q_loss option: {self.config.normalize_q_loss}")
 
         # Total loss: alpha * distillation + q_loss
         actor_onestep_flow_loss = self.config.alpha * distill_loss + q_loss
