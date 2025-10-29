@@ -38,8 +38,8 @@ from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
-from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.utils import check_visuals
+from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.processor.converters import (
     batch_to_transition,
@@ -422,8 +422,6 @@ def make_policy(
 
     if not rename_map:
         check_visuals(cfg, features)
-        # TODO: (jadechoghari)
-        # add a check_state same thing as iamge
-        # add a check_action same thing as image
-        
+        # TODO: (jadechoghari) - add a check_state(cfg, features) and check_action(cfg, features)
+
     return policy

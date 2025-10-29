@@ -22,10 +22,12 @@ import numpy as np
 import torch
 from torch import nn
 
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.utils import build_dataset_frame
 from lerobot.processor import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
-from lerobot.configs.types import FeatureType
+
 
 def populate_queues(
     queues: dict[str, deque], batch: dict[str, torch.Tensor], exclude_keys: list[str] | None = None
@@ -199,7 +201,11 @@ def make_robot_action(action_tensor: PolicyAction, ds_features: dict[str, dict])
     }
     return act_processed_policy
 
-def raise_feature_mismatch_error(provided_features, expected_features):
+
+def raise_feature_mismatch_error(
+    provided_features: set[str],
+    expected_features: set[str],
+) -> None:
     """
     Raises a standardized ValueError for feature mismatches between dataset/environment and policy config.
     """
@@ -217,10 +223,20 @@ def raise_feature_mismatch_error(provided_features, expected_features):
         f'"observation.images.top": "observation.images.camera2"}}\''
     )
 
-def check_visuals(cfg, features):
+
+def check_visuals(
+    cfg: PreTrainedConfig,
+    features: dict[str, PolicyFeature],
+) -> None:
+    """
+    Validates visual feature consistency between a policy config and provided dataset/environment features.
+
+    Args:
+        cfg (PreTrainedConfig): The model or policy configuration containing input_features and type.
+        features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects.
+    """
     expected_visuals = {k for k, v in cfg.input_features.items() if v.type == FeatureType.VISUAL}
     provided_visuals = {k for k, v in features.items() if v.type == FeatureType.VISUAL}
-
     if cfg.type in ["smolvla", "pi0", "pi05"]:
         missing_visuals = expected_visuals - provided_visuals
         if len(missing_visuals) != getattr(cfg, "empty_cameras", 0):
@@ -228,5 +244,5 @@ def check_visuals(cfg, features):
                 f"Expected {cfg.empty_cameras} missing visual features but found {len(missing_visuals)}.\n"
                 f"Missing visuals: {sorted(missing_visuals)}"
             )
-    if not expected_visuals.issubset(provided_visuals):
+    if not provided_visuals.issubset(expected_visuals):
         raise_feature_mismatch_error(provided_visuals, expected_visuals)

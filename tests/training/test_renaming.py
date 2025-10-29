@@ -14,28 +14,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import numpy as np
 from pathlib import Path
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.scripts.lerobot_train import train
-from lerobot.configs.train import TrainPipelineConfig
+import numpy as np
+import pytest
+
 from lerobot.configs.default import DatasetConfig
-from lerobot.policies.factory import make_policy_config
-from lerobot.utils.utils import auto_select_torch_device
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies.factory import make_policy_config
+from lerobot.scripts.lerobot_train import train
+from lerobot.utils.utils import auto_select_torch_device
 
 DUMMY_REPO_ID = "dummy/repo"
+
 
 @pytest.fixture
 def temp_dir(tmp_path):
     return tmp_path
 
+
 DUMMY_STATE_DIM = 6
 DUMMY_ACTION_DIM = 6
 IMAGE_SIZE = 256
 DEVICE = auto_select_torch_device()
+
+
 def make_dummy_dataset(camera_keys, tmp_path):
     """Creates a minimal dummy dataset for testing rename_mapping logic."""
     features = {
@@ -72,6 +77,7 @@ def make_dummy_dataset(camera_keys, tmp_path):
     dataset.finalize()
     return dataset, root
 
+
 def custom_validate(train_config: TrainPipelineConfig, policy_path: str, empty_cameras: int):
     train_config.policy = PreTrainedConfig.from_pretrained(policy_path)
     train_config.policy.pretrained_path = Path(policy_path)
@@ -79,20 +85,26 @@ def custom_validate(train_config: TrainPipelineConfig, policy_path: str, empty_c
     train_config.policy.empty_cameras = empty_cameras
     train_config.policy.push_to_hub = False
     if train_config.use_policy_training_preset:
-            train_config.optimizer = train_config.policy.get_optimizer_preset()
-            train_config.scheduler = train_config.policy.get_scheduler_preset()
+        train_config.optimizer = train_config.policy.get_optimizer_preset()
+        train_config.scheduler = train_config.policy.get_scheduler_preset()
     return train_config
+
 
 @pytest.mark.parametrize(
     "camera_keys, empty_cameras, rename_map, expect_success",
     [
         # case 1: dataset has fewer cameras than policy (3 instead of 4), but we specify empty_cameras=1 for smolvla, pi0, pi05
         (["camera1", "camera2", "camera3"], 1, {}, True),
-
         # case 2: dataset has 2 cameras with different names, rename_mapping provided
-        (["top", "side"], 0, {"observation.images.top": "observation.images.camera1",
-                              "observation.images.side": "observation.images.camera2"}, True),
-
+        (
+            ["top", "side"],
+            0,
+            {
+                "observation.images.top": "observation.images.camera1",
+                "observation.images.side": "observation.images.camera2",
+            },
+            True,
+        ),
         # case 3: dataset has 2 cameras, policy expects 3, no rename_map, no empty_cameras, should raise for smolvla
         (["camera1", "camera2"], 0, {}, False),
     ],
