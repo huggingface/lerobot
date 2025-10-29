@@ -38,7 +38,7 @@ RLBench is built around CoppeliaSim v4.1.0 and [PyRep](https://github.com/stepja
 First, install CoppeliaSim:
 
 ```bash
-# set env variables
+# set environment variables
 export COPPELIASIM_ROOT=${HOME}/CoppeliaSim
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$COPPELIASIM_ROOT
 export QT_QPA_PLATFORM_PLUGIN_PATH=$COPPELIASIM_ROOT
@@ -49,7 +49,11 @@ rm -rf CoppeliaSim_Edu_V4_1_0_Ubuntu20_04.tar.xz
 ```
 
 Next, install the necessary dependencies:
-`pip install -e ".[rlbench]"`
+
+```bash
+pip install pycparser    # needed while cloning rlbench
+pip install -e ".[rlbench]"
+```
 
 That's it! You can now use RLBench environments within LeRobot. To run headless, check the documentation on the original [RLBench repo](https://github.com/stepjam/RLBench).
 

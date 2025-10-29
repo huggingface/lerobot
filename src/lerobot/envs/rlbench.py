@@ -164,7 +164,9 @@ class RLBenchEnv(gym.Env):
 
         self._env = self._make_envs_task(self.task)
         self._max_episode_steps = 500  # TODO: make configurable depending on task suite?
-        task_name = self.task.get_name() if self.task is not None else ""
+
+        # Get task description
+        task_name = self.task.__name__ if self.task is not None else ""
         self.task_description = TASK_DESCRIPTIONS.get(task_name, "")
 
         images = {}
