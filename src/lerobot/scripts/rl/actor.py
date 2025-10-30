@@ -49,6 +49,7 @@ https://github.com/michel-aractingi/lerobot-hilserl-guide
 import logging
 import os
 import time
+from collections import deque
 from functools import lru_cache
 from queue import Empty
 
@@ -272,6 +273,7 @@ def act_with_policy(
     auto_steps = 0
     auto_correct = 0
     auto_l1_sum = 0.0
+    recent_episode_results: deque[int] = deque(maxlen=50)
 
     policy_timer = TimerManager("Policy inference", log=False)
 
@@ -433,19 +435,6 @@ def act_with_policy(
                     if dx == 0 and dy == 0:
                         auto_correct += 1
 
-                    # Periodically log convergence stats
-                    if auto_steps % 50 == 0:
-                        acc = 100.0 * auto_correct / max(1, auto_steps)
-                        mean_l1 = auto_l1_sum / max(1, auto_steps)
-                        logging.info(
-                            "==================== [AUTO ACCURACY] ===================="
-                        )
-                        logging.info(
-                            f"[AUTO ACCURACY] steps={auto_steps} accuracy={acc:.1f}% mean_L1={mean_l1:.3f}"
-                        )
-                        logging.info(
-                            "==========================================================="
-                        )
 
                 if pred_x is not None and gt_x is not None:
                     info["pred_index"] = info.get("pred_index", pred_y * 8 + pred_x)
@@ -491,6 +480,14 @@ def act_with_policy(
 
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
+
+            # Update rolling 50-episode accuracy statistics
+            episode_success = 1 if sum_reward_episode > 0 else 0
+            recent_episode_results.append(episode_success)
+            rolling_acc = 100.0 * sum(recent_episode_results) / len(recent_episode_results)
+            logging.info(
+                f"[AUTO ACCURACY 50] episodes={len(recent_episode_results)} accuracy={rolling_acc:.1f}%"
+            )
 
             update_policy_parameters(
                 policy=policy,
