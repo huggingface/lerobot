@@ -26,7 +26,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.utils import build_dataset_frame
 from lerobot.processor import PolicyAction, RobotAction, RobotObservation
-from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STR
 
 
 def populate_queues(
@@ -235,7 +235,11 @@ def validate_visual_features_consistency(
         cfg (PreTrainedConfig): The model or policy configuration containing input_features and type.
         features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects.
     """
-    expected_visuals = {k for k, v in cfg.input_features.items() if v.type == FeatureType.VISUAL}
+    expected_visuals = {
+        k
+        for k, v in cfg.input_features.items()
+        if v.type == FeatureType.VISUAL and not k.startswith(f"{OBS_IMAGES}.empty_camera_")
+    }
     provided_visuals = {k for k, v in features.items() if v.type == FeatureType.VISUAL}
     if cfg.type in ["smolvla", "pi0", "pi05"]:
         missing_visuals = expected_visuals - provided_visuals
