@@ -1,4 +1,5 @@
-from .config_piper_arm import PiperArmConfig
-from .piper_arm import PiperArm
+from .config_piper import PiperConfig
+from .piper import PiperArm
+from .piper_sdk_interface import PiperSDKInterface
 
-__all__ = ["PiperArmConfig", "PiperArm"]
+__all__ = ["PiperArmConfig", "PiperArm", "PiperSDKInterface"]
