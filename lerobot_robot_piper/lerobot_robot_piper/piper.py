@@ -14,12 +14,17 @@ class Piper(Robot):
     def __init__(self, config: PiperConfig):
         super().__init__(config)
         self.config = config
-        self._iface: PiperSDKInterface | None = PiperSDKInterface(port=config.can_interface)
+        # Lazily initialize the SDK interface in connect()
+        self._iface: PiperSDKInterface | None = None
         self.cameras = make_cameras_from_configs(config.cameras) if config.cameras else {}
 
     @property
     def is_connected(self) -> bool:
-        return (self._iface is not None) and all(cam.is_connected for cam in self.cameras.values())
+        return (
+            self._iface is not None
+            and getattr(self._iface, "piper", None) is not None
+            and all(cam.is_connected for cam in self.cameras.values())
+        )
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -44,6 +49,9 @@ class Piper(Robot):
         return ft
 
     def connect(self, calibrate: bool = True) -> None:
+        # Initialize SDK interface on demand
+        if self._iface is None:
+            self._iface = PiperSDKInterface(port=self.config.can_interface)
         for cam in self.cameras.values():
             cam.connect()
         self.configure()
@@ -55,6 +63,7 @@ class Piper(Robot):
         for cam in self.cameras.values():
             cam.disconnect()
 
+    @property
     def is_calibrated(self) -> bool:  # type: ignore[override]
         return True
 
@@ -75,7 +84,7 @@ class Piper(Robot):
         # Gather in configured order and apply signs
         joints = [status[f"joint_{i+1}.pos"] for i in range(6)]
         joints = self._apply_signs(joints)
-        obs = {name: val for name, val in zip(self.config.joint_names, joints, strict=True)}
+        obs = {f"{name}.pos": val for name, val in zip(self.config.joint_names, joints, strict=True)}
         if self.config.include_gripper and "gripper.pos" in status:
             obs["gripper.pos"] = status["gripper.pos"]
         for cam_key, cam in self.cameras.items():
@@ -86,7 +95,13 @@ class Piper(Robot):
         if not self.is_connected or self._iface is None:
             raise ConnectionError(f"{self} is not connected.")
         joints = [float(action[f"{name}.pos"]) for name in self.config.joint_names]
+        # Convert to hardware frame (apply signs)
         joints_hw = self._apply_signs(joints)
+        # Clip to hardware limits if available
+        min_pos = getattr(self._iface, "min_pos", None)
+        max_pos = getattr(self._iface, "max_pos", None)
+        if isinstance(min_pos, list) and isinstance(max_pos, list) and len(min_pos) >= 6 and len(max_pos) >= 6:
+            joints_hw = [max(min_val, min(max_val, val)) for val, min_val, max_val in zip(joints_hw, min_pos[:6], max_pos[:6], strict=True)]
         gripper_mm = float(action["gripper.pos"]) if self.config.include_gripper and "gripper.pos" in action else None
         self._iface.set_joint_positions_deg(joints_hw, gripper_mm)
         return action
