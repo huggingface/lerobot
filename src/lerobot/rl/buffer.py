@@ -86,7 +86,7 @@ class ReplayBuffer:
         image_augmentation_function: Callable | None = None,
         use_drq: bool = True,
         storage_device: str = "cpu",
-        optimize_memory: bool = False,
+        optimize_memory: bool = True
     ):
         """
         Replay buffer for storing transitions.
@@ -136,6 +136,7 @@ class ReplayBuffer:
         complementary_info: dict[str, torch.Tensor] | None = None,
     ):
         """Initialize the storage tensors based on the first transition."""
+        self.capacity = 1000
         # Determine shapes from the first transition
         state_shapes = {key: val.squeeze(0).shape for key, val in state.items()}
         action_shape = action.squeeze(0).shape
@@ -444,7 +445,7 @@ class ReplayBuffer:
         if capacity is None:
             capacity = len(lerobot_dataset)
 
-        if capacity < len(lerobot_dataset):
+        if capacity < 1000: #len(lerobot_dataset):
             raise ValueError(
                 "The capacity of the ReplayBuffer must be greater than or equal to the length of the LeRobotDataset."
             )
@@ -476,13 +477,14 @@ class ReplayBuffer:
                 and first_transition["complementary_info"] is not None
             ):
                 first_complementary_info = {
-                    k: v.to(device) for k, v in first_transition["complementary_info"].items()
+                    k: v.to for k, v in first_transition["complementary_info"].items()
                 }
 
             replay_buffer._initialize_storage(
                 state=first_state, action=first_action, complementary_info=first_complementary_info
             )
 
+        num_samples = 0
         # Fill the buffer with all transitions
         for data in list_transition:
             for k, v in data.items():
@@ -503,6 +505,9 @@ class ReplayBuffer:
                 truncated=False,  # NOTE: Truncation are not supported yet in lerobot dataset
                 complementary_info=data.get("complementary_info", None),
             )
+            num_samples += 1
+            if num_samples >= 1000:
+                return replay_buffer
 
         return replay_buffer
 
@@ -645,7 +650,7 @@ class ReplayBuffer:
             raise ValueError("State keys must be provided when converting LeRobotDataset to Transitions.")
 
         transitions = []
-        num_frames = len(dataset)
+        num_frames = 1000 # len(dataset)
 
         # Check if the dataset has "next.done" key
         sample = dataset[0]
@@ -659,7 +664,7 @@ class ReplayBuffer:
         if not has_done_key:
             print("'next.done' key not found in dataset. Inferring from episode boundaries...")
 
-        for i in tqdm(range(num_frames)):
+        for i in tqdm(range(1000)): # num_frames)):
             current_sample = dataset[i]
 
             # ----- 1) Current state -----

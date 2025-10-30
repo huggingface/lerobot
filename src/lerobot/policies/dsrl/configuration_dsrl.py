@@ -139,6 +139,8 @@ class DSRLConfig(PreTrainedConfig):
     # Training parameter
     # Number of steps for online training
     online_steps: int = 1000000
+    # Number of steps for offline training
+    offline_steps: int = 100000
     # Capacity of the online replay buffer
     online_buffer_capacity: int = 100000
     # Capacity of the offline replay buffer
