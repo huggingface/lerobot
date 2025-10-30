@@ -407,6 +407,7 @@ class InterventionActionProcessorStep(ProcessorStep):
     """
 
     use_gripper: bool = False
+    gripper_neutral_action: float = 1.0
     use_rotation: bool = False
     terminate_on_success: bool = True
 
@@ -454,7 +455,7 @@ class InterventionActionProcessorStep(ProcessorStep):
                         ]
                     )
                 if self.use_gripper:
-                    action_list.append(teleop_action.get(GRIPPER_KEY, 0.0))
+                    action_list.append(teleop_action.get(GRIPPER_KEY, self.gripper_neutral_action))
             elif isinstance(teleop_action, np.ndarray):
                 action_list = teleop_action.tolist()
             else:

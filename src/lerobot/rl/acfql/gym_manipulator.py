@@ -16,6 +16,7 @@
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import gymnasium as gym
@@ -25,7 +26,6 @@ import torch
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.envs.configs import HILSerlRobotEnvConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
@@ -52,7 +52,7 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import identity_transition
 from lerobot.rl.gym_manipulator import (
-    GymManipulatorConfig,
+    DatasetConfig,
     replay_trajectory,
     reset_follower_position,
     step_env_and_process_transition,
@@ -86,9 +86,20 @@ from lerobot.utils.utils import (
     log_say,
 )
 
+from .configs import HILSerlRobotEnvConfig
 from .utils import get_frequency_stats
 
 logging.basicConfig(level=logging.INFO)
+
+
+@dataclass
+class GymManipulatorConfig:
+    """Main configuration for gym manipulator environment."""
+
+    env: HILSerlRobotEnvConfig
+    dataset: DatasetConfig
+    mode: str | None = None  # Either "record", "replay", None
+    device: str = "cpu"
 
 
 class RobotEnv(gym.Env):
@@ -185,8 +196,12 @@ class RobotEnv(gym.Env):
         if self.use_gripper:
             action_dim += 1
             # TODO(jpizarrom): bounds should part of the config
-            bounds["min"] = np.concatenate([bounds["min"], [-1]])
-            bounds["max"] = np.concatenate([bounds["max"], [1]])
+            bounds["min"] = np.concatenate(
+                [bounds["min"], [self.robot.processor.gripper.min_bound_gripper_pos]]
+            )
+            bounds["max"] = np.concatenate(
+                [bounds["max"], [self.robot.processor.gripper.max_bound_gripper_pos]]
+            )
 
         self.action_space = gym.spaces.Box(
             low=bounds["min"],
@@ -301,6 +316,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     # Check if this is a GymHIL simulation environment
     if cfg.name == "gym_hil":
         assert cfg.robot is None and cfg.teleop is None, "GymHIL environment does not support robot or teleop"
+
         import gym_hil  # noqa: F401
 
         # Extract gripper settings with defaults
@@ -599,7 +615,9 @@ def control_loop(
         # Create a neutral action (no movement)
         neutral_action = torch.tensor([0.0] * action_dim_without_gripper, dtype=torch.float32)
         if use_gripper:
-            neutral_action = torch.cat([neutral_action, torch.tensor([0.0])])  # Gripper stay
+            neutral_action = torch.cat(
+                [neutral_action, torch.tensor([cfg.env.processor.gripper.neutral_action])]
+            )  # Gripper stay
 
         # Use the new step function
         transition = step_env_and_process_transition(
@@ -611,6 +629,12 @@ def control_loop(
         )
         terminated = transition.get(TransitionKey.DONE, False)
         truncated = transition.get(TransitionKey.TRUNCATED, False)
+
+        action_to_record = transition[TransitionKey.COMPLEMENTARY_DATA].get(
+            "teleop_action", transition[TransitionKey.ACTION]
+        )
+
+        # print(action_to_record)
 
         if cfg.mode == "record":
             observations = {
