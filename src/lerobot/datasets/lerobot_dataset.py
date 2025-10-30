@@ -430,9 +430,7 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         for key in video_keys:
             if not self.features[key].get("info", None):
-                video_path = self.root / self.video_path.format(
-                    video_key=video_key, chunk_index=0, file_index=0
-                )
+                video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
                 self.info["features"][key]["info"] = get_video_info(video_path)
 
     def update_chunk_settings(
