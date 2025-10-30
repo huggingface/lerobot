@@ -52,6 +52,8 @@ import time
 from functools import lru_cache
 from queue import Empty
 
+import numpy as np
+
 import grpc
 import torch
 from torch import nn
@@ -273,6 +275,16 @@ def act_with_policy(
 
     policy_timer = TimerManager("Policy inference", log=False)
 
+    def _action_to_grid_coords(raw_action) -> tuple[int, int, np.ndarray]:
+        arr = raw_action.detach().cpu().numpy() if hasattr(raw_action, "detach") else np.asarray(raw_action)
+        arr = np.array(arr, dtype=np.float32).reshape(-1)
+        if arr.size < 2:
+            return 0, 0, arr
+        scaled = (np.clip(arr[:2], -1.0, 1.0) + 1.0) * 0.5 * 7.0
+        gx = int(np.clip(np.rint(scaled[0]), 0, 7))
+        gy = int(np.clip(np.rint(scaled[1]), 0, 7))
+        return gx, gy, arr
+
     for interaction_step in range(cfg.policy.online_steps):
         start_time = time.perf_counter()
         if shutdown_event.is_set():
@@ -280,6 +292,15 @@ def act_with_policy(
             return
 
         if interaction_step >= cfg.policy.online_step_before_learning:
+            # Ensure we have the freshest policy before inference
+            update_policy_parameters(
+                policy=policy,
+                parameters_queue=parameters_queue,
+                device=device,
+                block=True,
+                timeout=cfg.policy.actor_learner_config.queue_get_timeout,
+            )
+
             # Time policy inference and check if it meets FPS requirement
             with policy_timer:
                 action = policy.select_action(batch=obs)
@@ -297,13 +318,8 @@ def act_with_policy(
         corrected_action_tensor = None
         if is_grid_task and not is_auto_supervision:
             try:
-                import numpy as np
-                # Convert action to CPU numpy and flatten
-                act_np = action.detach().cpu().numpy() if hasattr(action, "detach") else np.array(action)
-                act_np = np.array(act_np).reshape(-1)
-                if act_np.size >= 2:
-                    pred_x = int(np.clip(np.rint(act_np[0]), 0, 7))
-                    pred_y = int(np.clip(np.rint(act_np[1]), 0, 7))
+                pred_x, pred_y = _action_to_grid_coords(action)
+                if pred_x is not None:
                     print(f"[HIL] Predicted grid: [{pred_x}, {pred_y}]  (raw={act_np[:2]})")
                     user = input("[HIL] Press Enter to accept or type corrected x,y (0-7): ").strip()
                     if user:
@@ -319,20 +335,14 @@ def act_with_policy(
             except Exception as e:
                 logging.warning(f"[HIL] Human confirmation skipped due to error: {e}")
 
-        # Auto-supervision path: replace action with ground-truth and record prediction for stats
+        # Auto-supervision path: collect ground-truth for logging without overriding the action
         pred_for_stats = None
         gt_x_pre = None
         gt_y_pre = None
         if is_grid_task and is_auto_supervision:
             try:
-                import numpy as np
-                # Compute predicted indices from current action for stats
-                act_np = action.detach().cpu().numpy() if hasattr(action, "detach") else np.array(action)
-                act_np = np.array(act_np).reshape(-1)
-                if act_np.size >= 2:
-                    pred_x = int(np.clip(np.rint(act_np[0]), 0, 7))
-                    pred_y = int(np.clip(np.rint(act_np[1]), 0, 7))
-                    pred_for_stats = (pred_x, pred_y)
+                pred_x_tmp, pred_y_tmp, _ = _action_to_grid_coords(action)
+                pred_for_stats = (pred_x_tmp, pred_y_tmp)
 
                 # Walk wrappers to find current GT before stepping
                 env_cursor = online_env
@@ -356,32 +366,42 @@ def act_with_policy(
 
                 if gt_x_pre is not None and gt_y_pre is not None:
                     corrected_action_tensor = torch.tensor([gt_x_pre, gt_y_pre], dtype=torch.float32, device=device)
-                    action = corrected_action_tensor
-                    user_corrected = True  # treat as intervention for buffers
             except Exception as e:
                 logging.debug(f"[HIL] Auto-supervision GT fetch failed: {e}")
 
         # Debug logging for action generation
         if interaction_step % 100 == 0:  # Log every 100 steps to avoid spam
-            action_np = action.detach().cpu().numpy() if hasattr(action, "detach") else action
+            _, _, action_np = _action_to_grid_coords(action)
+            action_np = np.atleast_1d(action_np)
             logging.info(f"[ACTOR] Step {interaction_step}: Action = {action_np}")
-            if len(action_np) >= 4:
+            if action_np.size >= 4:
                 logging.info(
                     f"[ACTOR] Gripper action (4th dim): {action_np[3]:.3f} (0=close, 1=stay, 2=open)"
                 )
 
-        next_obs, reward, done, truncated, info = online_env.step(action)
+        action_to_env = action
+        if user_corrected and corrected_action_tensor is not None:
+            # Convert grid indices into normalized action in [-1, 1]
+            idx = corrected_action_tensor.to(torch.float32).flatten()
+            x = (idx[0] / 7.0) * 2.0 - 1.0
+            y = (idx[1] / 7.0) * 2.0 - 1.0
+            action_to_env = torch.tensor([x, y], dtype=torch.float32, device=device)
+
+        next_obs, reward, done, truncated, info = online_env.step(action_to_env)
+        if is_grid_task and isinstance(info, dict):
+            info.setdefault("action.raw", action.detach().cpu().to("cpu"))
+            info.setdefault("action.env", action_to_env.detach().cpu().to("cpu"))
 
         # For grid task, attach complementary info for learner about predictions and corrections
         if is_grid_task:
             try:
-                import numpy as np
                 # Extract GT and computed reward/error from env info when available
                 gt_x = info.get("gt_x")
                 gt_y = info.get("gt_y")
                 pred_x = info.get("pred_x")
                 pred_y = info.get("pred_y")
                 error_l1 = info.get("error.l1")
+                reward_value = info.get("reward", float(reward))
 
                 # Mark whether human intervened at this step
                 info["is_intervention"] = bool(user_corrected)
@@ -418,8 +438,27 @@ def act_with_policy(
                         acc = 100.0 * auto_correct / max(1, auto_steps)
                         mean_l1 = auto_l1_sum / max(1, auto_steps)
                         logging.info(
-                            f"[AUTO] steps={auto_steps} accuracy={acc:.1f}% mean_L1={mean_l1:.3f}"
+                            "==================== [AUTO ACCURACY] ===================="
                         )
+                        logging.info(
+                            f"[AUTO ACCURACY] steps={auto_steps} accuracy={acc:.1f}% mean_L1={mean_l1:.3f}"
+                        )
+                        logging.info(
+                            "==========================================================="
+                        )
+
+                if pred_x is not None and gt_x is not None:
+                    info["pred_index"] = info.get("pred_index", pred_y * 8 + pred_x)
+                    logging.info(
+                        "[GRID] step=%d pred=(%d,%d) gt=(%d,%d) reward=%.1f l1=%.1f",
+                        interaction_step,
+                        int(pred_x),
+                        int(pred_y) if pred_y is not None else -1,
+                        int(gt_x),
+                        int(gt_y) if gt_y is not None else -1,
+                        float(reward_value),
+                        float(info.get("error.l1", 0.0)),
+                    )
             except Exception as e:
                 logging.debug(f"[HIL] Could not attach grid info: {e}")
 
@@ -453,7 +492,12 @@ def act_with_policy(
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
-            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
+            update_policy_parameters(
+                policy=policy,
+                parameters_queue=parameters_queue,
+                device=device,
+                block=False,
+            )
 
             if len(list_transition_to_send_to_learner) > 0:
                 push_transitions_to_transport_queue(
@@ -747,8 +791,14 @@ def interactions_stream(
 #################################################
 
 
-def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
-    bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
+def update_policy_parameters(
+    policy: SACPolicy,
+    parameters_queue: Queue,
+    device,
+    block: bool = False,
+    timeout: float = 0.1,
+):
+    bytes_state_dict = get_last_item_from_queue(parameters_queue, block=block, timeout=timeout)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
         state_dicts = bytes_to_state_dict(bytes_state_dict)

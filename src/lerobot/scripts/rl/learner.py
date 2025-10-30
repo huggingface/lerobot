@@ -519,6 +519,8 @@ def add_actor_information_and_train(
             "next_observation_feature": next_observation_features,
         }
 
+        performed_optimization = False
+
         critic_output = policy.forward(forward_batch, model="critic")
 
         loss_critic = critic_output["loss_critic"]
@@ -528,6 +530,7 @@ def add_actor_information_and_train(
             parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
         ).item()
         optimizers["critic"].step()
+        performed_optimization = True
 
         # Initialize training info dictionary
         training_infos = {
@@ -585,13 +588,16 @@ def add_actor_information_and_train(
                 # Update temperature
                 policy.update_temperature()
 
-        # Push policy to actors if needed
-        if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
-            push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
-            last_time_policy_pushed = time.time()
-
         # Update target networks (main and discrete)
         policy.update_target_networks()
+
+        # Push policy to actors if needed
+        if performed_optimization:
+            push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+            last_time_policy_pushed = time.time()
+        elif time.time() - last_time_policy_pushed >= policy_parameters_push_frequency:
+            push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+            last_time_policy_pushed = time.time()
 
         # Log training metrics at specified intervals
         if optimization_step % log_freq == 0:

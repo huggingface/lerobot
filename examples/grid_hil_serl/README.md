@@ -1,6 +1,6 @@
 # Grid HIL SERL Environment
 
-This example demonstrates a **simplified HIL-SERL setup** for computer vision-based grid position prediction. Instead of complex robotic manipulation, the algorithm learns to predict which of the 64 grid cells contains a red cube based on camera images, with human feedback during training.
+This example demonstrates a **simplified HIL-SERL setup** for computer vision-based grid position prediction. Instead of complex robotic manipulation, the algorithm learns to predict which of the 64 grid cells contains a red cube based on camera images, with human feedback during training. Episodes are single prediction attempts: if the guess is correct, the agent receives reward 1; otherwise reward 0.
 
 ## Overview
 
@@ -26,8 +26,8 @@ python grid_cube_randomizer.py
 
 ### 2. Record Demonstrations
 ```bash
-# Record training data automatically
-python record_grid_demo.py --episodes 50 --steps 10
+# Record training data automatically (single step episodes)
+python examples/grid_hil_serl/record_grid_demo.py --config_path examples/grid_hil_serl/record_grid_position_lerobot.json
 
 # Or use LeRobot's recording script (standard dataset format)
 python -m lerobot.scripts.rl.gym_manipulator --config_path record_grid_position_lerobot.json
@@ -47,8 +47,8 @@ python -m lerobot.scripts.rl.actor --config_path train_grid_position.json
 # Environment testing
 python grid_cube_randomizer.py --interval 2.0 --no-save
 
-# Recording options
-python record_grid_demo.py --episodes 100 --steps 5 --output ./my_recordings
+# Recording options (edit the JSON config to change episodes/root)
+python examples/grid_hil_serl/record_grid_demo.py --config_path examples/grid_hil_serl/record_grid_position_lerobot.json
 ```
 
 ## Features
@@ -90,11 +90,12 @@ This simplified setup demonstrates the core HIL-SERL concept with minimal comple
 
 ### Human-in-the-Loop Phase (Online)
 1. **Algorithm Prediction**: Model predicts cube position from camera images
-2. **Human Feedback**: Human indicates if prediction is correct/incorrect
-3. **Iterative Learning**: Model improves based on human guidance
+2. **Binary Feedback**: Human (or auto-supervision) accepts or corrects the guess
+3. **Iterative Learning**: Model improves based on the accepted/corrected outcome
 
 ### Key Simplifications
 - **No Robot Control**: Focus purely on computer vision prediction
+- **Single-Step Episodes**: One prediction per episode with immediate success/failure reward
 - **Discrete Predictions**: 64 possible outputs (one per grid cell)
 - **Perfect Ground Truth**: Exact position labels available
 - **Visual Task Only**: No complex motor control or physics

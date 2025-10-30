@@ -7,7 +7,7 @@
     "batch_size": 256,
     "steps": 100000,
     "log_freq": 50,
-    "save_checkpoint": true,
+    "save_checkpoint": false,
     "save_freq": 10,
     "wandb": {
         "enable": false,
@@ -16,7 +16,7 @@
     },
     "dataset": {
         "repo_id": "spirosperos/grid-position-prediction",
-        "root": "/home/nikola/lerobot_spes/recording_grid_position_lerobot_004",
+        "root": "/home/nikola/lerobot_spes/recording_grid_position_lerobot",
         "revision": null,
         "use_imagenet_stats": false
     },
@@ -26,7 +26,17 @@
         "repo_id": "spirosperos/grid-position-policy",
         "normalization_mapping": {
             "VISUAL": "MEAN_STD",
-            "ACTION": "MIN_MAX"
+            "ACTION": "IDENTITY"
+        },
+        "dataset_stats": {
+            "observation.image": {
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225]
+            },
+            "action": {
+                "min": [-1.0, -1.0],
+                "max": [1.0, 1.0]
+            }
         },
         "input_features": {
             "observation.image": {
@@ -59,9 +69,15 @@
         "temperature_init": 0.01,
         "discount": 0.97,
         "critic_target_update_weight": 0.005,
-        "policy_update_freq": 1,
+        "policy_update_freq": 100,
         "utd_ratio": 2,
         "grad_clip_norm": 10.0,
+        "policy_kwargs": {
+            "std_max": 5.0,
+            "std_min": 1e-05,
+            "init_final": 0.05,
+            "use_tanh_squash": true
+        },
         "offline_buffer_capacity": 1000,
         "online_buffer_capacity": 10000,
         "online_steps": 1000000,
@@ -70,7 +86,7 @@
         "actor_learner_config": {
             "learner_host": "127.0.0.1",
             "learner_port": 50053,
-            "policy_parameters_push_frequency": 1,
+            "policy_parameters_push_frequency": 0,
             "queue_get_timeout": 2
         },
         "push_to_hub": true,
@@ -81,8 +97,8 @@
     "env": {
         "type": "gym_manipulator",
         "task": "GridPositionPrediction-v0",
-    "mode": "auto_supervision",
-        "fps": 10,
+        "mode": "auto_supervision",
+        "fps": 100,
         "device": "cuda",
         "features": {
             "observation.image": {
@@ -104,5 +120,3 @@
         }
     }
 }
-
-

@@ -4,8 +4,8 @@
 Grid Position Prediction Environment for HIL-SERL
 
 This environment provides image observations and grid position labels for training
-a position prediction policy using HIL-SERL. The task is simplified to predict
-which of the 64 grid cells contains the red cube.
+a position prediction policy using HIL-SERL. Episodes are single-step: the agent
+predicts which grid cell contains the cube and immediately receives binary feedback.
 """
 
 import numpy as np
@@ -15,8 +15,6 @@ import mujoco
 import mujoco.viewer
 from pathlib import Path
 from PIL import Image
-import time
-
 # Register the environment with gymnasium
 gym.register(
     id="GridPositionPrediction-v0",
@@ -30,7 +28,7 @@ class GridPositionEnv(gym.Env):
     Simplified environment for grid position prediction.
 
     Observations: High-definition RGB images (1920x1080)
-    Actions: None (prediction-only task)
+    Actions: Discrete grid index (0-63)
     Reward: Binary feedback from human (correct/incorrect prediction)
     """
 
@@ -64,13 +62,18 @@ class GridPositionEnv(gym.Env):
             dtype=np.uint8
         )
 
-        # Action space: Discrete grid positions (0-63 for 8x8 grid)
-        # We'll use a dummy action space since this is prediction-only
-        self.action_space = spaces.Discrete(1)  # Placeholder
+        self.grid_size = 8
+
+        # Action space: continuous pair in [-1, 1]
+        self.action_space = spaces.Box(
+            low=np.full(2, -1.0, dtype=np.float32),
+            high=np.full(2, 1.0, dtype=np.float32),
+            dtype=np.float32,
+        )
 
         # Environment state
         self.current_position = None
-        self.grid_size = 8
+
 
         # Initialize to random position
         self._randomize_cube_position()
@@ -115,20 +118,13 @@ class GridPositionEnv(gym.Env):
         return obs, {"grid_position": position}
 
     def step(self, action):
-        """
-        Step function for HIL-SERL compatibility.
-
-        In this simplified version, actions are not used for control,
-        but for receiving human feedback on predictions.
-        """
-        # For now, just randomize position on each step
-        # In real HIL-SERL, this would be triggered by the learning algorithm
+        """Advance to the next random position (single-step episodes)."""
         position = self._randomize_cube_position()
         obs = self._get_observation()
 
-        # Placeholder reward before wrapper computes it (will be recomputed in wrapper)
+        # Placeholder reward; the wrapper computes the binary reward.
         reward = 0.0
-        terminated = False
+        terminated = True
         truncated = False
 
         info = {
@@ -191,8 +187,12 @@ class GridPositionLeRobotEnv:
             )
         }
 
-        # Action is predicted grid cell as 2-int vector [x, y] in [0,7]
-        self.action_space = spaces.Box(low=0.0, high=7.0, shape=(2,), dtype=np.float32)
+        # Action is predicted grid cell coordinates in [-1, 1]
+        self.action_space = spaces.Box(
+            low=np.full(2, -1.0, dtype=np.float32),
+            high=np.full(2, 1.0, dtype=np.float32),
+            dtype=np.float32,
+        )
 
     def reset(self, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
@@ -205,23 +205,28 @@ class GridPositionLeRobotEnv:
         return lerobot_obs, info
 
     def step(self, action):
-        # Compute reward based on predicted [x, y] vs current ground-truth before advancing env
+        # Compute reward based on predicted grid index
         gt_position = int(self.env.get_current_position())
         gt_x = gt_position % self.env.grid_size
         gt_y = gt_position // self.env.grid_size
 
-        # Clamp and round action to valid cell indices
-        action = np.asarray(action, dtype=np.float32)
-        pred_x = int(np.clip(np.rint(action[0]), 0, self.env.grid_size - 1))
-        pred_y = int(np.clip(np.rint(action[1]), 0, self.env.grid_size - 1))
+        action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+        if action_arr.size >= 2:
+            # Policy emits values in [-1, 1]; rescale to [0, grid_size - 1]
+            scaled = (np.clip(action_arr[:2], -1.0, 1.0) + 1.0) * 0.5 * (self.env.grid_size - 1)
+            pred_x = int(np.clip(np.rint(scaled[0]), 0, self.env.grid_size - 1))
+            pred_y = int(np.clip(np.rint(scaled[1]), 0, self.env.grid_size - 1))
+        else:
+            pred_x = pred_y = 0
 
-        # Dense reward shaping based on L1 grid error (normalized to [0,1])
-        max_l1 = 2 * (self.env.grid_size - 1)
-        l1_error = abs(pred_x - gt_x) + abs(pred_y - gt_y)
-        reward = 1.0 - (l1_error / max_l1)
+        # Binary reward: 1 for exact match, 0 otherwise
+        correct = pred_x == gt_x and pred_y == gt_y
+        reward = 1.0 if correct else 0.0
 
         # Advance environment to next random position
-        obs, _, terminated, truncated, info = self.env.step(0)
+        obs, _, _, _, info = self.env.step([0.0, 0.0])
+        terminated = True
+        truncated = False
 
         # Convert to LeRobot format
         lerobot_obs = {
@@ -229,14 +234,19 @@ class GridPositionLeRobotEnv:
         }
 
         # Enrich info with prediction details
+        l1_error = abs(pred_x - gt_x) + abs(pred_y - gt_y)
+
         info = {
             **info,
             "gt_x": gt_x,
             "gt_y": gt_y,
+            "gt_index": gt_position,
             "pred_x": pred_x,
             "pred_y": pred_y,
-            "correct": pred_x == gt_x and pred_y == gt_y,
+            "pred_index": pred_y * self.env.grid_size + pred_x,
+            "correct": correct,
             "error.l1": float(l1_error),
+            "reward": reward,
         }
 
         return lerobot_obs, reward, terminated, truncated, info

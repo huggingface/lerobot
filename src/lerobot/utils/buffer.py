@@ -121,11 +121,11 @@ class ReplayBuffer:
         # If no state_keys provided, default to an empty list
         self.state_keys = state_keys if state_keys is not None else []
 
-        self.image_augmentation_function = image_augmentation_function
-
         if image_augmentation_function is None:
             base_function = functools.partial(random_shift, pad=4)
-            self.image_augmentation_function = torch.compile(base_function)
+            self.image_augmentation_function = base_function
+        else:
+            self.image_augmentation_function = image_augmentation_function
         self.use_drq = use_drq
 
     def _initialize_storage(

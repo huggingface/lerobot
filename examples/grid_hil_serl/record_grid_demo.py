@@ -51,7 +51,7 @@ def record_demonstrations_from_config(config_path: str):
     repo_id = dataset_cfg.get("repo_id", "username/grid-position-prediction")
     root = dataset_cfg.get("root", "./recording_grid_position_lerobot")
     num_episodes = int(dataset_cfg.get("num_episodes_to_record", 10))
-    steps_per_episode = int(dataset_cfg.get("steps_per_episode", 5))
+    steps_per_episode = int(dataset_cfg.get("steps_per_episode", 1))
     push_to_hub = bool(dataset_cfg.get("push_to_hub", False))
     task_string = dataset_cfg.get("task", "grid_position_prediction")
 
@@ -92,11 +92,11 @@ def record_demonstrations_from_config(config_path: str):
     image_hwc = _center_crop_resize(image_hwc, target_h, target_w)
 
     # Define features for LeRobot dataset
-    # Observation: input image only; Action: target grid position as [x, y] integers
+    # Observation: input image only; Action: normalized grid coordinates in [-1, 1]
     # Include reward/done to be compatible with RL replay buffer expectations
     features = {
         "observation.image": {"dtype": "image", "shape": (3, target_h, target_w), "names": None},
-        "action": {"dtype": "int64", "shape": (2,), "names": None},
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
         "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
         "next.done": {"dtype": "bool", "shape": (1,), "names": None},
     }
@@ -129,17 +129,23 @@ def record_demonstrations_from_config(config_path: str):
             image_array = _center_crop_resize(image_array, target_h, target_w)
             Image.fromarray(image_array).save("img.jpg")
 
-            # Prepare frame for dataset: action stores the ground-truth position
-            action_xy = np.array([
-                current_position % 8,
-                current_position // 8,
-            ], dtype=np.int64)
-            # Offline pretraining: use zero reward; mark done on last step of episode
+            # Prepare frame for dataset: action stores normalized coordinates
+            grid_x = current_position % 8
+            grid_y = current_position // 8
+            action_xy = np.array(
+                [
+                    (grid_x / 7.0) * 2.0 - 1.0,
+                    (grid_y / 7.0) * 2.0 - 1.0,
+                ],
+                dtype=np.float32,
+            )
+            # Offline pretraining: binary reward with single-step episodes; mark done on last step
             is_last = (step == steps_per_episode - 1)
+            reward_value = 1.0  # Offline recording always logs the ground-truth action (correct prediction)
             frame = {
                 "observation.image": image_array,  # LeRobot will write image file
                 "action": action_xy,
-                "next.reward": np.array([0.0], dtype=np.float32),
+                "next.reward": np.array([reward_value], dtype=np.float32),
                 "next.done": np.array([is_last], dtype=bool),
             }
 
@@ -148,12 +154,16 @@ def record_demonstrations_from_config(config_path: str):
 
             print(
                 f"  Step {step + 1}: Position {current_position} "
-                f"(action=[{current_position % 8}, {current_position // 8}])"
+                f"(action_norm=[{action_xy[0]:.3f}, {action_xy[1]:.3f}] -> x={grid_x}, y={grid_y})"
             )
 
             # Advance environment using ground-truth action to satisfy env API
             obs, reward, terminated, truncated, info = env.step(action_xy)
             current_position = int(info["grid_position"])  # next label
+            print(
+                f"    Next cube position -> index={current_position} "
+                f"(x={current_position % 8}, y={current_position // 8})"
+            )
 
         # Save episode to parquet + meta
         dataset.save_episode()

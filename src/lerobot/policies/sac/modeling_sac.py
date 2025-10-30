@@ -96,6 +96,7 @@ class SACPolicy(
         if self.config.num_discrete_actions is not None:
             discrete_action_value = self.discrete_critic(batch, observations_features)
             discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
+            discrete_action = discrete_action.to(actions.dtype if actions.numel() > 0 else torch.float32)
             actions = torch.cat([actions, discrete_action], dim=-1)
 
         return actions
@@ -281,6 +282,8 @@ class SACPolicy(
             td_target = rewards + (1 - done) * self.config.discount * min_q
 
         # 3- compute predicted qs
+        if actions.dim() == 1:
+            actions = actions.unsqueeze(-1)
         if self.config.num_discrete_actions is not None:
             # NOTE: We only want to keep the continuous action part
             # In the buffer we have the full action space (continuous + discrete)
@@ -317,6 +320,8 @@ class SACPolicy(
         next_observation_features=None,
         complementary_info=None,
     ):
+        if actions.dim() == 1:
+            actions = actions.unsqueeze(-1)
         # NOTE: We only want to keep the discrete action part
         # In the buffer we have the full action space (continuous + discrete)
         # We need to split them before concatenating them in the critic forward
@@ -865,22 +870,28 @@ class Policy(nn.Module):
             if isinstance(layer, nn.Linear):
                 out_features = layer.out_features
                 break
-        # Mean layer
-        self.mean_layer = nn.Linear(out_features, action_dim)
-        if init_final is not None:
-            nn.init.uniform_(self.mean_layer.weight, -init_final, init_final)
-            nn.init.uniform_(self.mean_layer.bias, -init_final, init_final)
-        else:
-            orthogonal_init()(self.mean_layer.weight)
-
-        # Standard deviation layer or parameter
-        if fixed_std is None:
-            self.std_layer = nn.Linear(out_features, action_dim)
+        if action_dim > 0:
+            # Mean layer
+            self.mean_layer = nn.Linear(out_features, action_dim)
             if init_final is not None:
-                nn.init.uniform_(self.std_layer.weight, -init_final, init_final)
-                nn.init.uniform_(self.std_layer.bias, -init_final, init_final)
+                nn.init.uniform_(self.mean_layer.weight, -init_final, init_final)
+                nn.init.uniform_(self.mean_layer.bias, -init_final, init_final)
             else:
-                orthogonal_init()(self.std_layer.weight)
+                orthogonal_init()(self.mean_layer.weight)
+
+            # Standard deviation layer or parameter
+            if fixed_std is None:
+                self.std_layer = nn.Linear(out_features, action_dim)
+                if init_final is not None:
+                    nn.init.uniform_(self.std_layer.weight, -init_final, init_final)
+                    nn.init.uniform_(self.std_layer.bias, -init_final, init_final)
+                else:
+                    orthogonal_init()(self.std_layer.weight)
+            else:
+                self.std_layer = None
+        else:
+            self.mean_layer = None
+            self.std_layer = None
 
     def forward(
         self,
@@ -893,15 +904,22 @@ class Policy(nn.Module):
 
         # Get network outputs
         outputs = self.network(obs_enc)
+
+        if self.action_dim == 0:
+            batch_size = outputs.shape[0]
+            empty = outputs.new_zeros((batch_size, 0))
+            log_probs = outputs.new_zeros((batch_size,), dtype=outputs.dtype, device=outputs.device)
+            return empty, log_probs, empty
+
         means = self.mean_layer(outputs)
 
         # Compute standard deviations
-        if self.fixed_std is None:
+        if self.fixed_std is None and self.std_layer is not None:
             log_std = self.std_layer(outputs)
             std = torch.exp(log_std)  # Match JAX "exp"
             std = torch.clamp(std, self.std_min, self.std_max)  # Match JAX default clip
         else:
-            std = self.fixed_std.expand_as(means)
+            std = self.fixed_std.expand_as(means) if self.fixed_std is not None else torch.ones_like(means)
 
         # Build transformed distribution
         dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)

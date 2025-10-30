@@ -170,6 +170,46 @@ class TorchBox(gym.spaces.Box):
         )
 
 
+class TorchDiscrete(gym.spaces.Discrete):
+    """Discrete space that returns PyTorch tensors when sampled."""
+
+    def __init__(self, n: int, torch_dtype: torch.dtype = torch.int64, device: str = "cpu", seed=None):
+        super().__init__(n=n, seed=seed)
+        self.torch_dtype = torch_dtype
+        self.device = device
+
+    def sample(self) -> torch.Tensor:
+        arr = super().sample()
+        return torch.as_tensor(arr, dtype=self.torch_dtype, device=self.device)
+
+    def contains(self, x: torch.Tensor) -> bool:
+        arr = int(x.detach().cpu().item())
+        return super().contains(arr)
+
+    def __repr__(self) -> str:
+        return f"TorchDiscrete(n={self.n}, torch={self.torch_dtype}, device={self.device})"
+
+
+class TorchMultiDiscrete(gym.spaces.MultiDiscrete):
+    """MultiDiscrete space that returns PyTorch tensors when sampled."""
+
+    def __init__(self, nvec, torch_dtype: torch.dtype = torch.int64, device: str = "cpu", seed=None):
+        super().__init__(nvec=nvec, seed=seed)
+        self.torch_dtype = torch_dtype
+        self.device = device
+
+    def sample(self) -> torch.Tensor:
+        arr = super().sample()
+        return torch.as_tensor(arr, dtype=self.torch_dtype, device=self.device)
+
+    def contains(self, x: torch.Tensor) -> bool:
+        arr = x.detach().cpu().numpy().astype(np.int64)
+        return super().contains(arr)
+
+    def __repr__(self) -> str:
+        return f"TorchMultiDiscrete(nvec={self.nvec}, torch={self.torch_dtype}, device={self.device})"
+
+
 class TorchActionWrapper(gym.Wrapper):
     """
     Wrapper that changes the action space to use PyTorch tensors.
@@ -187,15 +227,32 @@ class TorchActionWrapper(gym.Wrapper):
             device: The PyTorch device to use for tensor operations.
         """
         super().__init__(env)
-        self.action_space = TorchBox(
-            low=env.action_space.low,
-            high=env.action_space.high,
-            shape=env.action_space.shape,
-            torch_dtype=torch.float32,
-            device=torch.device("cpu"),
-        )
+        self._is_discrete = isinstance(env.action_space, gym.spaces.Discrete)
+        self._is_multi_discrete = isinstance(env.action_space, gym.spaces.MultiDiscrete)
+        if self._is_discrete:
+            self.action_space = TorchDiscrete(
+                env.action_space.n,
+                torch_dtype=torch.int64,
+                device=torch.device("cpu"),
+            )
+        elif self._is_multi_discrete:
+            self.action_space = TorchMultiDiscrete(
+                env.action_space.nvec,
+                torch_dtype=torch.int64,
+                device=torch.device("cpu"),
+            )
+        elif isinstance(env.action_space, gym.spaces.Box):
+            self.action_space = TorchBox(
+                low=env.action_space.low,
+                high=env.action_space.high,
+                shape=env.action_space.shape,
+                torch_dtype=torch.float32,
+                device=torch.device("cpu"),
+            )
+        else:
+            raise TypeError(f"TorchActionWrapper does not support action space: {env.action_space}")
 
-    def step(self, action: torch.Tensor):
+    def step(self, action):
         """
         Step the environment with a PyTorch tensor action.
 
@@ -208,9 +265,20 @@ class TorchActionWrapper(gym.Wrapper):
         Returns:
             Tuple of (observation, reward, terminated, truncated, info).
         """
-        if action.dim() == 2:
-            action = action.squeeze(0)
-        action = action.detach().cpu().numpy()
+        if torch.is_tensor(action):
+            action = action.detach().cpu()
+        if self._is_discrete:
+            action = int(action.item()) if torch.is_tensor(action) else int(action)
+        elif self._is_multi_discrete:
+            if torch.is_tensor(action):
+                arr = action.round().to(torch.int64).cpu().numpy()
+            else:
+                arr = np.asarray(action, dtype=np.int64)
+            action = np.asarray(arr, dtype=np.int64)
+        else:
+            if action.dim() == 2:
+                action = action.squeeze(0)
+            action = action.numpy()
         return self.env.step(action)
 
 
