@@ -155,10 +155,7 @@ def get_image_keys(root):
 def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int, task_index: int):
     task_dir_name = f"task-00{task_index}"
     data_dir = root / "data" / task_dir_name
-    # print("data_dir", data_dir)
     ep_paths = sorted(data_dir.glob("*.parquet"))
-    # ep_paths = sorted(data_dir.glob("*/*.parquet"))
-    # print("ep_paths", ep_paths)
     image_keys = get_image_keys(root)
 
     ep_idx = 0
