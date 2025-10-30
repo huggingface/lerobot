@@ -13,6 +13,7 @@ class Piper(Robot):
 
     def __init__(self, config: PiperConfig):
         super().__init__(config)
+        self.config = config
         self._iface: PiperSDKInterface | None = PiperSDKInterface(port=config.can_interface)
         self.cameras = make_cameras_from_configs(config.cameras) if config.cameras else {}
 
