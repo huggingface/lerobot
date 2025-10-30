@@ -408,7 +408,7 @@ def encode_video_frames(
         # lp=6 is the highest level of parallelism
         svtav1_params = "preset=13:lp=6"
         if fast_decode:
-            svtav1_params += f"fast-decode={fast_decode}"
+            svtav1_params += f":fast-decode={fast_decode}"
         cmd.extend(["-svtav1-params", svtav1_params])
     elif fast_decode and vcodec in ["h264", "hevc"]:
         cmd.extend(["-tune", "fastdecode"])
