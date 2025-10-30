@@ -119,7 +119,9 @@ def custom_validate(train_config: TrainPipelineConfig, policy_path: str, empty_c
             },
             True,
         ),
-        # TODO: case 3: dataset has 2 cameras, policy expects 3, no rename_map, no empty_cameras, should raise for smolvla
+        # case 3: dataset has 2 cameras, policy expects 3, names do not match, no empty_cameras
+        (["top", "side"], 0, {}, False),
+        # TODO: case 4: dataset has 2 cameras, policy expects 3, no rename_map, no empty_cameras, should raise for smolvla
         # (["camera1", "camera2"], 0, {}, False),
     ],
 )
