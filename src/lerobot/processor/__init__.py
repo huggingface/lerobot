@@ -28,7 +28,12 @@ from .core import (
     RobotObservation,
     TransitionKey,
 )
-from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
+from .delta_action_processor import (
+    MapDeltaActionToRobotActionStep,
+    MapTensorToDeltaActionDictStep,
+    Map7DDeltaActionToRobotActionStep,
+    MapTensorTo7DDeltaActionDictStep,
+)
 from .device_processor import DeviceProcessorStep
 from .factory import (
     make_default_processors,
@@ -101,8 +106,10 @@ __all__ = [
     "make_default_teleop_action_processor",
     "make_default_robot_action_processor",
     "make_default_robot_observation_processor",
+    "Map7DDeltaActionToRobotActionStep",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
+    "MapTensorTo7DDeltaActionDictStep",
     "MotorCurrentProcessorStep",
     "NormalizerProcessorStep",
     "Numpy2TorchActionProcessorStep",

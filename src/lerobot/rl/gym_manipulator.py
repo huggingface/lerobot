@@ -43,6 +43,8 @@ from lerobot.processor import (
     LeaderArmInterventionProcessorStep,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
+    MapTensorTo7DDeltaActionDictStep,
+    Map7DDeltaActionToRobotActionStep,
     MotorCurrentProcessorStep,
     Numpy2TorchActionProcessorStep,
     RewardClassifierProcessorStep,
@@ -82,6 +84,7 @@ from lerobot.utils.utils import log_say, get_shape_as_tuple
 from lerobot.utils.control_utils import (
     sanity_check_dataset_robot_compatibility,
 )
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -470,8 +473,14 @@ def make_processors(
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
         AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
         LeaderArmInterventionProcessorStep(
-            use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+            use_gripper=(
+                cfg.processor.gripper.use_gripper
+                if cfg.processor.gripper is not None
+                else False
+            ),
             terminate_on_success=terminate_on_success,
+            kinematics_solver=kinematics_solver,
+            motor_names=motor_names,
         ),
     ]
 
@@ -479,10 +488,10 @@ def make_processors(
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
-            MapTensorToDeltaActionDictStep(
+            MapTensorTo7DDeltaActionDictStep(
                 use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False
             ),
-            MapDeltaActionToRobotActionStep(),
+            Map7DDeltaActionToRobotActionStep(),
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
                 end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
@@ -720,8 +729,8 @@ def control_loop(
             # **dataset_action_features,
             "action": {
                 "dtype": "float32",
-                "shape": (4,),
-                "names": ["x", "y", "z", "gripper"],
+                "shape": (7,),
+                "names": ["x", "y", "z", "rx", "ry", "rz", "gripper"],
             },
             REWARD: {"dtype": "float32", "shape": (1,), "names": None},
             DONE: {"dtype": "bool", "shape": (1,), "names": None},

@@ -141,3 +141,125 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
             )
 
         return features
+
+
+@ProcessorStepRegistry.register("map_tensor_to_7d_delta_action_dict")
+@dataclass
+class MapTensorTo7DDeltaActionDictStep(ActionProcessorStep):
+    """
+    Maps a flat 7D action tensor to a structured delta action dictionary.
+    Supports 7-dimensional actions: [x, y, z, rx, ry, rz, gripper]
+    """
+
+    use_gripper: bool = True
+
+    def action(self, action: PolicyAction) -> RobotAction:
+        if not isinstance(action, PolicyAction):
+            raise ValueError("Only PolicyAction is supported for this processor")
+
+        if action.dim() > 1:
+            action = action.squeeze(0)
+
+        delta_action = {
+            "delta_x": action[0].item(),
+            "delta_y": action[1].item(),
+            "delta_z": action[2].item(),
+            "delta_rx": action[3].item(),
+            "delta_ry": action[4].item(),
+            "delta_rz": action[5].item(),
+        }
+        if self.use_gripper:
+            delta_action["gripper"] = action[6].item()
+        return delta_action
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        for axis in ["x", "y", "z"]:
+            features[PipelineFeatureType.ACTION][f"delta_{axis}"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+
+        for axis in ["rx", "ry", "rz"]:
+            features[PipelineFeatureType.ACTION][f"delta_{axis}"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+
+        if self.use_gripper:
+            features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+        return features
+
+
+@ProcessorStepRegistry.register("map_7d_delta_action_to_robot_action")
+@dataclass
+class Map7DDeltaActionToRobotActionStep(RobotActionProcessorStep):
+    """
+    Maps 7D delta actions to robot target actions for inverse kinematics.
+    Supports both position and rotation deltas.
+    """
+
+    # Scale factors for delta movements
+    position_scale: float = 1.0
+    rotation_scale: float = 1.0
+    noise_threshold: float = 1e-3
+
+    def action(self, action: RobotAction) -> RobotAction:
+        delta_x = action.pop("delta_x")
+        delta_y = action.pop("delta_y")
+        delta_z = action.pop("delta_z")
+        delta_rx = action.pop("delta_rx")
+        delta_ry = action.pop("delta_ry")
+        delta_rz = action.pop("delta_rz")
+        gripper = action.pop("gripper")
+
+        position_magnitude = (delta_x**2 + delta_y**2 + delta_z**2) ** 0.5
+        rotation_magnitude = (delta_rx**2 + delta_ry**2 + delta_rz**2) ** 0.5
+        enabled = (position_magnitude > self.noise_threshold) or (
+            rotation_magnitude > self.noise_threshold
+        )
+
+        scaled_delta_x = delta_x * self.position_scale
+        scaled_delta_y = delta_y * self.position_scale
+        scaled_delta_z = delta_z * self.position_scale
+
+        scaled_delta_rx = delta_rx * self.rotation_scale
+        scaled_delta_ry = delta_ry * self.rotation_scale
+        scaled_delta_rz = delta_rz * self.rotation_scale
+
+        action = {
+            "enabled": enabled,
+            "target_x": scaled_delta_x,
+            "target_y": scaled_delta_y,
+            "target_z": scaled_delta_z,
+            "target_wx": scaled_delta_rx,
+            "target_wy": scaled_delta_ry,
+            "target_wz": scaled_delta_rz,
+            "gripper_vel": float(gripper),
+        }
+
+        return action
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        for axis in ["x", "y", "z", "rx", "ry", "rz", "gripper"]:
+            features[PipelineFeatureType.ACTION].pop(f"delta_{axis}", None)
+
+        for feat in [
+            "enabled",
+            "target_x",
+            "target_y",
+            "target_z",
+            "target_wx",
+            "target_wy",
+            "target_wz",
+            "gripper_vel",
+        ]:
+            features[PipelineFeatureType.ACTION][f"{feat}"] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(1,)
+            )
+
+        return features
+
