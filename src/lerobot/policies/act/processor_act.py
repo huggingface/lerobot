@@ -17,6 +17,7 @@ from typing import Any
 
 import torch
 
+from lerobot.datasets.utils import DEFAULT_AUDIO_CHUNK_DURATION
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
@@ -64,7 +65,15 @@ def make_act_pre_post_processors(
             stats=dataset_stats,
             device=config.device,
         ),
-        AudioProcessorStep(),
+        AudioProcessorStep(
+            output_height=224,
+            output_width=224,
+            output_channels=3,
+            input_audio_chunk_duration=DEFAULT_AUDIO_CHUNK_DURATION,
+            input_sample_rate=48000,
+            intermediate_sample_rate=16000,
+            n_fft=1024,
+        ),
     ]
     output_steps = [
         UnnormalizerProcessorStep(
