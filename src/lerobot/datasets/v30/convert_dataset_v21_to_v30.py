@@ -59,6 +59,8 @@ from requests import HTTPError
 from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.datasets.utils import (
+    DEFAULT_AUDIO_FILE_SIZE_IN_MB,
+    DEFAULT_AUDIO_PATH,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -367,8 +369,124 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
     return episodes_metadata
 
 
+def get_audio_keys(root):
+    info = load_info(root)
+    features = info["features"]
+    audio_keys = [key for key, ft in features.items() if ft["dtype"] == "audio"]
+    return audio_keys
+
+
+def convert_audios(root: Path, new_root: Path, audio_file_size_in_mb: int):
+    logging.info(f"Converting audios from {root} to {new_root}")
+
+    audio_keys = get_audio_keys(root)
+    if len(audio_keys) == 0:
+        return None
+
+    audio_keys = sorted(audio_keys)
+
+    eps_metadata_per_mic = []
+    for microphone in audio_keys:
+        eps_metadata = convert_audios_of_microphone(root, new_root, microphone, audio_file_size_in_mb)
+        eps_metadata_per_mic.append(eps_metadata)
+
+    num_eps_per_mic = [len(eps_mic_map) for eps_mic_map in eps_metadata_per_mic]
+    if len(set(num_eps_per_mic)) != 1:
+        raise ValueError(f"All microphones dont have same number of episodes ({num_eps_per_mic}).")
+
+    episodes_metadata = []
+    num_microphones = len(audio_keys)
+    num_episodes = num_eps_per_mic[0]
+    for ep_idx in tqdm.tqdm(range(num_episodes), desc="convert audios"):
+        # Sanity check
+        ep_ids = [
+            eps_metadata_per_mic[mic_idx][ep_idx]["episode_index"] for mic_idx in range(num_microphones)
+        ]
+        ep_ids += [ep_idx]
+        if len(set(ep_ids)) != 1:
+            raise ValueError(f"All episode indices need to match ({ep_ids}).")
+
+        ep_dict = {}
+        for mic_idx in range(num_microphones):
+            ep_dict.update(eps_metadata_per_mic[mic_idx][ep_idx])
+        episodes_metadata.append(ep_dict)
+
+    return episodes_metadata
+
+
+def convert_audios_of_microphone(root: Path, new_root: Path, audio_key: str, audio_file_size_in_mb: int):
+    # Access old paths to m4a
+    audios_dir = root / "audio"
+    ep_paths = sorted(audios_dir.glob(f"*/{audio_key}/*.m4a"))
+
+    ep_idx = 0
+    chunk_idx = 0
+    file_idx = 0
+    size_in_mb = 0
+    duration_in_s = 0.0
+    paths_to_cat = []
+    episodes_metadata = []
+
+    for ep_path in tqdm.tqdm(ep_paths, desc=f"convert audios of {audio_key}"):
+        ep_size_in_mb = get_file_size_in_mb(ep_path)
+        ep_duration_in_s = get_media_duration_in_s(ep_path, media_type="audio")
+
+        # Check if adding this episode would exceed the limit
+        if size_in_mb + ep_size_in_mb >= audio_file_size_in_mb and len(paths_to_cat) > 0:
+            # Size limit would be exceeded, save current accumulation WITHOUT this episode
+            concatenate_media_files(
+                paths_to_cat,
+                new_root
+                / DEFAULT_AUDIO_PATH.format(audio_key=audio_key, chunk_index=chunk_idx, file_index=file_idx),
+            )
+
+            # Update episodes metadata for the file we just saved
+            for i, _ in enumerate(paths_to_cat):
+                past_ep_idx = ep_idx - len(paths_to_cat) + i
+                episodes_metadata[past_ep_idx][f"audio/{audio_key}/chunk_index"] = chunk_idx
+                episodes_metadata[past_ep_idx][f"audio/{audio_key}/file_index"] = file_idx
+
+            # Move to next file and start fresh with current episode
+            chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
+            size_in_mb = 0
+            duration_in_s = 0.0
+            paths_to_cat = []
+
+        # Add current episode metadata
+        ep_metadata = {
+            "episode_index": ep_idx,
+            f"audio/{audio_key}/chunk_index": chunk_idx,  # Will be updated when file is saved
+            f"audio/{audio_key}/file_index": file_idx,  # Will be updated when file is saved
+            f"audio/{audio_key}/from_timestamp": duration_in_s,
+            f"audio/{audio_key}/to_timestamp": duration_in_s + ep_duration_in_s,
+        }
+        episodes_metadata.append(ep_metadata)
+
+        # Add current episode to accumulation
+        paths_to_cat.append(ep_path)
+        size_in_mb += ep_size_in_mb
+        duration_in_s += ep_duration_in_s
+        ep_idx += 1
+
+    # Write remaining videos if any
+    if paths_to_cat:
+        concatenate_media_files(
+            paths_to_cat,
+            new_root
+            / DEFAULT_AUDIO_PATH.format(audio_key=audio_key, chunk_index=chunk_idx, file_index=file_idx),
+        )
+
+        # Update episodes metadata for the final file
+        for i, _ in enumerate(paths_to_cat):
+            past_ep_idx = ep_idx - len(paths_to_cat) + i
+            episodes_metadata[past_ep_idx][f"audio/{audio_key}/chunk_index"] = chunk_idx
+            episodes_metadata[past_ep_idx][f"audio/{audio_key}/file_index"] = file_idx
+
+    return episodes_metadata
+
+
 def generate_episode_metadata_dict(
-    episodes_legacy_metadata, episodes_metadata, episodes_stats, episodes_videos=None
+    episodes_legacy_metadata, episodes_metadata, episodes_stats, episodes_videos=None, episodes_audios=None
 ):
     num_episodes = len(episodes_metadata)
     episodes_legacy_metadata_vals = list(episodes_legacy_metadata.values())
@@ -392,16 +510,30 @@ def generate_episode_metadata_dict(
             ep_video = episodes_videos[i]
             ep_ids_set.add(ep_video["episode_index"])
 
+        if episodes_audios is None:
+            ep_audio = {}
+        else:
+            ep_audio = episodes_audios[i]
+            ep_ids_set.add(ep_audio["episode_index"])
+
         if len(ep_ids_set) != 1:
             raise ValueError(f"Number of episodes is not the same ({ep_ids_set}).")
 
-        ep_dict = {**ep_metadata, **ep_video, **ep_legacy_metadata, **flatten_dict({"stats": ep_stats})}
+        ep_dict = {
+            **ep_metadata,
+            **ep_video,
+            **ep_audio,
+            **ep_legacy_metadata,
+            **flatten_dict({"stats": ep_stats}),
+        }
         ep_dict["meta/episodes/chunk_index"] = 0
         ep_dict["meta/episodes/file_index"] = 0
         yield ep_dict
 
 
-def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_metadata=None):
+def convert_episodes_metadata(
+    root, new_root, episodes_metadata, episodes_video_metadata=None, episodes_audio_metadata=None
+):
     logging.info(f"Converting episodes metadata from {root} to {new_root}")
 
     episodes_legacy_metadata = legacy_load_episodes(root)
@@ -410,13 +542,19 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
     num_eps_set = {len(episodes_legacy_metadata), len(episodes_metadata)}
     if episodes_video_metadata is not None:
         num_eps_set.add(len(episodes_video_metadata))
+    if episodes_audio_metadata is not None:
+        num_eps_set.add(len(episodes_audio_metadata))
 
     if len(num_eps_set) != 1:
         raise ValueError(f"Number of episodes is not the same ({num_eps_set}).")
 
     ds_episodes = Dataset.from_generator(
         lambda: generate_episode_metadata_dict(
-            episodes_legacy_metadata, episodes_metadata, episodes_stats, episodes_video_metadata
+            episodes_legacy_metadata,
+            episodes_metadata,
+            episodes_stats,
+            episodes_video_metadata,
+            episodes_audio_metadata,
         )
     )
     write_episodes(ds_episodes, new_root)
@@ -425,20 +563,22 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
     write_stats(stats, new_root)
 
 
-def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
+def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb, audio_file_size_in_mb):
     info = load_info(root)
     info["codebase_version"] = V30
     del info["total_chunks"]
     del info["total_videos"]
     info["data_files_size_in_mb"] = data_file_size_in_mb
     info["video_files_size_in_mb"] = video_file_size_in_mb
+    info["audio_files_size_in_mb"] = audio_file_size_in_mb
     info["data_path"] = DEFAULT_DATA_PATH
     info["video_path"] = DEFAULT_VIDEO_PATH if info["video_path"] is not None else None
+    info["audio_path"] = DEFAULT_AUDIO_PATH if info["audio_path"] is not None else None
     info["fps"] = int(info["fps"])
     logging.info(f"Converting info from {root} to {new_root}")
     for key in info["features"]:
-        if info["features"][key]["dtype"] == "video":
-            # already has fps in video_info
+        if info["features"][key]["dtype"] == "video" or info["features"][key]["dtype"] == "audio":
+            # already has fps in video_info or audio_info
             continue
         info["features"][key]["fps"] = info["fps"]
     write_info(info, new_root)
@@ -449,6 +589,7 @@ def convert_dataset(
     branch: str | None = None,
     data_file_size_in_mb: int | None = None,
     video_file_size_in_mb: int | None = None,
+    audio_file_size_in_mb: int | None = None,
     root: str | Path | None = None,
     push_to_hub: bool = True,
     force_conversion: bool = False,
@@ -457,6 +598,8 @@ def convert_dataset(
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_file_size_in_mb is None:
         video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
+    if audio_file_size_in_mb is None:
+        audio_file_size_in_mb = DEFAULT_AUDIO_FILE_SIZE_IN_MB
 
     # First check if the dataset already has a v3.0 version
     if root is None and not force_conversion:
@@ -498,7 +641,10 @@ def convert_dataset(
     convert_tasks(root, new_root)
     episodes_metadata = convert_data(root, new_root, data_file_size_in_mb)
     episodes_videos_metadata = convert_videos(root, new_root, video_file_size_in_mb)
-    convert_episodes_metadata(root, new_root, episodes_metadata, episodes_videos_metadata)
+    episodes_audios_metadata = convert_audios(root, new_root, audio_file_size_in_mb)
+    convert_episodes_metadata(
+        root, new_root, episodes_metadata, episodes_videos_metadata, episodes_audios_metadata
+    )
 
     shutil.move(str(root), str(old_root))
     shutil.move(str(new_root), str(root))
@@ -511,7 +657,7 @@ def convert_dataset(
             print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
             pass
         hub_api.delete_files(
-            delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
+            delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*", "audio/chunk*"],
             repo_id=repo_id,
             revision=branch,
             repo_type="dataset",
@@ -548,6 +694,12 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="File size in MB. Defaults to 100 for data and 500 for videos.",
+    )
+    parser.add_argument(
+        "--audio-file-size-in-mb",
+        type=int,
+        default=None,
+        help="File size in MB. Defaults to 100 for audio.",
     )
     parser.add_argument(
         "--root",
