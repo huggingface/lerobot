@@ -182,7 +182,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("Creating dataset")
         dataset = make_dataset(cfg)
-
+    logging.info("Creating dataset Done")
     accelerator.wait_for_everyone()
 
     # Now all other processes can safely load the dataset

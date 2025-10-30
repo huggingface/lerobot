@@ -1693,8 +1693,11 @@ class ComplementaryDataProcessorStep(ProcessorStep, ABC):
         complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
         if complementary_data is None or not isinstance(complementary_data, dict):
             raise ValueError("ComplementaryDataProcessorStep requires complementary data in the transition.")
-
+        #print("complementary_data")
+        #print(complementary_data)
         processed_complementary_data = self.complementary_data(complementary_data.copy())
+        #print("processed_complementary_data")
+        #print(processed_complementary_data)
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = processed_complementary_data
         return new_transition
 

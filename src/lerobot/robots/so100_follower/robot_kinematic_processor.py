@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics import KinematicsLike
 from lerobot.processor import (
     EnvTransition,
     ObservationProcessorStep,
@@ -60,7 +60,7 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
         _command_when_disabled: Internal state to hold the last command while disabled.
     """
 
-    kinematics: RobotKinematics
+    kinematics: KinematicsLike
     end_effector_step_sizes: dict
     motor_names: list[str]
     use_latched_reference: bool = (
@@ -226,7 +226,7 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
             n = float(np.linalg.norm(dpos))
             if n > self.max_ee_step_m and n > 0:
                 pos = self._last_pos + dpos * (self.max_ee_step_m / n)
-                raise ValueError(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
+                # raise ValueError(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
 
         self._last_pos = pos
 
@@ -265,7 +265,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
             If False, use the solution from the previous step.
     """
 
-    kinematics: RobotKinematics
+    kinematics: KinematicsLike
     motor_names: list[str]
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True
@@ -401,7 +401,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
 
 def compute_forward_kinematics_joints_to_ee(
-    joints: dict[str, Any], kinematics: RobotKinematics, motor_names: list[str]
+    joints: dict[str, Any], kinematics: KinematicsLike, motor_names: list[str]
 ) -> dict[str, Any]:
     motor_joint_values = [joints[f"{n}.pos"] for n in motor_names]
 
@@ -435,7 +435,7 @@ class ForwardKinematicsJointsToEEObservation(ObservationProcessorStep):
         kinematics: The robot's kinematic model.
     """
 
-    kinematics: RobotKinematics
+    kinematics: KinematicsLike
     motor_names: list[str]
 
     def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
@@ -468,7 +468,7 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
         kinematics: The robot's kinematic model.
     """
 
-    kinematics: RobotKinematics
+    kinematics: KinematicsLike
     motor_names: list[str]
 
     def action(self, action: RobotAction) -> RobotAction:
@@ -491,7 +491,7 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
 @ProcessorStepRegistry.register(name="forward_kinematics_joints_to_ee")
 @dataclass
 class ForwardKinematicsJointsToEE(ProcessorStep):
-    kinematics: RobotKinematics
+    kinematics: KinematicsLike
     motor_names: list[str]
 
     def __post_init__(self):
@@ -528,7 +528,7 @@ class InverseKinematicsRLStep(ProcessorStep):
     This is modified from the InverseKinematicsEEToJoints step to be used in the RL pipeline.
     """
 
-    kinematics: RobotKinematics
+    kinematics: KinematicsLike
     motor_names: list[str]
     q_curr: np.ndarray | None = field(default=None, init=False, repr=False)
     initial_guess_current_joints: bool = True

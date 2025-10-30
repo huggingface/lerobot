@@ -69,8 +69,18 @@ from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
-from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
+from lerobot.robots import (  # noqa: F401
+    RobotConfig,
+    make_robot_from_config,
+    so100_follower,
+    so101_follower,
+)
+from lerobot.teleoperators import (
+    gamepad,  # noqa: F401
+    keyboard,  # noqa: F401
+    make_teleoperator_from_config,
+    so101_leader,  # noqa: F401
+)
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2_grpc
 from lerobot.transport.utils import (
@@ -100,7 +110,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
-from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
+from lerobot.rl.learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
 
 
 @parser.wrap()
@@ -326,7 +336,8 @@ def add_actor_information_and_train(
 
     log_training_info(cfg=cfg, policy=policy)
 
-    replay_buffer = initialize_replay_buffer(cfg, device, storage_device)
+    # replay_buffer = initialize_replay_buffer(cfg, device, storage_device)
+    replay_buffer = initialize_offline_replay_buffer(cfg, device, storage_device)
     batch_size = cfg.batch_size
     offline_replay_buffer = None
 
@@ -378,6 +389,7 @@ def add_actor_information_and_train(
 
         # Wait until the replay buffer has enough samples to start training
         if len(replay_buffer) < online_step_before_learning:
+            #print("continue")
             continue
 
         if online_iterator is None:

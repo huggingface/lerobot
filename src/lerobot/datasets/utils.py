@@ -712,8 +712,8 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
                 shape = (shape[2], shape[0], shape[1])
         elif key == OBS_ENV_STATE:
             type = FeatureType.ENV
-        elif key.startswith(OBS_STR):
-            type = FeatureType.STATE
+        # elif key.startswith(OBS_STR):
+        #     type = FeatureType.STATE
         elif key.startswith(ACTION):
             type = FeatureType.ACTION
         else:

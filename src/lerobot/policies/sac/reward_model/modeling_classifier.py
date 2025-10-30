@@ -20,6 +20,7 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.utils.constants import OBS_IMAGE, REWARD
 
@@ -143,6 +144,14 @@ class Classifier(PreTrainedPolicy):
             for image_key in self.image_keys:
                 encoder = self._create_single_encoder()
                 self.encoders[image_key] = encoder
+
+        # self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        # self.normalize_targets = Normalize(
+        #     config.output_features, config.normalization_mapping, dataset_stats
+        # )
+        # self.unnormalize_outputs = Unnormalize(
+        #     config.output_features, config.normalization_mapping, dataset_stats
+        # )
 
         self._build_classifier_head()
 
@@ -269,15 +278,15 @@ class Classifier(PreTrainedPolicy):
     def predict_reward(self, batch, threshold=0.5):
         """Eval method. Returns predicted reward with the decision threshold as argument."""
         # Check for both OBS_IMAGE and OBS_IMAGES prefixes
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
+        # batch = self.normalize_inputs(batch)
+        # batch = self.normalize_targets(batch) #mengke
 
         # Extract images from batch dict
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
 
         if self.config.num_classes == 2:
             probs = self.predict(images).probabilities
-            logging.debug(f"Predicted reward images: {probs}")
+            logging.warning(f"Predicted reward images: {probs}")
             return (probs > threshold).float()
         else:
             return torch.argmax(self.predict(images).probabilities, dim=1)

@@ -1,0 +1,90 @@
+{
+    "env": {
+        "robot": {
+            "type": "so101_follower",
+            "port": "/dev/ttyACM2",
+            "id": "follower2",
+            "cameras": {
+                "top": {
+                    "type": "opencv",
+                    "index_or_path": 5,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 15
+                },
+                "right": {
+                    "type": "opencv",
+                    "index_or_path": 3,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 15
+                }
+            }
+        },
+        "teleop": {
+            "type": "keyboard_ee"
+        },
+        "processor": {
+            "control_mode": "keyboard_ee",
+            "observation": {
+                "display_cameras": false,
+                "add_joint_velocity_to_observation": true,
+                "add_current_to_observation": true
+            },
+            "image_preprocessing": {
+                "crop_params_dict": {
+                  "observation.images.top": [49, 189, 262, 305]
+                },
+                "resize_size": [128, 128]            
+            },
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "reset_time_s": 2.5,
+                "control_time_s": 20.0,
+                "terminate_on_success": true
+            },
+            "inverse_kinematics": {
+                "urdf_path": "/home/sr/so101/SO-ARM100-main/Simulation/SO101/so101_new_calib.urdf",
+                "target_frame_name": "gripper_frame_link",
+                "end_effector_bounds": {
+            "min": [-1.0, -1.0, -1.0],  
+            "max": [1.0, 1.0, 1.0]
+                },
+                "end_effector_step_sizes": {
+                    "x": 0.02,
+                    "y": 0.02,
+                    "z": 0.02
+                }
+            },
+            "reward_classifier": {
+                "pretrained_path": "outputs/train/2025-10-30/05-49-53_reward-classifier/checkpoints/last/pretrained_model",
+                "success_threshold": 0.5,
+                "success_reward": 1.0
+            },
+            "max_gripper_pos": 30
+        },
+        "name": "real_robot",
+        "fps": 10
+    },
+    "dataset": {
+        "repo_id": null,
+        "root": null,
+        "task": "eval",
+        "num_episodes_to_record": 10,
+        "replay_episode": null,
+        "push_to_hub": false
+    },
+    "mode": null,
+    "device": "cpu"
+}

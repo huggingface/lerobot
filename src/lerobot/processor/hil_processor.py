@@ -115,7 +115,7 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
         Returns:
             A new dictionary with the teleoperator action added under the
             `teleop_action` key.
-        """
+        """ #mengke
         new_complementary_data = dict(complementary_data)
         new_complementary_data[TELEOP_ACTION_KEY] = self.teleop_device.get_action()
         return new_complementary_data
@@ -432,9 +432,14 @@ class InterventionActionProcessorStep(ProcessorStep):
         terminate_episode = info.get(TeleopEvents.TERMINATE_EPISODE, False)
         success = info.get(TeleopEvents.SUCCESS, False)
         rerecord_episode = info.get(TeleopEvents.RERECORD_EPISODE, False)
+        use_policy = info.get(TeleopEvents.USE_POLICY, False)
 
         new_transition = transition.copy()
 
+        if (not use_policy):
+            new_transition[TransitionKey.ACTION] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
+        else:
+            print("use_policy")
         # Override action if intervention is active
         if is_intervention and teleop_action is not None:
             if isinstance(teleop_action, dict):
@@ -589,6 +594,74 @@ class RewardClassifierProcessorStep(ProcessorStep):
             "success_reward": self.success_reward,
             "terminate_on_success": self.terminate_on_success,
         }
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@ProcessorStepRegistry.register("reward_rule_processor")
+@dataclass
+class RewardRuleProcessorStep(ProcessorStep):
+    """
+    Assigns a binary reward when the end-effector is inside a cylindrical target region.
+
+    The region is defined by a center position (`target_x`, `target_y`, `target_z`),
+    a radial tolerance `radius` on the xy-plane, and a vertical tolerance `z_radius`.
+    If the current end-effector pose satisfies both constraints, the reward is set to 1.0;
+    otherwise it is 0.0.
+    """
+
+    target_x: float
+    target_y: float
+    target_z: float
+    radius: float
+    radius_z: float
+    terminate_on_success: bool
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        new_transition = transition.copy()
+        observation = new_transition.get(TransitionKey.OBSERVATION) or {}
+
+        if not observation:
+            return new_transition
+
+        def _to_float(value: Any) -> float:
+            if isinstance(value, torch.Tensor):
+                return float(value.squeeze().item())
+            return float(value)
+
+        try:
+            ee_x = _to_float(observation["ee.x"])
+            ee_y = _to_float(observation["ee.y"])
+            ee_z = _to_float(observation["ee.z"])
+        except KeyError:
+            # Required pose components not available; keep reward unchanged.
+            print("RewardRuleProcessorStep failed, no ee pose")
+            return new_transition
+
+        dx = ee_x - self.target_x
+        dy = ee_y - self.target_y
+        within_radius = dx * dx + dy * dy <= self.radius * self.radius
+        within_height = abs(ee_z - self.target_z) <= self.radius_z
+
+
+        reward = new_transition.get(TransitionKey.REWARD, 0.0)
+        terminated = new_transition.get(TransitionKey.DONE, False)
+    
+        if (within_radius and within_height):
+            reward = 1.0
+            if self.terminate_on_success:
+                terminated = True
+        else:
+            reward = 0.0
+
+        new_transition[TransitionKey.REWARD] = reward
+        new_transition[TransitionKey.DONE] = terminated
+        print(f"ee_x: {ee_x}, ee_y: {ee_y}, ee_z: {ee_z}, target_x: {self.target_x}, target_y: {self.target_y}, target_z: {self.target_z}")
+
+        return new_transition
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
