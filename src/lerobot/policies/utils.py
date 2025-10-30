@@ -224,7 +224,7 @@ def raise_feature_mismatch_error(
     )
 
 
-def check_visuals(
+def validate_visual_features_consistency(
     cfg: PreTrainedConfig,
     features: dict[str, PolicyFeature],
 ) -> None:

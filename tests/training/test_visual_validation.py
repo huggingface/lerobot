@@ -14,6 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Visual Feature Consistency Tests
+
+This module tests the `validate_visual_features_consistency` function,
+which ensures that visual features (camera observations) in a dataset/env
+match the expectations defined in a policy configuration.
+
+The purpose of this check is to prevent mismatches between what a policy expects
+(e.g., `observation.images.camera1`, `camera2`, `camera3`) and what a dataset or
+environment actually provides (e.g., `observation.images.top`, `side`, or fewer cameras).
+"""
+
 from pathlib import Path
 
 import numpy as np
