@@ -494,16 +494,17 @@ class ACFQLPolicy(
             raise ValueError(f"Unknown normalize_q_loss option: {self.config.normalize_q_loss}")
 
         # Total loss: alpha * distillation + q_loss
-        actor_onestep_flow_loss = self.config.alpha * distill_loss + q_loss
+        actor_loss = self.config.alpha * distill_loss + q_loss
 
         info = {
+            "actor_loss": actor_loss,
             "q_loss": q_loss,
             "predicted_qs": torch.mean(q_preds),
             "distill_loss": distill_loss,
             "q": torch.mean(q_vals),
         }
 
-        return actor_onestep_flow_loss, info
+        return actor_loss, info
 
     def _compute_next_actions(
         self, next_observations: dict[str, Tensor], next_observation_features: Tensor | None = None
