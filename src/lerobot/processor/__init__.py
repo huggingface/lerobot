@@ -55,6 +55,7 @@ from .hil_processor import (
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
+from .joint_action_processor import DirectJointControlStep, JointBoundsAndSafetyStep
 from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
 from .observation_processor import VanillaObservationProcessorStep
@@ -77,6 +78,7 @@ from .pipeline import (
     TruncatedProcessorStep,
 )
 from .policy_robot_bridge import (
+    DirectJointToPolicyActionProcessorStep,
     PolicyActionToRobotActionProcessorStep,
     RobotActionToPolicyActionProcessorStep,
 )
@@ -91,6 +93,8 @@ __all__ = [
     "batch_to_transition",
     "create_transition",
     "DeviceProcessorStep",
+    "DirectJointControlStep",
+    "DirectJointToPolicyActionProcessorStep",
     "DoneProcessorStep",
     "EnvAction",
     "EnvTransition",
@@ -101,6 +105,7 @@ __all__ = [
     "InfoProcessorStep",
     "InterventionActionProcessorStep",
     "JointVelocityProcessorStep",
+    "JointBoundsAndSafetyStep",
     "LeaderArmInterventionProcessorStep",
     "make_default_processors",
     "make_default_teleop_action_processor",

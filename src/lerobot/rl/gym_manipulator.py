@@ -35,11 +35,13 @@ from lerobot.processor import (
     AddTeleopEventsAsInfoStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
+    DirectJointControlStep,
     EnvTransition,
     GripperPenaltyProcessorStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     JointVelocityProcessorStep,
+    JointBoundsAndSafetyStep,
     LeaderArmInterventionProcessorStep,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
@@ -49,6 +51,7 @@ from lerobot.processor import (
     Numpy2TorchActionProcessorStep,
     RewardClassifierProcessorStep,
     RobotActionToPolicyActionProcessorStep,
+    DirectJointToPolicyActionProcessorStep,
     TimeLimitProcessorStep,
     Torch2NumpyActionProcessorStep,
     TransitionKey,
@@ -84,7 +87,6 @@ from lerobot.utils.utils import log_say, get_shape_as_tuple
 from lerobot.utils.control_utils import (
     sanity_check_dataset_robot_compatibility,
 )
-
 
 logging.basicConfig(level=logging.INFO)
 
@@ -482,37 +484,16 @@ def make_processors(
             kinematics_solver=kinematics_solver,
             motor_names=motor_names,
         ),
+        DirectJointControlStep(
+            motor_names=motor_names,
+            use_gripper=(
+                cfg.processor.gripper.use_gripper
+                if cfg.processor.gripper is not None
+                else False
+            ),
+        ),
+        DirectJointToPolicyActionProcessorStep(motor_names=motor_names),
     ]
-
-    # Replace InverseKinematicsProcessor with new kinematic processors
-    if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
-        # Add EE bounds and safety processor
-        inverse_kinematics_steps = [
-            MapTensorTo7DDeltaActionDictStep(
-                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False
-            ),
-            Map7DDeltaActionToRobotActionStep(),
-            EEReferenceAndDelta(
-                kinematics=kinematics_solver,
-                end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
-                motor_names=motor_names,
-                use_latched_reference=False,
-                use_ik_solution=True,
-            ),
-            EEBoundsAndSafety(
-                end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
-            ),
-            GripperVelocityToJoint(
-                clip_max=cfg.processor.max_gripper_pos,
-                speed_factor=1.0,
-                discrete_gripper=True,
-            ),
-            InverseKinematicsRLStep(
-                kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=True
-            ),
-        ]
-        action_pipeline_steps.extend(inverse_kinematics_steps)
-        action_pipeline_steps.append(RobotActionToPolicyActionProcessorStep(motor_names=motor_names))
 
     return DataProcessorPipeline(
         steps=env_pipeline_steps, to_transition=identity_transition, to_output=identity_transition
@@ -724,13 +705,30 @@ def control_loop(
     dataset = None
     if cfg.mode == "record":
         action_features = teleop_device.action_features
-        # dataset_action_features = hw_to_dataset_features(action_features, ACTION, use_video=True)
         features = {
-            # **dataset_action_features,
             "action": {
                 "dtype": "float32",
-                "shape": (7,),
-                "names": ["x", "y", "z", "rx", "ry", "rz", "gripper"],
+                "shape": (6,),
+                "names": [
+                    "shoulder_pan",
+                    "shoulder_lift",
+                    "elbow_flex",
+                    "wrist_flex",
+                    "wrist_roll",
+                    "gripper",
+                ],
+            },
+            "leader_joint_positions": {
+                "dtype": "float32",
+                "shape": (6,),
+                "names": [
+                    "shoulder_pan",
+                    "shoulder_lift",
+                    "elbow_flex",
+                    "wrist_flex",
+                    "wrist_roll",
+                    "gripper",
+                ],
             },
             REWARD: {"dtype": "float32", "shape": (1,), "names": None},
             DONE: {"dtype": "bool", "shape": (1,), "names": None},
@@ -807,9 +805,24 @@ def control_loop(
             action_to_record = transition[TransitionKey.COMPLEMENTARY_DATA].get(
                 "teleop_action", transition[TransitionKey.ACTION]
             )
+
+            # Get leader joint positions from complementary data
+            leader_joint_positions = transition[TransitionKey.COMPLEMENTARY_DATA].get(
+                "leader_joint_positions", None
+            )
+            if leader_joint_positions is None:
+                leader_joint_positions_tensor = torch.zeros(6)  # 6 joints including gripper
+            else:
+                leader_joint_positions_tensor = (
+                    leader_joint_positions.cpu()
+                    if isinstance(leader_joint_positions, torch.Tensor)
+                    else torch.tensor(leader_joint_positions)
+                )
+
             frame = {
                 **observations,
                 ACTION: action_to_record.cpu(),
+                "leader_joint_positions": leader_joint_positions_tensor,
                 REWARD: np.array([transition[TransitionKey.REWARD]], dtype=np.float32),
                 DONE: np.array([terminated or truncated], dtype=bool),
             }
@@ -890,6 +903,7 @@ def main(cfg: GymManipulatorConfig) -> None:
     """Main entry point for gym manipulator script."""
     env, teleop_device = make_robot_env(cfg.env)
     env_processor, action_processor = make_processors(env, teleop_device, cfg.env, cfg.device)
+    # Full processor pipeline for real robot environment
 
     print("Environment observation space:", env.observation_space)
     print("Environment action space:", env.action_space)
