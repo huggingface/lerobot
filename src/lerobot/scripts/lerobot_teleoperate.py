@@ -187,6 +187,7 @@ def teleop_loop(
                 observation=obs_transition,
                 action=teleop_action,
                 compress_images=display_compressed_images,
+                log_time=time.perf_counter() - start,
             )
 
             print("\n" + "-" * (display_len + 10))
