@@ -1,10 +1,13 @@
 from typing import Any
+import logging
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.robots import Robot
 
 from .config_piper import PiperConfig
 from .piper_sdk_interface import PiperSDKInterface
+
+logger = logging.getLogger(__name__)
 
 
 class Piper(Robot):
@@ -94,14 +97,59 @@ class Piper(Robot):
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if not self.is_connected or self._iface is None:
             raise ConnectionError(f"{self} is not connected.")
-        joints = [float(action[f"{name}.pos"]) for name in self.config.joint_names]
+        # Use current observation as fallback to avoid KeyError / None crash
+        try:
+            obs = self.get_observation()
+        except Exception:
+            # If observation can't be read, fallback to zeros for safety
+            obs = {f"{name}.pos": 0.0 for name in self.config.joint_names}
+            if self.config.include_gripper:
+                obs["gripper.pos"] = 0.0
+
+        joints = []
+        for name in self.config.joint_names:
+            key = f"{name}.pos"
+            raw = action.get(key, obs.get(key, 0.0))
+            try:
+                val = float(raw)
+            except Exception:
+                logger.warning("Invalid value for %s: %r, falling back to observation/default", key, raw)
+                val = float(obs.get(key, 0.0))
+            joints.append(val)
+
         # Convert to hardware frame (apply signs)
         joints_hw = self._apply_signs(joints)
+
         # Clip to hardware limits if available
         min_pos = getattr(self._iface, "min_pos", None)
         max_pos = getattr(self._iface, "max_pos", None)
         if isinstance(min_pos, list) and isinstance(max_pos, list) and len(min_pos) >= 6 and len(max_pos) >= 6:
-            joints_hw = [max(min_val, min(max_val, val)) for val, min_val, max_val in zip(joints_hw, min_pos[:6], max_pos[:6], strict=True)]
-        gripper_mm = float(action["gripper.pos"]) if self.config.include_gripper and "gripper.pos" in action else None
-        self._iface.set_joint_positions_deg(joints_hw, gripper_mm)
+            try:
+                joints_hw = [
+                    max(min_val, min(max_val, val))
+                    for val, min_val, max_val in zip(joints_hw, min_pos[:6], max_pos[:6], strict=True)
+                ]
+            except TypeError:
+                # older Python without strict; fall back
+                joints_hw = [
+                    max(min_val, min(max_val, val))
+                    for val, min_val, max_val in zip(joints_hw, min_pos[:6], max_pos[:6])
+                ]
+
+        gripper_mm = None
+        if self.config.include_gripper:
+            g_raw = action.get("gripper.pos", obs.get("gripper.pos", None))
+            if g_raw is not None:
+                try:
+                    gripper_mm = float(g_raw)
+                except Exception:
+                    logger.warning("Invalid gripper.pos value %r, ignoring", g_raw)
+                    gripper_mm = None
+
+        try:
+            self._iface.set_joint_positions_deg(joints_hw, gripper_mm)
+        except Exception as e:
+            logger.exception("Failed to send joint positions: %s", e)
+            raise
+
         return action
