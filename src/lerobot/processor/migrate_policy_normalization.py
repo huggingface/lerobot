@@ -109,8 +109,29 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
                     # Last part is the stat type (mean, std, min, max, etc.)
                     stat_type = parts[-1]
                     # Everything else is the feature name
-                    feature_name = ".".join(parts[:-1]).replace("_", ".")
 
+                    # Smart underscore replacement: only convert structural underscores
+                    # Pattern: observation_images_CAMERANAME or observation_state
+                    if len(parts) >= 2:
+                        joined = "_".join(parts[:-1])
+                        
+                        # Handle known structural patterns
+                        if joined.startswith("observation_images_"):
+                            # Replace only the first two underscores: observation_images_ → observation.images.
+                            # Keep camera name intact (e.g., arm_camera stays arm_camera)
+                            feature_name = joined.replace("observation_images_", "observation.images.", 1)
+                        elif joined.startswith("observation_state"):
+                            feature_name = joined.replace("observation_state", "observation.state", 1)
+                        elif joined.startswith("observation_environment_state"):
+                            feature_name = joined.replace("observation_environment_state", "observation.environment_state", 1)
+                        elif joined == "action":
+                            feature_name = "action"
+                        else:
+                            # Fallback: replace all underscores (for backward compatibility)
+                            feature_name = joined.replace("_", ".")
+                    else:
+                        feature_name = ".".join(parts[:-1])
+                    
                     # Add to stats
                     if feature_name not in stats:
                         stats[feature_name] = {}

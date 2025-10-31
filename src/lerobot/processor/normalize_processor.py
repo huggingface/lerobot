@@ -303,8 +303,11 @@ class _NormalizationMixin:
             ValueError: If an unsupported normalization mode is encountered.
         """
         norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
+        if norm_mode == NormalizationMode.IDENTITY:
             return tensor
+
+        if key not in self._tensor_stats:
+            raise KeyError(f"Key {key} not found in normalization statistics.")
 
         if norm_mode not in (
             NormalizationMode.MEAN_STD,
