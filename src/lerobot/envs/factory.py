@@ -85,6 +85,19 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
+    elif "rlbench" in cfg.type:
+        from lerobot.envs.rlbench import create_rlbench_envs
+
+        if cfg.task is None:
+            raise ValueError("RLBench requires a task to be specified")
+
+        return create_rlbench_envs(
+            task=cfg.task,
+            n_envs=n_envs,
+            camera_name=cfg.camera_name,
+            gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+        )
 
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")

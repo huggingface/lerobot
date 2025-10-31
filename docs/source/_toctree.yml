@@ -47,6 +47,8 @@
     title: Using Libero
   - local: metaworld
     title: Using MetaWorld
+  - local: rlbench
+    title: Using RLBench
   title: "Simulation"
 - sections:
   - local: introduction_processors
