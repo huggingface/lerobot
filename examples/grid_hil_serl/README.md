@@ -10,6 +10,11 @@ The environment consists of:
 - Top-left origin coordinate system (0,0) = top-left corner
 - Automatic high-definition image capture (1920x1080)
 
+
+## Environment preview
+
+![Coordinate system](media/coordinate_system.png)
+
 ## Files
 
 - `grid_scene.xml` - Mujoco scene definition with 8x8 grid
@@ -18,66 +23,48 @@ The environment consists of:
 
 ## Usage
 
-### 1. Test the Environment
+### Install LeRobot (one time)
+Follow the main repository instructions (from repo root):
 ```bash
-cd examples/grid_hil_serl
-python grid_cube_randomizer.py
+pip install -e ".[hilserl]"
 ```
 
-### 2. Record Demonstrations
+### 2. Record Demonstrations (Optional - this repo already contains a recorded dataset)
 ```bash
-# Record training data automatically (single step episodes)
-python examples/grid_hil_serl/record_grid_demo.py --config_path examples/grid_hil_serl/record_grid_position_lerobot.json
-
-# Or use LeRobot's recording script (standard dataset format)
-python -m lerobot.scripts.rl.gym_manipulator --config_path record_grid_position_lerobot.json
+# From the repository root
+python examples/grid_hil_serl/record_grid_demo.py \
+  --config_path examples/grid_hil_serl/record_grid_position_lerobot.json
 ```
 
 ### 3. Train HIL-SERL Policy
 ```bash
 # Terminal 1: Start learner
-python -m lerobot.scripts.rl.learner --config_path train_grid_position.json
+cd src
+python -m lerobot.scripts.rl.learner --config_path ../examples/grid_hil_serl/train_grid_position.json
 
 # Terminal 2: Start actor (with human feedback)
-python -m lerobot.scripts.rl.actor --config_path train_grid_position.json
+cd src
+python -m lerobot.scripts.rl.actor --config_path ../examples/grid_hil_serl/train_grid_position.json
 ```
 
-### Command Line Options
-```bash
-# Environment testing
-python grid_cube_randomizer.py --interval 2.0 --no-save
-
-# Recording options (edit the JSON config to change episodes/root)
-python examples/grid_hil_serl/record_grid_demo.py --config_path examples/grid_hil_serl/record_grid_position_lerobot.json
-```
+The actor prints a rolling accuracy over the last 50 episodes and saves a plot every
+10 episodes to `outputs/grid_position/accuracy_plots/` so you can monitor training
+progress without attaching a debugger.
 
 ## Features
 
-### Grid System
-- **8x8 grid**: 64 total cells
-- **Coordinate system**: (0,0) = top-left, (7,7) = bottom-right
-- **Cell centers**: Cube spawns at precise grid cell centers
-- **High-definition**: 32x32 texture with 256x256 resolution
+This example gives you a fast, single‑step prediction task: every episode the
+cube appears in one of the 64 cells of an 8×8 grid and the policy must guess the
+cell from a high‑definition overhead image. Episodes are only one step long, so
+each prediction immediately becomes a labelled training example. Along the way the
+actor logs a rolling 50‑episode success rate and stores matplotlib accuracy plots,
+making it easy to gauge progress without additional tooling. Because the cubes are
+placed exactly at grid centres and the camera is fixed, the setup stays perfectly
+repeatable while still exercising the end‑to‑end vision→prediction loop.
 
-### Cube Positioning
-- **Random placement**: Uniform random distribution across all 64 cells
-- **Precise positioning**: Cube lands exactly at grid cell centers
-- **Physics compliant**: Proper velocity reset for instant teleportation
-- **Visual feedback**: Clear console output of cell coordinates
+![Accuracy curve](media/accuracy_episode_00160.png)
 
-### Image Capture
-- **HD resolution**: 1920x1080 (Full HD)
-- **Automatic saving**: Images saved after each cube repositioning
-- **Professional quality**: Suitable for datasets and documentation
-- **Top-down view**: Camera positioned for complete grid visibility
-
-## Coordinate System
-
-```
-(0,0) → (-3.5, 3.5)   (7,0) → (3.5, 3.5)
-      ↘                     ↙
-(0,7) → (-3.5, -3.5)  (7,7) → (3.5, -3.5)
-```
+Accuracy typically climbs toward ~95 % after roughly 140 prediction episodes.
 
 ## HIL-SERL Workflow
 
@@ -109,45 +96,10 @@ The environment integrates with LeRobot's HIL-SERL framework through:
 3. **Config Files**: `record_grid_position.json` and `train_grid_position.json`
 4. **Dataset Collection**: Automated recording of image-position pairs
 
-## Technical Details
-
-- **Physics**: Mujoco physics engine with proper joint control
-- **Rendering**: Offscreen rendering with PIL for image saving
-- **Randomization**: NumPy-based random number generation
-- **Threading**: Proper event handling for viewer controls
-
-## Example Output
-
-```
-Loading scene: grid_scene.xml
-
-==================================================
-8x8 Grid Cube Randomizer
-==================================================
-This scene shows an 8x8 grid with a randomly positioned cube.
-Cube position randomizes every 3.0 seconds.
-
-Controls:
-  R: Manually randomize cube position
-  S: Save current camera view to img.jpg
-  Space: Pause/unpause
-  Esc: Exit
-  Camera: Mouse controls for rotation/zoom
-==================================================
-Spawning cube at grid cell (3, 5) -> position (-0.5, -1.5)
-Camera view saved to: img.jpg
-Spawning cube at grid cell (1, 2) -> position (-2.5, 1.5)
-Camera view saved to: img.jpg
-```
-
 ## Dependencies
 
 - mujoco
 - numpy
 - PIL (Pillow)
 - gymnasium (optional, for integration)
-
-## Related Examples
-
-- `hil_serl_simulation_training/` - Full HIL-SERL training examples
-- `lekiwi/` - Real robot integration examples
+- matplotlib

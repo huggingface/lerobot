@@ -51,8 +51,13 @@ import os
 import time
 from collections import deque
 from functools import lru_cache
+from pathlib import Path
 from queue import Empty
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 
 import grpc
@@ -274,6 +279,13 @@ def act_with_policy(
     auto_correct = 0
     auto_l1_sum = 0.0
     recent_episode_results: deque[int] = deque(maxlen=50)
+    episode_counter = 0
+    episode_indices: list[int] = []
+    rolling_accuracy_history: list[float] = []
+
+    base_output_dir = Path(cfg.output_dir) if cfg.output_dir else Path("outputs") / "grid_position"
+    accuracy_plot_dir = base_output_dir / "accuracy_plots"
+    accuracy_plot_dir.mkdir(parents=True, exist_ok=True)
 
     policy_timer = TimerManager("Policy inference", log=False)
 
@@ -488,6 +500,23 @@ def act_with_policy(
             logging.info(
                 f"[AUTO ACCURACY 50] episodes={len(recent_episode_results)} accuracy={rolling_acc:.1f}%"
             )
+
+            episode_counter += 1
+            episode_indices.append(episode_counter)
+            rolling_accuracy_history.append(rolling_acc)
+
+            if episode_counter % 10 == 0:
+                plt.figure(figsize=(6, 4))
+                plt.plot(episode_indices, rolling_accuracy_history, marker="o", linewidth=1.5)
+                plt.xlabel("Episode")
+                plt.ylabel("Rolling Accuracy (last 50) [%]")
+                plt.title("Grid Task Accuracy")
+                plt.ylim(0, 100)
+                plt.grid(True, linestyle="--", alpha=0.3)
+                plot_path = accuracy_plot_dir / f"accuracy_episode_{episode_counter:05d}.png"
+                plt.tight_layout()
+                plt.savefig(plot_path)
+                plt.close()
 
             update_policy_parameters(
                 policy=policy,

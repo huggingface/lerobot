@@ -16,7 +16,7 @@
     },
     "dataset": {
         "repo_id": "spirosperos/grid-position-prediction",
-        "root": "/home/nikola/lerobot_spes/recording_grid_position_lerobot",
+        "root": "./recording_grid_position_lerobot",
         "revision": null,
         "use_imagenet_stats": false
     },
