@@ -322,13 +322,13 @@ class DamiaoMotorsBus(MotorsBusBase):
         self.canbus.send(msg)
         return self._recv_motor_response(expected_recv_id=recv_id)
 
-    def _recv_motor_response(self, expected_recv_id: Optional[int] = None, timeout: float = 0.5) -> Optional[can.Message]:
+    def _recv_motor_response(self, expected_recv_id: Optional[int] = None, timeout: float = 0.001) -> Optional[can.Message]:
         """
         Receive a response from a motor.
         
         Args:
             expected_recv_id: If provided, only return messages from this CAN ID
-            timeout: Timeout in seconds
+            timeout: Timeout in seconds (default: 1ms for high-speed operation)
         
         Returns:
             CAN message if received, None otherwise
@@ -337,7 +337,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             start_time = time.time()
             messages_seen = []
             while time.time() - start_time < timeout:
-                msg = self.canbus.recv(timeout=0.01)  # Short timeout for polling
+                msg = self.canbus.recv(timeout=0.0001)  # 100us timeout for fast polling
                 if msg:
                     messages_seen.append(f"0x{msg.arbitration_id:02X}")
                     # If no filter specified, return any message
@@ -349,14 +349,43 @@ class DamiaoMotorsBus(MotorsBusBase):
                     else:
                         logger.debug(f"Ignoring message from CAN ID 0x{msg.arbitration_id:02X}, expected 0x{expected_recv_id:02X}")
             
-            # Log what we saw for debugging
-            if messages_seen:
-                logger.warning(f"Received {len(messages_seen)} message(s) from IDs {set(messages_seen)}, but expected 0x{expected_recv_id:02X}")
-            else:
-                logger.warning(f"No CAN messages received (expected from 0x{expected_recv_id:02X})")
+            # Only log warnings if we're in debug mode to reduce overhead
+            if logger.isEnabledFor(logging.DEBUG):
+                if messages_seen:
+                    logger.debug(f"Received {len(messages_seen)} message(s) from IDs {set(messages_seen)}, but expected 0x{expected_recv_id:02X}")
+                else:
+                    logger.debug(f"No CAN messages received (expected from 0x{expected_recv_id:02X})")
         except Exception as e:
             logger.debug(f"Failed to receive CAN message: {e}")
         return None
+    
+    def _recv_all_responses(self, expected_recv_ids: list[int], timeout: float = 0.002) -> dict[int, can.Message]:
+        """
+        Efficiently receive responses from multiple motors at once.
+        Uses the OpenArms pattern: collect all available messages within timeout.
+        
+        Args:
+            expected_recv_ids: List of CAN IDs we expect responses from
+            timeout: Total timeout in seconds (default: 2ms)
+        
+        Returns:
+            Dictionary mapping recv_id to CAN message
+        """
+        responses = {}
+        expected_set = set(expected_recv_ids)
+        start_time = time.time()
+        
+        try:
+            while len(responses) < len(expected_recv_ids) and (time.time() - start_time) < timeout:
+                msg = self.canbus.recv(timeout=0.0001)  # 100us poll timeout
+                if msg and msg.arbitration_id in expected_set:
+                    responses[msg.arbitration_id] = msg
+                    if len(responses) == len(expected_recv_ids):
+                        break  # Got all responses, exit early
+        except Exception as e:
+            logger.debug(f"Error receiving responses: {e}")
+        
+        return responses
 
     def _mit_control(
         self,
@@ -528,14 +557,55 @@ class DamiaoMotorsBus(MotorsBusBase):
         normalize: bool = True,
         num_retry: int = 0,
     ) -> Dict[str, Value]:
-        """Read the same value from multiple motors simultaneously."""
+        """
+        Read the same value from multiple motors simultaneously.
+        Uses batched operations: sends all refresh commands, then collects all responses.
+        This is MUCH faster than sequential reads (OpenArms pattern).
+        """
         motors = self._get_motors_list(motors)
         result = {}
 
+        # Step 1: Send refresh commands to ALL motors first (no waiting)
+        for motor in motors:
+            motor_id = self._get_motor_id(motor)
+            data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
+            msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False)
+            self.canbus.send(msg)
+        
+        # Step 2: Collect all responses at once (batch receive)
+        expected_recv_ids = [self._get_motor_recv_id(motor) for motor in motors]
+        responses = self._recv_all_responses(expected_recv_ids, timeout=0.003)  # 3ms total timeout
+        
+        # Step 3: Parse responses
         for motor in motors:
             try:
-                value = self.read(data_name, motor, normalize=normalize, num_retry=num_retry)
+                recv_id = self._get_motor_recv_id(motor)
+                msg = responses.get(recv_id)
+                
+                if msg is None:
+                    logger.warning(f"No response from motor '{motor}' (recv ID: 0x{recv_id:02X})")
+                    result[motor] = 0.0
+                    continue
+                
+                motor_type = self._motor_types.get(motor, MotorType.DM4310)
+                position_degrees, velocity_deg_per_sec, torque, t_mos, t_rotor = self._decode_motor_state(msg.data, motor_type)
+                
+                # Return requested data
+                if data_name == "Present_Position":
+                    value = position_degrees
+                elif data_name == "Present_Velocity":
+                    value = velocity_deg_per_sec
+                elif data_name == "Present_Torque":
+                    value = torque
+                elif data_name == "Temperature_MOS":
+                    value = t_mos
+                elif data_name == "Temperature_Rotor":
+                    value = t_rotor
+                else:
+                    raise ValueError(f"Unknown data_name: {data_name}")
+                
                 result[motor] = value
+                
             except Exception as e:
                 logger.warning(f"Failed to read {data_name} from {motor}: {e}")
                 result[motor] = 0.0
@@ -550,14 +620,50 @@ class DamiaoMotorsBus(MotorsBusBase):
         normalize: bool = True,
         num_retry: int = 0,
     ) -> None:
-        """Write different values to multiple motors simultaneously. Positions are always in degrees."""
+        """
+        Write different values to multiple motors simultaneously. Positions are always in degrees.
+        Uses batched operations: sends all commands first, then collects responses (OpenArms pattern).
+        """
         if data_name == "Goal_Position":
-            # Use MIT control for position commands (values in degrees)
+            # Step 1: Send all MIT control commands first (no waiting)
             for motor, value_degrees in values.items():
-                # Use reasonable default gains for position control
-                self._mit_control(motor, 10.0, 0.5, value_degrees, 0, 0)
+                motor_id = self._get_motor_id(motor)
+                motor_name = self._get_motor_name(motor)
+                motor_type = self._motor_types.get(motor_name, MotorType.DM4310)
+                
+                # Convert degrees to radians
+                position_rad = np.radians(value_degrees)
+                
+                # Default gains for position control
+                kp, kd = 10.0, 0.5
+                
+                # Get motor limits and encode parameters
+                pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
+                kp_uint = self._float_to_uint(kp, 0, 500, 12)
+                kd_uint = self._float_to_uint(kd, 0, 5, 12)
+                q_uint = self._float_to_uint(position_rad, -pmax, pmax, 16)
+                dq_uint = self._float_to_uint(0, -vmax, vmax, 12)
+                tau_uint = self._float_to_uint(0, -tmax, tmax, 12)
+                
+                # Pack data
+                data = [0] * 8
+                data[0] = (q_uint >> 8) & 0xFF
+                data[1] = q_uint & 0xFF
+                data[2] = dq_uint >> 4
+                data[3] = ((dq_uint & 0xF) << 4) | ((kp_uint >> 8) & 0xF)
+                data[4] = kp_uint & 0xFF
+                data[5] = kd_uint >> 4
+                data[6] = ((kd_uint & 0xF) << 4) | ((tau_uint >> 8) & 0xF)
+                data[7] = tau_uint & 0xFF
+                
+                msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+                self.canbus.send(msg)
+            
+            # Step 2: Collect all responses at once
+            expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values.keys()]
+            self._recv_all_responses(expected_recv_ids, timeout=0.002)  # 2ms timeout
         else:
-            # Fall back to individual writes
+            # Fall back to individual writes for other data types
             for motor, value in values.items():
                 self.write(data_name, motor, value, normalize=normalize, num_retry=num_retry)
 
