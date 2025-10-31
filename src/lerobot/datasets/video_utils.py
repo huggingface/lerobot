@@ -17,6 +17,7 @@ import glob
 import importlib
 import logging
 import shutil
+import subprocess
 import tempfile
 import warnings
 from dataclasses import dataclass, field
@@ -315,8 +316,6 @@ def encode_video_frames(
 
     This implementation uses direct ffmpeg commands via subprocess instead of pyav bindings.
     """
-    import subprocess
-
     # Check encoder availability
     if vcodec not in ["h264", "hevc", "libsvtav1"]:
         raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: h264, hevc, libsvtav1.")
@@ -325,7 +324,7 @@ def encode_video_frames(
     imgs_dir = Path(imgs_dir)
 
     if video_path.exists() and not overwrite:
-        logging.warning("Video file already exists: %s. Skipping encoding.", video_path)
+        logging.warning(f"Video file already exists: {video_path}. Skipping encoding.")
         return
 
     video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -333,8 +332,7 @@ def encode_video_frames(
     # Encoders/pixel formats incompatibility check
     if (vcodec == "libsvtav1" or vcodec == "hevc") and pix_fmt == "yuv444p":
         logging.warning(
-            "Incompatible pixel format 'yuv444p' for codec %s, auto-selecting format 'yuv420p'",
-            vcodec,
+            f"Incompatible pixel format 'yuv444p' for codec {vcodec}, auto-selecting format 'yuv420p'"
         )
         pix_fmt = "yuv420p"
 
