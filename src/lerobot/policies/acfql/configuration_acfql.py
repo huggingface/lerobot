@@ -124,7 +124,8 @@ class ACFQLConfig(PreTrainedConfig):
     # Device to run the model on (e.g., "cuda", "cpu")
     device: str = "cpu"
     # Device to store the model on
-    storage_device: str = "cpu"
+    storage_device_offline_replay_buffer: str = "cpu"
+    storage_device_replay_buffer: str = "cpu"
     # Name of the vision encoder model (Set to "helper2424/resnet10" for hil serl resnet10)
     vision_encoder_name: str | None = None
     # Whether to freeze the vision encoder during training

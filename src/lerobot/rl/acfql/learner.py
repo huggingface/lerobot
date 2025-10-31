@@ -286,7 +286,10 @@ def add_actor_information_and_train(
     # Extract all configuration variables at the beginning, it improve the speed performance
     # of 7%
     device = get_safe_torch_device(try_device=cfg.policy.device, log=True)
-    storage_device = get_safe_torch_device(try_device=cfg.policy.storage_device)
+    storage_device_offline_replay_buffer = get_safe_torch_device(
+        try_device=cfg.policy.storage_device_offline_replay_buffer
+    )
+    storage_device_replay_buffer = get_safe_torch_device(try_device=cfg.policy.storage_device_replay_buffer)
     critic_grad_clip_norm_value = cfg.policy.critic_grad_clip_norm
     actor_bc_grad_clip_norm_value = cfg.policy.actor_bc_grad_clip_norm
     actor_onestep_grad_clip_norm_value = cfg.policy.actor_onestep_grad_clip_norm
@@ -369,13 +372,13 @@ def add_actor_information_and_train(
     offline_replay_buffer = None
 
     if online_steps > 0:
-        replay_buffer = initialize_replay_buffer(cfg, device, storage_device)
+        replay_buffer = initialize_replay_buffer(cfg, device, storage_device_replay_buffer)
 
     if cfg.dataset is not None and offline_steps > 0:
         offline_replay_buffer = initialize_offline_replay_buffer(
             cfg=cfg,
             device=device,
-            storage_device=storage_device,
+            storage_device=storage_device_offline_replay_buffer,
         )
         # batch_size: int = batch_size // 2  # We will sample from both replay buffer
 
@@ -717,7 +720,7 @@ def add_actor_information_and_train(
         offline_replay_buffer = initialize_offline_replay_buffer(
             cfg=cfg,
             device=device,
-            storage_device=storage_device,
+            storage_device=storage_device_offline_replay_buffer,
         )
 
     if offline_iterator is not None:
