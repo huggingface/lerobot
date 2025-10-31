@@ -39,3 +39,23 @@ class SO101FollowerConfig(RobotConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
+
+
+
+     # Default bounds for the end-effector position (in meters)
+    end_effector_bounds: dict[str, list[float]] = field( # bounds for the end-effector in x,y,z direction
+        default_factory=lambda: {
+            "min": [-1.0, -1.0, -1.0],  # min x, y, z
+            "max": [1.0, 1.0, 1.0],  # max x, y, z
+        }
+    )
+
+    max_gripper_pos: float = 50 # maximum gripper position that the gripper will be open at
+
+    end_effector_step_sizes: dict[str, float] = field( # maximum step size for the end-effector in x,y,z direction
+        default_factory=lambda: {
+            "x": 0.02,
+            "y": 0.02,
+            "z": 0.02,
+        }
+    )

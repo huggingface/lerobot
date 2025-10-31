@@ -200,6 +200,7 @@ class ReplayBuffer:
         """Saves a transition, ensuring tensors are stored on the designated storage device."""
         # Initialize storage if this is the first transition
         if not self.initialized:
+            print("action1: ", action)
             self._initialize_storage(state=state, action=action, complementary_info=complementary_info)
 
         # Store the transition in pre-allocated tensors
@@ -209,7 +210,8 @@ class ReplayBuffer:
             if not self.optimize_memory:
                 # Only store next_states if not optimizing memory
                 self.next_states[key][self.position].copy_(next_state[key].squeeze(dim=0))
-
+        # print("action3:", action)
+        # print("action4:", self.actions[self.position].shape)
         self.actions[self.position].copy_(action.squeeze(dim=0))
         self.rewards[self.position] = reward
         self.dones[self.position] = done
@@ -478,7 +480,7 @@ class ReplayBuffer:
                 first_complementary_info = {
                     k: v.to(device) for k, v in first_transition["complementary_info"].items()
                 }
-
+            print("action2: ", first_action)
             replay_buffer._initialize_storage(
                 state=first_state, action=first_action, complementary_info=first_complementary_info
             )

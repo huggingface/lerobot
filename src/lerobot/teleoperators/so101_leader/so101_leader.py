@@ -23,12 +23,30 @@ from lerobot.motors.feetech import (
     OperatingMode,
 )
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-
+from ..utils import TeleopEvents
 from ..teleoperator import Teleoperator
 from .config_so101_leader import SO101LeaderConfig
 
 logger = logging.getLogger(__name__)
+##hashot
+from queue import Queue
+import os,sys
+from ..utils import TeleopEvents
+PYNPUT_AVAILABLE = True
+try:
+    if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
+        logging.info("No DISPLAY set. Skipping pynput import.")
+        raise ImportError("pynput blocked intentionally due to no display.")
 
+    from pynput import keyboard
+except ImportError:
+    keyboard = None
+    PYNPUT_AVAILABLE = False
+except Exception as e:
+    keyboard = None
+    PYNPUT_AVAILABLE = False
+    logging.info(f"Could not import pynput: {e}")
+##hashot
 
 class SO101Leader(Teleoperator):
     """
@@ -55,10 +73,55 @@ class SO101Leader(Teleoperator):
             calibration=self.calibration,
         )
 
+        self.event_queue = Queue()
+        self.current_pressed = Queue()
+        self.listener = None
+        self.logs = {}
+        self.is_keyboard_connected = False
+
+    def keyboard_connect(self) -> None:
+        if self.is_keyboard_connected:
+            raise DeviceAlreadyConnectedError(
+                "Keyboard is already connected. Do not run `robot.connect()` twice."
+            )
+
+        if PYNPUT_AVAILABLE:
+            logging.info("pynput is available - enabling local keyboard listener.")
+            self.listener = keyboard.Listener(
+                on_press=self._on_press,
+                on_release=self._on_release,
+            )
+            self.listener.start()
+        else:
+            logging.info("pynput not available - skipping local keyboard listener.")
+            self.listener = None
+
+    def _drain_pressed_keys(self):
+        while not self.event_queue.empty():
+            key_char, is_pressed = self.event_queue.get_nowait()
+            if is_pressed:
+                self.current_pressed.put(key_char)
+
+    def _on_press(self, key):
+        if hasattr(key, "char"):
+            self.event_queue.put((key.char, True))
+
+    def _on_release(self, key):
+        if hasattr(key, "char"):
+            self.event_queue.put((key.char, False))
+        if key == keyboard.Key.esc:
+            logging.info("ESC pressed, disconnecting.")
+            self.disconnect()
+
     @property
     def action_features(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.bus.motors}
-
+        #return {f"{motor}.pos": float for motor in self.bus.motors}
+        action_names = ["delta_x_ee", "delta_y_ee", "delta_z_ee","gripper_delta"]
+        # if cfg.wrapper.use_gripper:
+        #     action_names.append("gripper_delta")
+        return {            "dtype": "float32",
+            "shape": (len(action_names),),
+            "names": action_names,}
     @property
     def feedback_features(self) -> dict[str, type]:
         return {}
@@ -79,6 +142,7 @@ class SO101Leader(Teleoperator):
             self.calibrate()
 
         self.configure()
+        self.keyboard_connect()
         logger.info(f"{self} connected.")
 
     @property
@@ -141,9 +205,73 @@ class SO101Leader(Teleoperator):
         action = self.bus.sync_read("Present_Position")
         action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
-        logger.debug(f"{self} read action: {dt_ms:.1f}ms")
+        logger.info(f"{self} read action: {dt_ms:.1f}ms")
         return action
+    from typing import Any
 
+    def get_teleop_events(self) -> dict[str, Any]:
+        """
+        Get extra control events from the keyboard such as intervention status,
+        episode termination, success indicators, etc.
+
+        Keyboard mappings:
+        - Any movement keys pressed = intervention active
+        - 's' key = success (terminate episode successfully)
+        - 'r' key = rerecord episode (terminate and rerecord)
+        - 'q' key = quit episode (terminate without success)
+
+        Returns:
+            Dictionary containing:
+                - is_intervention: bool - Whether human is currently intervening
+                - terminate_episode: bool - Whether to terminate the current episode
+                - success: bool - Whether the episode was successful
+                - rerecord_episode: bool - Whether to rerecord the episode
+        """
+        if not self.is_connected:
+            return {
+                TeleopEvents.IS_INTERVENTION: False,
+                TeleopEvents.TERMINATE_EPISODE: False,
+                TeleopEvents.SUCCESS: False,
+                TeleopEvents.RERECORD_EPISODE: False,
+            }
+
+        # Check if any movement keys are currently pressed (indicates intervention)
+        movement_keys = [
+            keyboard.Key.up,
+            keyboard.Key.down,
+            keyboard.Key.left,
+            keyboard.Key.right,
+            keyboard.Key.shift,
+            keyboard.Key.shift_r,
+            keyboard.Key.ctrl_r,
+            keyboard.Key.ctrl_l,
+        ]
+        is_intervention = True
+
+        self._drain_pressed_keys()
+        # Check for episode control commands from misc_keys_queue
+        terminate_episode = False
+        success = False
+        rerecord_episode = False
+
+        # Process any pending misc keys
+        while not self.current_pressed.empty():
+            key = self.current_pressed.get_nowait()
+            if key == "s":
+                success = True
+            elif key == "r":
+                terminate_episode = True
+                rerecord_episode = True
+            elif key == "q":
+                terminate_episode = True
+                success = False
+
+        return {
+            TeleopEvents.IS_INTERVENTION: is_intervention,
+            TeleopEvents.TERMINATE_EPISODE: terminate_episode,
+            TeleopEvents.SUCCESS: success,
+            TeleopEvents.RERECORD_EPISODE: rerecord_episode,
+        }
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # TODO(rcadene, aliberts): Implement force feedback
         raise NotImplementedError
@@ -154,3 +282,7 @@ class SO101Leader(Teleoperator):
 
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")
+    from typing import Any   
+
+
+    

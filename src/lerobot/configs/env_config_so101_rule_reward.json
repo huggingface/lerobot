@@ -1,0 +1,93 @@
+{
+    "env": {
+        "robot": {
+            "type": "so101_follower",
+            "port": "/dev/ttyACM2",
+            "id": "follower2",
+            "cameras": {
+                "top": {
+                    "type": "opencv",
+                    "index_or_path": 5,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                },
+                "right": {
+                    "type": "opencv",
+                    "index_or_path": 7,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                }
+            }
+        },
+        "teleop": {
+            "type": "keyboard_ee"
+        },
+        "processor": {
+            "control_mode": "keyboard_ee",
+            "observation": {
+                "display_cameras": false,
+                "add_joint_velocity_to_observation": true,
+                "add_current_to_observation": true
+            },
+            "image_preprocessing": {
+                "crop_params_dict": {
+                  
+                  "observation.images.top": [0, 136, 360, 360]
+                },
+                "resize_size": [128, 128]            
+            },
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "reset_time_s": 2.5,
+                "control_time_s": 20.0,
+                "terminate_on_success": true
+            },
+            "inverse_kinematics": {
+                "urdf_path": "/home/sr/so101/SO-ARM100-main/Simulation/SO101/so101_new_calib.urdf",
+                "target_frame_name": "gripper_frame_link",
+                "end_effector_bounds": {
+            "min": [-1.0, -1.0, -1.0],  
+            "max": [1.0, 1.0, 1.0]
+                },
+                "end_effector_step_sizes": {
+                    "x": 0.02,
+                    "y": 0.02,
+                    "z": 0.02
+                }
+            },
+            "reward_rule": {
+                "target_x": 0.26157,
+                "target_y": -0.1039,
+                "target_z": 0.060122,
+                "radius": 0.05,
+                "radius_z": 0.05
+            },
+            "max_gripper_pos": 30
+        },
+        "name": "real_robot",
+        "fps": 10
+    },
+    "dataset": {
+        "repo_id": "mengke/test11",
+        "root": "/home/sr/so101/lerobot/dataset/test7",
+        "task": "ss",
+        "num_episodes_to_record": 15,
+        "replay_episode": null,
+        "push_to_hub": false
+    },
+    "mode": "record",
+    "device": "cpu"
+}
