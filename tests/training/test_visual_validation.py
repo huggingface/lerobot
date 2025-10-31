@@ -51,7 +51,7 @@ def temp_dir(tmp_path):
 
 DUMMY_STATE_DIM = 6
 DUMMY_ACTION_DIM = 6
-IMAGE_SIZE = 256
+IMAGE_SIZE = 64
 DEVICE = auto_select_torch_device()
 
 
