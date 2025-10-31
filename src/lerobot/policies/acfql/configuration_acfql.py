@@ -182,8 +182,12 @@ class ACFQLConfig(PreTrainedConfig):
     utd_ratio: int = 2
     # Dimension of the latent space
     latent_dim: int = 256
-    # Gradient clipping norm for the ACFQL algorithm
-    grad_clip_norm: float = 40.0
+    # Gradient clipping norm for the critic
+    critic_grad_clip_norm: float = 40.0
+    # Gradient clipping norm for the behavior cloning actor
+    actor_bc_grad_clip_norm: float = 40.0
+    # Gradient clipping norm for the one-step actor
+    actor_onestep_grad_clip_norm: float = 40.0
 
     # Network configuration
     # Configuration for the critic network architecture

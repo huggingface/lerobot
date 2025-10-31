@@ -287,7 +287,9 @@ def add_actor_information_and_train(
     # of 7%
     device = get_safe_torch_device(try_device=cfg.policy.device, log=True)
     storage_device = get_safe_torch_device(try_device=cfg.policy.storage_device)
-    clip_grad_norm_value = cfg.policy.grad_clip_norm
+    critic_grad_clip_norm_value = cfg.policy.critic_grad_clip_norm
+    actor_bc_grad_clip_norm_value = cfg.policy.actor_bc_grad_clip_norm
+    actor_onestep_grad_clip_norm_value = cfg.policy.actor_onestep_grad_clip_norm
     online_step_before_learning = cfg.policy.online_step_before_learning
     utd_ratio = cfg.policy.utd_ratio
     fps = cfg.env.fps
@@ -505,7 +507,7 @@ def add_actor_information_and_train(
                 optimizers["critic"].zero_grad()
                 loss_critic.backward()
                 critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+                    parameters=policy.critic_ensemble.parameters(), max_norm=critic_grad_clip_norm_value
                 )
                 optimizers["critic"].step()
 
@@ -598,7 +600,7 @@ def add_actor_information_and_train(
             optimizers["critic"].zero_grad()
             loss_critic.backward()
             critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-                parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+                parameters=policy.critic_ensemble.parameters(), max_norm=critic_grad_clip_norm_value
             ).item()
             optimizers["critic"].step()
 
@@ -616,7 +618,7 @@ def add_actor_information_and_train(
                     optimizers["actor_bc_flow"].zero_grad()
                     loss_actor_bc_flow.backward()
                     actor_bc_flow_grad_norm = torch.nn.utils.clip_grad_norm_(
-                        parameters=policy.actor_bc_flow.parameters(), max_norm=clip_grad_norm_value
+                        parameters=policy.actor_bc_flow.parameters(), max_norm=actor_bc_grad_clip_norm_value
                     ).item()
                     optimizers["actor_bc_flow"].step()
 
@@ -637,7 +639,8 @@ def add_actor_information_and_train(
                     optimizers["actor_onestep_flow"].zero_grad()
                     loss_actor_onestep_flow.backward()
                     actor_onestep_flow_grad_norm = torch.nn.utils.clip_grad_norm_(
-                        parameters=policy.actor_onestep_flow.parameters(), max_norm=clip_grad_norm_value
+                        parameters=policy.actor_onestep_flow.parameters(),
+                        max_norm=actor_onestep_grad_clip_norm_value,
                     ).item()
                     optimizers["actor_onestep_flow"].step()
 
@@ -871,7 +874,7 @@ def add_actor_information_and_train(
             optimizers["critic"].zero_grad()
             loss_critic.backward()
             critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-                parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+                parameters=policy.critic_ensemble.parameters(), max_norm=critic_grad_clip_norm_value
             )
             optimizers["critic"].step()
 
@@ -961,7 +964,7 @@ def add_actor_information_and_train(
         optimizers["critic"].zero_grad()
         loss_critic.backward()
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-            parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+            parameters=policy.critic_ensemble.parameters(), max_norm=critic_grad_clip_norm_value
         ).item()
         optimizers["critic"].step()
 
@@ -981,7 +984,7 @@ def add_actor_information_and_train(
                 optimizers["actor_bc_flow"].zero_grad()
                 loss_actor_bc_flow.backward()
                 actor_bc_flow_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    parameters=policy.actor_bc_flow.parameters(), max_norm=clip_grad_norm_value
+                    parameters=policy.actor_bc_flow.parameters(), max_norm=actor_bc_grad_clip_norm_value
                 ).item()
                 optimizers["actor_bc_flow"].step()
 
@@ -1002,7 +1005,8 @@ def add_actor_information_and_train(
                 optimizers["actor_onestep_flow"].zero_grad()
                 loss_actor_onestep_flow.backward()
                 actor_onestep_flow_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    parameters=policy.actor_onestep_flow.parameters(), max_norm=clip_grad_norm_value
+                    parameters=policy.actor_onestep_flow.parameters(),
+                    max_norm=actor_onestep_grad_clip_norm_value,
                 ).item()
                 optimizers["actor_onestep_flow"].step()
 
