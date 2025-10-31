@@ -16,6 +16,7 @@
 
 import logging
 import time
+from contextlib import contextmanager
 from copy import deepcopy
 from functools import cached_property
 from typing import Dict, List, Optional, Tuple, Union
@@ -74,6 +75,9 @@ class DamiaoMotorsBus(MotorsBusBase):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
         can_interface: str = "auto",
+        use_can_fd: bool = True,
+        bitrate: int = 1000000,
+        data_bitrate: int | None = 5000000,
     ):
         """
         Initialize the Damiao motors bus.
@@ -83,10 +87,16 @@ class DamiaoMotorsBus(MotorsBusBase):
             motors: Dictionary mapping motor names to Motor objects
             calibration: Optional calibration data
             can_interface: CAN interface type - "auto" (default), "socketcan" (Linux), or "slcan" (macOS/serial)
+            use_can_fd: Whether to use CAN FD mode (default: True for OpenArms)
+            bitrate: Nominal bitrate in bps (default: 1000000 = 1 Mbps)
+            data_bitrate: Data bitrate for CAN FD in bps (default: 5000000 = 5 Mbps), ignored if use_can_fd is False
         """
         super().__init__(port, motors, calibration)
         self.port = port
         self.can_interface = can_interface
+        self.use_can_fd = use_can_fd
+        self.bitrate = bitrate
+        self.data_bitrate = data_bitrate
         self.canbus = None
         self._is_connected = False
         
@@ -138,26 +148,48 @@ class DamiaoMotorsBus(MotorsBusBase):
             
             # Connect to CAN bus
             if self.can_interface == "socketcan":
-                # Linux SocketCAN
-                self.canbus = can.interface.Bus(
-                    channel=self.port,
-                    interface="socketcan",
-                    bitrate=self.default_baudrate
-                )
+                # Linux SocketCAN with CAN FD support
+                if self.use_can_fd and self.data_bitrate is not None:
+                    self.canbus = can.interface.Bus(
+                        channel=self.port,
+                        interface="socketcan",
+                        bitrate=self.bitrate,
+                        data_bitrate=self.data_bitrate,
+                        fd=True
+                    )
+                    logger.info(f"Connected to {self.port} with CAN FD (bitrate={self.bitrate}, data_bitrate={self.data_bitrate})")
+                else:
+                    self.canbus = can.interface.Bus(
+                        channel=self.port,
+                        interface="socketcan",
+                        bitrate=self.bitrate
+                    )
+                    logger.info(f"Connected to {self.port} with CAN 2.0 (bitrate={self.bitrate})")
             elif self.can_interface == "slcan":
                 # Serial Line CAN (macOS, Windows, or USB adapters)
+                # Note: SLCAN typically doesn't support CAN FD
                 self.canbus = can.interface.Bus(
                     channel=self.port,
                     interface="slcan",
-                    bitrate=self.default_baudrate
+                    bitrate=self.bitrate
                 )
+                logger.info(f"Connected to {self.port} with SLCAN (bitrate={self.bitrate})")
             else:
                 # Generic interface (vector, pcan, etc.)
-                self.canbus = can.interface.Bus(
-                    channel=self.port,
-                    interface=self.can_interface,
-                    bitrate=self.default_baudrate
-                )
+                if self.use_can_fd and self.data_bitrate is not None:
+                    self.canbus = can.interface.Bus(
+                        channel=self.port,
+                        interface=self.can_interface,
+                        bitrate=self.bitrate,
+                        data_bitrate=self.data_bitrate,
+                        fd=True
+                    )
+                else:
+                    self.canbus = can.interface.Bus(
+                        channel=self.port,
+                        interface=self.can_interface,
+                        bitrate=self.bitrate
+                    )
             
             self._is_connected = True
             
@@ -250,6 +282,24 @@ class DamiaoMotorsBus(MotorsBusBase):
                     if _ == num_retry:
                         raise e
                     time.sleep(0.01)
+
+    @contextmanager
+    def torque_disabled(self, motors: str | list[str] | None = None):
+        """
+        Context manager that guarantees torque is re-enabled.
+        
+        This helper is useful to temporarily disable torque when configuring motors.
+        
+        Examples:
+            >>> with bus.torque_disabled():
+            ...     # Safe operations here with torque disabled
+            ...     pass
+        """
+        self.disable_torque(motors)
+        try:
+            yield
+        finally:
+            self.enable_torque(motors)
 
     def set_zero_position(self, motors: str | list[str] | None = None) -> None:
         """Set current position as zero for selected motors."""

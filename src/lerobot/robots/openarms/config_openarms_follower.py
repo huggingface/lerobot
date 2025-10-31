@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from lerobot.cameras import CameraConfig
 from lerobot.motors.damiao.tables import MotorType
@@ -28,13 +28,21 @@ from ..config import RobotConfig
 class OpenArmsFollowerConfig(RobotConfig):
     """Configuration for the OpenArms follower robot with Damiao motors."""
     
-    # CAN interface to connect to
+    # CAN interfaces - one per arm
+    # Right arm CAN interface (e.g., "can0")
+    # Left arm CAN interface (e.g., "can1")
     # Linux: "can0", "can1", etc.
     # macOS: "/dev/cu.usbmodem*" (serial device)
-    port: str = "can0"
+    port_right: str = "can0"    # CAN interface for right arm
+    port_left: str = "can1"     # CAN interface for left arm
     
     # CAN interface type: "socketcan" (Linux), "slcan" (macOS/serial), or "auto" (auto-detect)
-    can_interface: str = "auto"
+    can_interface: str = "socketcan"
+    
+    # CAN FD settings (OpenArms uses CAN FD by default)
+    use_can_fd: bool = True
+    can_bitrate: int = 1000000      # Nominal bitrate (1 Mbps)
+    can_data_bitrate: int = 5000000  # Data bitrate for CAN FD (5 Mbps)
     
     # Whether to disable torque when disconnecting
     disable_torque_on_disconnect: bool = True
@@ -64,9 +72,10 @@ class OpenArmsFollowerConfig(RobotConfig):
         "gripper": (0x08, 0x18, "dm4310"),   # J8 - Gripper (DM4310)
     })
     
-    # MIT control parameters for position control
-    position_kp: float = 10.0  # Position gain
-    position_kd: float = 0.5   # Velocity damping
+    # MIT control parameters for position control (per motor)
+    # Values: [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, joint_7, gripper]
+    position_kp: list[float] = field(default_factory=lambda: [240.0, 240.0, 240.0, 240.0, 24.0, 31.0, 25.0, 16.0])
+    position_kd: list[float] = field(default_factory=lambda: [3.0, 3.0, 3.0, 3.0, 0.2, 0.2, 0.2, 0.2])
     
     # Calibration parameters
     calibration_mode: str = "manual"  # "manual" or "auto"
