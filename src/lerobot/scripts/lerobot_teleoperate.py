@@ -174,6 +174,7 @@ def teleop_loop(
             log_rerun_data(
                 observation=obs_transition,
                 action=teleop_action,
+                log_time=time.perf_counter() - start,
             )
 
             print("\n" + "-" * (display_len + 10))

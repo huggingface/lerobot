@@ -14,6 +14,7 @@
 
 import numbers
 import os
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -42,13 +43,14 @@ def init_rerun(
     rr.init(
         application_id=session_name,
         recording_id=uuid4(),
-        default_blueprint=build_rerun_blueprint(robot) if robot is not None else None,
     )
+    if robot is not None:
+        rr.send_blueprint(build_rerun_blueprint(robot))
     memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
     rr.spawn(memory_limit=memory_limit)
 
     if reset_time:
-        rr.set_time_seconds("episode_time", seconds=0.0)
+        rr.set_time("episode_time", timestamp=0.0)
 
 
 def _is_scalar(x):
@@ -71,26 +73,26 @@ def build_rerun_blueprint(robot: Robot) -> rr.blueprint.Grid:
     """
     contents = [
         rr.blueprint.TimeSeriesView(
-            origin="states_actions",
+            origin="data",
             plot_legend=rr.blueprint.PlotLegend(visible=True),
         )
     ]
     if robot.microphones:
         contents += [
             rr.blueprint.TimeSeriesView(
-                origin="microphones",
+                origin="audio",
                 plot_legend=rr.blueprint.PlotLegend(visible=True),
             )
         ]
     if robot.cameras:
         contents += [
             rr.blueprint.Spatial2DView(
-                origin=camera_name,
+                origin=OBS_PREFIX + camera_name,
             )
             for camera_name in robot.cameras
         ]
 
-    return rr.blueprint.Grid(contents)
+    return rr.blueprint.Grid(*contents)
 
 
 def log_rerun_data(
@@ -117,8 +119,9 @@ def log_rerun_data(
         log_time: The time to log the data in the "episode_time" timeline.
                   If None, the current time is used in Rerun's default timeline.
     """
-    if log_time is not None:
-        rr.set_time_seconds("episode_time", seconds=log_time)
+    if log_time is None:
+        log_time = time.perf_counter()
+    rr.set_time("episode_time", timestamp=log_time)
 
     if observation:
         for k, v in observation.items():
@@ -127,29 +130,29 @@ def log_rerun_data(
             key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
 
             if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
+                rr.log("data/" + key, rr.Scalars(float(v)))
             elif isinstance(v, np.ndarray):
                 arr = v
                 # Convert CHW -> HWC when needed
                 if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
                     arr = np.transpose(arr, (1, 2, 0))
-                # Convert channel x samples -> samples x channel when needed
-                elif arr.ndim == 2 and arr.shape[0] < arr.shape[1]:
+                # Convert samples x channels -> channels x samples when needed
+                elif arr.ndim == 2 and arr.shape[1] < arr.shape[0]:
                     arr = np.transpose(arr, (1, 0))
 
                 if arr.ndim == 1:
                     for i, vi in enumerate(arr):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                        rr.log("data/" + f"{key}_{i}", rr.Scalars(float(vi)))
                 elif arr.ndim == 2:
-                    for i, channel_arr in enumerate(arr.T):
+                    for i, channel_arr in enumerate(arr):
                         rr.send_columns(
                             "audio/"
                             + key
                             + f"_channel_{i}",  # TODO(CarolinePascal): Get actual channel number/name
                             indexes=[
-                                rr.TimeSecondsColumn(
+                                rr.TimeColumn(
                                     "episode_time",
-                                    times=log_time
+                                    timestamp=log_time
                                     + np.linspace(
                                         -DEFAULT_AUDIO_CHUNK_DURATION,
                                         0,
@@ -158,7 +161,7 @@ def log_rerun_data(
                                     ),
                                 )
                             ],
-                            columns=rr.Scalar.columns(scalar=channel_arr),
+                            columns=rr.Scalars.columns(scalars=channel_arr),
                         )
                 elif arr.ndim == 3:
                     rr.log(key, rr.Image(arr), static=True)
@@ -170,13 +173,13 @@ def log_rerun_data(
             key = k if str(k).startswith("action.") else f"action.{k}"
 
             if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
+                rr.log("data/" + key, rr.Scalars(float(v)))
             elif isinstance(v, np.ndarray):
                 if v.ndim == 1:
                     for i, vi in enumerate(v):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                        rr.log("data/" + f"{key}_{i}", rr.Scalars(float(vi)))
                 else:
                     # Fall back to flattening higher-dimensional arrays
                     flat = v.flatten()
                     for i, vi in enumerate(flat):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                        rr.log("data/" + f"{key}_{i}", rr.Scalars(float(vi)))
