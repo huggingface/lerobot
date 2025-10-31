@@ -629,25 +629,138 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
             "gripper.pos": 10.0,
         }
 
-        # Movement detection thresholds for sync completion
-        self.position_threshold = 0.002  # 2mm in meters
-        self.orientation_threshold = 0.01  # Small rotation threshold in radians
-        self.gripper_threshold = 1.0  # 1 degree for gripper
+        # Movement detection thresholds
+        self.position_threshold = 0.002
+        self.orientation_threshold = 0.01
+        self.gripper_threshold = 1.0
 
         self._debug_frame_count = 0
         self._last_intervention_state = False
         self._is_position_synced = False
         self._follower_reference_positions = None
         self._leader_base_positions = None
-        self._leader_base_ee_pose = None  # Store base EE pose for delta calculation
+        self._leader_base_ee_pose = None
         self._sync_start_time = None
-        self._last_leader_ee_pose = (
-            None  # Track previous EE pose for movement detection
+        self._last_leader_ee_pose = None
+        self._stable_frames_count = 0
+        self._stable_frames_required = 10
+        self._follower_base_joints = None
+
+    def _log_leader_ee_analysis(
+        self,
+        base_joints: dict,
+        current_joints: dict,
+        base_pose: np.ndarray,
+        current_pose: np.ndarray,
+        delta_pose: np.ndarray,
+    ):
+        """Log leader EE pose analysis with joint positions comparison"""
+        from scipy.spatial.transform import Rotation
+
+        base_pos = base_pose[:3, 3]
+        current_pos = current_pose[:3, 3]
+        delta_pos = delta_pose[:3, 3]
+
+        base_rot = Rotation.from_matrix(base_pose[:3, :3]).as_euler("zyx", degrees=True)
+        current_rot = Rotation.from_matrix(current_pose[:3, :3]).as_euler(
+            "zyx", degrees=True
         )
-        self._stable_frames_count = 0  # Count consecutive stable frames
-        self._stable_frames_required = (
-            10  # Require 10 stable frames for sync completion
+        delta_rot = Rotation.from_matrix(delta_pose[:3, :3]).as_euler(
+            "zyx", degrees=True
         )
+
+        print(f"\n{'='*60}")
+        print("LEADER ARM ANALYSIS")
+        print(f"{'='*60}")
+
+        # Joint positions comparison
+        print("JOINT POSITIONS:")
+        for motor_name in self.motor_names:
+            joint_key = f"{motor_name}.pos"
+            base_joint = base_joints.get(joint_key, 0.0)
+            current_joint = current_joints.get(joint_key, 0.0)
+            joint_delta = current_joint - base_joint
+
+            print(
+                f"  {motor_name}: Base={base_joint:6.1f}°, Current={current_joint:6.1f}°, Δ={joint_delta:5.1f}°"
+            )
+
+        # EE pose comparison
+        print("\nEE POSE:")
+        print(f"Base:    {base_pos}")
+        print(f"Current: {current_pos}")
+        print(f"Delta:   {delta_pos}")
+        print(f"Rotation Delta (deg): {delta_rot}")
+        print(f"{'='*60}\n")
+
+    def _log_leader_follower_comparison(
+        self,
+        leader_base_joints: dict,
+        leader_current_joints: dict,
+        follower_current_joints: dict,
+        follower_target_joints: list,
+    ):
+        """Log leader-follower joint and EE comparison"""
+        print(f"\n{'='*60}")
+        print("LEADER-FOLLOWER COMPARISON")
+        print(f"{'='*60}")
+
+        # Calculate joint deltas
+        leader_joint_deltas = []
+        follower_joint_deltas = []
+
+        for motor_name in self.motor_names:
+            joint_key = f"{motor_name}.pos"
+            base_joint = leader_base_joints.get(joint_key, 0.0)
+            current_joint = leader_current_joints.get(joint_key, 0.0)
+            leader_delta = current_joint - base_joint
+            leader_joint_deltas.append(leader_delta)
+
+            follower_current = follower_current_joints.get(motor_name, 0.0)
+            follower_target = follower_target_joints[self.motor_names.index(motor_name)]
+            follower_delta = follower_target - follower_current
+            follower_joint_deltas.append(follower_delta)
+
+        print("JOINT DELTAS:")
+        for i, motor_name in enumerate(self.motor_names):
+            print(
+                f"  {motor_name}: LeaderΔ={leader_joint_deltas[i]:5.1f}°, FollowerΔ={follower_joint_deltas[i]:5.1f}°"
+            )
+
+        # EE pose comparison
+        if self.kinematics_solver:
+            leader_base_pose = self._compute_ee_pose_from_joints(leader_base_joints)
+            leader_current_pose = self._compute_ee_pose_from_joints(
+                leader_current_joints
+            )
+
+            follower_current_joints_array = [
+                follower_current_joints.get(name, 0.0) for name in self.motor_names
+            ]
+            follower_target_joints_array = follower_target_joints[
+                : len(self.motor_names)
+            ]
+
+            follower_current_pose = self.kinematics_solver.forward_kinematics(
+                np.array(follower_current_joints_array)
+            )
+            follower_target_pose = self.kinematics_solver.forward_kinematics(
+                np.array(follower_target_joints_array)
+            )
+
+            leader_ee_delta = leader_current_pose[:3, 3] - leader_base_pose[:3, 3]
+            follower_ee_delta = (
+                follower_target_pose[:3, 3] - follower_current_pose[:3, 3]
+            )
+
+            print("\nEE POSE DELTAS:")
+            print(f"Leader:   {leader_ee_delta}")
+            print(f"Follower: {follower_ee_delta}")
+            print(
+                f"Error:    {np.linalg.norm(leader_ee_delta - follower_ee_delta):.4f}m"
+            )
+
+        print(f"{'='*60}\n")
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         self._debug_frame_count += 1
@@ -655,24 +768,9 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
         if not isinstance(action, PolicyAction):
             raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
-        # Get intervention signals and teleoperation data
         info = transition.get(TransitionKey.INFO, {})
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
 
-        # IMPORTANT: For LeaderArmInterventionProcessorStep, teleop_action contains
-        # joint positions (including gripper) in degrees, NOT delta actions.
-        # This is different from other teleop devices like gamepad/keyboard which output
-        # direct delta actions [x, y, z, gripper].
-        #
-        # Leader Arm teleop_action format:
-        # {
-        #   "shoulder_pan.pos": 45.0,
-        #   "shoulder_lift.pos": -30.0,
-        #   "elbow_flex.pos": 60.0,
-        #   "wrist_flex.pos": -15.0,
-        #   "wrist_roll.pos": 20.0,
-        #   "gripper.pos": 50.0
-        # }
         teleop_action = complementary_data.get(TELEOP_ACTION_KEY, {})
         is_intervention = info.get(TeleopEvents.IS_INTERVENTION, False)
         terminate_episode = info.get(TeleopEvents.TERMINATE_EPISODE, False)
@@ -685,14 +783,12 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
         intervention_started = is_intervention and not self._last_intervention_state
         intervention_ended = not is_intervention and self._last_intervention_state
 
-        # Handle intervention start - initialize manual position synchronization
         if intervention_started:
             print(
                 "LEADER ARM INTERVENTION: Intervention started - initializing manual position synchronization"
             )
             self._initialize_manual_sync(transition)
 
-        # Handle intervention end - reset synchronization state
         if intervention_ended:
             print("LEADER ARM INTERVENTION: Intervention ended")
             self._reset_sync_state()
@@ -705,9 +801,7 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
                 ".pos" in key for key in teleop_action.keys()
             ):
 
-                # Check if position synchronization is complete
                 if not self._is_position_synced:
-                    # Still in synchronization phase - check if user moved leader to match follower
                     sync_complete = self._check_manual_sync_complete(
                         teleop_action, transition
                     )
@@ -715,22 +809,15 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
                         print(
                             "🎯 LEADER ARM INTERVENTION: Position synchronization COMPLETE!"
                         )
-                        print(
-                            "🎯 LEADER ARM INTERVENTION: Ready for teleoperation - you can now control the follower"
-                        )
+                        print("🎯 LEADER ARM INTERVENTION: Ready for teleoperation")
                         self._is_position_synced = True
                         self._leader_base_positions = teleop_action.copy()
-                        # Calculate base EE pose using forward kinematics
                         if self.kinematics_solver is not None:
                             self._leader_base_ee_pose = (
                                 self._compute_ee_pose_from_joints(teleop_action)
                             )
-                        self._last_leader_ee_pose = (
-                            self._leader_base_ee_pose
-                        )  # Initialize tracking
+                        self._last_leader_ee_pose = self._leader_base_ee_pose
 
-                        # IMPORTANT: Immediately generate an action to move follower to exact leader position
-                        # This eliminates the tolerance difference between arms
                         action_list = self._convert_to_exact_sync_action(
                             teleop_action, transition
                         )
@@ -739,7 +826,6 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
                         )
                         new_transition[TransitionKey.ACTION] = action_tensor
 
-                        # Update complementary data
                         complementary_data = new_transition.get(
                             TransitionKey.COMPLEMENTARY_DATA, {}
                         )
@@ -750,11 +836,8 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
                             complementary_data
                         )
 
-                        print(
-                            f"🎯 LEADER ARM INTERVENTION: Sending exact sync action to eliminate tolerance difference"
-                        )
+                        print("🎯 Sending exact sync action")
                     else:
-                        # Still synchronizing - return zero action to wait for completion
                         zero_action = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] + (
                             [1.0] if self.use_gripper else [0.0]
                         )
@@ -763,7 +846,6 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
                         )
                         new_transition[TransitionKey.ACTION] = zero_tensor
 
-                        # Also update complementary data with the tensor action
                         complementary_data = new_transition.get(
                             TransitionKey.COMPLEMENTARY_DATA, {}
                         )
@@ -774,69 +856,53 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
                             complementary_data
                         )
                 else:
-                    # 🚨 对比关节运动模式
-                    if self._debug_frame_count % 20 == 1:
-                        print(f"JOINT MOVEMENT COMPARISON:")
-                        print(f"LEADER JOINTS: {[teleop_action.get(f'{name}.pos', 0.0) for name in self.motor_names]}")
+                    # Get follower current joints for comparison
+                    observation = transition.get(TransitionKey.OBSERVATION, {})
+                    follower_current_joints = {}
+                    for motor_name in self.motor_names:
+                        for key_suffix in [".pos", "_pos"]:
+                            key = motor_name + key_suffix
+                            if key in observation:
+                                follower_current_joints[motor_name] = observation[key]
+                                break
 
-                        # 获取follower当前关节位置
-                        observation = transition.get(TransitionKey.OBSERVATION, {})
-                        follower_joint_positions = {}
-                        for motor_name in self.motor_names:
-                            for key_suffix in [".pos", "_pos"]:
-                                key = motor_name + key_suffix
-                                if key in observation:
-                                    follower_joint_positions[motor_name] = observation[key]
-                                    break
+                    # Position sync complete - convert to 7D action
+                    action_list = self._convert_to_7d_action_with_kinematics(
+                        teleop_action
+                    )
 
-                        # 对比每个关节的变化
-                        for motor_name in self.motor_names:
-                            leader_current = teleop_action.get(f"{motor_name}.pos", 0.0)
-                            leader_base = self._leader_base_positions.get(f"{motor_name}.pos", 0.0)
-                            leader_change = leader_current - leader_base
+                    # 🚨 Call leader-follower comparison logging
+                    if self._debug_frame_count % 30 == 1:
+                        # Get target joints from IK solution (if available)
+                        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+                        ik_solution = complementary_data.get("IK_solution")
+                        if ik_solution is not None:
+                            self._log_leader_follower_comparison(
+                                self._leader_base_positions,
+                                teleop_action,
+                                follower_current_joints,
+                                ik_solution.tolist() if hasattr(ik_solution, 'tolist') else ik_solution
+                            )
 
-                            follower_current = follower_joint_positions.get(motor_name, 0.0)
-                            # 需要记录follower的base位置
-                            if not hasattr(self, '_follower_base_positions'):
-                                self._follower_base_positions = follower_joint_positions.copy()
-                            follower_base = self._follower_base_positions.get(motor_name, 0.0)
-                            follower_change = follower_current - follower_base
+                    delta_magnitude = np.linalg.norm(action_list[:3])
+                    rot_magnitude = np.linalg.norm(action_list[3:6])
 
-                            print(f"  {motor_name}: LeaderΔ={leader_change:6.1f}°, FollowerΔ={follower_change:6.1f}°")
-
-                    # Position sync complete - convert to 7D action commands using kinematics
-                    action_list = self._convert_to_7d_action_with_kinematics(teleop_action)
-
-                    # 🚨 判断是否发送delta action
-                    delta_magnitude = np.linalg.norm(action_list[:3])  # 位置变化幅度
-                    rot_magnitude = np.linalg.norm(action_list[3:6])   # 旋转变化幅度
-
-                    if delta_magnitude > 0.005 or rot_magnitude > 0.01:  # 阈值判断
-                        # 发送delta action
+                    if delta_magnitude > 0.005 or rot_magnitude > 0.01:
                         teleop_action_tensor = torch.tensor(
                             action_list, dtype=action.dtype, device=action.device
                         )
-
-                        if self._debug_frame_count % 30 == 1:
-                            print(
-                                f"LEADER ARM INTERVENTION: Sending 7D command - "
-                                f"pos[{teleop_action_tensor[0]:6.3f}, {teleop_action_tensor[1]:6.3f}, {teleop_action_tensor[2]:6.3f}] "
-                                f"rot[{teleop_action_tensor[3]:6.3f}, {teleop_action_tensor[4]:6.3f}, {teleop_action_tensor[5]:6.3f}] "
-                                f"gripper[{teleop_action_tensor[6]:6.3f}]"
-                            )
-
                         new_transition[TransitionKey.ACTION] = teleop_action_tensor
 
-                        # 🚨 关键：发送action后立即更新base到当前位置
+                        # Update base after sending action
                         self._leader_base_positions = teleop_action.copy()
                         if self.kinematics_solver is not None:
-                            self._leader_base_ee_pose = self._compute_ee_pose_from_joints(teleop_action)
+                            self._leader_base_ee_pose = (
+                                self._compute_ee_pose_from_joints(teleop_action)
+                            )
 
                         if self._debug_frame_count % 30 == 1:
-                            print(f"🔄 Base updated after sending delta action")
-
+                            print("🔄 Base updated")
                     else:
-                        # Delta太小，发送零action，不更新base
                         zero_action = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] + (
                             [1.0] if self.use_gripper else [0.0]
                         )
@@ -844,13 +910,7 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
                             zero_action, dtype=action.dtype, device=action.device
                         )
                         new_transition[TransitionKey.ACTION] = zero_tensor
-
-                        if self._debug_frame_count % 60 == 1:
-                            print(f"⏹️  Delta too small, sending zero action")
-
         else:
-            # Non-intervention mode: output zero 7D action [x, y, z, rx, ry, rz, gripper]
-            # This ensures consistent 7D output format regardless of intervention state
             zero_action = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] + (
                 [1.0] if self.use_gripper else [0.0]
             )
@@ -859,165 +919,116 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
             )
             new_transition[TransitionKey.ACTION] = zero_tensor
 
-        # Handle episode termination and update metadata
+        # Handle episode termination
         new_transition[TransitionKey.DONE] = bool(terminate_episode) or (
             self.terminate_on_success and success
         )
         new_transition[TransitionKey.REWARD] = float(success)
 
-        # Update info dictionary with intervention metadata
+        # Update info dictionary
         info = new_transition.get(TransitionKey.INFO, {})
         info[TeleopEvents.IS_INTERVENTION] = is_intervention
         info[TeleopEvents.RERECORD_EPISODE] = rerecord_episode
         info[TeleopEvents.SUCCESS] = success
         new_transition[TransitionKey.INFO] = info
 
-        # Update complementary data with current action
+        # Update complementary data
         complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
         complementary_data[TELEOP_ACTION_KEY] = new_transition.get(TransitionKey.ACTION)
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
 
-        action_tensor = new_transition[TransitionKey.ACTION]
         return new_transition
 
     def _convert_to_exact_sync_action(
         self, leader_positions: dict, transition: EnvTransition
     ) -> list:
-        """
-        Generate a ONE-TIME correction action to move follower to leader's current position.
-        This is only called once when synchronization completes.
-
-        Computes: delta = leader_current * inv(follower_current)
-        This moves follower from its current position to leader's current position.
-        """
+        """Generate exact sync action to move follower to leader position"""
         if self.kinematics_solver is None:
             return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] + (
                 [1.0] if self.use_gripper else [0.0]
             )
 
-        # Get current follower EE pose from observation
         observation = transition.get(TransitionKey.OBSERVATION, {})
 
-        # Compute leader's current EE pose
         leader_current_pose = self._compute_ee_pose_from_joints(leader_positions)
 
-        # Get follower's current EE pose
+        # Get follower current pose and joints
         follower_joint_positions = []
-        follower_joint_positions_dict = {}
+        follower_joint_dict = {}
         for motor_name in self.motor_names:
             joint_key = motor_name + ".pos"
             if joint_key in observation:
                 follower_joint_positions.append(observation[joint_key])
-                follower_joint_positions_dict[motor_name] = observation[joint_key]
+                follower_joint_dict[motor_name] = observation[joint_key]
             else:
                 raise ValueError(
                     f"Cannot find follower joint position for {motor_name}"
                 )
 
-        if len(follower_joint_positions) != len(self.motor_names):
-            raise ValueError(
-                f"Missing follower joint positions. Expected {len(self.motor_names)}, got {len(follower_joint_positions)}"
-            )
         follower_current_pose = self.kinematics_solver.forward_kinematics(
             np.array(follower_joint_positions)
         )
 
-        # 对比每个关节
+        # 🚨 Log exact sync comparison
+        print(f"\n{'='*60}")
+        print("EXACT SYNC COMPARISON")
+        print(f"{'='*60}")
         for motor_name in self.motor_names:
             leader_joint = leader_positions.get(f"{motor_name}.pos", 0.0)
-            follower_joint = follower_joint_positions_dict.get(motor_name, 0.0)
+            follower_joint = follower_joint_dict.get(motor_name, 0.0)
             error = abs(leader_joint - follower_joint)
-            tolerance = self.sync_tolerances.get(f"{motor_name}.pos", 10.0)
+            print(
+                f"  {motor_name}: Leader={leader_joint:6.1f}°, Follower={follower_joint:6.1f}°, Error={error:5.1f}°"
+            )
+        print(f"{'='*60}\n")
 
-            status = "✅" if error <= tolerance else "❌"
-            print(f"  {motor_name}: {status} Leader={leader_joint:6.1f}°, Follower={follower_joint:6.1f}°, Error={error:5.1f}°, Tol={tolerance}°")
-
-        # Calculate correction transformation:
-        # We want: follower_future = leader_current
-        # So: delta = leader_current * inv(follower_current)
+        # Calculate correction
         follower_current_inv = np.linalg.inv(follower_current_pose)
         correction_pose = leader_current_pose @ follower_current_inv
 
-        # Convert to 7D action
         correction_action = self._pose_to_7d_action(correction_pose)
 
-        # Handle gripper correction
         if self.use_gripper:
             leader_gripper = leader_positions["gripper.pos"]
             follower_gripper = observation["gripper.pos"]
-            gripper_delta = (leader_gripper - follower_gripper) * 0.1  # 小的velocity
+            gripper_delta = (leader_gripper - follower_gripper) * 0.1
             correction_action.append(gripper_delta)
         else:
             correction_action.append(0.0)
 
-        print(f"🎯 EXACT SYNC CORRECTION: Moving follower to leader position")
-        print(f"  Follower current: {follower_current_pose}")
-        print(f"  Leader current: {leader_current_pose[:3, 3]}")
-        print(f"  Correction action: {[f'{x:.3f}' for x in correction_action]}")
+        print("🎯 EXACT SYNC CORRECTION")
+        print(f"Correction action: {[f'{x:.3f}' for x in correction_action]}")
 
         return correction_action
+
 
     def _compute_ee_pose_from_joints(self, joint_positions: dict) -> np.ndarray:
         if self.kinematics_solver is None:
             return np.eye(4)
 
         joint_array = []
-        joint_info = []
         for motor_name in self.motor_names:
             joint_key = motor_name + ".pos"
             if joint_key in joint_positions:
                 joint_array.append(joint_positions[joint_key])
-                joint_info.append(f"{motor_name}={joint_positions[joint_key]:.1f}°")
             else:
                 joint_array.append(0.0)
-                joint_info.append(f"{motor_name}=0.0°")
 
         ee_pose = self.kinematics_solver.forward_kinematics(np.array(joint_array))
-
-        # 验证FK一致性：相同的inputs应该产生相同的outputs
-        if hasattr(self, '_last_fk_joints') and hasattr(self, '_last_fk_pose'):
-            if np.allclose(joint_array, self._last_fk_joints, atol=0.01):
-                if not np.allclose(ee_pose, self._last_fk_pose, atol=0.001):
-                    print(f"FK INCONSISTENCY: Same joints but different EE pose!")
-                    print(f"  Joints: {joint_array}")
-                    print(f"  Old pose: {self._last_fk_pose[:3, 3]}")
-                    print(f"  New pose: {ee_pose[:3, 3]}")
-
-        self._last_fk_joints = joint_array
-        self._last_fk_pose = ee_pose.copy()
-
-        if self._debug_frame_count % 40 == 1:
-            print(f"FK JOINT MAPPING:")
-            print(f"  Joints: {', '.join(joint_info)}")
-            print(f"  EE Position: {ee_pose[:3, 3]}")
         return ee_pose
 
     def _pose_to_7d_action(self, pose: np.ndarray) -> list:
-        """
-        Convert 4x4 transformation matrix to 7D action [x, y, z, rx, ry, rz].
-        Uses Euler angles for rotation representation.
-        """
-        # Extract position
+        """Convert 4x4 transform to 7D action [x, y, z, rx, ry, rz]"""
         position = pose[:3, 3]
-
-        # Extract rotation matrix and convert to Euler angles (ZYX convention)
         rotation_matrix = pose[:3, :3]
 
-        # Convert to Euler angles
         try:
-            # Using scipy for robust rotation conversion
             from scipy.spatial.transform import Rotation
 
             rot = Rotation.from_matrix(rotation_matrix)
-            euler_angles = rot.as_euler("zyx", degrees=False)  # Return in radians
-
-            # Reorder to [rx, ry, rz] if needed, or keep as [rz, ry, rx] depending on your convention
-            # Here I'm using [rx, ry, rz] corresponding to roll, pitch, yaw
+            euler_angles = rot.as_euler("zyx", degrees=False)
             rx, ry, rz = euler_angles[2], euler_angles[1], euler_angles[0]
-
         except ImportError:
-            # Fallback to simple calculation if scipy not available
-            # This is a simplified conversion - consider using a proper library
             rx = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])
             ry = np.arctan2(
                 -rotation_matrix[2, 0],
@@ -1030,46 +1041,41 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
     def _convert_to_7d_action_with_kinematics(
         self, current_leader_positions: dict
     ) -> list:
-        """
-        Generate CONTINUOUS following action based on leader's movement from base position.
+        """Generate continuous following action based on leader movement"""
+        if self._leader_base_ee_pose is None or self.kinematics_solver is None:
+            return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] + (
+                [0.0] if self.use_gripper else [0.0]
+            )
 
-        Computes: delta = leader_current * inv(leader_base)
-        This makes follower move relative to the synchronized base position.
-        """
-        # 计算当前pose
         leader_current_pose = self._compute_ee_pose_from_joints(
             current_leader_positions
         )
-
-        # Debug: 检查base和current的差异
-        if self._debug_frame_count % 30 == 1:
-            base_pos = self._leader_base_ee_pose[:3, 3]
-            current_pos = leader_current_pose[:3, 3]
-            pos_error = np.linalg.norm(current_pos - base_pos)
-            print(f"DELTA DEBUG: pos_error={pos_error:.4f}m")
-            if pos_error > 0.001:
-                print(f"  Base:    {base_pos}")
-                print(f"  Current: {current_pos}")
-
-        # 计算delta
         base_pose_inv = np.linalg.inv(self._leader_base_ee_pose)
         delta_pose = leader_current_pose @ base_pose_inv
 
+        # 🚨 Call leader analysis logging
+        if self._debug_frame_count % 30 == 1:
+            self._log_leader_ee_analysis(
+                self._leader_base_positions,
+                current_leader_positions,
+                self._leader_base_ee_pose,
+                leader_current_pose,
+                delta_pose
+            )
+
         delta_action = self._pose_to_7d_action(delta_pose)
 
-        # Handle gripper
         if self.use_gripper:
             current_gripper = current_leader_positions["gripper.pos"]
             base_gripper = self._leader_base_positions["gripper.pos"]
             gripper_delta = (current_gripper - base_gripper) * 0.1
-            normalized_gripper = 1.0 + gripper_delta
-            normalized_gripper = max(0.0, min(2.0, normalized_gripper))
             delta_action.append(gripper_delta)
         else:
             delta_action.append(0.0)
 
         return delta_action
 
+    # Rest of the methods remain the same as before...
     def _initialize_manual_sync(self, transition: EnvTransition):
         """
         Initialize manual position synchronization.
