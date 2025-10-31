@@ -508,7 +508,7 @@ def make_processors(
                 discrete_gripper=True,
             ),
             InverseKinematicsRLStep(
-                kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=False
+                kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=True
             ),
         ]
         action_pipeline_steps.extend(inverse_kinematics_steps)

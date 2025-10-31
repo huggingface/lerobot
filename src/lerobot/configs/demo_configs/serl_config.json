@@ -89,11 +89,11 @@
         "repo_id": "weiwenliu/lerobot-serl-test",
         "root": null,
         "task": "Test SERL in cardbox perturbation",
-        "num_episodes_to_record": 1,
+        "num_episodes_to_record": 2,
         "replay_episode": 0,
         "push_to_hub": true
     },
     "mode": "record",
     "device": "cuda",
-    "resume": true
+    "resume": false
 }

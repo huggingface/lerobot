@@ -32,6 +32,11 @@ class RobotKinematics:
             target_frame_name: Name of the end-effector frame in the URDF
             joint_names: List of joint names to use for the kinematics solver
         """
+        print(f"DEBUG: Kinematics solver initialized:")
+        print(f"  URDF path: {urdf_path}")
+        print(f"  Target frame: {target_frame_name}")
+        print(f"  Motor names: {joint_names}")
+
         try:
             import placo
         except ImportError as e:

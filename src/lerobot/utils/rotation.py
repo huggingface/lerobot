@@ -268,3 +268,185 @@ class Rotation:
         )
 
         return Rotation(composed_quat)
+
+    def as_euler(self, seq: str, degrees: bool = False) -> np.ndarray:
+        """
+        Convert the rotation to Euler angles.
+
+        Args:
+            seq: Axis sequence, e.g., "xyz", "zyx", "xzy", "yxz", "yzx", "zxy".
+                 Only proper Tait-Bryan sequences with all distinct axes are supported.
+            degrees: If True, return angles in degrees; otherwise radians.
+
+        Returns:
+            ndarray of shape (3,) with angles [a1, a2, a3] for the given sequence.
+        """
+        seq = seq.lower()
+        valid = {"xyz", "xzy", "yxz", "yzx", "zxy", "zyx"}
+        if seq not in valid:
+            raise ValueError(
+                f"Unsupported euler sequence '{seq}'. Supported: {sorted(valid)}"
+            )
+
+        R = self.as_matrix()
+        r00, r01, r02 = R[0, 0], R[0, 1], R[0, 2]
+        r10, r11, r12 = R[1, 0], R[1, 1], R[1, 2]
+        r20, r21, r22 = R[2, 0], R[2, 1], R[2, 2]
+
+        # For Tait-Bryan sequences (all axes different), formulas:
+        # xyz:
+        #   sy = -r20
+        #   y = asin(sy)
+        #   x = atan2(r21, r22)
+        #   z = atan2(r10, r00)
+        # xzy:
+        #   sz = r10
+        #   z = asin(sz)
+        #   x = atan2(-r12, r11)
+        #   y = atan2(-r20, r00)
+        # yxz:
+        #   sx = r21
+        #   x = asin(sx)
+        #   y = atan2(-r20, r22)
+        #   z = atan2(-r01, r00)
+        # yzx:
+        #   sz = -r01
+        #   z = asin(sz)
+        #   y = atan2(r02, r00)
+        #   x = atan2(r21, r11)
+        # zxy:
+        #   sx = -r12
+        #   x = asin(sx)
+        #   z = atan2(r10, r11)
+        #   y = atan2(r02, r22)
+        # zyx:
+        #   sy = -r02
+        #   y = asin(sy)
+        #   z = atan2(r01, r00)
+        #   x = atan2(r12, r22)
+        #
+        # Handle gimbal lock when |sin(mid)| ~ 1.
+
+        eps = 1e-8
+
+        if seq == "xyz":
+            sy = -r20
+            y = np.arcsin(np.clip(sy, -1.0, 1.0))
+            if abs(sy) < 1 - eps:
+                x = np.arctan2(r21, r22)
+                z = np.arctan2(r10, r00)
+            else:
+                # Gimbal lock: z set to 0, solve x from r01/r02
+                x = np.arctan2(-r12, r11)
+                z = 0.0
+
+        elif seq == "xzy":
+            sz = r10
+            z = np.arcsin(np.clip(sz, -1.0, 1.0))
+            if abs(sz) < 1 - eps:
+                x = np.arctan2(-r12, r11)
+                y = np.arctan2(-r20, r00)
+            else:
+                x = np.arctan2(r21, r22)
+                y = 0.0
+
+        elif seq == "yxz":
+            sx = r21
+            x = np.arcsin(np.clip(sx, -1.0, 1.0))
+            if abs(sx) < 1 - eps:
+                y = np.arctan2(-r20, r22)
+                z = np.arctan2(-r01, r00)
+            else:
+                y = np.arctan2(r02, r00)
+                z = 0.0
+
+        elif seq == "yzx":
+            sz = -r01
+            z = np.arcsin(np.clip(sz, -1.0, 1.0))
+            if abs(sz) < 1 - eps:
+                y = np.arctan2(r02, r00)
+                x = np.arctan2(r21, r11)
+            else:
+                y = np.arctan2(-r20, r22)
+                x = 0.0
+
+        elif seq == "zxy":
+            sx = -r12
+            x = np.arcsin(np.clip(sx, -1.0, 1.0))
+            if abs(sx) < 1 - eps:
+                z = np.arctan2(r10, r11)
+                y = np.arctan2(r02, r22)
+            else:
+                z = np.arctan2(-r01, r00)
+                y = 0.0
+
+        elif seq == "zyx":
+            sy = -r02
+            y = np.arcsin(np.clip(sy, -1.0, 1.0))
+            if abs(sy) < 1 - eps:
+                z = np.arctan2(r01, r00)
+                x = np.arctan2(r12, r22)
+            else:
+                z = np.arctan2(-r10, r11)
+                x = 0.0
+
+        angles = {
+            "xyz": np.array([x, y, z]),
+            "xzy": np.array([x, y, z]),
+            "yxz": np.array([y, x, z]),
+            "yzx": np.array([y, z, x]),
+            "zxy": np.array([z, x, y]),
+            "zyx": np.array([z, y, x]),
+        }[seq]
+
+        if degrees:
+            angles = np.degrees(angles)
+        return angles
+
+    @classmethod
+    def from_euler(cls, seq: str, angles, degrees: bool = False) -> "Rotation":
+        """
+        Create rotation from Euler angles.
+
+        Args:
+            seq: Axis sequence, e.g., "xyz", "zyx", "xzy", "yxz", "yzx", "zxy".
+            angles: Iterable of 3 angles [a1, a2, a3].
+            degrees: If True, input angles are in degrees.
+
+        Returns:
+            Rotation instance.
+        """
+        seq = seq.lower()
+        valid = {"xyz", "xzy", "yxz", "yzx", "zxy", "zyx"}
+        if seq not in valid:
+            raise ValueError(
+                f"Unsupported euler sequence '{seq}'. Supported: {sorted(valid)}"
+            )
+
+        angles = np.asarray(angles, dtype=float).reshape(3)
+        if degrees:
+            angles = np.radians(angles)
+
+        a1, a2, a3 = angles
+
+        def Rx(a):
+            ca, sa = np.cos(a), np.sin(a)
+            return np.array([[1, 0, 0], [0, ca, -sa], [0, sa, ca]], dtype=float)
+
+        def Ry(a):
+            ca, sa = np.cos(a), np.sin(a)
+            return np.array([[ca, 0, sa], [0, 1, 0], [-sa, 0, ca]], dtype=float)
+
+        def Rz(a):
+            ca, sa = np.cos(a), np.sin(a)
+            return np.array([[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]], dtype=float)
+
+        axis_map = {"x": Rx, "y": Ry, "z": Rz}
+        R1 = axis_map[seq[0]](a1)
+        R2 = axis_map[seq[1]](a2)
+        R3 = axis_map[seq[2]](a3)
+
+        # Active rotations applied in order: first a1 about seq[0], then a2, then a3
+        R = R3 @ R2 @ R1
+        return cls.from_matrix(R)
+

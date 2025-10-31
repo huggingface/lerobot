@@ -548,10 +548,10 @@ class InverseKinematicsRLStep(ProcessorStep):
         wz = action.pop("ee.wz")
         gripper_pos = action.pop("ee.gripper_pos")
 
-        if None in (x, y, z, wx, wy, wz, gripper_pos):
-            raise ValueError(
-                "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos must all be present in action"
-            )
+        # 🚨 添加输入debug
+        print(f"IK INPUT DEBUG:")
+        print(f"  Target EE - pos: [{x:.3f}, {y:.3f}, {z:.3f}]")
+        print(f"  Target EE - rot: [{wx:.3f}, {wy:.3f}, {wz:.3f}]")
 
         observation = new_transition.get(TransitionKey.OBSERVATION).copy()
         if observation is None:
@@ -561,22 +561,41 @@ class InverseKinematicsRLStep(ProcessorStep):
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+
+        # 🚨 添加当前关节状态debug
+        print(f"  Current follower joints: {[f'{q:.1f}' for q in q_raw]}")
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
             self.q_curr = q_raw
+            print(f"  Initial guess: CURRENT joints")
         else:  # Use previous ik solution as initial guess
             if self.q_curr is None:
                 self.q_curr = q_raw
+            print(f"  Initial guess: PREVIOUS IK solution")
 
         # Build desired 4x4 transform from pos + rotvec (twist)
         t_des = np.eye(4, dtype=float)
         t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
         t_des[:3, 3] = [x, y, z]
 
+        # 🚨 添加初始猜测debug
+        print(f"  Initial guess joints: {[f'{q:.1f}' for q in self.q_curr]}")
+
         # Compute inverse kinematics
         q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+
+        # 🚨 添加IK结果debug
+        print(f"  IK solution: {[f'{q:.1f}' for q in q_target]}")
+        print(f"  Joint changes: {[f'{(q_target[i]-q_raw[i]):.1f}' for i in range(len(q_target))]}")
+
+        # 🚨 验证FK一致性
+        fk_verification = self.kinematics.forward_kinematics(q_target)
+        fk_pos = fk_verification[:3, 3]
+        pos_error = np.linalg.norm(fk_pos - np.array([x, y, z]))
+        print(f"  FK verification error: {pos_error:.4f}m")
+
+        print("=" * 50)
+
         self.q_curr = q_target
 
         # TODO: This is sentitive to order of motor_names = q_target mapping
