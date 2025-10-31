@@ -47,6 +47,7 @@ if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_conn
     raise ValueError("Robot or teleop is not connected!")
 
 print("Starting teleop loop...")
+start = time.perf_counter()
 while True:
     t0 = time.perf_counter()
 
@@ -67,6 +68,6 @@ while True:
     _ = robot.send_action(action)
 
     # Visualize
-    log_rerun_data(observation=observation, action=action)
+    log_rerun_data(observation=observation, action=action, log_time=time.perf_counter() - start)
 
     busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
