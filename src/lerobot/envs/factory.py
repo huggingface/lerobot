@@ -18,7 +18,7 @@ import importlib
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, GymRoboticsEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -28,6 +28,8 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "libero":
         return LiberoEnv(**kwargs)
+    elif env_type == "gymnasium-robotics":
+        return GymRoboticsEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
@@ -85,6 +87,12 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
+    elif "gymnasium-robotics" in cfg.type:
+        from lerobot.envs.gymnasium_robotics import create_gymnasium_robotics_envs
+
+        if cfg.task is None:
+            raise ValueError("Gym robotics requires a task to be specified")
+        return create_gymnasium_robotics_envs(cfg)
 
     if cfg.gym_id not in gym_registry:
         print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")

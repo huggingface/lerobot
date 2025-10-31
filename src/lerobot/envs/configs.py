@@ -319,3 +319,19 @@ class MetaworldEnv(EnvConfig):
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
+
+@EnvConfig.register_subclass("gymnasium-robotics")
+@dataclass
+class GymRoboticsEnv(EnvConfig):
+    # minimal fields the factory/CLI may expect
+    type: str = "gymnasium-robotics"
+    task: str = "fetch_pick_and_place"
+    episode_length: int | None = None
+    max_state_dim: int | None = None
+
+    seed: int | None = 0
+    image_key: str = "agentview_image"
+    
+    @property
+    def gym_kwargs(self) -> dict:
+        return {}
