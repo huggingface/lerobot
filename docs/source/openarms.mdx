@@ -34,51 +34,7 @@ Each arm has the following motor configuration based on the [OpenArm setup guide
 
 For dual arm setups, the left arm uses IDs 0x09-0x10 for joints 1-8 with the same motor types.
 
-## Quick Start (macOS)
-
-If you're on macOS, here's the fastest way to get started:
-
-```bash
-# 1. Install LeRobot with OpenArms dependencies
-pip install -e ".[openarms]"
-
-# 2. Find your USB-CAN adapter
-ls /dev/cu.usbmodem*
-
-# 3. Test communication
-python3 -c "
-import can
-bus = can.interface.Bus(channel='/dev/cu.usbmodem00000000050C1', interface='slcan', bitrate=1000000)
-print('✓ CAN interface connected')
-bus.shutdown()
-"
-```
-
-Then use this configuration:
-
-```python
-from lerobot.robots.openarms import OpenArmsFollower
-from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
-
-config = OpenArmsFollowerConfig(
-    port="/dev/cu.usbmodem00000000050C1",  # Your adapter
-    can_interface="auto",  # Auto-detects slcan for /dev/* ports
-    is_dual_arm=True,
-)
-
-robot = OpenArmsFollower(config)
-robot.connect()
-```
-
-## Prerequisites
-
-### Software Requirements
-
-**Linux:**
-- Ubuntu 22.04/24.04 (or any Linux with SocketCAN)
-- Python 3.8+
-- `can-utils` and `iproute2` packages
-- LeRobot with OpenArms dependencies
+## Quick Start 
 
 ```bash
 # Install system dependencies
@@ -87,26 +43,6 @@ sudo apt install can-utils iproute2
 # Install LeRobot with OpenArms support
 pip install -e ".[openarms]"
 ```
-
-**macOS:**
-- macOS 12+ (Monterey or later)
-- Python 3.8+
-- LeRobot with OpenArms dependencies
-
-```bash
-# Install LeRobot with OpenArms support (includes python-can)
-pip install -e ".[openarms]"
-```
-
-The `openarms` extra installs:
-- `python-can>=4.2.0` - CAN bus communication library (supports SocketCAN on Linux and SLCAN on macOS)
-
-:::tip
-If you've already installed LeRobot and want to add OpenArms support, run:
-```bash
-pip install -e ".[openarms]"
-```
-:::
 
 ## Setup Guide
 
@@ -117,10 +53,9 @@ pip install -e ".[openarms]"
 Refer to the [OpenArm Motor ID Configuration Guide](https://docs.openarm.dev/software/setup/motor-id) for detailed instructions using the Damiao Debugging Tools on Windows.
 
 Key points:
-- Each motor needs a unique **Sender CAN ID** (0x01-0x08 for first arm)
-- Each motor needs a unique **Receiver/Master ID** (0x11-0x18 for first arm)
+- Each motor needs a unique **Sender CAN ID** (0x01-0x08)
+- Each motor needs a unique **Receiver/Master ID** (0x11-0x18)
 - Use the Damiao Debugging Tools to set these IDs
-- For dual arm setups, use 0x09-0x10 for the second arm
 
 ### Step 2: Setup CAN Interface
 
@@ -132,95 +67,39 @@ Configure your CAN interface as described in the [OpenArm CAN Setup Guide](https
 # Find your CAN interface
 ip link show
 
-# Setup CAN 2.0 at 1 Mbps (standard)
+# Configure can0, 1, 2, 3
 sudo ip link set can0 down
 sudo ip link set can0 type can bitrate 1000000
 sudo ip link set can0 up
+
+sudo ip link set can1 down
+sudo ip link set can1 type can bitrate 1000000
+sudo ip link set can1 up
+
+sudo ip link set can2 down
+sudo ip link set can2 type can bitrate 1000000
+sudo ip link set can2 up
+
+sudo ip link set can3 down
+sudo ip link set can3 type can bitrate 1000000
+sudo ip link set can3 up
 
 # Verify configuration
 ip link show can0
 ```
 
-#### macOS
+or run:
 
-macOS doesn't have native SocketCAN support. 
+`examples/openarms/setup_can.sh`
 
-**Use SLCAN (Serial Line CAN)**
+### Testing canbus and motor connection
 
-For USB-CAN adapters that support SLCAN protocol (like CANable):
-
-```bash
-# Install python-can if not already installed
-pip install python-can
-
-# The adapter will appear as a serial device
-ls /dev/cu.usbmodem*
-
-# Use with python-can slcan interface
-# Example: /dev/cu.usbmodem14201
-```
-
-In your code, specify the slcan interface:
-
-```python
-from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
-
-config = OpenArmsFollowerConfig(
-    port="/dev/cu.usbmodem14201",  # Your USB-CAN adapter
-    can_interface="slcan",  # Will auto-detect if set to "auto"
-)
-```
-
-### Step 3: Test Motor Communication
-
-**On Linux:**
-
-Test basic communication as described in the [OpenArm Motor Test Guide](https://docs.openarm.dev/software/setup/configure-test):
-
-```bash
-# Terminal 1: Monitor CAN traffic
-candump can0
-
-# Terminal 2: Enable motor 1
-cansend can0 001#FFFFFFFFFFFFFFFC
-
-# Expected response on Terminal 1:
-# can0  011   [8]  XX XX XX XX XX XX XX XX
-
-# Disable motor 1
-cansend can0 001#FFFFFFFFFFFFFFFD
-```
-
-**On macOS:**
-
-Testing is done differently since you'll use serial-based adapters:
-
-```bash
-# Find your USB-CAN adapter
-ls /dev/cu.usbmodem*
-
-# Example output: /dev/cu.usbmodem00000000050C1
-
-# Test with Python directly (can-utils don't work on macOS)
-python3 -c "
-import can
-bus = can.interface.Bus(channel='/dev/cu.usbmodem00000000050C1', interface='slcan', bitrate=1000000)
-msg = can.Message(arbitration_id=0x01, data=[0xFF]*7+[0xFC])
-bus.send(msg)
-response = bus.recv(timeout=1.0)
-if response:
-    print(f'✓ Motor responded: ID 0x{response.arbitration_id:02X}')
-else:
-    print('✗ No response')
-bus.shutdown()
-"
-```
+Please run this script to check if all motors can be found and to find your can-fd speed: `python examples/openarms/debug_can_communication.py`
 
 ## Usage
 
 ### Basic Setup
 
-**On Linux:**
 
 ```python
 from lerobot.robots.openarms import OpenArmsFollower
@@ -230,26 +109,6 @@ from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerCon
 config = OpenArmsFollowerConfig(
     port="can0",
     can_interface="socketcan",  # Or "auto" for auto-detection
-    id="openarms_dual",
-    is_dual_arm=True,
-)
-
-robot = OpenArmsFollower(config)
-robot.connect()
-```
-
-**On macOS:**
-
-```python
-from lerobot.robots.openarms import OpenArmsFollower
-from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
-
-# Find your USB-CAN adapter first
-# ls /dev/cu.usbmodem*
-
-config = OpenArmsFollowerConfig(
-    port="/dev/cu.usbmodem14201",  # Your adapter's serial port
-    can_interface="slcan",  # Or "auto" for auto-detection
     id="openarms_dual",
     is_dual_arm=True,
 )
@@ -424,53 +283,6 @@ follower_config = OpenArmsFollowerConfig(
 
 ## Troubleshooting
 
-### Motors Not Responding
-
-**Linux:**
-1. **Check power supply**: 24V with sufficient current
-2. **Verify CAN interface**: `ip link show can0` should show "UP"
-3. **Test with cansend**: Follow [motor test guide](https://docs.openarm.dev/software/setup/configure-test)
-4. **Check motor IDs**: Use Damiao Debugging Tools to verify IDs
-5. **Check termination**: 120Ω resistor should be enabled on CAN interface
-
-**macOS:**
-1. **Check power supply**: 24V with sufficient current
-2. **Find adapter**: `ls /dev/cu.usbmodem*` should show your device
-3. **Test connection**: Use Python script above to test communication
-4. **Check motor IDs**: Use Damiao Debugging Tools on Windows
-5. **Verify drivers**: Ensure USB-CAN adapter drivers are installed
-6. **Try different baudrate**: Some adapters default to different rates
-
-### macOS-Specific Issues
-
-**"No such interface" error:**
-```python
-# Try auto-detection
-config.can_interface = "auto"
-
-# Or explicitly list available interfaces
-import can
-print(can.detect_available_configs())
-```
-
-**Permission denied on `/dev/cu.*`:**
-```bash
-# Add user to dialout group (if applicable)
-sudo dscl . -append /Groups/_dialout GroupMembership $USER
-
-# Or run with sudo (not recommended)
-sudo python your_script.py
-```
-
-**Adapter not showing up:**
-```bash
-# Check USB devices
-system_profiler SPUSBDataType
-
-# Reinstall python-can
-pip install --upgrade --force-reinstall python-can
-```
-
 ### Motor Shaking/Unstable
 
 - **Lower control gains**: Reduce `position_kp` and `position_kd`
@@ -480,7 +292,6 @@ pip install --upgrade --force-reinstall python-can
 
 ### CAN Bus Errors
 
-**Linux:**
 ```bash
 # Check for errors
 ip -s link show can0
@@ -489,30 +300,6 @@ ip -s link show can0
 sudo ip link set can0 down
 sudo ip link set can0 up
 ```
-
-**macOS:**
-```bash
-# Reconnect USB adapter
-# Unplug and replug the USB cable
-
-# Restart Python script
-# The slcan interface auto-reconnects
-```
-
-### Position Drift
-
-- **Re-calibrate**: Run calibration procedure
-- **Set zero position**: Use `robot.bus.set_zero_position()` with arm in known position
-- **Check temperature**: Motors may drift when hot
-
-## Technical Details
-
-### Position Units
-
-All positions are in **degrees**:
-- Motor internal representation: radians
-- User API: degrees
-- Automatic conversion handled by `DamiaoMotorsBus`
 
 ### Control Mode
 
