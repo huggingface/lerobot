@@ -25,13 +25,21 @@ from ..config import TeleoperatorConfig
 class OpenArmsLeaderConfig(TeleoperatorConfig):
     """Configuration for the OpenArms leader/teleoperator with Damiao motors."""
     
-    # CAN interface to connect to
+    # CAN interfaces - one per arm
+    # Right arm CAN interface (e.g., "can2")
+    # Left arm CAN interface (e.g., "can3")
     # Linux: "can0", "can1", etc.
     # macOS: "/dev/cu.usbmodem*" (serial device)
-    port: str = "can0"
+    port_right: str = "can2"    # CAN interface for right arm
+    port_left: str = "can3"     # CAN interface for left arm
     
     # CAN interface type: "socketcan" (Linux), "slcan" (macOS/serial), or "auto" (auto-detect)
-    can_interface: str = "auto"
+    can_interface: str = "socketcan"
+    
+    # CAN FD settings (OpenArms uses CAN FD by default)
+    use_can_fd: bool = True
+    can_bitrate: int = 1000000      # Nominal bitrate (1 Mbps)
+    can_data_bitrate: int = 5000000  # Data bitrate for CAN FD (5 Mbps)
     
     # Motor configuration for OpenArms (7 DOF per arm)
     # Maps motor names to (send_can_id, recv_can_id, motor_type)
