@@ -24,7 +24,6 @@ https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/sr
 import logging
 import math
 
-import numpy as np
 import torch
 from torch import Tensor
 
@@ -34,6 +33,7 @@ from lerobot.policies.rtc.debug_handler import Tracker
 
 logger = logging.getLogger(__name__)
 
+
 class RTCProcessor:
     """Real-Time Chunking processor for action chunking policies.
 
@@ -41,10 +41,7 @@ class RTCProcessor:
     prefix attention, and adaptive chunk processing.
     """
 
-    def __init__(
-        self,
-        rtc_config: RTCConfig
-    ):
+    def __init__(self, rtc_config: RTCConfig):
         self.rtc_config = rtc_config
 
         self.tracker = None
@@ -176,17 +173,18 @@ class RTCProcessor:
             err = err.squeeze(0)
 
         # Record debug information (all params except x_t which is recorded externally)
-        self.tracker.record_step(
-            v_t=v_t,
-            x1_t=x1_t,
-            correction=correction,
-            err=err,
-            weights=weights,
-            guidance_weight=guidance_weight,
-            time=time.item() if isinstance(time, torch.Tensor) else time,
-            inference_delay=inference_delay,
-            execution_horizon=execution_horizon,
-        )
+        if self.tracker is not None:
+            self.tracker.track(
+                time=time,
+                v_t=v_t,
+                x1_t=x1_t,
+                correction=correction,
+                err=err,
+                weights=weights,
+                guidance_weight=guidance_weight,
+                inference_delay=inference_delay,
+                execution_horizon=execution_horizon,
+            )
 
         return result
 

@@ -1,0 +1,61 @@
+{
+  "summary": {
+    "rtc_vs_ground_truth_mse": {
+      "mean": 4285.49658203125,
+      "std": 1.610208141385955,
+      "min": 4284.28076171875,
+      "max": 4287.77197265625,
+      "median": 4284.43701171875
+    },
+    "no_rtc_vs_ground_truth_mse": {
+      "mean": 4285.49658203125,
+      "std": 1.610208141385955,
+      "min": 4284.28076171875,
+      "max": 4287.77197265625,
+      "median": 4284.43701171875
+    },
+    "rtc_vs_no_rtc_mse": {
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "median": 0.0
+    },
+    "rtc_consistency_prefix_mse": {
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "median": 0.0
+    },
+    "rtc_consistency_prefix_max_error": {
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "median": 0.0
+    },
+    "rtc_consistency_prefix_mean_error": {
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "median": 0.0
+    },
+    "improvement": {
+      "absolute": 0.0,
+      "relative_percent": 0.0
+    }
+  },
+  "config": {
+    "policy_path": "helper2424/smolvla_check_rtc_last3",
+    "dataset_repo_id": "helper2424/check_rtc",
+    "num_iterations": 3,
+    "skip_steps": 10,
+    "execution_horizon": 8,
+    "max_guidance_weight": 5.0,
+    "prefix_attention_schedule": "LINEAR",
+    "seed": 42
+  },
+  "detailed_results": []
+}

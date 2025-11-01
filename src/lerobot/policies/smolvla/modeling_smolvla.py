@@ -249,12 +249,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """Initialize RTC processor with optional verbose logging.
 
         Args:
-            verbose: Enable verbose debug logging in RTCProcessor
+            verbose: Enable verbose debug logging in RTCProcessor (currently unused)
         """
         self.rtc_processor = None
 
         if self.config.rtc_config is not None and self.config.rtc_config.enabled:
-            self.rtc_processor = RTCProcessor(self.config.rtc_config, verbose=verbose)
+            self.rtc_processor = RTCProcessor(self.config.rtc_config)
 
             # In case of calling init_rtc_processor after the model is created
             # We need to set the rtc_processor to the model
@@ -829,9 +829,9 @@ class VLAFlowMatching(nn.Module):
                 self.config.rtc_config is not None
                 and self.config.rtc_config.enabled
                 and correction is not None
-                and len(self.rtc_processor.tracker) > 0
+                and self.rtc_processor.tracker is not None
             ):
-                self.rtc_processor.tracker.record_step(x_t=x_t, update_last=True)
+                self.rtc_processor.tracker.track(time=time, x_t=x_t)
 
             # Visualize x_t using plot_waypoints - accumulate all denoise steps
             # Use provided axes or create new ones
@@ -851,29 +851,35 @@ class VLAFlowMatching(nn.Module):
             color = colors[self.denoise_step_counter % len(colors)]
 
             # Plot this denoise step
-            plot_waypoints(xt_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
+            # TODO: Restore plot_waypoints function
+            # plot_waypoints(xt_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
 
             # Plot this denoise step
-            plot_waypoints(vt_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
+            # TODO: Restore plot_waypoints function
+            # plot_waypoints(vt_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
 
             if correction is not None:
-                plot_waypoints(
-                    vt_axs,
-                    correction,
-                    start_from=0,
-                    color="red",
-                    label=f"Step corr {self.denoise_step_counter}",
-                )
+                # TODO: Restore plot_waypoints function
+                pass
+                # plot_waypoints(
+                #     vt_axs,
+                #     correction,
+                #     start_from=0,
+                #     color="red",
+                #     label=f"Step corr {self.denoise_step_counter}",
+                # )
 
             # Plot x1_t if axes provided and RTC is enabled
             if viz_x1t_axs is not None and x1_t is not None:
-                plot_waypoints(
-                    viz_x1t_axs,
-                    x1_t,
-                    start_from=0,
-                    color=color,
-                    label=f"x1_t Step {self.denoise_step_counter}",
-                )
+                # TODO: Restore plot_waypoints function
+                pass
+                # plot_waypoints(
+                #     viz_x1t_axs,
+                #     x1_t,
+                #     start_from=0,
+                #     color=color,
+                #     label=f"x1_t Step {self.denoise_step_counter}",
+                # )
 
                 # Plot error on the same axes with different color
                 if error is not None:
@@ -911,9 +917,11 @@ class VLAFlowMatching(nn.Module):
                 prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
 
                 if prev_chunk_left_over is not None:
-                    plot_waypoints(
-                        self.viz_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
-                    )
+                    # TODO: Restore plot_waypoints function
+                    pass
+                    # plot_waypoints(
+                    #     self.viz_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                    # )
 
             plt.savefig(xt_name)
             plt.close(self.viz_fig)
@@ -938,14 +946,16 @@ class VLAFlowMatching(nn.Module):
                 and self.config.rtc_config is not None
                 and self.config.rtc_config.enabled
             ):
-                plot_waypoints(
-                    viz_xt_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
-                )
-                # Also plot ground truth on x1_t axes if provided
-                if viz_x1t_axs is not None:
-                    plot_waypoints(
-                        viz_x1t_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
-                    )
+                # TODO: Restore plot_waypoints function
+                pass
+                # plot_waypoints(
+                #     viz_xt_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                # )
+                # # Also plot ground truth on x1_t axes if provided
+                # if viz_x1t_axs is not None:
+                #     plot_waypoints(
+                #         viz_x1t_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                #     )
 
         # Reset counter when using provided axes (for next call)
         if use_provided_axes:

@@ -342,7 +342,7 @@ class RTCEvaluator:
 
         tracker = self.policy.rtc_processor.tracker
 
-        if not tracker.enabled or len(tracker) == 0:
+        if tracker is None or not tracker.enabled or len(tracker) == 0:
             logger.warning("Tracker is disabled or has no recorded steps. Skipping debug visualization.")
             return
 

@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(uv run:*)",
+      "Bash(./run_eval.sh)",
+      "Bash(chmod:*)",
+      "Bash(/Users/helper2424/Documents/lerobot/run_eval.sh:*)",
+      "Bash(git merge:*)",
+      "Bash(git add:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(git fetch:*)",
+      "Bash(git branch:*)",
+      "Bash(git reset:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git push:*)",
+      "Bash(lsof:*)",
+      "Read(//dev/**)",
+      "Bash(kill:*)",
+      "Read(//Users/helper2424/.cache/huggingface/lerobot/**)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nRefactor RTC debug tracking to use clearer naming\n\nRename enable_debug to debug and debug_handler to tracker to better reflect \ntheir purpose as a data collection mechanism for RTC analysis. Add DebugHandler \nclass and RTCDebugVisualizer utilities for tracking and visualizing RTC denoising steps.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(find:*)",
+      "Bash(tee:*)",
+      "Read(//private/tmp/**)",
+      "mcp__ide__getDiagnostics"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

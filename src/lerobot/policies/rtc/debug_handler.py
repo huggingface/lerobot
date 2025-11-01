@@ -16,7 +16,6 @@
 
 """Debug information handler for Real-Time Chunking (RTC)."""
 
-from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -101,8 +100,8 @@ class DebugStep:
 class Tracker:
     """Collects and manages debug information for RTC processing.
 
-    This tracker stores debug information from recent denoising steps in a sliding window,
-    allowing inspection of intermediate values, tensors, and statistics.
+    This tracker stores debug information from recent denoising steps in a dictionary,
+    using time as the key for efficient lookups and updates.
 
     Args:
         enabled (bool): Whether debug collection is enabled.
@@ -112,7 +111,8 @@ class Tracker:
 
     def __init__(self, enabled: bool = False, maxlen: int = 100):
         self.enabled = enabled
-        self._steps = deque(maxlen=maxlen) if enabled else None
+        self._steps = {} if enabled else None  # Dictionary with time as key
+        self._maxlen = maxlen
         self._step_counter = 0
 
     def reset(self) -> None:
@@ -121,8 +121,9 @@ class Tracker:
             self._steps.clear()
         self._step_counter = 0
 
-    def record_step(
+    def track(
         self,
+        time: float | Tensor,
         x_t: Tensor | None = None,
         v_t: Tensor | None = None,
         x1_t: Tensor | None = None,
@@ -130,15 +131,17 @@ class Tracker:
         err: Tensor | None = None,
         weights: Tensor | None = None,
         guidance_weight: float | Tensor | None = None,
-        time: float | Tensor | None = None,
         inference_delay: int | None = None,
         execution_horizon: int | None = None,
-        update_last: bool = False,
         **metadata,
     ) -> None:
-        """Record debug information from a denoising step.
+        """Track debug information for a denoising step at a given time.
+
+        If a step with the given time already exists, it will be updated with the new data.
+        Otherwise, a new step will be created. Only non-None fields are updated/set.
 
         Args:
+            time (float | Tensor): Time parameter - used as the key to identify the step.
             x_t (Tensor | None): Current latent/state tensor.
             v_t (Tensor | None): Velocity from denoiser.
             x1_t (Tensor | None): Denoised prediction.
@@ -146,62 +149,67 @@ class Tracker:
             err (Tensor | None): Weighted error term.
             weights (Tensor | None): Prefix attention weights.
             guidance_weight (float | Tensor | None): Applied guidance weight.
-            time (float | Tensor | None): Time parameter.
             inference_delay (int | None): Inference delay parameter.
             execution_horizon (int | None): Execution horizon parameter.
-            update_last (bool): If True, update the most recent step instead of creating a new one.
-                Only updates fields that are not None.
             **metadata: Additional metadata to store.
         """
         if not self.enabled:
             return
 
-        # Update existing step if requested
-        if update_last and len(self._steps) > 0:
-            last_step = self._steps[-1]
-            # Only update fields that are provided (not None)
+        # Convert time to float and round to avoid float precision issues
+        time_value = time.item() if isinstance(time, Tensor) else time
+        time_key = round(time_value, 6)  # Use rounded time as dictionary key
+
+        # Check if step with this time already exists
+        if time_key in self._steps:
+            # Update existing step with non-None fields
+            existing_step = self._steps[time_key]
             if x_t is not None:
-                last_step.x_t = x_t.detach().clone()
+                existing_step.x_t = x_t.detach().clone()
             if v_t is not None:
-                last_step.v_t = v_t.detach().clone()
+                existing_step.v_t = v_t.detach().clone()
             if x1_t is not None:
-                last_step.x1_t = x1_t.detach().clone()
+                existing_step.x1_t = x1_t.detach().clone()
             if correction is not None:
-                last_step.correction = correction.detach().clone()
+                existing_step.correction = correction.detach().clone()
             if err is not None:
-                last_step.err = err.detach().clone()
+                existing_step.err = err.detach().clone()
             if weights is not None:
-                last_step.weights = weights.detach().clone()
+                existing_step.weights = weights.detach().clone()
             if guidance_weight is not None:
-                last_step.guidance_weight = guidance_weight
-            if time is not None:
-                last_step.time = time
+                existing_step.guidance_weight = guidance_weight
             if inference_delay is not None:
-                last_step.inference_delay = inference_delay
+                existing_step.inference_delay = inference_delay
             if execution_horizon is not None:
-                last_step.execution_horizon = execution_horizon
+                existing_step.execution_horizon = execution_horizon
             if metadata:
-                last_step.metadata.update(metadata)
-            return
+                existing_step.metadata.update(metadata)
+        else:
+            # Create new step
+            step = DebugStep(
+                step_idx=self._step_counter,
+                x_t=x_t.detach().clone() if x_t is not None else None,
+                v_t=v_t.detach().clone() if v_t is not None else None,
+                x1_t=x1_t.detach().clone() if x1_t is not None else None,
+                correction=correction.detach().clone() if correction is not None else None,
+                err=err.detach().clone() if err is not None else None,
+                weights=weights.detach().clone() if weights is not None else None,
+                guidance_weight=guidance_weight,
+                time=time_value,
+                inference_delay=inference_delay,
+                execution_horizon=execution_horizon,
+                metadata=metadata,
+            )
 
-        # Create new step
-        step = DebugStep(
-            step_idx=self._step_counter,
-            x_t=x_t.detach().clone() if x_t is not None else None,
-            v_t=v_t.detach().clone() if v_t is not None else None,
-            x1_t=x1_t.detach().clone() if x1_t is not None else None,
-            correction=correction.detach().clone() if correction is not None else None,
-            err=err.detach().clone() if err is not None else None,
-            weights=weights.detach().clone() if weights is not None else None,
-            guidance_weight=guidance_weight,
-            time=time,
-            inference_delay=inference_delay,
-            execution_horizon=execution_horizon,
-            metadata=metadata,
-        )
+            # Add to dictionary
+            self._steps[time_key] = step
+            self._step_counter += 1
 
-        self._steps.append(step)
-        self._step_counter += 1
+            # Enforce maxlen if set
+            if self._maxlen is not None and len(self._steps) > self._maxlen:
+                # Remove oldest entry (first key in dict - Python 3.7+ preserves insertion order)
+                oldest_key = next(iter(self._steps))
+                del self._steps[oldest_key]
 
     def get_recent_steps(self, n: int = 1) -> list[DebugStep]:
         """Get the n most recent debug steps.
@@ -215,7 +223,9 @@ class Tracker:
         if not self.enabled or self._steps is None:
             return []
 
-        return list(self._steps)[-n:]
+        # Get all values and return the last n
+        all_steps = list(self._steps.values())
+        return all_steps[-n:]
 
     def get_all_steps(self) -> list[DebugStep]:
         """Get all recorded debug steps.
@@ -226,7 +236,7 @@ class Tracker:
         if not self.enabled or self._steps is None:
             return []
 
-        return list(self._steps)
+        return list(self._steps.values())
 
     def get_step_stats_summary(self) -> dict[str, Any]:
         """Get summary statistics across all recorded steps.
@@ -237,10 +247,10 @@ class Tracker:
         if not self.enabled or self._steps is None or len(self._steps) == 0:
             return {"enabled": self.enabled, "total_steps": 0}
 
-        # Aggregate statistics
-        corrections = [s.correction for s in self._steps if s.correction is not None]
-        errors = [s.err for s in self._steps if s.err is not None]
-        guidance_weights = [s.guidance_weight for s in self._steps if s.guidance_weight is not None]
+        # Aggregate statistics from dictionary values
+        corrections = [s.correction for s in self._steps.values() if s.correction is not None]
+        errors = [s.err for s in self._steps.values() if s.err is not None]
+        guidance_weights = [s.guidance_weight for s in self._steps.values() if s.guidance_weight is not None]
 
         summary = {
             "enabled": self.enabled,
@@ -249,7 +259,7 @@ class Tracker:
         }
 
         if corrections:
-            correction_norms = torch.stack([c.norm().item() for c in corrections])
+            correction_norms = torch.tensor([c.norm().item() for c in corrections])
             summary["correction_norms"] = {
                 "mean": correction_norms.mean().item(),
                 "std": correction_norms.std().item(),
@@ -258,7 +268,7 @@ class Tracker:
             }
 
         if errors:
-            error_norms = torch.stack([e.norm().item() for e in errors])
+            error_norms = torch.tensor([e.norm().item() for e in errors])
             summary["error_norms"] = {
                 "mean": error_norms.mean().item(),
                 "std": error_norms.std().item(),
@@ -294,7 +304,7 @@ class Tracker:
             "enabled": True,
             "total_steps": len(self._steps),
             "step_counter": self._step_counter,
-            "steps": [step.to_dict(include_tensors=include_tensors) for step in self._steps],
+            "steps": [step.to_dict(include_tensors=include_tensors) for step in self._steps.values()],
         }
 
     def __len__(self) -> int:
