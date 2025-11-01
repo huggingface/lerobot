@@ -51,6 +51,7 @@ import os
 import time
 from functools import lru_cache
 from queue import Empty
+import argparse
 
 import grpc
 import torch
@@ -96,6 +97,24 @@ from .gym_manipulator import (
     make_robot_env,
     step_env_and_process_transition,
 )
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Your script description here')
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Enable verbose logging output'
+    )
+    return parser.parse_args()
+
+
+def setup_logging(verbose):
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+
 
 # Main entry point
 
@@ -734,5 +753,10 @@ def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
     return cfg.policy.concurrency.actor == "threads"
 
 
-if __name__ == "__main__":
+def main():
+    args = parse_args()
+    setup_logging(args.verbose)
     actor_cli()
+
+if __name__ == "__main__":
+    main()
