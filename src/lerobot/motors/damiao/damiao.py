@@ -440,6 +440,65 @@ class DamiaoMotorsBus(MotorsBusBase):
         self.canbus.send(msg)
         recv_id = self._get_motor_recv_id(motor)
         self._recv_motor_response(expected_recv_id=recv_id)
+    
+    def _mit_control_batch(
+        self,
+        commands: Dict[NameOrID, Tuple[float, float, float, float, float]],
+    ) -> None:
+        """
+        Send MIT control commands to multiple motors in batch (optimized).
+        Sends all commands first, then collects responses. Much faster than sequential.
+        
+        Args:
+            commands: Dict mapping motor name/ID to (kp, kd, position_deg, velocity_deg/s, torque)
+                     Example: {'joint_1': (10.0, 0.5, 45.0, 0.0, 0.0), ...}
+        """
+        if not commands:
+            return
+        
+        expected_recv_ids = []
+        
+        # Step 1: Send all MIT control commands (no waiting)
+        for motor, (kp, kd, position_degrees, velocity_deg_per_sec, torque) in commands.items():
+            motor_id = self._get_motor_id(motor)
+            motor_name = self._get_motor_name(motor)
+            motor_type = self._motor_types.get(motor_name, MotorType.DM4310)
+            
+            # Convert degrees to radians
+            position_rad = np.radians(position_degrees)
+            velocity_rad_per_sec = np.radians(velocity_deg_per_sec)
+            
+            # Get motor limits
+            pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
+            
+            # Encode parameters
+            kp_uint = self._float_to_uint(kp, 0, 500, 12)
+            kd_uint = self._float_to_uint(kd, 0, 5, 12)
+            q_uint = self._float_to_uint(position_rad, -pmax, pmax, 16)
+            dq_uint = self._float_to_uint(velocity_rad_per_sec, -vmax, vmax, 12)
+            tau_uint = self._float_to_uint(torque, -tmax, tmax, 12)
+            
+            # Pack data
+            data = [0] * 8
+            data[0] = (q_uint >> 8) & 0xFF
+            data[1] = q_uint & 0xFF
+            data[2] = dq_uint >> 4
+            data[3] = ((dq_uint & 0xF) << 4) | ((kp_uint >> 8) & 0xF)
+            data[4] = kp_uint & 0xFF
+            data[5] = kd_uint >> 4
+            data[6] = ((kd_uint & 0xF) << 4) | ((tau_uint >> 8) & 0xF)
+            data[7] = tau_uint & 0xFF
+            
+            # Send command
+            msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
+            self.canbus.send(msg)
+            
+            # Track expected response
+            recv_id = self._get_motor_recv_id(motor)
+            expected_recv_ids.append(recv_id)
+        
+        # Step 2: Collect all responses at once
+        self._recv_all_responses(expected_recv_ids, timeout=0.002)
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
@@ -609,6 +668,63 @@ class DamiaoMotorsBus(MotorsBusBase):
             except Exception as e:
                 logger.warning(f"Failed to read {data_name} from {motor}: {e}")
                 result[motor] = 0.0
+        
+        return result
+    
+    def sync_read_all_states(
+        self,
+        motors: str | list[str] | None = None,
+        *,
+        num_retry: int = 0,
+    ) -> Dict[str, Dict[str, Value]]:
+        """
+        Read ALL motor states (position, velocity, torque) from multiple motors in ONE refresh cycle.
+        This is 3x faster than calling sync_read() three times separately.
+        
+        Returns:
+            Dictionary mapping motor names to state dicts with keys: 'position', 'velocity', 'torque'
+            Example: {'joint_1': {'position': 45.2, 'velocity': 1.3, 'torque': 0.5}, ...}
+        """
+        motors = self._get_motors_list(motors)
+        result = {}
+
+        # Step 1: Send refresh commands to ALL motors first (no waiting)
+        for motor in motors:
+            motor_id = self._get_motor_id(motor)
+            data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
+            msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False)
+            self.canbus.send(msg)
+        
+        # Step 2: Collect all responses at once (batch receive)
+        expected_recv_ids = [self._get_motor_recv_id(motor) for motor in motors]
+        responses = self._recv_all_responses(expected_recv_ids, timeout=0.003)  # 3ms total timeout
+        
+        # Step 3: Parse responses and extract ALL state values
+        for motor in motors:
+            try:
+                recv_id = self._get_motor_recv_id(motor)
+                msg = responses.get(recv_id)
+                
+                if msg is None:
+                    logger.warning(f"No response from motor '{motor}' (recv ID: 0x{recv_id:02X})")
+                    result[motor] = {"position": 0.0, "velocity": 0.0, "torque": 0.0}
+                    continue
+                
+                motor_type = self._motor_types.get(motor, MotorType.DM4310)
+                position_degrees, velocity_deg_per_sec, torque, t_mos, t_rotor = self._decode_motor_state(msg.data, motor_type)
+                
+                # Return all state values in one dict
+                result[motor] = {
+                    "position": position_degrees,
+                    "velocity": velocity_deg_per_sec,
+                    "torque": torque,
+                    "temp_mos": t_mos,
+                    "temp_rotor": t_rotor,
+                }
+                
+            except Exception as e:
+                logger.warning(f"Failed to read state from {motor}: {e}")
+                result[motor] = {"position": 0.0, "velocity": 0.0, "torque": 0.0}
         
         return result
 

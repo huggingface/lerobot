@@ -1,7 +1,7 @@
 """
-OpenArms Teleoperation with Gravity Compensation
+OpenArms Teleoperation with Gravity + Friction Compensation
 
-Leader arms (both LEFT and RIGHT): Gravity compensation (weightless, easy to move)
+Leader arms (both LEFT and RIGHT): Gravity + Friction compensation (weightless, easy to move)
 Follower arms (both LEFT and RIGHT): Mirror leader movements
 
 Uses the URDF file from the lerobot repository.
@@ -16,6 +16,8 @@ from lerobot.robots.openarms.openarms_follower import OpenArmsFollower
 from lerobot.teleoperators.openarms.config_openarms_leader import OpenArmsLeaderConfig
 from lerobot.teleoperators.openarms.openarms_leader import OpenArmsLeader
 
+# Friction compensation scale factor (1.0 = full, 0.3 = 30% for stability)
+FRICTION_SCALE = 1.0
 
 def main():
     """Main teleoperation loop with gravity compensation"""
@@ -54,7 +56,7 @@ def main():
     if leader.pin_robot is None:
         raise RuntimeError("URDF model not loaded on leader. Gravity compensation not available.")
 
-    print("\nLeader BOTH arms: G-comp | Follower BOTH arms: Teleop")
+    print("\nLeader BOTH arms: Gravity + Friction comp | Follower BOTH arms: Teleop")
     print("Press ENTER to start...")
     input()
 
@@ -83,75 +85,75 @@ def main():
             # Get leader state
             leader_action = leader.get_action()
 
-            # Extract positions in degrees
+            # Extract positions and velocities in degrees
             leader_positions_deg = {}
+            leader_velocities_deg_per_sec = {}
+            
             for motor in leader.bus_right.motors:
-                key = f"right_{motor}.pos"
-                if key in leader_action:
-                    leader_positions_deg[f"right_{motor}"] = leader_action[key]
+                pos_key = f"right_{motor}.pos"
+                vel_key = f"right_{motor}.vel"
+                if pos_key in leader_action:
+                    leader_positions_deg[f"right_{motor}"] = leader_action[pos_key]
+                if vel_key in leader_action:
+                    leader_velocities_deg_per_sec[f"right_{motor}"] = leader_action[vel_key]
 
             for motor in leader.bus_left.motors:
-                key = f"left_{motor}.pos"
-                if key in leader_action:
-                    leader_positions_deg[f"left_{motor}"] = leader_action[key]
+                pos_key = f"left_{motor}.pos"
+                vel_key = f"left_{motor}.vel"
+                if pos_key in leader_action:
+                    leader_positions_deg[f"left_{motor}"] = leader_action[pos_key]
+                if vel_key in leader_action:
+                    leader_velocities_deg_per_sec[f"left_{motor}"] = leader_action[vel_key]
 
             # Calculate gravity torques for leader using built-in method
             leader_positions_rad = {k: np.deg2rad(v) for k, v in leader_positions_deg.items()}
-            leader_torques_nm = leader._gravity_from_q(leader_positions_rad)
+            leader_gravity_torques_nm = leader._gravity_from_q(leader_positions_rad)
+            
+            # Calculate friction torques for leader using built-in method
+            leader_velocities_rad_per_sec = {k: np.deg2rad(v) for k, v in leader_velocities_deg_per_sec.items()}
+            leader_friction_torques_nm = leader._friction_from_velocity(
+                leader_velocities_rad_per_sec,
+                friction_scale=FRICTION_SCALE
+            )
+            
+            # Combine gravity + friction torques 
+            leader_total_torques_nm = {}
+            for motor_name in leader_gravity_torques_nm:
+                gravity = leader_gravity_torques_nm.get(motor_name, 0.0)
+                friction = leader_friction_torques_nm.get(motor_name, 0.0)
+                leader_total_torques_nm[motor_name] = gravity + friction
 
-            # Apply gravity compensation to leader RIGHT arm (all joints except gripper)
+            # Apply gravity + friction compensation to leader RIGHT arm (all joints including gripper)
             for motor in leader.bus_right.motors:
-                if motor == "gripper":
-                    # Skip gripper - keep it free
-                    full_name = f"right_{motor}"
-                    position = leader_positions_deg.get(full_name, 0.0)
-                    leader.bus_right._mit_control(
-                        motor=motor,
-                        kp=0.0,
-                        kd=0.0,
-                        position_degrees=position,
-                        velocity_deg_per_sec=0.0,
-                        torque=0.0,
-                    )
-                    continue
-                
                 full_name = f"right_{motor}"
                 position = leader_positions_deg.get(full_name, 0.0)
-                torque = leader_torques_nm.get(full_name, 0.0)
+                torque = leader_total_torques_nm.get(full_name, 0.0)
+                
+                # Get damping gain for stability
+                kd = leader.get_damping_kd(motor)
 
                 leader.bus_right._mit_control(
                     motor=motor,
                     kp=0.0,
-                    kd=0.0,
+                    kd=kd,  # Add damping for stability
                     position_degrees=position,
                     velocity_deg_per_sec=0.0,
                     torque=torque,
                 )
 
-            # Apply gravity compensation to leader LEFT arm (all joints except gripper)
+            # Apply gravity + friction compensation to leader LEFT arm (all joints including gripper)
             for motor in leader.bus_left.motors:
-                if motor == "gripper":
-                    # Skip gripper - keep it free
-                    full_name = f"left_{motor}"
-                    position = leader_positions_deg.get(full_name, 0.0)
-                    leader.bus_left._mit_control(
-                        motor=motor,
-                        kp=0.0,
-                        kd=0.0,
-                        position_degrees=position,
-                        velocity_deg_per_sec=0.0,
-                        torque=0.0,
-                    )
-                    continue
-                
                 full_name = f"left_{motor}"
                 position = leader_positions_deg.get(full_name, 0.0)
-                torque = leader_torques_nm.get(full_name, 0.0)
+                torque = leader_total_torques_nm.get(full_name, 0.0)
+                
+                # Get damping gain for stability
+                kd = leader.get_damping_kd(motor)
 
-                leader.bus_left._mit_control(
+                leader.bus_left._mit_control(                    
                     motor=motor,
                     kp=0.0,
-                    kd=0.0,
+                    kd=kd,  # Add damping for stability
                     position_degrees=position,
                     velocity_deg_per_sec=0.0,
                     torque=torque,
