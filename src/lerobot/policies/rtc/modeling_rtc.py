@@ -46,7 +46,18 @@ except ImportError:
 
 
 def plot_waypoints(axs, chunk, start_from: int = 0, color: str | None = None, label: str | None = None):
-    chunk = chunk[0].cpu().numpy()
+    # Convert to numpy and handle batch dimension
+    if isinstance(chunk, torch.Tensor):
+        chunk = chunk.cpu().numpy()
+
+    # Remove batch dimension if present
+    if chunk.ndim == 3:
+        chunk = chunk[0]
+
+    # Handle case where chunk might be 1D (single timestep)
+    if chunk.ndim == 1:
+        chunk = chunk.reshape(1, -1)
+
     # Limit to 6 action dimensions to match number of subplots
     num_dims = min(chunk.shape[-1], 6)
     for j in range(num_dims):
