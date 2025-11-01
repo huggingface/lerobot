@@ -62,3 +62,19 @@ class OpenArmsLeaderConfig(TeleoperatorConfig):
     # Torque mode settings for manual control
     # When enabled, motors have torque disabled for manual movement
     manual_control: bool = True
+    
+    # MIT control parameters (used when manual_control=False for torque control)
+    # List of 8 values: [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6, joint_7, gripper]
+    position_kp: list[float] = field(default_factory=lambda: [240.0, 240.0, 240.0, 240.0, 24.0, 31.0, 25.0, 16.0])
+    position_kd: list[float] = field(default_factory=lambda: [3.0, 3.0, 3.0, 3.0, 0.2, 0.2, 0.2, 0.2])
+    
+    # Damping gains for stability when applying torque compensation (gravity/friction)
+    # Used when kp=0 and only torque is applied
+    damping_kd: list[float] = field(default_factory=lambda: [0.5, 0.5, 0.5, 0.5, 0.1, 0.1, 0.1, 0.1])
+    
+    # Friction model parameters: τ_fric(ω) = Fo + Fv·ω + Fc·tanh(k·ω)
+    # From OpenArms config/leader.yaml (note: Fc[5] is slightly different: 0.083 vs 0.093)
+    friction_fc: list[float] = field(default_factory=lambda: [0.306, 0.306, 0.40, 0.166, 0.050, 0.083, 0.172, 0.0512])  # Coulomb friction [Nm]
+    friction_k: list[float] = field(default_factory=lambda: [28.417, 28.417, 29.065, 130.038, 151.771, 242.287, 7.888, 4.000])  # tanh steepness
+    friction_fv: list[float] = field(default_factory=lambda: [0.063, 0.0630, 0.604, 0.813, 0.029, 0.072, 0.084, 0.084])  # Viscous friction [Nm·s/rad]
+    friction_fo: list[float] = field(default_factory=lambda: [0.088, 0.088, 0.008, -0.058, 0.005, 0.009, -0.059, -0.050])  # Offset torque [Nm]

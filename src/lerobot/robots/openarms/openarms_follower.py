@@ -296,32 +296,33 @@ class OpenArmsFollower(Robot):
         raise NotImplementedError("Motor ID configuration is typically done via manufacturer tools for CAN motors.")
 
     def get_observation(self) -> Dict[str, Any]:
-        """Get current observation from robot including position, velocity, and torque."""
+        """
+        Get current observation from robot including position, velocity, and torque.
+        
+        OPTIMIZED: Reads all motor states (pos/vel/torque) in one CAN refresh cycle
+        instead of 3 separate reads.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
         obs_dict = {}
-        
-        # Read motor positions, velocities, and torques from right arm
         start = time.perf_counter()
-        positions_right = self.bus_right.sync_read("Present_Position")
-        velocities_right = self.bus_right.sync_read("Present_Velocity")
-        torques_right = self.bus_right.sync_read("Present_Torque")
         
+        # OPTIMIZED: Use sync_read_all_states to get pos/vel/torque in one go
+        right_states = self.bus_right.sync_read_all_states()
         for motor in self.bus_right.motors:
-            obs_dict[f"right_{motor}.pos"] = positions_right.get(motor, 0.0)
-            obs_dict[f"right_{motor}.vel"] = velocities_right.get(motor, 0.0)
-            obs_dict[f"right_{motor}.torque"] = torques_right.get(motor, 0.0)
+            state = right_states.get(motor, {})
+            obs_dict[f"right_{motor}.pos"] = state.get("position", 0.0)
+            obs_dict[f"right_{motor}.vel"] = state.get("velocity", 0.0)
+            obs_dict[f"right_{motor}.torque"] = state.get("torque", 0.0)
         
-        # Read motor positions, velocities, and torques from left arm
-        positions_left = self.bus_left.sync_read("Present_Position")
-        velocities_left = self.bus_left.sync_read("Present_Velocity")
-        torques_left = self.bus_left.sync_read("Present_Torque")
-        
+        # OPTIMIZED: Use sync_read_all_states to get pos/vel/torque in one go
+        left_states = self.bus_left.sync_read_all_states()
         for motor in self.bus_left.motors:
-            obs_dict[f"left_{motor}.pos"] = positions_left.get(motor, 0.0)
-            obs_dict[f"left_{motor}.vel"] = velocities_left.get(motor, 0.0)
-            obs_dict[f"left_{motor}.torque"] = torques_left.get(motor, 0.0)
+            state = left_states.get(motor, {})
+            obs_dict[f"left_{motor}.pos"] = state.get("position", 0.0)
+            obs_dict[f"left_{motor}.vel"] = state.get("velocity", 0.0)
+            obs_dict[f"left_{motor}.torque"] = state.get("torque", 0.0)
         
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -404,39 +405,25 @@ class OpenArmsFollower(Robot):
             "gripper": 7,
         }
         
-        # Send MIT control commands to right arm
-        for motor_name, position_degrees in goal_pos_right.items():
-            # Get per-motor gains from config
-            idx = motor_index.get(motor_name, 0)
-            kp = self.config.position_kp[idx]
-            kd = self.config.position_kd[idx]
-            
-            # Send MIT control command (position is in degrees)
-            self.bus_right._mit_control(
-                motor_name,
-                kp=kp,
-                kd=kd,
-                position_degrees=position_degrees,
-                velocity_deg_per_sec=0.0,
-                torque=0.0
-            )
+        # Use batch MIT control for right arm (sends all commands, then collects responses)
+        if goal_pos_right:
+            commands_right = {}
+            for motor_name, position_degrees in goal_pos_right.items():
+                idx = motor_index.get(motor_name, 0)
+                kp = self.config.position_kp[idx] if isinstance(self.config.position_kp, list) else self.config.position_kp
+                kd = self.config.position_kd[idx] if isinstance(self.config.position_kd, list) else self.config.position_kd
+                commands_right[motor_name] = (kp, kd, position_degrees, 0.0, 0.0)
+            self.bus_right._mit_control_batch(commands_right)
         
-        # Send MIT control commands to left arm
-        for motor_name, position_degrees in goal_pos_left.items():
-            # Get per-motor gains from config
-            idx = motor_index.get(motor_name, 0)
-            kp = self.config.position_kp[idx]
-            kd = self.config.position_kd[idx]
-            
-            # Send MIT control command (position is in degrees)
-            self.bus_left._mit_control(
-                motor_name,
-                kp=kp,
-                kd=kd,
-                position_degrees=position_degrees,
-                velocity_deg_per_sec=0.0,
-                torque=0.0
-            )
+        # Use batch MIT control for left arm (sends all commands, then collects responses)
+        if goal_pos_left:
+            commands_left = {}
+            for motor_name, position_degrees in goal_pos_left.items():
+                idx = motor_index.get(motor_name, 0)
+                kp = self.config.position_kp[idx] if isinstance(self.config.position_kp, list) else self.config.position_kp
+                kd = self.config.position_kd[idx] if isinstance(self.config.position_kd, list) else self.config.position_kd
+                commands_left[motor_name] = (kp, kd, position_degrees, 0.0, 0.0)
+            self.bus_left._mit_control_batch(commands_left)
         
         # Return the actions that were actually sent
         result = {}
@@ -543,4 +530,95 @@ class OpenArmsFollower(Robot):
         idx += 2
         
         return result
+    
+    def _friction_from_velocity(
+        self, 
+        velocity_rad_per_sec: Dict[str, float],
+        friction_scale: float = 1.0,
+        amp_tmp: float = 1.0,
+        coef_tmp: float = 0.1
+    ) -> Dict[str, float]:
+        """
+        Compute friction torques for all joints in the robot using tanh friction model.
+        
+        Args:
+            velocity_rad_per_sec: Dictionary mapping motor names (with arm prefix) to velocities in rad/s
+            friction_scale: Scale factor for friction compensation (default 1.0, use 0.3 for stability)
+            amp_tmp: Amplitude factor for tanh term (default 1.0)
+            coef_tmp: Coefficient for tanh steepness (default 0.1)
+            
+        Returns:
+            Dictionary mapping motor names to friction torques in N·m
+        """
+        # Motor name to index mapping
+        motor_name_to_index = {
+            "joint_1": 0,
+            "joint_2": 1,
+            "joint_3": 2,
+            "joint_4": 3,
+            "joint_5": 4,
+            "joint_6": 5,
+            "joint_7": 6,
+            "gripper": 7,
+        }
+        
+        result = {}
+        
+        # Process all motors (left and right)
+        for motor_full_name, velocity in velocity_rad_per_sec.items():
+            # Extract motor name without arm prefix
+            if motor_full_name.startswith("right_"):
+                motor_name = motor_full_name.removeprefix("right_")
+            elif motor_full_name.startswith("left_"):
+                motor_name = motor_full_name.removeprefix("left_")
+            else:
+                result[motor_full_name] = 0.0
+                continue
+            
+            # Get motor index for friction parameters
+            motor_index = motor_name_to_index.get(motor_name, 0)
+            
+            # Get friction parameters from config
+            Fc = self.config.friction_fc[motor_index]
+            k = self.config.friction_k[motor_index]
+            Fv = self.config.friction_fv[motor_index]
+            Fo = self.config.friction_fo[motor_index]
+            
+            # Friction model: τ_fric = amp * Fc * tanh(coef * k * ω) + Fv * ω + Fo
+            friction_torque = (
+                amp_tmp * Fc * np.tanh(coef_tmp * k * velocity) +
+                Fv * velocity +
+                Fo
+            )
+            
+            # Apply scale factor
+            friction_torque *= friction_scale
+            
+            result[motor_full_name] = float(friction_torque)
+        
+        return result
+    
+    def get_damping_kd(self, motor_name: str) -> float:
+        """
+        Get damping gain (Kd) for a specific motor.
+        
+        Args:
+            motor_name: Motor name without arm prefix (e.g., "joint_1", "gripper")
+            
+        Returns:
+            Damping gain value
+        """
+        motor_name_to_index = {
+            "joint_1": 0,
+            "joint_2": 1,
+            "joint_3": 2,
+            "joint_4": 3,
+            "joint_5": 4,
+            "joint_6": 5,
+            "joint_7": 6,
+            "gripper": 7,
+        }
+        
+        motor_index = motor_name_to_index.get(motor_name, 0)
+        return self.config.damping_kd[motor_index]
     
