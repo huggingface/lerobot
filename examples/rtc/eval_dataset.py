@@ -399,11 +399,7 @@ def main(cfg: RTCEvalConfig):
 
     logger.info("=" * 80)
     logger.info("RTC Dataset Evaluation")
-    logger.info("=" * 80)
-    logger.info(f"Policy: {cfg.policy.pretrained_path}")
-    logger.info(f"Dataset: {cfg.dataset.repo_id}")
-    logger.info(f"Device: {cfg.device}")
-    logger.info(f"Seed: {cfg.seed}")
+    logger.info(f"Config: {cfg}")
     logger.info("=" * 80)
 
     evaluator = RTCEvaluator(cfg)

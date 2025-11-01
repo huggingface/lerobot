@@ -809,7 +809,17 @@ class VLAFlowMatching(nn.Module):
                 prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
                 execution_horizon = kwargs.get("execution_horizon", self.config.rtc_config.execution_horizon)
 
-                v_t, correction, x1_t, error = self.rtc_processor.denoise_step(
+                (
+                    v_t,
+                    correction,
+                    x1_t,
+                    error,
+                    _,  # weights
+                    _,  # guidance_weight
+                    _,  # inference_delay_out
+                    _,  # execution_horizon_out
+                    _,  # prev_chunk_left_over_out
+                ) = self.rtc_processor.denoise_step(
                     x_t=x_t,
                     prev_chunk_left_over=prev_chunk_left_over,
                     inference_delay=inference_delay,
@@ -819,10 +829,25 @@ class VLAFlowMatching(nn.Module):
                 )
             else:
                 v_t = denoise_step_partial_call(x_t)
+                correction = None
+                x1_t = None
+                error = None
 
             # Euler step
             x_t += dt * v_t
             time += dt
+
+            # Record x_t after Euler step (other params are recorded in rtc_processor.denoise_step)
+            if (
+                self.config.rtc_config is not None
+                and self.config.rtc_config.enabled
+                and correction is not None
+                and len(self.rtc_processor.tracker) > 0
+            ):
+                recent_steps = self.rtc_processor.tracker.get_recent_steps(n=1)
+                if recent_steps:
+                    # Update the most recent step with x_t after Euler step
+                    recent_steps[0].x_t = x_t.detach().clone()
 
             # Visualize x_t using plot_waypoints - accumulate all denoise steps
             # Use provided axes or create new ones

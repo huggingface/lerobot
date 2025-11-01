@@ -271,8 +271,19 @@ class RTCProcessor:
         if prev_chunk_left_over is None:
             if self.verbose:
                 logger.info("No prev_chunk_left_over - skipping guidance (first step)")
-            # First step, no guidance
-            return original_denoise_step_partial(x_t)
+            # First step, no guidance - return v_t with None for other values
+            v_t = original_denoise_step_partial(x_t)
+            return (
+                v_t,
+                None,  # correction
+                None,  # x1_t
+                None,  # err
+                None,  # weights
+                None,  # guidance_weight
+                inference_delay,
+                execution_horizon if execution_horizon is not None else self.rtc_config.execution_horizon,
+                None,  # prev_chunk_left_over
+            )
 
         squeezed = False
         if len(x_t.shape) < 3:
@@ -355,21 +366,6 @@ class RTCProcessor:
 
         result = v_t - guidance_weight * correction
 
-        # Record debug information if enabled
-        self.tracker.record_step(
-            x_t=x_t,
-            v_t=v_t,
-            x1_t=x1_t,
-            correction=correction,
-            err=err,
-            weights=weights,
-            guidance_weight=guidance_weight,
-            time=time,
-            inference_delay=inference_delay,
-            execution_horizon=execution_horizon,
-            prev_chunk_shape=tuple(prev_chunk_left_over.shape) if prev_chunk_left_over is not None else None,
-        )
-
         # Remove the batch dimension if it was added
         if squeezed:
             result = result.squeeze(0)
@@ -377,7 +373,31 @@ class RTCProcessor:
             x1_t = x1_t.squeeze(0)
             err = err.squeeze(0)
 
-        return result, correction, x1_t, err
+        # Record debug information (all params except x_t which is recorded externally)
+        self.tracker.record_step(
+            v_t=v_t,
+            x1_t=x1_t,
+            correction=correction,
+            err=err,
+            weights=weights,
+            guidance_weight=guidance_weight,
+            time=time.item() if isinstance(time, torch.Tensor) else time,
+            inference_delay=inference_delay,
+            execution_horizon=execution_horizon,
+        )
+
+        # Return tracking data for external recording
+        return (
+            result,
+            correction,
+            x1_t,
+            err,
+            weights,
+            guidance_weight,
+            inference_delay,
+            execution_horizon,
+            prev_chunk_left_over,
+        )
 
     def get_prefix_weights(self, start, end, total):
         start = min(start, end)
