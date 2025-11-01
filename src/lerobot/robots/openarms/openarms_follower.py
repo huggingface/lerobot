@@ -94,10 +94,19 @@ class OpenArmsFollower(Robot):
         # Initialize Pinocchio robot model for dynamics (optional)
         self.pin_robot = None
         try:
-            # Try to load URDF if available
-            # TODO: Add OpenArms URDF file to repository
-            self.pin_robot = pin.RobotWrapper.BuildFromURDF("urdf/openarms.urdf", "urdf")
-            logger.info("Loaded OpenArms URDF for dynamics computation")
+            # Load URDF - try external path first (with meshes), then repository
+            import os
+            from os.path import expanduser, dirname
+            
+            # Try external URDF with meshes first
+            external_urdf_path = expanduser("~/Documents/openarm_description/openarm_bimanual_pybullet.urdf")
+            if os.path.exists(external_urdf_path):
+                urdf_path = external_urdf_path
+                urdf_dir = dirname(urdf_path)
+            
+                self.pin_robot = pin.RobotWrapper.BuildFromURDF(urdf_path, urdf_dir)
+                self.pin_robot.data = self.pin_robot.model.createData()
+                logger.info(f"Loaded OpenArms URDF for dynamics computation from {urdf_path}")
         except Exception as e:
             logger.warning(f"Could not load URDF for dynamics: {e}. Gravity compensation will not be available.")
 
@@ -476,34 +485,62 @@ class OpenArmsFollower(Robot):
                 "Ensure urdf/openarms.urdf exists and is valid."
             )
         
-        # Build position vector in the order of motors (right arm, then left arm)
+        # Build position vector in the order of motors (left arm, then right arm)
+        # This order must match the URDF joint order
+        # URDF has: left_joint1-7, left_finger_joint1-2, right_joint1-7, right_finger_joint1-2
         q = np.zeros(self.pin_robot.model.nq)
         idx = 0
         
-        # Right arm motors
-        for motor_name in self.bus_right.motors:
-            full_name = f"right_{motor_name}"
-            q[idx] = q_rad.get(full_name, 0.0)
-            idx += 1
-        
-        # Left arm motors
+        # Left arm motors (first in URDF) - joints 1-7
         for motor_name in self.bus_left.motors:
+            if motor_name == "gripper":
+                continue  # Skip gripper, will be handled separately
             full_name = f"left_{motor_name}"
             q[idx] = q_rad.get(full_name, 0.0)
             idx += 1
         
+        # Skip left finger joints (leave as zeros)
+        idx += 2
+        
+        # Right arm motors (second in URDF) - joints 1-7
+        for motor_name in self.bus_right.motors:
+            if motor_name == "gripper":
+                continue  # Skip gripper, will be handled separately
+            full_name = f"right_{motor_name}"
+            q[idx] = q_rad.get(full_name, 0.0)
+            idx += 1
+        
+        # Skip right finger joints (leave as zeros)
+        idx += 2
+        
         # Compute generalized gravity vector
         g = pin.computeGeneralizedGravity(self.pin_robot.model, self.pin_robot.data, q)
         
-        # Map back to motor names
+        # Map back to motor names (only arm joints, not fingers)
         result = {}
         idx = 0
-        for motor_name in self.bus_right.motors:
-            result[f"right_{motor_name}"] = float(g[idx])
-            idx += 1
+        
+        # Left arm torques (joints 1-7)
         for motor_name in self.bus_left.motors:
+            if motor_name == "gripper":
+                result["left_gripper"] = 0.0  # No gravity compensation for gripper
+                continue
             result[f"left_{motor_name}"] = float(g[idx])
             idx += 1
+        
+        # Skip left finger joint torques in output
+        idx += 2
+        
+        # Right arm torques (joints 1-7)
+        for motor_name in self.bus_right.motors:
+            if motor_name == "gripper":
+                result["right_gripper"] = 0.0  # No gravity compensation for gripper
+                continue
+            result[f"right_{motor_name}"] = float(g[idx])
+            idx += 1
+        
+        # Skip right finger joint torques in output
+        idx += 2
         
         return result
     
