@@ -38,6 +38,7 @@ from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.processor.converters import (
@@ -420,20 +421,7 @@ def make_policy(
     # policy = torch.compile(policy, mode="reduce-overhead")
 
     if not rename_map:
-        expected_features = set(cfg.input_features.keys()) | set(cfg.output_features.keys())
-        provided_features = set(features.keys())
-        if expected_features and provided_features != expected_features:
-            missing = expected_features - provided_features
-            extra = provided_features - expected_features
-            # TODO (jadechoghari): provide a dynamic rename map suggestion to the user.
-            raise ValueError(
-                f"Feature mismatch between dataset/environment and policy config.\n"
-                f"- Missing features: {sorted(missing) if missing else 'None'}\n"
-                f"- Extra features: {sorted(extra) if extra else 'None'}\n\n"
-                f"Please ensure your dataset and policy use consistent feature names.\n"
-                f"If your dataset uses different observation keys (e.g., cameras named differently), "
-                f"use the `--rename_map` argument, for example:\n"
-                f'  --rename_map=\'{{"observation.images.left": "observation.images.camera1", '
-                f'"observation.images.top": "observation.images.camera2"}}\''
-            )
+        validate_visual_features_consistency(cfg, features)
+        # TODO: (jadechoghari) - add a check_state(cfg, features) and check_action(cfg, features)
+
     return policy
