@@ -18,6 +18,9 @@ import logging
 import time
 from typing import Any, Dict
 
+import numpy as np
+import pinocchio as pin
+
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.motors.damiao.tables import MotorType
@@ -83,6 +86,25 @@ class OpenArmsLeader(Teleoperator):
             bitrate=self.config.can_bitrate,
             data_bitrate=self.config.can_data_bitrate if self.config.use_can_fd else None,
         )
+
+        # Initialize Pinocchio robot model for dynamics (optional)
+        self.pin_robot = None
+        try:
+            # Load URDF - try external path first (with meshes), then repository
+            import os
+            from os.path import expanduser, dirname
+            
+            # Try external URDF with meshes first
+            external_urdf_path = expanduser("~/Documents/openarm_description/openarm_bimanual_pybullet.urdf")
+            if os.path.exists(external_urdf_path):
+                urdf_path = external_urdf_path
+                urdf_dir = dirname(urdf_path)
+            
+                self.pin_robot = pin.RobotWrapper.BuildFromURDF(urdf_path, urdf_dir)
+                self.pin_robot.data = self.pin_robot.model.createData()
+                logger.info(f"Loaded OpenArms URDF for dynamics computation from {urdf_path}")
+        except Exception as e:
+            logger.warning(f"Could not load URDF for dynamics: {e}. Gravity compensation will not be available.")
 
     @property
     def action_features(self) -> Dict[str, type]:
@@ -307,4 +329,88 @@ class OpenArmsLeader(Teleoperator):
         self.bus_left.disconnect(disable_torque=False)
         
         logger.info(f"{self} disconnected.")
+
+    def _deg_to_rad(self, deg: Dict[str, float | int]) -> Dict[str, float]:
+        """Convert degrees to radians for all motors."""
+        return {m: np.deg2rad(float(v)) for m, v in deg.items()}
+    
+    def _gravity_from_q(self, q_rad: Dict[str, float]) -> Dict[str, float]:
+        """
+        Compute g(q) [N·m] for all joints in the robot.
+        The order of joints in the URDF matches the concatenated motor lists (right then left).
+        
+        Args:
+            q_rad: Dictionary mapping motor names (with arm prefix) to positions in radians
+            
+        Returns:
+            Dictionary mapping motor names to gravity torques in N·m
+            
+        Raises:
+            RuntimeError: If URDF model is not loaded
+        """
+        if self.pin_robot is None:
+            raise RuntimeError(
+                "Cannot compute gravity: URDF model not loaded. "
+                "Ensure urdf/openarms.urdf exists and is valid."
+            )
+        
+        # Build position vector in the order of motors (left arm, then right arm)
+        # This order must match the URDF joint order
+        # URDF has: left_joint1-7, left_finger_joint1-2, right_joint1-7, right_finger_joint1-2
+        q = np.zeros(self.pin_robot.model.nq)
+        idx = 0
+        
+        # Left arm motors (first in URDF) - joints 1-7
+        for motor_name in self.bus_left.motors:
+            if motor_name == "gripper":
+                continue  # Skip gripper, will be handled separately
+            full_name = f"left_{motor_name}"
+            q[idx] = q_rad.get(full_name, 0.0)
+            idx += 1
+        
+        # Skip left finger joints (leave as zeros)
+        idx += 2
+        
+        # Right arm motors (second in URDF) - joints 1-7
+        for motor_name in self.bus_right.motors:
+            if motor_name == "gripper":
+                continue  # Skip gripper, will be handled separately
+            full_name = f"right_{motor_name}"
+            q[idx] = q_rad.get(full_name, 0.0)
+            idx += 1
+        
+        # Skip right finger joints (leave as zeros)
+        idx += 2
+        
+        # Compute generalized gravity vector
+        g = pin.computeGeneralizedGravity(self.pin_robot.model, self.pin_robot.data, q)
+        
+        # Map back to motor names (only arm joints, not fingers)
+        result = {}
+        idx = 0
+        
+        # Left arm torques (joints 1-7)
+        for motor_name in self.bus_left.motors:
+            if motor_name == "gripper":
+                result["left_gripper"] = 0.0  # No gravity compensation for gripper
+                continue
+            result[f"left_{motor_name}"] = float(g[idx])
+            idx += 1
+        
+        # Skip left finger joint torques in output
+        idx += 2
+        
+        # Right arm torques (joints 1-7)
+        for motor_name in self.bus_right.motors:
+            if motor_name == "gripper":
+                result["right_gripper"] = 0.0  # No gravity compensation for gripper
+                continue
+            result[f"right_{motor_name}"] = float(g[idx])
+            idx += 1
+        
+        # Skip right finger joint torques in output
+        idx += 2
+        
+        return result
+
 
