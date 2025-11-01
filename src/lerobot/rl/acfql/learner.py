@@ -1317,7 +1317,7 @@ def initialize_replay_buffer(
             repo_id=repo_id,
             root=dataset_path,
         )
-    elif not cfg.resume and cfg.online_dataset is not None:
+    elif cfg.online_dataset is not None:
         logging.info(f"Load the online dataset from the repo {cfg.online_dataset.repo_id}")
         dataset = LeRobotDataset(
             repo_id=cfg.online_dataset.repo_id,
