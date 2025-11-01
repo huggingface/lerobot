@@ -62,7 +62,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc.modeling_rtc import RTCProcessor, plot_waypoints
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
@@ -809,17 +809,7 @@ class VLAFlowMatching(nn.Module):
                 prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
                 execution_horizon = kwargs.get("execution_horizon", self.config.rtc_config.execution_horizon)
 
-                (
-                    v_t,
-                    correction,
-                    x1_t,
-                    error,
-                    _,  # weights
-                    _,  # guidance_weight
-                    _,  # inference_delay_out
-                    _,  # execution_horizon_out
-                    _,  # prev_chunk_left_over_out
-                ) = self.rtc_processor.denoise_step(
+                v_t = self.rtc_processor.denoise_step(
                     x_t=x_t,
                     prev_chunk_left_over=prev_chunk_left_over,
                     inference_delay=inference_delay,
@@ -829,9 +819,6 @@ class VLAFlowMatching(nn.Module):
                 )
             else:
                 v_t = denoise_step_partial_call(x_t)
-                correction = None
-                x1_t = None
-                error = None
 
             # Euler step
             x_t += dt * v_t
@@ -844,10 +831,7 @@ class VLAFlowMatching(nn.Module):
                 and correction is not None
                 and len(self.rtc_processor.tracker) > 0
             ):
-                recent_steps = self.rtc_processor.tracker.get_recent_steps(n=1)
-                if recent_steps:
-                    # Update the most recent step with x_t after Euler step
-                    recent_steps[0].x_t = x_t.detach().clone()
+                self.rtc_processor.tracker.record_step(x_t=x_t, update_last=True)
 
             # Visualize x_t using plot_waypoints - accumulate all denoise steps
             # Use provided axes or create new ones

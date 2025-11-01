@@ -133,6 +133,7 @@ class Tracker:
         time: float | Tensor | None = None,
         inference_delay: int | None = None,
         execution_horizon: int | None = None,
+        update_last: bool = False,
         **metadata,
     ) -> None:
         """Record debug information from a denoising step.
@@ -148,12 +149,42 @@ class Tracker:
             time (float | Tensor | None): Time parameter.
             inference_delay (int | None): Inference delay parameter.
             execution_horizon (int | None): Execution horizon parameter.
+            update_last (bool): If True, update the most recent step instead of creating a new one.
+                Only updates fields that are not None.
             **metadata: Additional metadata to store.
         """
         if not self.enabled:
             return
 
-        # Clone tensors to avoid holding references to computation graph
+        # Update existing step if requested
+        if update_last and len(self._steps) > 0:
+            last_step = self._steps[-1]
+            # Only update fields that are provided (not None)
+            if x_t is not None:
+                last_step.x_t = x_t.detach().clone()
+            if v_t is not None:
+                last_step.v_t = v_t.detach().clone()
+            if x1_t is not None:
+                last_step.x1_t = x1_t.detach().clone()
+            if correction is not None:
+                last_step.correction = correction.detach().clone()
+            if err is not None:
+                last_step.err = err.detach().clone()
+            if weights is not None:
+                last_step.weights = weights.detach().clone()
+            if guidance_weight is not None:
+                last_step.guidance_weight = guidance_weight
+            if time is not None:
+                last_step.time = time
+            if inference_delay is not None:
+                last_step.inference_delay = inference_delay
+            if execution_horizon is not None:
+                last_step.execution_horizon = execution_horizon
+            if metadata:
+                last_step.metadata.update(metadata)
+            return
+
+        # Create new step
         step = DebugStep(
             step_idx=self._step_counter,
             x_t=x_t.detach().clone() if x_t is not None else None,
