@@ -31,12 +31,14 @@ from torch import Tensor
 
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc.debug_handler import DebugHandler
 
 logger = logging.getLogger(__name__)
 
 # Optional import for gradient visualization
 try:
     from torchviz import make_dot
+
     TORCHVIZ_AVAILABLE = True
 except ImportError:
     TORCHVIZ_AVAILABLE = False
@@ -85,6 +87,8 @@ class RTCProcessor:
                 - prefix_attention_schedule: strategy for prefix weights
                   (ZEROS, ONES, LINEAR, EXP)
                 - max_guidance_weight: upper bound applied to the guidance scale
+                - debug: whether to collect debug information
+                - debug_maxlen: sliding window size for debug information
             verbose (bool): Enable verbose debug logging.
             visualize_gradients (bool): Enable gradient visualization using torchviz.
             viz_output_dir (str): Directory to save gradient visualizations.
@@ -94,6 +98,12 @@ class RTCProcessor:
         self.visualize_gradients = visualize_gradients and TORCHVIZ_AVAILABLE
         self.viz_output_dir = viz_output_dir
         self._viz_counter = 0
+
+        # Initialize tracker
+        self.tracker = DebugHandler(
+            enabled=rtc_config.debug,
+            maxlen=rtc_config.debug_maxlen,
+        )
 
         if visualize_gradients and not TORCHVIZ_AVAILABLE:
             logger.warning(
@@ -147,6 +157,7 @@ class RTCProcessor:
             return
 
         import os
+
         os.makedirs(self.viz_output_dir, exist_ok=True)
 
         # Visualize the forward graph leading to the error term
@@ -154,19 +165,18 @@ class RTCProcessor:
             dot_forward = make_dot(
                 err.mean(),
                 params={
-                    'x_t': x_t,
-                    'v_t': v_t,
-                    'x1_t': x1_t,
-                    'prev_chunk': prev_chunk,
-                    'weights': weights,
+                    "x_t": x_t,
+                    "v_t": v_t,
+                    "x1_t": x1_t,
+                    "prev_chunk": prev_chunk,
+                    "weights": weights,
                 },
                 show_attrs=True,
-                show_saved=True
+                show_saved=True,
             )
-            dot_forward.format = 'png'
+            dot_forward.format = "png"
             forward_path = os.path.join(
-                self.viz_output_dir,
-                f'rtc_correction_forward_graph_{self._viz_counter}'
+                self.viz_output_dir, f"rtc_correction_forward_graph_{self._viz_counter}"
             )
             dot_forward.render(forward_path, cleanup=True)
             logger.info(f"Forward graph saved to {forward_path}.png")
@@ -178,16 +188,15 @@ class RTCProcessor:
             dot_correction = make_dot(
                 correction.mean(),
                 params={
-                    'x_t': x_t,
-                    'correction': correction,
+                    "x_t": x_t,
+                    "correction": correction,
                 },
                 show_attrs=True,
-                show_saved=True
+                show_saved=True,
             )
-            dot_correction.format = 'png'
+            dot_correction.format = "png"
             correction_path = os.path.join(
-                self.viz_output_dir,
-                f'rtc_correction_gradient_graph_{self._viz_counter}'
+                self.viz_output_dir, f"rtc_correction_gradient_graph_{self._viz_counter}"
             )
             dot_correction.render(correction_path, cleanup=True)
             logger.info(f"Correction gradient graph saved to {correction_path}.png")
@@ -323,7 +332,7 @@ class RTCProcessor:
                 err=err,
                 time=time,
                 weights=weights,
-                prev_chunk=prev_chunk_left_over
+                prev_chunk=prev_chunk_left_over,
             )
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
@@ -335,12 +344,27 @@ class RTCProcessor:
 
         result = v_t - guidance_weight * correction
 
+        # Record debug information if enabled
+        self.tracker.record_step(
+            x_t=x_t,
+            v_t=v_t,
+            x1_t=x1_t,
+            correction=correction,
+            err=err,
+            weights=weights,
+            guidance_weight=guidance_weight,
+            time=time,
+            inference_delay=inference_delay,
+            execution_horizon=execution_horizon,
+            prev_chunk_shape=tuple(prev_chunk_left_over.shape) if prev_chunk_left_over is not None else None,
+        )
+
         # Remove the batch dimension if it was added
         if squeezed:
             result = result.squeeze(0)
-            final_correction = final_correction.squeeze(0)
+            correction = correction.squeeze(0)
             x1_t = x1_t.squeeze(0)
-            error = error.squeeze(0)
+            err = err.squeeze(0)
 
         return result, correction, x1_t, err
 

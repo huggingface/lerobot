@@ -52,6 +52,7 @@ from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
 from lerobot.utils.hub import HubMixin
 
 logging.basicConfig(
@@ -166,6 +167,8 @@ class RTCDatasetEvalConfig(HubMixin):
             execution_horizon=20,
             max_guidance_weight=5.0,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
+            debug=True,
+            debug_maxlen=1000,
         )
     )
 
@@ -197,9 +200,17 @@ class RTCDatasetEvalConfig(HubMixin):
         default=None,
         metadata={"help": "Path to save evaluation results (JSON format)"},
     )
+    output_dir: str = field(
+        default="rtc_debug_output",
+        metadata={"help": "Directory to save debug visualizations"},
+    )
     verbose: bool = field(
         default=False,
         metadata={"help": "Enable verbose logging for each sample"},
+    )
+    enable_debug_viz: bool = field(
+        default=True,
+        metadata={"help": "Enable debug visualization using debug handler"},
     )
 
     # Seed configuration
@@ -290,7 +301,6 @@ class RTCDatasetEvaluator:
         logger.info(f"Inference delay: {self.cfg.inference_delay}")
 
         batch_size = 1
-        prev_actions_chunk = None
 
         # Determine actual inference delay based on skip_steps
         inference_delay = self.cfg.inference_delay
@@ -301,9 +311,6 @@ class RTCDatasetEvaluator:
             shuffle=True,
             num_workers=4,
         )
-
-        inference_times = 0
-        last_inference_i = 0
 
         prev_chunk_left_over = None
 
@@ -422,14 +429,11 @@ class RTCDatasetEvaluator:
             logger.info("Saved final actions comparison to final_actions_comparison.png")
             plt.close(fig)
 
+            # Visualize debug information if enabled
+            if self.cfg.enable_debug_viz and self.policy.rtc_processor is not None:
+                self._visualize_debug_info()
+
             break
-
-            prev_actions_chunk = rtc_actions
-            inference_times += 1
-            last_inference_i += i
-
-            if inference_times >= self.cfg.num_iterations:
-                break
 
         return
 
@@ -447,6 +451,60 @@ class RTCDatasetEvaluator:
             self.axs[j].legend(loc="upper right", fontsize=14)
             if j == 2:
                 self.axs[j].set_xlabel("Step #", fontsize=16)
+
+    def _visualize_debug_info(self) -> None:
+        """Visualize debug information from the RTC processor."""
+        import os
+
+        tracker = self.policy.rtc_processor.tracker
+
+        if not tracker.enabled or len(tracker) == 0:
+            logger.warning("Tracker is disabled or has no recorded steps. Skipping debug visualization.")
+            return
+
+        # Create output directory
+        os.makedirs(self.cfg.output_dir, exist_ok=True)
+        logger.info(f"Saving debug visualizations to {self.cfg.output_dir}")
+
+        # Print statistics
+        RTCDebugVisualizer.print_debug_statistics(tracker)
+
+        # Plot debug summary
+        summary_path = os.path.join(self.cfg.output_dir, "debug_summary.png")
+        RTCDebugVisualizer.plot_debug_summary(
+            tracker,
+            save_path=summary_path,
+            show=False,
+        )
+
+        # Plot correction heatmap
+        heatmap_path = os.path.join(self.cfg.output_dir, "correction_heatmap.png")
+        RTCDebugVisualizer.plot_correction_heatmap(
+            tracker,
+            save_path=heatmap_path,
+            show=False,
+        )
+
+        # Plot step-by-step comparison (last step)
+        step_path = os.path.join(self.cfg.output_dir, "step_comparison_last.png")
+        RTCDebugVisualizer.plot_step_by_step_comparison(
+            tracker,
+            step_idx=-1,
+            save_path=step_path,
+            show=False,
+        )
+
+        # Plot step-by-step comparison (first step)
+        step_path_first = os.path.join(self.cfg.output_dir, "step_comparison_first.png")
+        if len(tracker) > 0:
+            RTCDebugVisualizer.plot_step_by_step_comparison(
+                tracker,
+                step_idx=0,
+                save_path=step_path_first,
+                show=False,
+            )
+
+        logger.info(f"Debug visualizations saved to {self.cfg.output_dir}")
 
 
 @parser.wrap()
