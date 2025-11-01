@@ -98,10 +98,10 @@ class DebugStep:
         return result
 
 
-class DebugHandler:
+class Tracker:
     """Collects and manages debug information for RTC processing.
 
-    This handler stores debug information from recent denoising steps in a sliding window,
+    This tracker stores debug information from recent denoising steps in a sliding window,
     allowing inspection of intermediate values, tensors, and statistics.
 
     Args:

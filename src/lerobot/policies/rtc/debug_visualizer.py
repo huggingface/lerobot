@@ -21,19 +21,19 @@ import torch
 from matplotlib.figure import Figure
 from torch import Tensor
 
-from lerobot.policies.rtc.debug_handler import DebugHandler
+from lerobot.policies.rtc.debug_handler import Tracker
 
 
 class RTCDebugVisualizer:
     """Visualizer for RTC debug information.
 
-    This class provides methods to visualize debug information collected by the DebugHandler,
+    This class provides methods to visualize debug information collected by the Tracker,
     including corrections, errors, weights, and guidance weights over denoising steps.
     """
 
     @staticmethod
     def plot_debug_summary(
-        tracker: DebugHandler,
+        tracker: Tracker,
         save_path: str | None = None,
         show: bool = False,
         figsize: tuple[int, int] = (16, 12),
@@ -41,7 +41,7 @@ class RTCDebugVisualizer:
         """Create a comprehensive summary plot of debug information.
 
         Args:
-            tracker (DebugHandler): Tracker with recorded steps.
+            tracker (Tracker): Tracker with recorded steps.
             save_path (str | None): Path to save the figure. If None, figure is not saved.
             show (bool): Whether to display the figure.
             figsize (tuple[int, int]): Figure size in inches (width, height).
@@ -144,7 +144,7 @@ class RTCDebugVisualizer:
 
     @staticmethod
     def plot_correction_heatmap(
-        tracker: DebugHandler,
+        tracker: Tracker,
         save_path: str | None = None,
         show: bool = False,
         figsize: tuple[int, int] = (14, 8),
@@ -153,7 +153,7 @@ class RTCDebugVisualizer:
         """Create a heatmap showing correction values across steps and action dimensions.
 
         Args:
-            tracker (DebugHandler): Tracker with recorded steps.
+            tracker (Tracker): Tracker with recorded steps.
             save_path (str | None): Path to save the figure.
             show (bool): Whether to display the figure.
             figsize (tuple[int, int]): Figure size in inches.
@@ -208,7 +208,7 @@ class RTCDebugVisualizer:
 
     @staticmethod
     def plot_step_by_step_comparison(
-        tracker: DebugHandler,
+        tracker: Tracker,
         step_idx: int = -1,
         save_path: str | None = None,
         show: bool = False,
@@ -218,7 +218,7 @@ class RTCDebugVisualizer:
         """Plot detailed comparison for a single denoising step.
 
         Args:
-            tracker (DebugHandler): Tracker with recorded steps.
+            tracker (Tracker): Tracker with recorded steps.
             step_idx (int): Step index to visualize (-1 for last step).
             save_path (str | None): Path to save the figure.
             show (bool): Whether to display the figure.
@@ -332,11 +332,11 @@ class RTCDebugVisualizer:
         return fig
 
     @staticmethod
-    def print_debug_statistics(tracker: DebugHandler) -> None:
+    def print_debug_statistics(tracker: Tracker) -> None:
         """Print summary statistics from the tracker.
 
         Args:
-            tracker (DebugHandler): Tracker with recorded steps.
+            tracker (Tracker): Tracker with recorded steps.
         """
         if not tracker.enabled:
             print("Tracker is disabled.")
