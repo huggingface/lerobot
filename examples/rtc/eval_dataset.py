@@ -340,15 +340,23 @@ class RTCEvaluator:
         """Visualize debug information from the RTC processor."""
         import os
 
-        tracker = self.policy.rtc_processor.tracker
+        # Use proxy method to check if debug is enabled
+        if not self.policy.rtc_processor.is_debug_enabled():
+            logger.warning("Debug tracking is disabled. Skipping debug visualization.")
+            return
 
-        if tracker is None or not tracker.enabled or len(tracker) == 0:
-            logger.warning("Tracker is disabled or has no recorded steps. Skipping debug visualization.")
+        # Get tracker length using proxy method
+        if self.policy.rtc_processor.get_tracker_length() == 0:
+            logger.warning("No debug steps recorded. Skipping debug visualization.")
             return
 
         # Create output directory
         os.makedirs(self.cfg.output_dir, exist_ok=True)
         logger.info(f"Saving debug visualizations to {self.cfg.output_dir}")
+
+        # Still need direct access to tracker for visualization functions
+        # This is acceptable since RTCDebugVisualizer is part of the RTC package
+        tracker = self.policy.rtc_processor.tracker
 
         # Print statistics
         RTCDebugVisualizer.print_debug_statistics(tracker)
@@ -380,7 +388,7 @@ class RTCEvaluator:
 
         # Plot step-by-step comparison (first step)
         step_path_first = os.path.join(self.cfg.output_dir, "step_comparison_first.png")
-        if len(tracker) > 0:
+        if self.policy.rtc_processor.get_tracker_length() > 0:
             RTCDebugVisualizer.plot_step_by_step_comparison(
                 tracker,
                 step_idx=0,

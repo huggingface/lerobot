@@ -24,7 +24,8 @@
       "Bash(find:*)",
       "Bash(tee:*)",
       "Read(//private/tmp/**)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(awk:*)"
     ],
     "deny": [],
     "ask": []

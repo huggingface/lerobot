@@ -833,9 +833,8 @@ class VLAFlowMatching(nn.Module):
                 self.config.rtc_config is not None
                 and self.config.rtc_config.enabled
                 and correction is not None
-                and self.rtc_processor.tracker is not None
             ):
-                self.rtc_processor.tracker.track(time=time, x_t=x_t)
+                self.rtc_processor.track_debug(time=time, x_t=x_t)
 
             # Visualize x_t using plot_waypoints - accumulate all denoise steps
             # Use provided axes or create new ones

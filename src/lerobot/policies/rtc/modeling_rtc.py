@@ -52,6 +52,94 @@ class RTCProcessor:
                 maxlen=rtc_config.debug_maxlen,
             )
 
+    # ====================== Tracker Proxy Methods ======================
+    def track_debug(
+        self,
+        time: float | Tensor,
+        x_t: Tensor | None = None,
+        v_t: Tensor | None = None,
+        x1_t: Tensor | None = None,
+        correction: Tensor | None = None,
+        err: Tensor | None = None,
+        weights: Tensor | None = None,
+        guidance_weight: float | Tensor | None = None,
+        inference_delay: int | None = None,
+        execution_horizon: int | None = None,
+        **metadata,
+    ) -> None:
+        """Proxy method to track debug information.
+
+        If tracker is None or disabled, this method does nothing.
+        Otherwise, it forwards the call to tracker.track().
+        """
+        if self.tracker is not None:
+            self.tracker.track(
+                time=time,
+                x_t=x_t,
+                v_t=v_t,
+                x1_t=x1_t,
+                correction=correction,
+                err=err,
+                weights=weights,
+                guidance_weight=guidance_weight,
+                inference_delay=inference_delay,
+                execution_horizon=execution_horizon,
+                **metadata,
+            )
+
+    def get_tracker_stats(self) -> dict | None:
+        """Get tracker statistics summary.
+
+        Returns None if tracker is disabled or None.
+        """
+        if self.tracker is not None:
+            return self.tracker.get_step_stats_summary()
+        return None
+
+    def get_all_debug_steps(self) -> list:
+        """Get all debug steps from tracker.
+
+        Returns empty list if tracker is disabled or None.
+        """
+        if self.tracker is not None:
+            return self.tracker.get_all_steps()
+        return []
+
+    def get_recent_debug_steps(self, n: int = 1) -> list:
+        """Get recent debug steps from tracker.
+
+        Returns empty list if tracker is disabled or None.
+        """
+        if self.tracker is not None:
+            return self.tracker.get_recent_steps(n)
+        return []
+
+    def is_debug_enabled(self) -> bool:
+        """Check if debug tracking is enabled.
+
+        Returns True if tracker exists and is enabled.
+        """
+        return self.tracker is not None and self.tracker.enabled
+
+    def reset_tracker(self) -> None:
+        """Reset the tracker, clearing all recorded steps.
+
+        Does nothing if tracker is None.
+        """
+        if self.tracker is not None:
+            self.tracker.reset()
+
+    def get_tracker_length(self) -> int:
+        """Get the number of recorded debug steps.
+
+        Returns 0 if tracker is disabled or None.
+        """
+        if self.tracker is not None:
+            return len(self.tracker)
+        return 0
+
+    # ====================== End Tracker Proxy Methods ======================
+
     def denoise_step(
         self,
         x_t,
@@ -173,18 +261,17 @@ class RTCProcessor:
             err = err.squeeze(0)
 
         # Record debug information (all params except x_t which is recorded externally)
-        if self.tracker is not None:
-            self.tracker.track(
-                time=time,
-                v_t=v_t,
-                x1_t=x1_t,
-                correction=correction,
-                err=err,
-                weights=weights,
-                guidance_weight=guidance_weight,
-                inference_delay=inference_delay,
-                execution_horizon=execution_horizon,
-            )
+        self.track_debug(
+            time=time,
+            v_t=v_t,
+            x1_t=x1_t,
+            correction=correction,
+            err=err,
+            weights=weights,
+            guidance_weight=guidance_weight,
+            inference_delay=inference_delay,
+            execution_horizon=execution_horizon,
+        )
 
         return result
 
