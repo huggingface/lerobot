@@ -62,6 +62,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
@@ -70,6 +71,9 @@ from lerobot.policies.utils import (
 )
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.utils import get_safe_dtype
+
+# Make plot_waypoints easily accessible
+plot_waypoints = RTCDebugVisualizer.plot_waypoints
 
 
 def create_sinusoidal_pos_embedding(
@@ -851,35 +855,29 @@ class VLAFlowMatching(nn.Module):
             color = colors[self.denoise_step_counter % len(colors)]
 
             # Plot this denoise step
-            # TODO: Restore plot_waypoints function
-            # plot_waypoints(xt_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
+            plot_waypoints(xt_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
 
             # Plot this denoise step
-            # TODO: Restore plot_waypoints function
-            # plot_waypoints(vt_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
+            plot_waypoints(vt_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
 
             if correction is not None:
-                # TODO: Restore plot_waypoints function
-                pass
-                # plot_waypoints(
-                #     vt_axs,
-                #     correction,
-                #     start_from=0,
-                #     color="red",
-                #     label=f"Step corr {self.denoise_step_counter}",
-                # )
+                plot_waypoints(
+                    vt_axs,
+                    correction,
+                    start_from=0,
+                    color="red",
+                    label=f"Step corr {self.denoise_step_counter}",
+                )
 
             # Plot x1_t if axes provided and RTC is enabled
             if viz_x1t_axs is not None and x1_t is not None:
-                # TODO: Restore plot_waypoints function
-                pass
-                # plot_waypoints(
-                #     viz_x1t_axs,
-                #     x1_t,
-                #     start_from=0,
-                #     color=color,
-                #     label=f"x1_t Step {self.denoise_step_counter}",
-                # )
+                plot_waypoints(
+                    viz_x1t_axs,
+                    x1_t,
+                    start_from=0,
+                    color=color,
+                    label=f"x1_t Step {self.denoise_step_counter}",
+                )
 
                 # Plot error on the same axes with different color
                 if error is not None:
@@ -917,11 +915,9 @@ class VLAFlowMatching(nn.Module):
                 prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
 
                 if prev_chunk_left_over is not None:
-                    # TODO: Restore plot_waypoints function
-                    pass
-                    # plot_waypoints(
-                    #     self.viz_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
-                    # )
+                    plot_waypoints(
+                        self.viz_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                    )
 
             plt.savefig(xt_name)
             plt.close(self.viz_fig)
@@ -946,16 +942,14 @@ class VLAFlowMatching(nn.Module):
                 and self.config.rtc_config is not None
                 and self.config.rtc_config.enabled
             ):
-                # TODO: Restore plot_waypoints function
-                pass
-                # plot_waypoints(
-                #     viz_xt_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
-                # )
-                # # Also plot ground truth on x1_t axes if provided
-                # if viz_x1t_axs is not None:
-                #     plot_waypoints(
-                #         viz_x1t_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
-                #     )
+                plot_waypoints(
+                    viz_xt_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                )
+                # Also plot ground truth on x1_t axes if provided
+                if viz_x1t_axs is not None:
+                    plot_waypoints(
+                        viz_x1t_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                    )
 
         # Reset counter when using provided axes (for next call)
         if use_provided_axes:
