@@ -75,7 +75,6 @@ from lerobot.datasets.video_utils import (
     concatenate_media_files,
     decode_video_frames,
     encode_video_frames,
-    get_audio_duration_in_s,
     get_media_duration_in_s,
     get_safe_default_codec,
     get_video_info,
@@ -1756,7 +1755,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Encode episode audio into a temporary audio file
         ep_path = self._encode_temporary_episode_audio(audio_key, episode_index)
         ep_size_in_mb = get_file_size_in_mb(ep_path)
-        ep_duration_in_s = get_audio_duration_in_s(ep_path)
+        ep_duration_in_s = get_media_duration_in_s(ep_path, media_type="audio")
 
         if (
             episode_index == 0
@@ -1844,7 +1843,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if isinstance(episode_index, np.ndarray):
                 episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
             for audio_key in self.meta.audio_keys:
-                audio_file = self.root / self.meta.get_audio_file_path(episode_index, audio_key)
+                audio_file = self._get_raw_audio_file_path(episode_index, audio_key)
                 if audio_file.is_file():
                     audio_file.unlink()
 
