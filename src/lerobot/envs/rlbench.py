@@ -77,7 +77,7 @@ except json.JSONDecodeError as err:
 
 # extract and type-check top-level dicts
 TASK_DESCRIPTIONS: dict[str, str] = data.get("TASK_DESCRIPTIONS", {})
-TASK_NAME_TO_ID: dict[str, int] = data.get("TASK_NAME_TO_ID", {})
+TASK_ID_TO_NAME: dict[str, str] = data.get("TASK_ID_TO_NAME", {})
 
 """
 RLBench can support many action and observation types.
@@ -585,20 +585,28 @@ def create_rlbench_envs(
         raise ValueError("`task` must contain at least one RLBench suite name.")
 
     print(f"Creating RLBench envs | task_groups={suite_names} | n_envs(per task)={n_envs}")
-    if task_ids_filter is not None:
-        print(f"Restricting to task_ids={task_ids_filter}")
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
 
     for suite_name in suite_names:
         suite = _get_suite(suite_name)
         total = len(suite["train"])
+
+        # Select task ids to build
+        if task_ids_filter is not None:
+            # If string, parse to list of ints (task ids)
+            if isinstance(task_ids_filter, str):
+                task_ids_filter = json.loads(task_ids_filter)
+            print(f"Restricting to task_ids={task_ids_filter}")
         selected = _select_task_ids(total, task_ids_filter)
+        print(
+            f"Selected {len(selected)} tasks from suite '{suite_name}': {[TASK_ID_TO_NAME[str(id)] for id in selected]}."
+        )
 
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 
-        for tid in selected:  # FIXME: this breaks!
+        for tid in selected:  # FIXME: this breaks for multi-task!
             fns = _make_env_fns(
                 suite=suite,
                 task=suite["train"][tid],
