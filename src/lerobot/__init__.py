@@ -29,6 +29,7 @@ Example:
         print(lerobot.available_policies_per_env)
         print(lerobot.available_robots)
         print(lerobot.available_cameras)
+        print(lerobot.available_microphones)
         print(lerobot.available_motors)
     ```
 
