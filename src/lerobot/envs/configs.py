@@ -21,7 +21,7 @@ import draccus
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STATE_JOINTS
 
 
 @dataclass
@@ -329,10 +329,11 @@ class RLBenchEnv(EnvConfig):
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
-    camera_name: str = "front_rgb,wrist_rgb"
+    camera_name: str = "left_shoulder_rgb,right_shoulder_rgb,front_rgb,wrist_rgb,overhead_rgb"
     camera_name_mapping: dict[str, str] | None = None
     observation_height: int = 256
     observation_width: int = 256
+    task_ids: str | None = None
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(8,)),
@@ -342,33 +343,46 @@ class RLBenchEnv(EnvConfig):
         default_factory=lambda: {
             ACTION: ACTION,
             "agent_pos": OBS_STATE,
-            "pixels/front_rgb": f"{OBS_IMAGES}.image",
-            "pixels/wrist_rgb": f"{OBS_IMAGES}.image2",
+            "agent_joints": OBS_STATE_JOINTS,
+            "pixels/front_rgb": f"{OBS_IMAGES}.front_rgb",
+            "pixels/wrist_rgb": f"{OBS_IMAGES}.wrist_rgb",
+            "pixels/left_shoulder_rgb": f"{OBS_IMAGES}.left_shoulder_rgb",
+            "pixels/right_shoulder_rgb": f"{OBS_IMAGES}.right_shoulder_rgb",
+            "pixels/overhead_rgb": f"{OBS_IMAGES}.overhead_rgb",
         }
     )
 
     def __post_init__(self):
+        all_cameras = ["front_rgb", "wrist_rgb", "left_shoulder_rgb", "right_shoulder_rgb", "overhead_rgb"]
+
         if self.obs_type == "pixels":
-            self.features["pixels/front_rgb"] = PolicyFeature(
-                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
-            )
-            self.features["pixels/wrist_rgb"] = PolicyFeature(
-                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
-            )
+            for cam in all_cameras:
+                self.features[f"pixels/{cam}"] = PolicyFeature(
+                    type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+                )
+
         elif self.obs_type == "pixels_agent_pos":
-            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(8,))
-            self.features["pixels/front_rgb"] = PolicyFeature(
-                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
-            )
-            self.features["pixels/wrist_rgb"] = PolicyFeature(
-                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
-            )
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(7,))
+            self.features["agent_joints"] = PolicyFeature(type=FeatureType.STATE, shape=(7,))
+            for cam in all_cameras:
+                self.features[f"pixels/{cam}"] = PolicyFeature(
+                    type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+                )
+
+        elif self.obs_type == "state":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(7,))
+            self.features["agent_joints"] = PolicyFeature(type=FeatureType.STATE, shape=(7,))
+
         else:
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
     @property
     def gym_kwargs(self) -> dict:
-        return {
+        kwargs = {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
+
+        if self.task_ids is not None:
+            kwargs["task_ids"] = self.task_ids
+        return kwargs

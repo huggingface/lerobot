@@ -7,7 +7,7 @@ import numpy as np
 # RLBench
 from rlbench import CameraConfig, Environment
 from rlbench.action_modes.action_mode import MoveArmThenGripper
-from rlbench.action_modes.arm_action_modes import EndEffectorPoseViaPlanning
+from rlbench.action_modes.arm_action_modes import EndEffectorPoseViaIK
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.demo import Demo
 from rlbench.observation_config import ObservationConfig
@@ -169,7 +169,7 @@ def main(args):
     obs_config.set_all(True)
 
     action_mode = MoveArmThenGripper(
-        arm_action_mode=EndEffectorPoseViaPlanning(absolute_mode=args.absolute_actions),
+        arm_action_mode=EndEffectorPoseViaIK(absolute_mode=args.absolute_actions),
         gripper_action_mode=Discrete(),
     )
     env = Environment(action_mode, obs_config=obs_config, headless=True)
@@ -228,17 +228,18 @@ def main(args):
             # All camera images
             **{
                 f"observation.images.{cam}": {
-                    "dtype": "video",
+                    "dtype": "image",
                     "shape": (args.image_height, args.image_width, 3),
                     "names": ["height", "width", "channels"],
-                    "info": {
-                        "video.fps": args.fps,
-                        "video.height": args.image_height,
-                        "video.width": args.image_width,
-                        "video.channels": 3,
-                        "video.is_depth_map": False,
-                        "has_audio": False,
-                    },
+                    # "dtype": "video",
+                    # "info": {
+                    #     "video.fps": args.fps,
+                    #     "video.height": args.image_height,
+                    #     "video.width": args.image_width,
+                    #     "video.channels": 3,
+                    #     "video.is_depth_map": False,
+                    #     "has_audio": False,
+                    # },
                 }
                 for cam in camera_names
             },

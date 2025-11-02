@@ -23,16 +23,23 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
+from pyrep.const import RenderMode
+from pyrep.objects.dummy import Dummy
+from pyrep.objects.vision_sensor import VisionSensor
 from rlbench.action_modes.action_mode import MoveArmThenGripper
-from rlbench.action_modes.arm_action_modes import JointPosition
+from rlbench.action_modes.arm_action_modes import EndEffectorPoseViaIK
 from rlbench.action_modes.gripper_action_modes import Discrete
+from rlbench.backend.exceptions import BoundaryError, InvalidActionError, TaskEnvironmentError, WaypointError
 from rlbench.backend.task import Task
-from rlbench.gym import RLBenchEnv as RLBenchGymEnv
+from rlbench.environment import Environment
+from rlbench.observation_config import CameraConfig, ObservationConfig
 from rlbench.tasks import FS10_V1, FS25_V1, FS50_V1, FS95_V1, MT15_V1, MT30_V1, MT55_V1, MT100_V1
+from scipy.spatial.transform import Rotation
 
 
-class AbsoluteJointPositionActionMode(MoveArmThenGripper):
-    """Absolute joint position action mode for arm and gripper.
+class DeltaEEFPositionActionMode(MoveArmThenGripper):
+    """Delta end-effector position action mode for arm and gripper.
+    8 values: [Δposition Δquaternion gripper].
 
     The arm action is first applied, followed by the gripper action.
     """
@@ -40,16 +47,15 @@ class AbsoluteJointPositionActionMode(MoveArmThenGripper):
     def __init__(self):
         # Call super
         super().__init__(
-            JointPosition(absolute_mode=True),  # Arm in absolute joint positions
+            EndEffectorPoseViaIK(absolute_mode=False),  # Arm in delta end-effector position
             Discrete(),  # Gripper in discrete open/close (<0.5 → close, >=0.5 → open)
         )
 
     def action_bounds(self):
         """Returns the min and max of the action mode.
-
-        Range is [- 2*pi, 2*pi] for each joint and [0.0, 1.0] for the gripper.
+        Range is [-0.3, 0.3] for pose, [-1, 1] for rotation and [0.0, 1.0] for the gripper.
         """
-        return np.array([-2 * np.pi] * 7 + [0.0]), np.array([2 * np.pi] * 7 + [1.0])
+        return np.array([-0.3, -0.3, -0.3, -1, -1, -1, -1, 0.0]), np.array([0.3, 0.3, 0.3, 1, 1, 1, 1, 1.0])
 
 
 # ---- Load configuration data from the external JSON file ----
@@ -73,8 +79,12 @@ except json.JSONDecodeError as err:
 TASK_DESCRIPTIONS: dict[str, str] = data.get("TASK_DESCRIPTIONS", {})
 TASK_NAME_TO_ID: dict[str, int] = data.get("TASK_NAME_TO_ID", {})
 
-ACTION_DIM = 8  # 7 joints + 1 gripper  # NOTE: RLBench supports also EEF pose+gripper (dim=8, [x,y,z,rx,ry,rz,gripper])
-OBS_DIM = 8  # 7 joints + 1 gripper
+"""
+RLBench can support many action and observation types.
+Here, we define standard dimensions for end-effector position control with gripper.
+"""
+ACTION_DIM = 8  # EEF pose+gripper (dim=8, [Δx Δy Δz Δqx Δqy Δqz Δqw gripper])
+OBS_DIM = 7  # EEF pose+gripper (dim=7, [x y z rx ry rz gripper])
 
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
@@ -124,6 +134,144 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
     return ids
 
 
+class RLBenchGymEnv(gym.Env):
+    """An gym wrapper for RLBench."""
+
+    metadata: dict[str, Any] = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
+
+    def __init__(
+        self,
+        task_class,
+        observation_mode="state",
+        render_mode: None | str = None,
+        action_mode=None,
+        obs_width: int = 256,
+        obs_height: int = 256,
+    ):
+        self.task_class = task_class
+        self.observation_mode = observation_mode
+
+        if render_mode is not None and render_mode not in self.metadata["render_modes"]:
+            raise ValueError(f"render_mode must be one of {self.metadata['render_modes']}, got {render_mode}")
+        self.render_mode = render_mode
+        cam_config = CameraConfig(image_size=(obs_width, obs_height))
+        obs_config = ObservationConfig(
+            left_shoulder_camera=cam_config,
+            right_shoulder_camera=cam_config,
+            wrist_camera=cam_config,
+            front_camera=cam_config,
+            overhead_camera=cam_config,
+        )
+        if observation_mode == "state":
+            obs_config.set_all_high_dim(False)
+            obs_config.set_all_low_dim(True)
+        elif observation_mode == "vision":
+            obs_config.set_all(True)
+        else:
+            raise ValueError(f"Unrecognised observation_mode: {observation_mode}.")
+        self.obs_config = obs_config
+        if action_mode is None:
+            action_mode = EndEffectorPoseViaIK()
+        self.action_mode = action_mode
+
+        self.rlbench_env = Environment(
+            action_mode=self.action_mode,
+            obs_config=self.obs_config,
+            headless=True,
+        )
+        self.rlbench_env.launch()
+        self.rlbench_task_env = self.rlbench_env.get_task(self.task_class)
+        if render_mode is not None:
+            cam_placeholder = Dummy("cam_cinematic_placeholder")
+            self.gym_cam = VisionSensor.create([640, 360])
+            self.gym_cam.set_pose(cam_placeholder.get_pose())
+            if render_mode == "human":
+                self.gym_cam.set_render_mode(RenderMode.OPENGL3_WINDOWED)
+            else:
+                self.gym_cam.set_render_mode(RenderMode.OPENGL3)
+        _, obs = self.rlbench_task_env.reset()
+
+        gym_obs = self._extract_obs(obs)
+        self.observation_space = {}
+        for key, value in gym_obs.items():
+            if "rgb" in key:
+                self.observation_space[key] = spaces.Box(
+                    low=0, high=255, shape=value.shape, dtype=value.dtype
+                )
+            else:
+                self.observation_space[key] = spaces.Box(
+                    low=-np.inf, high=np.inf, shape=value.shape, dtype=value.dtype
+                )
+        self.observation_space = spaces.Dict(self.observation_space)
+
+        action_low, action_high = action_mode.action_bounds()
+        self.action_space = spaces.Box(
+            low=np.float32(action_low),
+            high=np.float32(action_high),
+            shape=self.rlbench_env.action_shape,
+            dtype=np.float32,
+        )
+
+    def _extract_obs(self, rlbench_obs):
+        gym_obs = {}
+        for state_name in [
+            "joint_velocities",
+            "joint_positions",
+            "joint_forces",
+            "gripper_open",
+            "gripper_pose",
+            "gripper_joint_positions",
+            "gripper_touch_forces",
+            "task_low_dim_state",
+        ]:
+            state_data = getattr(rlbench_obs, state_name)
+            if state_data is not None:
+                state_data = np.float32(state_data)
+                if np.isscalar(state_data):
+                    state_data = np.asarray([state_data])
+                gym_obs[state_name] = state_data
+
+        if self.observation_mode == "vision":
+            gym_obs.update(
+                {
+                    "left_shoulder_rgb": rlbench_obs.left_shoulder_rgb,
+                    "right_shoulder_rgb": rlbench_obs.right_shoulder_rgb,
+                    "wrist_rgb": rlbench_obs.wrist_rgb,
+                    "front_rgb": rlbench_obs.front_rgb,
+                    "overhead_rgb": rlbench_obs.overhead_rgb,
+                }
+            )
+        return gym_obs
+
+    def render(self):
+        if self.render_mode == "rgb_array":
+            frame = self.gym_cam.capture_rgb()
+            frame = np.clip((frame * 255.0).astype(np.uint8), 0, 255)
+            return frame
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        # TODO: Remove this and use seed from super()
+        np.random.seed(seed=seed)
+        reset_to_demo = None
+        if options is not None:
+            # TODO: Write test for this
+            reset_to_demo = options.get("reset_to_demo", None)
+
+        if reset_to_demo is None:
+            descriptions, obs = self.rlbench_task_env.reset()
+        else:
+            descriptions, obs = self.rlbench_task_env.reset(reset_to_demo=reset_to_demo)
+        return self._extract_obs(obs), {"text_descriptions": descriptions}
+
+    def step(self, action):
+        obs, reward, terminated = self.rlbench_task_env.step(action)
+        return self._extract_obs(obs), reward, terminated, False, {"is_success": reward > 0.5}
+
+    def close(self) -> None:
+        self.rlbench_env.shutdown()
+
+
 class RLBenchEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 30}
 
@@ -131,7 +279,8 @@ class RLBenchEnv(gym.Env):
         self,
         task: Task | None = None,
         task_suite: dict[str, list[Task]] | None = None,
-        camera_name: str | Sequence[str] = "front_rgb,wrist_rgb",
+        camera_name: str
+        | Sequence[str] = "left_shoulder_rgb,right_shoulder_rgb,front_rgb,wrist_rgb,overhead_rgb",
         obs_type: str = "pixels",
         render_mode: str = "rgb_array",
         observation_width: int = 256,
@@ -150,15 +299,18 @@ class RLBenchEnv(gym.Env):
         self.visualization_height = visualization_height
         self.camera_name = _parse_camera_names(camera_name)
 
-        # Map raw camera names to "image1" and "image2".
+        # Map raw camera names to "front_rgb", "wrist_rgb", etc.
         # The preprocessing step `preprocess_observation` will then prefix these with `.images.*`,
-        # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
+        # following the LeRobot convention (e.g., `observation.images.front_rgb`, ...).
         # This ensures the policy consistently receives observations in the
         # expected format regardless of the original camera naming.
         if camera_name_mapping is None:
             camera_name_mapping = {
-                "front_rgb": "image",
-                "wrist_rgb": "image2",
+                "front_rgb": "front_rgb",
+                "wrist_rgb": "wrist_rgb",
+                "left_shoulder_rgb": "left_shoulder_rgb",
+                "right_shoulder_rgb": "right_shoulder_rgb",
+                "overhead_rgb": "overhead_rgb",
             }
         self.camera_name_mapping = camera_name_mapping
 
@@ -178,44 +330,50 @@ class RLBenchEnv(gym.Env):
                 dtype=np.uint8,
             )
 
-        if (
-            self.obs_type == "state"
-        ):  # TODO: This can be implemented in RLBench, because the observation contains joint positions and gripper pose
-            raise ValueError(
-                "The 'state' observation type is not supported in RLBench. "
-                "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
-            )
-
-        elif self.obs_type == "pixels":
+        if self.obs_type == "state":
             self.observation_space = spaces.Dict(
                 {
-                    "pixels": spaces.Box(
-                        low=0,
-                        high=255,
-                        shape=(self.observation_height, self.observation_width, 3),
-                        dtype=np.uint8,
-                    )
-                }
-            )
-        elif self.obs_type == "pixels_agent_pos":
-            self.observation_space = spaces.Dict(
-                {
-                    "pixels": spaces.Box(
-                        low=0,
-                        high=255,
-                        shape=(self.observation_height, self.observation_width, 3),
-                        dtype=np.uint8,
-                    ),
                     "agent_pos": spaces.Box(
                         low=-1000.0,
                         high=1000.0,
                         shape=(OBS_DIM,),
                         dtype=np.float64,
                     ),
+                    "agent_joints": spaces.Box(
+                        low=-1000.0,
+                        high=1000.0,
+                        shape=(7,),
+                        dtype=np.float64,
+                    ),
                 }
             )
 
-        self.action_space = spaces.Box(low=-1, high=1, shape=(ACTION_DIM,), dtype=np.float32)
+        elif self.obs_type == "pixels":
+            self.observation_space = spaces.Dict(
+                {
+                    "pixels": spaces.Dict(images),
+                }
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            self.observation_space = spaces.Dict(
+                {
+                    "pixels": spaces.Dict(images),
+                    "agent_pos": spaces.Box(
+                        low=-1000.0,
+                        high=1000.0,
+                        shape=(OBS_DIM,),
+                        dtype=np.float64,
+                    ),
+                    "agent_joints": spaces.Box(
+                        low=-1000.0,
+                        high=1000.0,
+                        shape=(7,),
+                        dtype=np.float64,
+                    ),
+                }
+            )
+
+        self.action_space = spaces.Box(low=-5, high=5, shape=(ACTION_DIM,), dtype=np.float32)
 
     def render(self) -> np.ndarray:
         """
@@ -231,7 +389,9 @@ class RLBenchEnv(gym.Env):
             task,
             observation_mode="vision",
             render_mode=self.render_mode,
-            action_mode=AbsoluteJointPositionActionMode(),
+            action_mode=DeltaEEFPositionActionMode(),
+            obs_width=self.observation_width,
+            obs_height=self.observation_height,
         )
 
     def _format_raw_obs(self, raw_obs: dict) -> dict[str, Any]:
@@ -241,24 +401,29 @@ class RLBenchEnv(gym.Env):
             image = image[::-1, ::-1]  # rotate 180 degrees
             images[self.camera_name_mapping[camera_name]] = image
 
-        agent_pos = np.concatenate(
-            raw_obs["joint_positions"],
-            [raw_obs["gripper_open"]],
+        # Gripper pose is 7D (position + quaternion), we convert to 6D (position + euler angles)
+        eef_position = np.concatenate(
+            [
+                raw_obs["gripper_pose"][:3],
+                Rotation.from_quat(raw_obs["gripper_pose"][3:]).as_euler("xyz"),
+                raw_obs["gripper_open"],
+            ]
         )
+        robot_joints = np.array(raw_obs["joint_positions"], dtype=np.float32)
 
-        if (
-            self.obs_type == "state"
-        ):  # TODO: this can be implemented in RLBench, because the observation contains joint positions and gripper pose
-            raise NotImplementedError(
-                "'state' obs_type not implemented for RLBench. Use pixel modes instead."
-            )
+        if self.obs_type == "state":
+            obs = {
+                "agent_pos": eef_position,
+                "agent_joints": robot_joints,
+            }
 
         if self.obs_type == "pixels":
-            obs = {"pixels": image.copy()}
+            obs = {"pixels": images.copy()}
         elif self.obs_type == "pixels_agent_pos":
             obs = {
-                "pixels": image.copy(),
-                "agent_pos": agent_pos,
+                "pixels": images.copy(),
+                "agent_pos": eef_position,
+                "agent_joints": robot_joints,
             }
         else:
             raise NotImplementedError(
@@ -310,11 +475,32 @@ class RLBenchEnv(gym.Env):
                 f"Expected action to be 1-D (shape (action_dim,)), "
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
-        raw_obs, reward, done, truncated, info = self._env.step(action)
+
+        # If the action has 7 elements (pose + euler angles + gripper), convert to 8 elements (pose + quaternion + gripper)
+        if action.shape[0] == 7:
+            action = np.concatenate(
+                [
+                    action[:3],  # position
+                    Rotation.from_euler("xyz", action[3:6]).as_quat(),  # rotation as quaternion
+                    action[-1:],  # Only last position is gripper
+                ]
+            )
+
+        # Force unit quaternion
+        quat = action[3:7]
+        quat = quat / np.linalg.norm(quat)
+        action[3:7] = quat
+
+        # Perform step
+        try:
+            raw_obs, reward, done, truncated, info = self._env.step(action)
+        except (InvalidActionError, BoundaryError, WaypointError, TaskEnvironmentError) as e:
+            print(f"Error occurred while stepping the environment: {e}")
+            raw_obs, reward, done, truncated, info = None, 0.0, True, True, {}
 
         # Determine whether the task was successful
-        is_success = bool(info.get("success", 0))
-        terminated = done or is_success
+        is_success = bool(info.get("is_success", False))
+        terminated = done or is_success or truncated
         info.update(
             {
                 "task": self.task,

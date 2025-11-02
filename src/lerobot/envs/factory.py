@@ -18,7 +18,7 @@ import importlib
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, RLBenchEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -28,6 +28,8 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "libero":
         return LiberoEnv(**kwargs)
+    elif env_type == "rlbench":
+        return RLBenchEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
