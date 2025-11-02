@@ -442,6 +442,7 @@ def concatenate_media_files(
         tmp_concatenate_path, mode="r", format="concat", options={"safe": "0"}
     )  # safe = 0 allows absolute paths as well as relative paths
 
+    # Using an intermediate container to store the concatenated media file is necessary to avoid inplace concatenation read-write race conditions.
     with tempfile.NamedTemporaryFile(suffix=output_media_path.suffix, delete=False) as tmp_named_file:
         tmp_output_media_path = tmp_named_file.name
 
@@ -461,6 +462,7 @@ def concatenate_media_files(
             stream_map[input_stream.index].time_base = input_stream.time_base
 
     # Demux + remux packets (no re-encode)
+    last_dts = None
     for packet in input_container.demux():
         # Skip packets from un-mapped streams
         if packet.stream.index not in stream_map:
@@ -469,6 +471,16 @@ def concatenate_media_files(
         # Skip demux flushing packets
         if packet.dts is None:
             continue
+        else:
+            # Enforce strictly increasing decoding timestamps (DTS)
+            if last_dts is not None and packet.dts <= last_dts:
+                shift = last_dts - packet.dts + 1
+                packet.dts += shift
+                packet.pts += shift  # Presenting timestamps (PTS) are the same as DTS here
+                logging.warning(
+                    f"Non-monotonic DTS; previous: {last_dts}, current: {packet.dts - shift}; changing to {packet.dts}. This may result in incorrect timestamps in the output file."
+                )
+            last_dts = packet.dts
 
         output_stream = stream_map[packet.stream.index]
         packet.stream = output_stream
