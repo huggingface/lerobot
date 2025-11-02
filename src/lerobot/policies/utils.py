@@ -22,6 +22,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.utils import build_dataset_frame
 from lerobot.processor import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -198,3 +200,42 @@ def make_robot_action(action_tensor: PolicyAction, ds_features: dict[str, dict])
         f"{name}": float(action_tensor[i]) for i, name in enumerate(action_names)
     }
     return act_processed_policy
+
+
+def raise_feature_mismatch_error(
+    provided_features: set[str],
+    expected_features: set[str],
+) -> None:
+    """
+    Raises a standardized ValueError for feature mismatches between dataset/environment and policy config.
+    """
+    missing = expected_features - provided_features
+    extra = provided_features - expected_features
+    # TODO (jadechoghari): provide a dynamic rename map suggestion to the user.
+    raise ValueError(
+        f"Feature mismatch between dataset/environment and policy config.\n"
+        f"- Missing features: {sorted(missing) if missing else 'None'}\n"
+        f"- Extra features: {sorted(extra) if extra else 'None'}\n\n"
+        f"Please ensure your dataset and policy use consistent feature names.\n"
+        f"If your dataset uses different observation keys (e.g., cameras named differently), "
+        f"use the `--rename_map` argument, for example:\n"
+        f'  --rename_map=\'{{"observation.images.left": "observation.images.camera1", '
+        f'"observation.images.top": "observation.images.camera2"}}\''
+    )
+
+
+def validate_visual_features_consistency(
+    cfg: PreTrainedConfig,
+    features: dict[str, PolicyFeature],
+) -> None:
+    """
+    Validates visual feature consistency between a policy config and provided dataset/environment features.
+
+    Args:
+        cfg (PreTrainedConfig): The model or policy configuration containing input_features and type.
+        features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects.
+    """
+    expected_visuals = {k for k, v in cfg.input_features.items() if v.type == FeatureType.VISUAL}
+    provided_visuals = {k for k, v in features.items() if v.type == FeatureType.VISUAL}
+    if not provided_visuals.issubset(expected_visuals):
+        raise_feature_mismatch_error(provided_visuals, expected_visuals)
