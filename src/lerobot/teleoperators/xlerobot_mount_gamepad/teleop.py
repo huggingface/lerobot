@@ -1,5 +1,16 @@
 #!/usr/bin/env python
 
+# Example teleoperation command for XLeRobot mount with this gamepad teleop:
+#
+# lerobot-teleoperate \
+#     --robot.type=xlerobot_mount \
+#     --robot.port=/dev/ttyACM5 \
+#     --robot.id=mount \
+#     --teleop.type=xlerobot_mount_gamepad \
+#     --teleop.joystick_index=0 \
+#     --teleop.id=gamepad \
+#     --display_data=true
+
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,13 +25,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+import draccus
+import numpy as np
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from .config import XLeRobotMountGamepadTeleopConfig
+
+
+@dataclass
+class MountGamepadCalibration:
+    pan_axis: int
+    tilt_axis: int
+    invert_pan: bool
+    invert_tilt: bool
 
 
 class XLeRobotMountGamepadTeleop(Teleoperator):
@@ -40,6 +63,11 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         self._current_tilt: float | None = None
         self._pan_bias = 0.0
         self._tilt_bias = 0.0
+        calibration = self.calibration if isinstance(self.calibration, MountGamepadCalibration) else None
+        self.calibration: MountGamepadCalibration | None = calibration
+        self._calibrated = calibration is not None
+        if calibration is not None:
+            self._apply_calibration_to_config()
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -53,8 +81,6 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         return {}
 
     def connect(self, calibrate: bool = True) -> None:
-        del calibrate  # not used for gamepad teleop
-
         try:
             import pygame
         except ImportError as exc:
@@ -80,20 +106,106 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         # Reset current readings; they will be synced from observations if available
         self._current_pan = None
         self._current_tilt = None
-        # Record neutral stick offsets so we can compensate for non-zero resting values
-        self._pan_bias = self._joystick.get_axis(self.config.pan_axis)
-        self._tilt_bias = self._joystick.get_axis(self.config.tilt_axis)
+        self._pan_bias = 0.0
+        self._tilt_bias = 0.0
+
+        if calibrate and not self.is_calibrated:
+            self.calibrate()
+        elif self.calibration is not None:
+            self._apply_calibration_to_config()
+            self._calibrated = True
+
+        self._sync_biases()
 
     @property
     def is_connected(self) -> bool:
         return self._joystick is not None
 
     def calibrate(self) -> None:
-        return None
+        if not self.is_connected or self._pygame is None:
+            raise DeviceNotConnectedError("Mount gamepad teleoperator is not connected.")
+
+        pygame = self._pygame
+        joystick = self._joystick
+
+        axis_threshold = 0.4
+        release_threshold = 0.2
+        poll_interval = 0.05
+
+        if self.calibration is not None:
+            user_input = input(
+                "Press ENTER to use existing calibration file associated with this teleoperator, "
+                "or type 'c' and press ENTER to run calibration: "
+            )
+            if user_input.strip().lower() != "c":
+                print("Using saved calibration.")
+                self._apply_calibration_to_config()
+                self._calibrated = True
+                self._sync_biases()
+                return
+
+        print("\nStarting gamepad calibration for XLeRobot mount.")
+        print("Follow the prompts. Move the indicated control and hold until it is detected.")
+
+        def read_axes() -> list[float]:
+            pygame.event.pump()
+            return [joystick.get_axis(i) for i in range(joystick.get_numaxes())]
+
+        def wait_for_axis(prompt: str) -> tuple[int, float]:
+            print(f"- {prompt}")
+            baseline = read_axes()
+            while True:
+                time.sleep(poll_interval)
+                current = read_axes()
+                if not current:
+                    continue
+                diffs = [current[i] - baseline[i] for i in range(len(current))]
+                axis_index = max(range(len(diffs)), key=lambda idx: abs(diffs[idx]))
+                change = diffs[axis_index]
+                if abs(change) >= axis_threshold:
+                    detected_value = current[axis_index]
+                    print(f"  detected axis {axis_index} with value {detected_value:+.2f}")
+                    while True:
+                        time.sleep(poll_interval)
+                        pygame.event.pump()
+                        value = joystick.get_axis(axis_index)
+                        if abs(value - baseline[axis_index]) <= release_threshold:
+                            break
+                    return axis_index, detected_value
+
+        pan_axis, pan_value = wait_for_axis("Move the right stick to the RIGHT and hold it")
+
+        while True:
+            tilt_axis, tilt_value = wait_for_axis("Move the right stick UP and hold it")
+            if tilt_axis == pan_axis:
+                print("  detected the same axis as pan; release the stick and try moving straight up.")
+                continue
+            break
+
+        self.config.pan_axis = pan_axis
+        self.config.invert_pan = pan_value < 0
+        self.config.tilt_axis = tilt_axis
+        self.config.invert_tilt = tilt_value < 0
+
+        print("\nCalibration results:")
+        print(f"  pan_axis -> axis {self.config.pan_axis} | invert_pan={self.config.invert_pan}")
+        print(f"  tilt_axis -> axis {self.config.tilt_axis} | invert_tilt={self.config.invert_tilt}")
+
+        self.calibration = MountGamepadCalibration(
+            pan_axis=self.config.pan_axis,
+            tilt_axis=self.config.tilt_axis,
+            invert_pan=self.config.invert_pan,
+            invert_tilt=self.config.invert_tilt,
+        )
+        self._save_calibration()
+        print(f"Calibration saved to {self.calibration_fpath}")
+
+        self._calibrated = True
+        self._sync_biases()
 
     @property
     def is_calibrated(self) -> bool:
-        return True
+        return self._calibrated
 
     def configure(self) -> None:
         return None
@@ -210,3 +322,42 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         if abs(value) < self.config.deadzone:
             return 0.0
         return max(-1.0, min(1.0, value))
+
+    def _sync_biases(self) -> None:
+        if not self.is_connected or self._joystick is None:
+            self._pan_bias = 0.0
+            self._tilt_bias = 0.0
+            return
+
+        num_axes = self._joystick.get_numaxes()
+        if self.config.pan_axis >= num_axes or self.config.tilt_axis >= num_axes:
+            raise RuntimeError(
+                "Calibrated axis index exceeds available joystick axes. "
+                "Re-run calibration for the gamepad teleoperator."
+            )
+
+        self._pan_bias = self._joystick.get_axis(self.config.pan_axis)
+        self._tilt_bias = self._joystick.get_axis(self.config.tilt_axis)
+
+    def _apply_calibration_to_config(self) -> None:
+        if self.calibration is None:
+            return
+        self.config.pan_axis = self.calibration.pan_axis
+        self.config.tilt_axis = self.calibration.tilt_axis
+        self.config.invert_pan = self.calibration.invert_pan
+        self.config.invert_tilt = self.calibration.invert_tilt
+
+    def _load_calibration(self, fpath: Path | None = None) -> None:
+        fpath = self.calibration_fpath if fpath is None else fpath
+        with open(fpath) as f, draccus.config_type("json"):
+            calibration = draccus.load(MountGamepadCalibration, f)
+        self.calibration = calibration
+        self._apply_calibration_to_config()
+        self._calibrated = True
+
+    def _save_calibration(self, fpath: Path | None = None) -> None:
+        if self.calibration is None:
+            return
+        fpath = self.calibration_fpath if fpath is None else fpath
+        with open(fpath, "w") as f, draccus.config_type("json"):
+            draccus.dump(self.calibration, f, indent=4)
