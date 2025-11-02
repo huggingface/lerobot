@@ -269,12 +269,14 @@ class PortAudioMicrophone(Microphone):
 
         # Create and start an audio input stream with a recording callback
         # Remark: this is done in a separate process so that audio recording is not impacted by the main thread CPU usage, especially the busy_wait function.
+        process_init_event = process_Event()
         self.record_process = Process(
             target=self._record_process,
             args=(
                 self.microphone_index,
                 self.sample_rate,
                 self.channels,
+                process_init_event,
                 self.record_start_event,
                 self.record_stop_event,
                 self.record_close_event,
@@ -288,10 +290,10 @@ class PortAudioMicrophone(Microphone):
         self.record_process.daemon = True
         self.record_process.start()
 
-        time.sleep(
-            0.1
+        is_init = process_init_event.wait(
+            timeout=5.0
         )  # Wait for the recording process to be started, and to potentially raise an error on failure.
-        if not self.is_connected:
+        if not self.is_connected or not is_init:
             raise RuntimeError(f"Error connecting microphone {self.microphone_index}.")
 
         logger.info(f"{self} connected.")
@@ -348,6 +350,7 @@ class PortAudioMicrophone(Microphone):
         microphone_index,
         sample_rate,
         channels,
+        process_init_event,
         record_start_event,
         record_stop_event,
         record_close_event,
@@ -386,6 +389,7 @@ class PortAudioMicrophone(Microphone):
             # never_drop_input=True, # Disabled as it generates an error for some devices
             callback=audio_callback,
         )
+        process_init_event.set()
 
         while True:
             start_flag = record_start_event.wait(timeout=0.1)
