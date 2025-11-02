@@ -355,7 +355,11 @@ def record_loop(
         async_microphones_start_recording(robot.microphones)
 
     # Fill audio buffers if needed
-    if robot.microphones and (policy is not None or dataset is not None):
+    if (
+        robot.microphones
+        and (policy is not None or dataset is not None)
+        and DEFAULT_INITIAL_AUDIO_BUFFER_DURATION > 0.0
+    ):
         # This initial wait might be longer than the audio chunk duration to
         # (1) ensure that the audio buffers are filled with enough data
         # (2) add additional initial samples to the dataset in case of variable audio chunk duration during training

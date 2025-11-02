@@ -173,12 +173,14 @@ class TouchLabSensor(Microphone):
 
         # Create and start an audio input stream with a recording callback
         # Remark: this is done in a separate process so that audio recording is not impacted by the main thread CPU usage, especially the busy_wait function.
+        process_init_event = process_Event()
         self.record_process = Process(
             target=self._record_process,
             args=(
                 self.sensor_port,
                 self.baud_rate,
                 self.channels,
+                process_init_event,
                 self.record_start_event,
                 self.record_stop_event,
                 self.record_close_event,
@@ -191,10 +193,10 @@ class TouchLabSensor(Microphone):
         self.record_process.daemon = True
         self.record_process.start()
 
-        time.sleep(
-            0.1
+        is_init = process_init_event.wait(
+            timeout=5.0
         )  # Wait for the recording process to be started, and to potentially raise an error on failure.
-        if not self.is_connected:
+        if not self.is_connected or not is_init:
             raise RuntimeError(f"Error connecting sensor connected to {self.sensor_port}.")
 
         logger.info(f"{self} connected.")
@@ -204,6 +206,7 @@ class TouchLabSensor(Microphone):
         sensor_port,
         baud_rate,
         channels,
+        process_init_event,
         record_start_event,
         record_stop_event,
         record_close_event,
@@ -232,6 +235,8 @@ class TouchLabSensor(Microphone):
 
                     write_queue.put_nowait(indata[:, channels_index])
                     read_shared_array.write(local_read_shared_array, indata[:, channels_index])
+
+        process_init_event.set()
 
         while True:
             start_flag = record_start_event.wait(timeout=0.1)
