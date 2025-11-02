@@ -85,6 +85,7 @@ Here, we define standard dimensions for end-effector position control with gripp
 """
 ACTION_DIM = 8  # EEF pose+gripper (dim=8, [Δx Δy Δz Δqx Δqy Δqz Δqw gripper])
 OBS_DIM = 7  # EEF pose+gripper (dim=7, [x y z rx ry rz gripper])
+OBS_JOINTS_DIM = 7  # Robot joint positions (7 joints for Panda robot)
 
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
@@ -315,7 +316,7 @@ class RLBenchEnv(gym.Env):
         self.camera_name_mapping = camera_name_mapping
 
         self._env = self._make_envs_task(self.task)
-        self._max_episode_steps = 500  # TODO: make configurable depending on task suite?
+        self._max_episode_steps = 300  # TODO: make configurable depending on task suite?
 
         # Get task description
         task_name = self.task.__name__ if self.task is not None else ""
@@ -395,6 +396,17 @@ class RLBenchEnv(gym.Env):
         )
 
     def _format_raw_obs(self, raw_obs: dict) -> dict[str, Any]:
+        if raw_obs is None:
+            # Return empty observation if raw_obs is None (e.g., due to an error in step)
+            return {
+                "pixels": {
+                    cam: np.zeros((self.observation_height, self.observation_width, 3), dtype=np.uint8)
+                    for cam in self.camera_name
+                },
+                "agent_pos": np.zeros(OBS_DIM, dtype=np.float64),
+                "agent_joints": np.zeros(OBS_JOINTS_DIM, dtype=np.float64),
+            }
+
         images = {}
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
