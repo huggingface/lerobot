@@ -16,6 +16,7 @@
 """Convert Behavior Dataset to LeRobotDataset v3.0 format"""
 
 import argparse
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -327,10 +328,6 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int, task_
     return episods_metadata
 
 
-import json
-from pathlib import Path
-
-
 def infer_task_episode_ranges(episodes_jsonl_path: Path) -> dict:
     """
     Parse the Behavior-1K episodes.jsonl metadata and infer contiguous episode ranges per unique task.
@@ -491,9 +488,6 @@ def convert_episodes_metadata(
     write_stats(stats, new_root)
 
 
-from pathlib import Path
-
-
 def convert_dataset_local(
     data_path: Path,
     new_repo: Path,
@@ -525,20 +519,18 @@ def convert_dataset_local(
     print(f"🔹 Starting conversion for task {task_id}")
     print(f"Input root: {root}")
     print(f"Output root: {new_root}")
-    STEP = 10
     # Infer task episode ranges
-    EPISODES_META_PATH = root / "meta" / "episodes.jsonl"
-    task_ranges = infer_task_episode_ranges(EPISODES_META_PATH)
-    # def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb, meta_path, task_id: int, task_ranges, step):
+    episodes_meta_path = root / "meta" / "episodes.jsonl"
+    task_ranges = infer_task_episode_ranges(episodes_meta_path)
     convert_info(
         root,
         new_root,
         data_file_size_in_mb,
         video_file_size_in_mb,
-        EPISODES_META_PATH,
+        episodes_meta_path,
         task_id,
         task_ranges,
-        STEP,
+        step=10,
     )
     convert_tasks(root, new_root, task_id)
     episodes_metadata = convert_data(root, new_root, data_file_size_in_mb, task_index=task_id)
