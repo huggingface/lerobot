@@ -643,6 +643,12 @@ class VideoEncodingManager:
                     else:
                         logging.info("Recording stopped. Encoding remaining episodes...")
 
+                # Flush metadata buffer and close writers before encoding so episodes can be loaded
+                self.dataset.meta._flush_metadata_buffer()
+                if self.dataset.meta.writer is not None:
+                    self.dataset.meta.writer.close()
+                    self.dataset.meta.writer = None
+                
                 start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
                 end_ep = self.dataset.num_episodes
                 logging.info(
