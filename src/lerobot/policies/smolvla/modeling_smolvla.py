@@ -249,12 +249,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
-    def init_rtc_processor(self, verbose: bool = False):
-        """Initialize RTC processor with optional verbose logging.
-
-        Args:
-            verbose: Enable verbose debug logging in RTCProcessor (currently unused)
-        """
+    def init_rtc_processor(self):
+        """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None
 
         if self.config.rtc_config is not None and self.config.rtc_config.enabled:
