@@ -263,7 +263,6 @@ class RTCProcessor:
         # Record debug information (all params except x_t which is recorded externally)
         self.track(
             time=time,
-            v_t=v_t,
             x1_t=x1_t,
             correction=correction,
             err=err,
