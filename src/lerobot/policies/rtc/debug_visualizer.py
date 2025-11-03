@@ -21,7 +21,7 @@ import torch
 from matplotlib.figure import Figure
 from torch import Tensor
 
-from lerobot.policies.rtc.debug_handler import Tracker
+from lerobot.policies.rtc.debug_tracker import Tracker
 
 
 class RTCDebugVisualizer:
