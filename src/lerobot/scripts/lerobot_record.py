@@ -166,10 +166,10 @@ class DatasetRecordConfig:
     video_encoding_batch_size: int = 1
     # If True, postpone video encoding until the end of recording. Only PNGs will be saved during recording.
     # This allows faster recording with batch post-processing of all episodes.
-    defer_video_encoding: bool = False
+    defer_video_encoding: bool = True
     # If True, automatically encode all deferred videos when recording finishes or exits.
     # If False, PNGs remain on disk and can be encoded later using encode_pending_videos().
-    encode_on_exit: bool = True
+    encode_on_exit: bool = False
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
 

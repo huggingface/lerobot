@@ -555,8 +555,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        defer_video_encoding: bool = False,
-        encode_on_exit: bool = True,
+        defer_video_encoding: bool = True,
+        encode_on_exit: bool = False,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -1552,8 +1552,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        defer_video_encoding: bool = False,
-        encode_on_exit: bool = True,
+        defer_video_encoding: bool = True,
+        encode_on_exit: bool = False,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
