@@ -53,7 +53,7 @@ class RTCProcessor:
             )
 
     # ====================== Tracker Proxy Methods ======================
-    def track_debug(
+    def track(
         self,
         time: float | Tensor,
         x_t: Tensor | None = None,
@@ -261,7 +261,7 @@ class RTCProcessor:
             err = err.squeeze(0)
 
         # Record debug information (all params except x_t which is recorded externally)
-        self.track_debug(
+        self.track(
             time=time,
             v_t=v_t,
             x1_t=x1_t,
