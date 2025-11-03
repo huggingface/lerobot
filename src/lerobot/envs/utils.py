@@ -253,7 +253,7 @@ def _download_hub_file(
     repo_id, revision, file_path = _parse_hub_url(cfg_str)
 
     try:
-        local_file = hf_hub_download(repo_id=repo_id, filename=file_path, revision=revision)
+        local_file = hf_hub_download(repo_id=repo_id, filename=file_path, revision=revision, cache_dir=hub_cache_dir)
     except Exception as e:
         # fallback to snapshot download
         snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
