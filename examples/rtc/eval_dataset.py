@@ -21,6 +21,7 @@ Usage:
 import logging
 import os
 import random
+import sys
 from dataclasses import dataclass, field
 
 import matplotlib.pyplot as plt
@@ -40,8 +41,13 @@ from lerobot.utils.hub import HubMixin
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True,
 )
 logger = logging.getLogger(__name__)
+
+# Ensure logs are flushed immediately
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 
 def set_seed(seed: int):
