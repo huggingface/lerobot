@@ -71,7 +71,24 @@ echo ""
 # 1. Start FastAPI backend (Rerun will start when recording begins)
 echo -e "${BLUE}[1/2]${NC} Starting FastAPI backend on port 8000..."
 cd "$SCRIPT_DIR"
-python web_record_server.py > /tmp/openarms_backend.log 2>&1 &
+
+# Use Python from current environment (if lerobot env is active, it will use that)
+# Otherwise, check if we need to use conda run
+if [[ "$CONDA_DEFAULT_ENV" == "lerobot" ]]; then
+    # Already in lerobot environment
+    echo -e "${GREEN}✓ Using active lerobot environment${NC}"
+    PYTHON_CMD="python"
+elif command -v conda >/dev/null 2>&1 && conda env list | grep -q "^lerobot "; then
+    # lerobot env exists but not active - use conda run
+    echo -e "${YELLOW}Using conda run with lerobot environment...${NC}"
+    PYTHON_CMD="conda run -n lerobot --no-capture-output python"
+else
+    # Fall back to system python
+    echo -e "${YELLOW}⚠ Warning: lerobot environment not found, using system python${NC}"
+    PYTHON_CMD="python"
+fi
+
+$PYTHON_CMD web_record_server.py > /tmp/openarms_backend.log 2>&1 &
 BACKEND_PID=$!
 sleep 3
 

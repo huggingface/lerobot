@@ -17,7 +17,7 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pinocchio as pin
@@ -168,9 +168,9 @@ class OpenArmsFollower(Robot):
         self.bus_left.connect()
         
         # Run calibration if needed
-        if not self.is_calibrated and calibrate:
+        if calibrate:
             logger.info(
-                "No calibration found or calibration mismatch. Running calibration..."
+                "No calibration found or overwriting calibration. Running calibration..."
             )
             self.calibrate()
         
@@ -336,7 +336,12 @@ class OpenArmsFollower(Robot):
         
         return obs_dict
 
-    def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+    def send_action(
+        self, 
+        action: Dict[str, Any], 
+        custom_kp: Optional[Dict[str, float]] = None,
+        custom_kd: Optional[Dict[str, float]] = None
+    ) -> Dict[str, Any]:
         """
         Send action command to robot.
         
@@ -344,6 +349,8 @@ class OpenArmsFollower(Robot):
         
         Args:
             action: Dictionary with motor positions (e.g., "right_joint_1.pos", "left_joint_2.pos")
+            custom_kp: Optional custom kp gains per motor (e.g., {"right_joint_1": 120.0, "left_joint_2": 150.0})
+            custom_kd: Optional custom kd gains per motor (e.g., {"right_joint_1": 1.5, "left_joint_2": 2.0})
             
         Returns:
             The action actually sent (potentially clipped)
@@ -360,7 +367,7 @@ class OpenArmsFollower(Robot):
                 motor_name = key.removesuffix(".pos")
                 if motor_name.startswith("right_"):
                     # Remove "right_" prefix for bus access
-                    goal_pos_right[motor_name.removeprefix("right_")] = val
+                    goal_pos_right[motor_name.removeprefix("right_")] = val # do we also do this read in other robots in send action?
                 elif motor_name.startswith("left_"):
                     # Remove "left_" prefix for bus access
                     goal_pos_left[motor_name.removeprefix("left_")] = val
@@ -410,8 +417,19 @@ class OpenArmsFollower(Robot):
             commands_right = {}
             for motor_name, position_degrees in goal_pos_right.items():
                 idx = motor_index.get(motor_name, 0)
-                kp = self.config.position_kp[idx] if isinstance(self.config.position_kp, list) else self.config.position_kp
-                kd = self.config.position_kd[idx] if isinstance(self.config.position_kd, list) else self.config.position_kd
+                
+                # Use custom gains if provided, otherwise use config defaults
+                full_motor_name = f"right_{motor_name}"
+                if custom_kp is not None and full_motor_name in custom_kp:
+                    kp = custom_kp[full_motor_name]
+                else:
+                    kp = self.config.position_kp[idx] if isinstance(self.config.position_kp, list) else self.config.position_kp
+                
+                if custom_kd is not None and full_motor_name in custom_kd:
+                    kd = custom_kd[full_motor_name]
+                else:
+                    kd = self.config.position_kd[idx] if isinstance(self.config.position_kd, list) else self.config.position_kd
+                
                 commands_right[motor_name] = (kp, kd, position_degrees, 0.0, 0.0)
             self.bus_right._mit_control_batch(commands_right)
         
@@ -420,8 +438,19 @@ class OpenArmsFollower(Robot):
             commands_left = {}
             for motor_name, position_degrees in goal_pos_left.items():
                 idx = motor_index.get(motor_name, 0)
-                kp = self.config.position_kp[idx] if isinstance(self.config.position_kp, list) else self.config.position_kp
-                kd = self.config.position_kd[idx] if isinstance(self.config.position_kd, list) else self.config.position_kd
+                
+                # Use custom gains if provided, otherwise use config defaults
+                full_motor_name = f"left_{motor_name}"
+                if custom_kp is not None and full_motor_name in custom_kp:
+                    kp = custom_kp[full_motor_name]
+                else:
+                    kp = self.config.position_kp[idx] if isinstance(self.config.position_kp, list) else self.config.position_kp
+                
+                if custom_kd is not None and full_motor_name in custom_kd:
+                    kd = custom_kd[full_motor_name]
+                else:
+                    kd = self.config.position_kd[idx] if isinstance(self.config.position_kd, list) else self.config.position_kd
+                
                 commands_left[motor_name] = (kp, kd, position_degrees, 0.0, 0.0)
             self.bus_left._mit_control_batch(commands_left)
         

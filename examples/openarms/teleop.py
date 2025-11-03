@@ -14,8 +14,8 @@ from lerobot.teleoperators.openarms.config_openarms_leader import OpenArmsLeader
 
 
 follower_config = OpenArmsFollowerConfig(
-    port_left="can0",   # CAN interface for follower left arm
-    port_right="can1",  # CAN interface for follower right arm
+    port_left="can2",   # CAN interface for follower left arm
+    port_right="can3",  # CAN interface for follower right arm
     can_interface="socketcan",  # Linux SocketCAN
     id="openarms_follower",
     disable_torque_on_disconnect=True,
@@ -24,8 +24,8 @@ follower_config = OpenArmsFollowerConfig(
 
 
 leader_config = OpenArmsLeaderConfig(
-    port_left="can2",   # CAN interface for leader left arm
-    port_right="can3",  # CAN interface for leader right arm
+    port_left="can0",   # CAN interface for leader left arm
+    port_right="can1",  # CAN interface for leader right arm
     can_interface="socketcan",  # Linux SocketCAN
     id="openarms_leader",
     manual_control=True,  # Enable manual control (torque disabled)
@@ -89,39 +89,23 @@ loop_times = []
 start_time = time.perf_counter()
 last_print_time = start_time
 
-# Detailed timing accumulators
-timing_stats = {
-    "leader_read": [],
-    "filter_data": [],
-    "follower_write": [],
-}
-
 try:
     while True:
         loop_start = time.perf_counter()
         
         # Get action from leader
-        t0 = time.perf_counter()
         leader_action = leader.get_action()
-        t1 = time.perf_counter()
-        timing_stats["leader_read"].append((t1 - t0) * 1000)
         
         # Filter to only position data for all joints (both arms)
-        t2 = time.perf_counter()
         joint_action = {}
         for joint in all_joints:
             pos_key = f"{joint}.pos"
             if pos_key in leader_action:
                 joint_action[pos_key] = leader_action[pos_key]
-        t3 = time.perf_counter()
-        timing_stats["filter_data"].append((t3 - t2) * 1000)
         
         # Send action to follower (both arms)
-        t4 = time.perf_counter()
         if joint_action:
             follower.send_action(joint_action)
-        t5 = time.perf_counter()
-        timing_stats["follower_write"].append((t5 - t4) * 1000)
         
         # Measure loop time
         loop_end = time.perf_counter()
@@ -138,31 +122,12 @@ try:
                 max_hz = 1.0 / min_time if min_time > 0 else 0
                 min_hz = 1.0 / max_time if max_time > 0 else 0
                 
-                # Calculate average timing for each operation
-                timing_avgs = {
-                    k: (sum(v) / len(v) if v else 0.0) 
-                    for k, v in timing_stats.items()
-                }
-                
-                # Print detailed timing breakdown
-                print(f"\n{'='*70}")
-                print(f"Teleoperation - {current_hz:.1f} Hz | Total: {avg_time*1000:.1f} ms")
-                print(f"{'='*70}")
-                print(f"  Leader Read:       {timing_avgs['leader_read']:6.2f} ms")
-                print(f"  Filter Data:       {timing_avgs['filter_data']:6.2f} ms")
-                print(f"  Follower Write:    {timing_avgs['follower_write']:6.2f} ms")
-                print(f"  ───────────────────────────────")
-                total_accounted = sum(timing_avgs.values())
-                print(f"  Accounted:         {total_accounted:6.2f} ms")
-                print(f"  Unaccounted:       {avg_time*1000 - total_accounted:6.2f} ms")
-                print(f"  ───────────────────────────────")
-                print(f"  Hz Range:          {min_hz:.1f} - {max_hz:.1f} Hz")
-                print(f"{'='*70}\n")
+                print(f"[Hz Stats] Avg: {current_hz:.1f} Hz | "
+                      f"Range: {min_hz:.1f}-{max_hz:.1f} Hz | "
+                      f"Avg loop time: {avg_time*1000:.1f} ms")
                 
                 # Reset for next measurement window
                 loop_times = []
-                for key in timing_stats:
-                    timing_stats[key] = []
                 last_print_time = loop_end
             
 except KeyboardInterrupt:

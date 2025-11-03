@@ -28,8 +28,8 @@ def main():
 
     # Configuration
     follower_config = OpenArmsFollowerConfig(
-        port_left="can0",
-        port_right="can1",
+        port_left="can2",
+        port_right="can3",
         can_interface="socketcan",
         id="openarms_follower",
         disable_torque_on_disconnect=True,
@@ -37,8 +37,8 @@ def main():
     )
 
     leader_config = OpenArmsLeaderConfig(
-        port_left="can2",
-        port_right="can3",
+        port_left="can0",
+        port_right="can1",
         can_interface="socketcan",
         id="openarms_leader",
         manual_control=False,  # Enable torque control for gravity compensation
@@ -49,8 +49,8 @@ def main():
     follower = OpenArmsFollower(follower_config)
     leader = OpenArmsLeader(leader_config)
 
-    follower.connect(calibrate=True)
-    leader.connect(calibrate=True)
+    follower.connect()
+    leader.connect()
 
     # URDF is automatically loaded in the leader constructor
     if leader.pin_robot is None:
