@@ -253,7 +253,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None
 
-        if self.config.rtc_config is not None and self.config.rtc_config.enabled:
+        # Lets create processor if the config provided
+        # If RTC is not enabled - we still can track the denoising data
+        if self.config.rtc_config is not None:
             self.rtc_processor = RTCProcessor(self.config.rtc_config)
 
             # In case of calling init_rtc_processor after the model is created
