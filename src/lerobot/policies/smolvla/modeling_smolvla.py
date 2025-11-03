@@ -831,7 +831,7 @@ class VLAFlowMatching(nn.Module):
 
             # Record x_t after Euler step (other params are recorded in rtc_processor.denoise_step)
             if self._rtc_enabled() and correction is not None:
-                self.rtc_processor.track_debug(time=time, x_t=x_t)
+                self.rtc_processor.track(time=time, x_t=x_t)
 
             # Visualize x_t using plot_waypoints - accumulate all denoise steps
             # Use provided axes or create new ones
