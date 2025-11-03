@@ -185,6 +185,11 @@ _Replace `[...]` with your desired features._
 For a full list of optional dependencies, see:
 https://pypi.org/project/lerobot/
 
+> [!NOTE]
+> For lerobot 0.4.0, if you want to install libero or pi tags, you will have to do: `pip install "lerobot[pi,libero]@git+https://github.com/huggingface/lerobot.git"`.
+>
+> This will be solved in the next patch release
+
 ### Weights & Biases
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
@@ -337,7 +342,3 @@ If you want, you can cite this work with:
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)
-
-```
-
-```
