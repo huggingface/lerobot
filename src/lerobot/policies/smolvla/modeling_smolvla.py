@@ -55,11 +55,15 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 import math
 from collections import deque
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
@@ -67,6 +71,9 @@ from lerobot.policies.utils import (
 )
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.utils import get_safe_dtype
+
+# Make plot_waypoints easily accessible
+plot_waypoints = RTCDebugVisualizer.plot_waypoints
 
 
 def create_sinusoidal_pos_embedding(
@@ -232,8 +239,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-
-        self.model = VLAFlowMatching(config)
+        self.init_rtc_processor()
+        self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
         self.reset()
 
     def reset(self):
@@ -242,10 +249,27 @@ class SmolVLAPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
+    def init_rtc_processor(self, verbose: bool = False):
+        """Initialize RTC processor with optional verbose logging.
+
+        Args:
+            verbose: Enable verbose debug logging in RTCProcessor (currently unused)
+        """
+        self.rtc_processor = None
+
+        if self.config.rtc_config is not None and self.config.rtc_config.enabled:
+            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+
+            # In case of calling init_rtc_processor after the model is created
+            # We need to set the rtc_processor to the model
+            # During the normal initialization process the model is not created yet
+            if self.model is not None:
+                self.model.rtc_processor = self.rtc_processor
+
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs) -> Tensor:
         # TODO: Check if this for loop is needed.
         # Context: In fact, self.queues contains only ACTION field, and in inference, we don't have action in the batch
         # In the case of offline inference, we have the action in the batch
@@ -260,7 +284,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
+        actions = self.model.sample_actions(
+            images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
+        )
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
@@ -278,30 +304,33 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs) -> Tensor:
         self.eval()
 
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        actions = self._get_action_chunk(batch, noise)
+        actions = self._get_action_chunk(batch, noise, **kwargs)
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
+
+        assert not self._rtc_enabled(), (
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
+
         self.eval()
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
-        # querying the policy.
-        if len(self._queues[ACTION]) == 0:
+        if self._check_get_actions_condition():
             actions = self._get_action_chunk(batch, noise)
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
@@ -309,6 +338,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
+
+    def _check_get_actions_condition(self) -> bool:
+        return len(self._queues[ACTION]) == 0
+
+    def _rtc_enabled(self) -> bool:
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> dict[str, Tensor]:
         """Do a full training forward pass to compute the loss"""
@@ -471,7 +506,7 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config: SmolVLAConfig):
+    def __init__(self, config: SmolVLAConfig, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
 
@@ -485,7 +520,6 @@ class VLAFlowMatching(nn.Module):
             num_vlm_layers=self.config.num_vlm_layers,
             self_attn_every_n_layers=self.config.self_attn_every_n_layers,
             expert_width_multiplier=self.config.expert_width_multiplier,
-            device=self.config.device,
         )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
@@ -510,6 +544,12 @@ class VLAFlowMatching(nn.Module):
         self.add_image_special_tokens = self.config.add_image_special_tokens
         self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long)
         self.prefix_length = self.config.prefix_length
+        self.rtc_processor = rtc_processor
+
+        # For visualization of x_t during denoising
+        self.denoise_step_counter = 0
+        self.viz_fig = None
+        self.viz_axs = None
 
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
@@ -706,10 +746,24 @@ class VLAFlowMatching(nn.Module):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+    def sample_actions(
+        self, images, img_masks, lang_tokens, lang_masks, state, noise=None, **kwargs
+    ) -> Tensor:
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)
+
+        Args:
+            viz_xt_axs: Optional matplotlib axes for plotting x_t trajectories (array of 6 axes)
+            viz_vt_axs: Optional matplotlib axes for plotting v_t trajectories (array of 6 axes)
+            viz_x1t_axs: Optional matplotlib axes for plotting x1_t predicted state and error (array of 6 axes)
+                         When RTC is enabled, plots both x1_t (solid line) and error (orange dashed line)
+        """
         bsize = state.shape[0]
         device = state.device
+
+        # Extract visualization axes from kwargs
+        viz_xt_axs = kwargs.pop("viz_xt_axs", None)
+        viz_vt_axs = kwargs.pop("viz_vt_axs", None)
+        viz_x1t_axs = kwargs.pop("viz_x1t_axs", None)
 
         if noise is None:
             actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
@@ -734,17 +788,167 @@ class VLAFlowMatching(nn.Module):
 
         x_t = noise
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        correction = None
+        x1_t = None
+        error = None
+        use_provided_axes = viz_xt_axs is not None and viz_vt_axs is not None
+
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
-            )
+
+            # Define a closure function to properly capture expanded_time
+            # This avoids the lambda expression (E731) and loop variable binding (B023) issues
+            def denoise_step_partial_call(input_x_t, current_timestep=expanded_time):
+                return self.denoise_step(
+                    x_t=input_x_t,
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    timestep=current_timestep,
+                )
+
+            if self.config.rtc_config is not None and self.config.rtc_config.enabled:
+                inference_delay = kwargs.get("inference_delay")
+                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+                execution_horizon = kwargs.get("execution_horizon", self.config.rtc_config.execution_horizon)
+
+                v_t = self.rtc_processor.denoise_step(
+                    x_t=x_t,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    inference_delay=inference_delay,
+                    time=time,
+                    original_denoise_step_partial=denoise_step_partial_call,
+                    execution_horizon=execution_horizon,
+                )
+            else:
+                v_t = denoise_step_partial_call(x_t)
+
             # Euler step
             x_t += dt * v_t
             time += dt
+
+            # Record x_t after Euler step (other params are recorded in rtc_processor.denoise_step)
+            if (
+                self.config.rtc_config is not None
+                and self.config.rtc_config.enabled
+                and correction is not None
+            ):
+                self.rtc_processor.track_debug(time=time, x_t=x_t)
+
+            # Visualize x_t using plot_waypoints - accumulate all denoise steps
+            # Use provided axes or create new ones
+            if not use_provided_axes:
+                if self.viz_fig is None:
+                    # Create figure once on first denoise step
+                    self.viz_fig, self.viz_axs = plt.subplots(6, 1, figsize=(12, 12))
+                    self.viz_v_fig, self.viz_v_axs = plt.subplots(6, 1, figsize=(12, 12))
+                xt_axs = self.viz_axs
+                vt_axs = self.viz_v_axs
+            else:
+                xt_axs = viz_xt_axs
+                vt_axs = viz_vt_axs
+
+            # Define colors for different denoise steps (using a colormap)
+            colors = plt.cm.viridis(np.linspace(0, 1, self.config.num_steps))
+            color = colors[self.denoise_step_counter % len(colors)]
+
+            # Plot this denoise step
+            plot_waypoints(xt_axs, x_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
+
+            # Plot this denoise step
+            plot_waypoints(vt_axs, v_t, start_from=0, color=color, label=f"Step {self.denoise_step_counter}")
+
+            if correction is not None:
+                plot_waypoints(
+                    vt_axs,
+                    correction,
+                    start_from=0,
+                    color="red",
+                    label=f"Step corr {self.denoise_step_counter}",
+                )
+
+            # Plot x1_t if axes provided and RTC is enabled
+            if viz_x1t_axs is not None and x1_t is not None:
+                plot_waypoints(
+                    viz_x1t_axs,
+                    x1_t,
+                    start_from=0,
+                    color=color,
+                    label=f"x1_t Step {self.denoise_step_counter}",
+                )
+
+                # Plot error on the same axes with different color
+                if error is not None:
+                    # Use orange color for error
+                    # Handle batch dimension if present
+                    error_chunk = error[0].cpu().numpy() if len(error.shape) == 3 else error.cpu().numpy()
+
+                    num_dims = min(error_chunk.shape[-1], 6)
+                    for j in range(num_dims):
+                        viz_x1t_axs[j].plot(
+                            np.arange(0, error_chunk.shape[0]),
+                            error_chunk[:, j],
+                            color="orange",
+                            linestyle="--",
+                            alpha=0.7,
+                            label=f"error Step {self.denoise_step_counter}",
+                        )
+
+            self.denoise_step_counter += 1
+
+        # Save visualization of x_t denoise steps (only if using internal figures)
+        if not use_provided_axes and self.viz_fig is not None:
+            plt.figure(self.viz_fig.number)
+
+            xt_name = "smolvla_x_t_denoise_steps.png"
+            v_name = "smolvla_v_denoise_steps.png"
+
+            if self.config.rtc_config is not None and self.config.rtc_config.enabled:
+                xt_name = "smolvla_x_t_with_rtc_denoise_steps.png"
+                v_name = "smolvla_v_with_rtc_denoise_steps.png"
+
+                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+
+                if prev_chunk_left_over is not None:
+                    plot_waypoints(
+                        self.viz_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                    )
+
+            plt.savefig(xt_name)
+            plt.close(self.viz_fig)
+
+            # Reset for next inference
+            self.viz_fig = None
+            self.viz_axs = None
+            self.denoise_step_counter = 0
+
+            plt.figure(self.viz_v_fig.number)
+            plt.savefig(v_name)
+            plt.close(self.viz_v_fig)
+
+            self.viz_v_fig = None
+            self.viz_v_axs = None
+
+        # Plot ground truth on provided axes if available
+        if use_provided_axes:
+            prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+            if (
+                prev_chunk_left_over is not None
+                and self.config.rtc_config is not None
+                and self.config.rtc_config.enabled
+            ):
+                plot_waypoints(
+                    viz_xt_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                )
+                # Also plot ground truth on x1_t axes if provided
+                if viz_x1t_axs is not None:
+                    plot_waypoints(
+                        viz_x1t_axs, prev_chunk_left_over, start_from=0, color="red", label="Ground truth"
+                    )
+
+        # Reset counter when using provided axes (for next call)
+        if use_provided_axes:
+            self.denoise_step_counter = 0
+
         return x_t
 
     def denoise_step(
