@@ -41,14 +41,14 @@
     title: NVIDIA GR00T N1.5
   title: "Policies"
 - sections:
+  - local: envhub
+    title: Environments from the Hub
   - local: il_sim
     title: Imitation Learning in Sim
   - local: libero
     title: Using Libero
   - local: metaworld
     title: Using MetaWorld
-  - local: envhub
-    title: Environments from the Hub
   title: "Simulation"
 - sections:
   - local: introduction_processors
