@@ -630,24 +630,33 @@ class VideoEncodingManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Handle any remaining episodes that haven't been batch encoded
         if self.dataset.episodes_since_last_encoding > 0:
-            if self.dataset.defer_video_encoding:
-                if exc_type is not None:
-                    logging.info("Exception occurred. Encoding all deferred videos before exit...")
+            # Only encode on exit if encode_on_exit is True
+            if self.dataset.encode_on_exit:
+                if self.dataset.defer_video_encoding:
+                    if exc_type is not None:
+                        logging.info("Exception occurred. Encoding all deferred videos before exit...")
+                    else:
+                        logging.info("Recording stopped. Encoding all deferred videos...")
                 else:
-                    logging.info("Recording stopped. Encoding all deferred videos...")
-            else:
-                if exc_type is not None:
-                    logging.info("Exception occurred. Encoding remaining episodes before exit...")
-                else:
-                    logging.info("Recording stopped. Encoding remaining episodes...")
+                    if exc_type is not None:
+                        logging.info("Exception occurred. Encoding remaining episodes before exit...")
+                    else:
+                        logging.info("Recording stopped. Encoding remaining episodes...")
 
-            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
-            end_ep = self.dataset.num_episodes
-            logging.info(
-                f"Encoding {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}"
-            )
-            self.dataset._batch_save_episode_video(start_ep, end_ep)
+                start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
+                end_ep = self.dataset.num_episodes
+                logging.info(
+                    f"Encoding {self.dataset.episodes_since_last_encoding} episodes, "
+                    f"from episode {start_ep} to {end_ep - 1}"
+                )
+                self.dataset._batch_save_episode_video(start_ep, end_ep)
+            else:
+                # encode_on_exit is False, skip encoding but warn user
+                logging.info(
+                    f"Skipping video encoding on exit (encode_on_exit=False). "
+                    f"{self.dataset.episodes_since_last_encoding} episodes with PNGs remain on disk. "
+                    f"Use dataset.encode_pending_videos() to encode them later."
+                )
 
         # Finalize the dataset to properly close all writers
         self.dataset.finalize()

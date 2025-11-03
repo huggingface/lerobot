@@ -556,6 +556,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         defer_video_encoding: bool = False,
+        encode_on_exit: bool = True,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -681,6 +682,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.defer_video_encoding = defer_video_encoding
+        self.encode_on_exit = encode_on_exit
         self.episodes_since_last_encoding = 0
 
         # Unused attributes
@@ -1456,6 +1458,78 @@ class LeRobotDataset(torch.utils.data.Dataset):
         shutil.rmtree(img_dir)
         return temp_path
 
+    def encode_pending_videos(
+        self, start_episode: int | None = None, end_episode: int | None = None
+    ) -> None:
+        """
+        Encode videos for episodes that have PNGs but no videos yet.
+
+        This method is useful when encode_on_exit=False was used during recording,
+        allowing you to encode videos later on-demand.
+
+        Args:
+            start_episode: Starting episode index (inclusive). If None, starts from first episode with PNGs.
+            end_episode: Ending episode index (exclusive). If None, ends at last episode with PNGs.
+        """
+        if len(self.meta.video_keys) == 0:
+            logging.info("No video keys in dataset, nothing to encode.")
+            return
+
+        # Find episodes with PNGs but potentially missing videos
+        episodes_with_pngs = []
+        for ep_idx in range(self.num_episodes):
+            has_pngs = False
+            for video_key in self.meta.video_keys:
+                img_dir = self._get_image_file_dir(ep_idx, video_key)
+                if img_dir.exists() and any(img_dir.glob("*.png")):
+                    has_pngs = True
+                    break
+            if has_pngs:
+                episodes_with_pngs.append(ep_idx)
+
+        if len(episodes_with_pngs) == 0:
+            logging.info("No episodes with PNGs found. Nothing to encode.")
+            return
+
+        # Filter by start/end if provided
+        if start_episode is not None:
+            episodes_with_pngs = [ep for ep in episodes_with_pngs if ep >= start_episode]
+        if end_episode is not None:
+            episodes_with_pngs = [ep for ep in episodes_with_pngs if ep < end_episode]
+
+        if len(episodes_with_pngs) == 0:
+            logging.info(f"No episodes with PNGs in range [{start_episode}, {end_episode}).")
+            return
+
+        logging.info(
+            f"Found {len(episodes_with_pngs)} episodes with PNGs to encode: "
+            f"{episodes_with_pngs[0]} to {episodes_with_pngs[-1]}"
+        )
+
+        # Use batch encoding for all episodes with PNGs
+        start_ep = min(episodes_with_pngs)
+        end_ep = max(episodes_with_pngs) + 1
+
+        # Ensure we have latest_episode initialized for proper video concatenation
+        if self.meta.latest_episode is None and len(self.meta.episodes) > 0:
+            # Initialize from last episode with video metadata if available
+            last_ep = self.meta.episodes[-1]
+            if len(self.meta.video_keys) > 0 and f"videos/{self.meta.video_keys[0]}/chunk_index" in last_ep:
+                latest_ep_dict = {}
+                for key, value in last_ep.items():
+                    # Convert to list format expected by latest_episode
+                    if hasattr(value, 'tolist'):  # torch.Tensor or np.ndarray
+                        val_list = value.tolist()
+                        latest_ep_dict[key] = [val_list] if isinstance(val_list, (int, float)) else val_list
+                    elif isinstance(value, (list, tuple)):
+                        latest_ep_dict[key] = list(value)
+                    else:
+                        latest_ep_dict[key] = [value]
+                self.meta.latest_episode = latest_ep_dict
+
+        self._batch_save_episode_video(start_ep, end_ep)
+        logging.info(f"Successfully encoded videos for {len(episodes_with_pngs)} episodes.")
+
     @classmethod
     def create(
         cls,
@@ -1471,6 +1545,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         defer_video_encoding: bool = False,
+        encode_on_exit: bool = True,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1489,6 +1564,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_writer = None
         obj.batch_encoding_size = batch_encoding_size
         obj.defer_video_encoding = defer_video_encoding
+        obj.encode_on_exit = encode_on_exit
         obj.episodes_since_last_encoding = 0
 
         if image_writer_processes or image_writer_threads:
