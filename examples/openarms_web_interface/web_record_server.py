@@ -56,6 +56,9 @@ recording_state = {
     "status_message": "Ready",
     "upload_status": None,
     "current_fps": 0.0,
+    "ramp_up_remaining": 0.0,  # Remaining seconds for PID ramp-up
+    "recording_started_time": None,  # Time when actual recording starts (after ramp-up)
+    "moving_to_zero": False,  # Whether robot is moving to zero position
     "config": {
         "leader_left": "can0",
         "leader_right": "can1",
@@ -76,18 +79,26 @@ robot_instances = {
 }
 
 # Camera frames from recording loop (for streaming during recording)
-camera_frames = {
+# Store pre-encoded JPEG bytes with timestamps to track freshness and discard stale frames
+camera_frames_jpeg = {
     "left_wrist": None,
     "right_wrist": None,
     "base": None,
 }
+camera_frames_timestamp = {
+    "left_wrist": 0.0,
+    "right_wrist": 0.0,
+    "base": 0.0,
+}
 camera_frames_lock = threading.Lock()
-
+# Maximum age for frames (in seconds) - discard frames older than this
+MAX_FRAME_AGE = 0.2 
 # Recording control
 recording_thread = None
 stop_recording_flag = threading.Event()
 FPS = 30
 FRICTION_SCALE = 1.0
+RAMP_UP_DURATION = 3.0  # Seconds to ramp up PID/torque from 0 to full
 
 
 class RecordingConfig(BaseModel):
@@ -358,12 +369,13 @@ def record_loop_with_compensation():
         print(f"[Recording] Error: Missing components")
         return
     
-    print(f"[Recording] Starting recording loop...")
+    print(f"[Recording] Starting recording loop with ramp-up...")
     
     dt = 1 / FPS
-    episode_start_time = time.perf_counter()
+    loop_start_time = time.perf_counter()
+    episode_start_time = None  # Will be set after ramp-up completes
     frame_count = 0
-    last_fps_update = episode_start_time
+    last_fps_update = loop_start_time
     fps_frame_count = 0
     
     # All joints (both arms)
@@ -376,15 +388,39 @@ def record_loop_with_compensation():
     try:
         while not stop_recording_flag.is_set():
             loop_start = time.perf_counter()
-            elapsed = loop_start - episode_start_time
+            elapsed_total = loop_start - loop_start_time
             
-            # Calculate actual FPS every second
-            fps_frame_count += 1
-            if elapsed - (last_fps_update - episode_start_time) >= 1.0:
-                actual_fps = fps_frame_count / (elapsed - (last_fps_update - episode_start_time))
-                recording_state["current_fps"] = round(actual_fps, 1)
-                fps_frame_count = 0
-                last_fps_update = loop_start
+            # PID ramp-up: calculate ramp factor and completion status
+            ramp_up_remaining = max(0.0, RAMP_UP_DURATION - elapsed_total)
+            ramp_factor = max(0.0, min(1.0, 1.0 - (ramp_up_remaining / RAMP_UP_DURATION)))
+            is_ramp_up_complete = ramp_up_remaining <= 0.0
+            
+            # Start episode timer after ramp-up completes
+            if is_ramp_up_complete and episode_start_time is None:
+                episode_start_time = loop_start
+                recording_state["recording_started_time"] = time.time()  # Set timestamp for UI
+                print(f"[Recording] Ramp-up complete, starting data recording")
+            
+            # Update ramp-up status for UI
+            recording_state["ramp_up_remaining"] = round(ramp_up_remaining, 2)
+            
+            # Track if we're falling behind - if so, skip encoding to maintain FPS
+            # Check if previous loop took too long (indicating we're falling behind)
+            if hasattr(record_loop_with_compensation, '_last_loop_duration'):
+                # If previous loop took longer than frame time, we're falling behind - skip encoding
+                skip_encoding = record_loop_with_compensation._last_loop_duration > dt * 1.1
+            else:
+                skip_encoding = False
+            
+            # Calculate actual FPS every second (only after ramp-up)
+            if is_ramp_up_complete:
+                elapsed = loop_start - episode_start_time
+                fps_frame_count += 1
+                if elapsed - (last_fps_update - episode_start_time) >= 1.0:
+                    actual_fps = fps_frame_count / (elapsed - (last_fps_update - episode_start_time))
+                    recording_state["current_fps"] = round(actual_fps, 1)
+                    fps_frame_count = 0
+                    last_fps_update = loop_start
             
             # Get leader state
             leader_action = leader.get_action()
@@ -426,11 +462,13 @@ def record_loop_with_compensation():
                 friction = leader_friction_torques_nm.get(motor_name, 0.0)
                 leader_total_torques_nm[motor_name] = gravity + friction
             
-            # Apply compensation to RIGHT arm
+            # Apply compensation to RIGHT arm with ramp-up scaling
             for motor in leader.bus_right.motors:
                 full_name = f"right_{motor}"
                 position = leader_positions_deg.get(full_name, 0.0)
-                torque = leader_total_torques_nm.get(full_name, 0.0)
+                torque_raw = leader_total_torques_nm.get(full_name, 0.0)
+                # Scale torque by ramp factor during ramp-up phase
+                torque = torque_raw * ramp_factor
                 kd = leader.get_damping_kd(motor)
                 
                 leader.bus_right._mit_control(
@@ -440,11 +478,13 @@ def record_loop_with_compensation():
                     torque=torque,
                 )
             
-            # Apply compensation to LEFT arm
+            # Apply compensation to LEFT arm with ramp-up scaling
             for motor in leader.bus_left.motors:
                 full_name = f"left_{motor}"
                 position = leader_positions_deg.get(full_name, 0.0)
-                torque = leader_total_torques_nm.get(full_name, 0.0)
+                torque_raw = leader_total_torques_nm.get(full_name, 0.0)
+                # Scale torque by ramp factor during ramp-up phase
+                torque = torque_raw * ramp_factor
                 kd = leader.get_damping_kd(motor)
                 
                 leader.bus_left._mit_control(
@@ -454,7 +494,7 @@ def record_loop_with_compensation():
                     torque=torque,
                 )
             
-            # Send positions to follower
+            # Send positions to follower with ramped PID gains using send_action
             follower_action = {}
             for joint in all_joints:
                 pos_key = f"{joint}.pos"
@@ -462,35 +502,94 @@ def record_loop_with_compensation():
                     follower_action[pos_key] = leader_action[pos_key]
             
             if follower_action:
-                follower.send_action(follower_action)
+                # Build custom ramped PID gains for all motors
+                motor_index = {
+                    "joint_1": 0, "joint_2": 1, "joint_3": 2, "joint_4": 3,
+                    "joint_5": 4, "joint_6": 5, "joint_7": 6, "gripper": 7,
+                }
+                
+                custom_kp = {}
+                custom_kd = {}
+                
+                # Calculate ramped gains for all motors in both arms
+                for motor in follower.bus_right.motors:
+                    full_name = f"right_{motor}"
+                    idx = motor_index.get(motor, 0)
+                    kp_base = follower.config.position_kp[idx] if isinstance(follower.config.position_kp, list) else follower.config.position_kp
+                    kd_base = follower.config.position_kd[idx] if isinstance(follower.config.position_kd, list) else follower.config.position_kd
+                    custom_kp[full_name] = kp_base * ramp_factor
+                    custom_kd[full_name] = kd_base * ramp_factor
+                
+                for motor in follower.bus_left.motors:
+                    full_name = f"left_{motor}"
+                    idx = motor_index.get(motor, 0)
+                    kp_base = follower.config.position_kp[idx] if isinstance(follower.config.position_kp, list) else follower.config.position_kp
+                    kd_base = follower.config.position_kd[idx] if isinstance(follower.config.position_kd, list) else follower.config.position_kd
+                    custom_kp[full_name] = kp_base * ramp_factor
+                    custom_kd[full_name] = kd_base * ramp_factor
+                
+                # Send action with custom ramped gains (includes safety checks)
+                follower.send_action(follower_action, custom_kp=custom_kp, custom_kd=custom_kd)
             
             # Get observation
             observation = follower.get_observation()
             
-            # Store camera frames for streaming (no extra camera reads needed!)
-            with camera_frames_lock:
+            # Get current timestamp for frame freshness tracking
+            frame_timestamp = time.perf_counter()
+            
+            # Pre-encode camera frames as JPEG for streaming (minimizes lock time and encoding overhead)
+            # This avoids encoding the same frame multiple times for multiple stream endpoints
+            # OpenCV cameras configured with ColorMode.RGB return RGB frames (default config)
+            # Skip encoding if we're falling behind to maintain 30 FPS
+            encoded_frames = {}
+            
+            # Only encode if we're not falling behind
+            if not skip_encoding:
                 for cam_name in ["left_wrist", "right_wrist", "base"]:
                     if cam_name in observation:
-                        camera_frames[cam_name] = observation[cam_name].copy()
+                        frame = observation[cam_name]
+                        if frame is not None and len(frame.shape) == 3:
+                            # Frame is already RGB from OpenCVCamera (ColorMode.RGB by default)
+                            # Encode once, use many times - eliminates per-stream encoding overhead
+                            # Quick encode - use lower quality if we're tight on time
+                            encode_start = time.perf_counter()
+                            success, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                            encode_duration = time.perf_counter() - encode_start
+                            
+                            # Only use encoded frame if encoding was fast enough (< 10ms)
+                            if success and encode_duration < 0.01:
+                                encoded_frames[cam_name] = jpeg_bytes.tobytes()
+                            # If encoding took too long, skip this camera for this frame
             
-            # Add to dataset
-            try:
-                obs_frame = build_dataset_frame(dataset_features, observation, prefix="observation")
-                action_frame = build_dataset_frame(dataset_features, follower_action, prefix="action")
-                frame = {**obs_frame, **action_frame}
-                frame["task"] = task
-                dataset.add_frame(frame)
-                frame_count += 1
-                
-                # Log progress every 5 seconds (150 frames @ 30 FPS)
-                if frame_count % 150 == 0:
-                    print(f"[Recording] {frame_count} frames @ {recording_state['current_fps']} FPS")
-            except Exception as frame_error:
-                print(f"[Recording] Frame error: {frame_error}")
-                # Continue recording even if one frame fails
+            # Store encoded frames with timestamps with minimal lock time
+            with camera_frames_lock:
+                for cam_name, jpeg_bytes in encoded_frames.items():
+                    camera_frames_jpeg[cam_name] = jpeg_bytes
+                    camera_frames_timestamp[cam_name] = frame_timestamp
+            
+            # Add to dataset ONLY after ramp-up completes
+            if is_ramp_up_complete:
+                try:
+                    obs_frame = build_dataset_frame(dataset_features, observation, prefix="observation")
+                    action_frame = build_dataset_frame(dataset_features, follower_action, prefix="action")
+                    frame = {**obs_frame, **action_frame}
+                    frame["task"] = task
+                    dataset.add_frame(frame)
+                    frame_count += 1
+                    
+                    # Log progress every 5 seconds (150 frames @ 30 FPS)
+                    if frame_count % 150 == 0:
+                        print(f"[Recording] {frame_count} frames @ {recording_state['current_fps']} FPS")
+                except Exception as frame_error:
+                    print(f"[Recording] Frame error: {frame_error}")
+                    # Continue recording even if one frame fails
             
             # Maintain loop rate - don't wait if behind, just continue
             loop_duration = time.perf_counter() - loop_start
+            
+            # Track loop duration for next iteration's encoding skip decision
+            record_loop_with_compensation._last_loop_duration = loop_duration
+            
             sleep_time = dt - loop_duration
             
             # Only sleep if we're ahead of schedule (more than 2ms remaining)
@@ -551,6 +650,8 @@ async def start_recording(config: RecordingConfig):
         recording_state["is_initializing"] = False
         recording_state["is_recording"] = True
         recording_state["start_time"] = time.time()
+        recording_state["recording_started_time"] = None  # Will be set after ramp-up
+        recording_state["ramp_up_remaining"] = RAMP_UP_DURATION  # Initialize ramp-up
         stop_recording_flag.clear()  # Clear the stop flag
         
         # Start recording in background thread
@@ -586,6 +687,8 @@ async def stop_recording():
     
     recording_state["is_recording"] = False
     recording_state["status_message"] = "Stopping recording..."
+    recording_state["ramp_up_remaining"] = 0.0  # Reset ramp-up
+    recording_state["recording_started_time"] = None  # Reset recording start time
     
     # Stop the recording thread
     stop_recording_flag.set()
@@ -749,12 +852,97 @@ async def disconnect_robots():
     return {"status": "disconnected"}
 
 
+@app.post("/api/robots/move-to-zero")
+async def move_to_zero():
+    """Move follower robot to zero position with reduced gains (for 2 seconds)."""
+    global recording_state
+    
+    if recording_state["is_recording"] or recording_state["is_initializing"]:
+        raise HTTPException(status_code=400, detail="Cannot move to zero while recording")
+    
+    if not robot_instances.get("follower"):
+        raise HTTPException(status_code=400, detail="Robots not initialized. Please setup robots first.")
+    
+    if recording_state["moving_to_zero"]:
+        raise HTTPException(status_code=400, detail="Already moving to zero position")
+    
+    try:
+        recording_state["moving_to_zero"] = True
+        recording_state["status_message"] = "Moving to zero position..."
+        
+        follower = robot_instances["follower"]
+        
+        # Motor name to index mapping
+        motor_index = {
+            "joint_1": 0, "joint_2": 1, "joint_3": 2, "joint_4": 3,
+            "joint_5": 4, "joint_6": 5, "joint_7": 6, "gripper": 7,
+        }
+        
+        # Build zero position action with reduced gains (20% of original)
+        zero_action = {}
+        custom_kp = {}
+        custom_kd = {}
+        
+        # Right arm - all motors to zero
+        for motor in follower.bus_right.motors:
+            full_name = f"right_{motor}"
+            zero_action[f"{full_name}.pos"] = 0.0
+            
+            idx = motor_index.get(motor, 0)
+            kp_base = follower.config.position_kp[idx] if isinstance(follower.config.position_kp, list) else follower.config.position_kp
+            kd_base = follower.config.position_kd[idx] if isinstance(follower.config.position_kd, list) else follower.config.position_kd
+            
+            custom_kp[full_name] = kp_base * 0.05
+            custom_kd[full_name] = kd_base
+        
+        # Left arm - all motors to zero
+        for motor in follower.bus_left.motors:
+            full_name = f"left_{motor}"
+            zero_action[f"{full_name}.pos"] = 0.0
+            
+            idx = motor_index.get(motor, 0)
+            kp_base = follower.config.position_kp[idx] if isinstance(follower.config.position_kp, list) else follower.config.position_kp
+            kd_base = follower.config.position_kd[idx] if isinstance(follower.config.position_kd, list) else follower.config.position_kd
+            
+            custom_kp[full_name] = kp_base * 0.05
+            custom_kd[full_name] = kd_base
+        
+        # Send zero position commands for 2 seconds at 30 FPS
+        duration = 2.0
+        fps = 30
+        dt = 1 / fps
+        start_time = time.perf_counter()
+        
+        while time.perf_counter() - start_time < duration:
+            loop_start = time.perf_counter()
+            
+            # Send action with reduced gains
+            follower.send_action(zero_action, custom_kp=custom_kp, custom_kd=custom_kd)
+            
+            # Maintain loop rate
+            loop_duration = time.perf_counter() - loop_start
+            sleep_time = dt - loop_duration
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+        
+        recording_state["moving_to_zero"] = False
+        recording_state["status_message"] = "Moved to zero position" if recording_state["robots_ready"] else "Ready"
+        
+        return {"status": "success", "message": "Robot moved to zero position"}
+    
+    except Exception as e:
+        recording_state["moving_to_zero"] = False
+        recording_state["status_message"] = f"Error: {str(e)}"
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/status")
 async def get_status():
     """Get current recording status."""
     elapsed = 0
-    if recording_state["is_recording"] and recording_state["start_time"]:
-        elapsed = time.time() - recording_state["start_time"]
+    # Only show elapsed time after ramp-up completes
+    if recording_state["is_recording"] and recording_state["recording_started_time"]:
+        elapsed = time.time() - recording_state["recording_started_time"]
 
     return {
         "is_recording": recording_state["is_recording"],
@@ -769,6 +957,8 @@ async def get_status():
         "error": recording_state["error"],
         "status_message": recording_state["status_message"],
         "upload_status": recording_state["upload_status"],
+        "ramp_up_remaining": recording_state["ramp_up_remaining"],
+        "moving_to_zero": recording_state["moving_to_zero"],
         "config": recording_state["config"]
     }
 
@@ -799,20 +989,30 @@ async def stream_camera(camera_name: str):
             while True:
                 frame = None
                 
-                # If recording, use frames from recording loop (zero contention!)
+                # If recording, use pre-encoded JPEG frames from recording loop (zero encoding, minimal lock time!)
                 if recording_state["is_recording"]:
-                    with camera_frames_lock:
-                        frame = camera_frames.get(camera_name)
+                    # Acquire lock only to read the reference and timestamp, not to encode
+                    jpeg_bytes = None
+                    frame_timestamp = 0.0
+                    current_time = time.perf_counter()
                     
-                    if frame is not None:
-                        # Frame already in RGB from recording loop
-                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        _, buffer = cv2.imencode('.jpg', frame_rgb, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    with camera_frames_lock:
+                        jpeg_bytes = camera_frames_jpeg.get(camera_name)
+                        frame_timestamp = camera_frames_timestamp.get(camera_name, 0.0)
+                    
+                    # Only serve frames that are fresh (not stale)
+                    frame_age = current_time - frame_timestamp
+                    if jpeg_bytes is not None and frame_age <= MAX_FRAME_AGE:
+                        # Frame is fresh and available - yield it
                         yield (b'--frame\r\n'
-                               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-                        time.sleep(0.033)  # ~30 FPS (matches recording)
+                               b'Content-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n')
+                        time.sleep(0.1)  # ~10 FPS for streaming (independent of recording FPS)
+                    elif jpeg_bytes is not None and frame_age > MAX_FRAME_AGE:
+                        # Frame is stale - skip it, wait a bit and try next frame
+                        time.sleep(0.01)
+                        continue
                     else:
-                        # Wait a bit if frame not available yet
+                        # No frame available yet - wait a bit
                         time.sleep(0.01)
                         continue
                 else:

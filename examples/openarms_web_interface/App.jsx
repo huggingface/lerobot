@@ -17,6 +17,8 @@ function App() {
   const [error, setError] = useState(null);
   const [statusMessage, setStatusMessage] = useState('Ready');
   const [uploadStatus, setUploadStatus] = useState(null);
+  const [rampUpRemaining, setRampUpRemaining] = useState(0);
+  const [movingToZero, setMovingToZero] = useState(false);
   const [configExpanded, setConfigExpanded] = useState(false);
 
   // Configuration
@@ -73,6 +75,8 @@ function App() {
       setError(data.error);
       setStatusMessage(data.status_message || 'Ready');
       setUploadStatus(data.upload_status);
+      setRampUpRemaining(data.ramp_up_remaining || 0);
+      setMovingToZero(data.moving_to_zero || false);
 
       if (data.config) {
         // Only merge server config if we don't have a saved config (first load)
@@ -228,6 +232,21 @@ function App() {
     }
   };
 
+  // Move robot to zero position
+  const moveToZero = async () => {
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/robots/move-to-zero`, { method: 'POST' });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to move to zero position');
+      }
+      await response.json();
+    } catch (e) {
+      setError(`Move to zero failed: ${e.message}`);
+    }
+  };
+
   // Format time as MM:SS
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -270,8 +289,10 @@ function App() {
       </header>
 
       <div className="container">
-        {/* Configuration Panel */}
-        <section className="panel config-panel">
+        {/* Left Column: Configuration and Recording Control */}
+        <div className="left-column">
+          {/* Configuration Panel */}
+          <section className="panel config-panel">
           <div
             className="config-header"
             onClick={() => setConfigExpanded(!configExpanded)}
@@ -491,9 +512,20 @@ function App() {
                 </button>
               </div>
 
-              {/* Recording Status */}
-              {isRecording && (
-                <div className="status recording">
+              {/* Ramp-up Countdown */}
+              {isRecording && rampUpRemaining > 0 && (
+                <div className="ramp-up-countdown">
+                  <div className="countdown-box">
+                    <div className="countdown-label">⚡ WARMING UP - PID RAMP-UP</div>
+                    <div className="countdown-value">{rampUpRemaining.toFixed(1)}s</div>
+                    <div className="countdown-subtitle">Recording will start automatically...</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Recording Status - Only show after ramp-up */}
+              {isRecording && rampUpRemaining <= 0 && (
+                <div className="status recording recording-active">
                   <div className="indicator"></div>
                   <span className="time-display">
                     {formatTime(elapsedTime)} @ {currentFps.toFixed(1)} FPS
@@ -517,6 +549,20 @@ function App() {
             </div>
           </div>
 
+          {/* Move to Zero Button */}
+          {robotsReady && !isRecording && !isInitializing && (
+            <div className="zero-position-section">
+              <button 
+                onClick={moveToZero} 
+                disabled={movingToZero}
+                className="btn-zero-large"
+                title="Move follower robot to zero position (2s with 60% gains)"
+              >
+                {movingToZero ? '⏳ Moving to Zero Position...' : '🎯 Move to Zero Position'}
+              </button>
+            </div>
+          )}
+
           {/* Error Display */}
           {error && (
             <div className="error-box">
@@ -524,25 +570,31 @@ function App() {
             </div>
           )}
         </section>
+        </div>
 
-        {/* Camera Feeds */}
-        <section className="panel cameras">
+        {/* Right Column: Camera Feeds */}
+        <div className="right-column">
+          <section className="panel cameras">
           <h2>📹 Camera Views</h2>
           {robotsReady || isRecording || isInitializing ? (
-            <div className="camera-grid">
-              <div className="camera">
-                <h3>Left Wrist</h3>
-                <img src={`${API_BASE}/camera/stream/left_wrist`} alt="Left Wrist Camera" />
-              </div>
-
-              <div className="camera">
-                <h3>Base</h3>
+            <div className="camera-layout">
+              {/* Base camera - full width */}
+              <div className="camera camera-base">
+                <h3>Base Camera</h3>
                 <img src={`${API_BASE}/camera/stream/base`} alt="Base Camera" />
               </div>
 
-              <div className="camera">
-                <h3>Right Wrist</h3>
-                <img src={`${API_BASE}/camera/stream/right_wrist`} alt="Right Wrist Camera" />
+              {/* Wrist cameras - side by side */}
+              <div className="camera-wrist-container">
+                <div className="camera camera-wrist">
+                  <h3>Left Wrist</h3>
+                  <img src={`${API_BASE}/camera/stream/left_wrist`} alt="Left Wrist Camera" />
+                </div>
+
+                <div className="camera camera-wrist">
+                  <h3>Right Wrist</h3>
+                  <img src={`${API_BASE}/camera/stream/right_wrist`} alt="Right Wrist Camera" />
+                </div>
               </div>
             </div>
           ) : (
@@ -552,6 +604,7 @@ function App() {
             </div>
           )}
         </section>
+        </div>
 
       </div>
     </main>
