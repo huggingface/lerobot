@@ -18,7 +18,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TypeVar
+from typing import TypedDict, TypeVar
 
 import packaging
 import safetensors
@@ -27,6 +27,7 @@ from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
 from torch import Tensor, nn
+from typing_extensions import Unpack
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -34,6 +35,10 @@ from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.hub import HubMixin
 
 T = TypeVar("T", bound="PreTrainedPolicy")
+
+
+class ActionSelectKwargs(TypedDict, total=False):
+    noise: Tensor | None
 
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
@@ -181,7 +186,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Returns the action chunk (for action chunking policies) for a given observation, potentially in batch mode.
 
         Child classes using action chunking should use this method within `select_action` to form the action chunk
@@ -190,7 +195,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Return one action to run in the environment (potentially in batch mode).
 
         When the model uses a history of observations, or outputs a sequence of actions, this method deals
@@ -246,7 +251,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             base_model=base_model,
         )
 
-        template_card = files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text()
+        template_card = (
+            files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text(encoding="utf-8")
+        )
         card = ModelCard.from_template(card_data, template_str=template_card)
         card.validate()
         return card
