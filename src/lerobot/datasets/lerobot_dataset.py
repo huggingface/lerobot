@@ -555,6 +555,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        defer_video_encoding: bool = False,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -679,6 +680,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
+        self.defer_video_encoding = defer_video_encoding
         self.episodes_since_last_encoding = 0
 
         # Unused attributes
@@ -1136,14 +1138,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         has_video_keys = len(self.meta.video_keys) > 0
         use_batched_encoding = self.batch_encoding_size > 1
 
-        if has_video_keys and not use_batched_encoding:
+        # Skip video encoding during recording if defer_video_encoding is True
+        if has_video_keys and not self.defer_video_encoding and not use_batched_encoding:
             for video_key in self.meta.video_keys:
                 ep_metadata.update(self._save_episode_video(video_key, episode_index))
 
-        # `meta.save_episode` need to be executed after encoding the videos
+        # `meta.save_episode` need to be executed after encoding the videos (or before if deferring)
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
 
-        if has_video_keys and use_batched_encoding:
+        if has_video_keys and not self.defer_video_encoding and use_batched_encoding:
             # Check if we should trigger batch encoding
             self.episodes_since_last_encoding += 1
             if self.episodes_since_last_encoding == self.batch_encoding_size:
@@ -1151,10 +1154,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 end_ep = self.num_episodes
                 self._batch_save_episode_video(start_ep, end_ep)
                 self.episodes_since_last_encoding = 0
+        elif has_video_keys and self.defer_video_encoding:
+            # Track episodes that need encoding later
+            self.episodes_since_last_encoding += 1
 
         if not episode_data:
-            # Reset episode buffer and clean up temporary images (if not already deleted during video encoding)
-            self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
+            # Reset episode buffer and clean up temporary images
+            # Don't delete images if we're deferring video encoding
+            delete_images = len(self.meta.image_keys) > 0 and not self.defer_video_encoding
+            self.clear_episode_buffer(delete_images=delete_images)
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """
@@ -1208,6 +1216,28 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_df = episode_df.combine_first(video_ep_df)
             episode_df.to_parquet(episode_df_path)
             self.meta.episodes = load_episodes(self.root)
+            
+            # Update latest_episode with the current episode's metadata so the next episode
+            # in the batch can concatenate to the correct video file
+            # latest_episode expects values as lists (e.g., [chunk_idx] not chunk_idx)
+            if ep_idx < len(self.meta.episodes):
+                current_ep_data = self.meta.episodes[ep_idx]
+                # Convert to dict format expected by latest_episode (values as lists)
+                latest_ep_dict = {}
+                for key, value in current_ep_data.items():
+                    # Convert tensor/array to list, then wrap in list if needed
+                    if hasattr(value, 'tolist'):  # torch.Tensor or np.ndarray
+                        latest_ep_dict[key] = [value.tolist()] if isinstance(value.tolist(), (int, float)) else value.tolist()
+                    elif isinstance(value, (list, tuple)):
+                        # If already a list/tuple, check if it needs wrapping
+                        if len(value) == 0:
+                            latest_ep_dict[key] = []
+                        else:
+                            latest_ep_dict[key] = list(value)
+                    else:
+                        # Scalar value, wrap in list
+                        latest_ep_dict[key] = [value]
+                self.meta.latest_episode = latest_ep_dict
 
     def _save_episode_data(self, episode_buffer: dict) -> dict:
         """Save episode data to a parquet file and update the Hugging Face dataset of frames data.
@@ -1440,6 +1470,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        defer_video_encoding: bool = False,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1457,6 +1488,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.tolerance_s = tolerance_s
         obj.image_writer = None
         obj.batch_encoding_size = batch_encoding_size
+        obj.defer_video_encoding = defer_video_encoding
         obj.episodes_since_last_encoding = 0
 
         if image_writer_processes or image_writer_threads:

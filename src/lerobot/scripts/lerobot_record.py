@@ -164,6 +164,9 @@ class DatasetRecordConfig:
     # Number of episodes to record before batch encoding videos
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
+    # If True, postpone video encoding until the end of recording. Only PNGs will be saved during recording.
+    # This allows faster recording with batch post-processing of all episodes.
+    defer_video_encoding: bool = False
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
 
@@ -401,6 +404,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+            defer_video_encoding=cfg.dataset.defer_video_encoding,
         )
 
         if hasattr(robot, "cameras") and len(robot.cameras) > 0:
@@ -422,6 +426,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             image_writer_processes=cfg.dataset.num_image_writer_processes,
             image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+            defer_video_encoding=cfg.dataset.defer_video_encoding,
         )
 
     # Load pretrained policy

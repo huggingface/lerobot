@@ -630,15 +630,21 @@ class VideoEncodingManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Handle any remaining episodes that haven't been batch encoded
         if self.dataset.episodes_since_last_encoding > 0:
-            if exc_type is not None:
-                logging.info("Exception occurred. Encoding remaining episodes before exit...")
+            if self.dataset.defer_video_encoding:
+                if exc_type is not None:
+                    logging.info("Exception occurred. Encoding all deferred videos before exit...")
+                else:
+                    logging.info("Recording stopped. Encoding all deferred videos...")
             else:
-                logging.info("Recording stopped. Encoding remaining episodes...")
+                if exc_type is not None:
+                    logging.info("Exception occurred. Encoding remaining episodes before exit...")
+                else:
+                    logging.info("Recording stopped. Encoding remaining episodes...")
 
             start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
             end_ep = self.dataset.num_episodes
             logging.info(
-                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
+                f"Encoding {self.dataset.episodes_since_last_encoding} episodes, "
                 f"from episode {start_ep} to {end_ep - 1}"
             )
             self.dataset._batch_save_episode_video(start_ep, end_ep)
