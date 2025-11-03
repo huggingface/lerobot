@@ -26,3 +26,16 @@ This implementation is based on Physical Intelligence's Kinetix RTC:
 
 - [Real Time Chunking Paper](https://www.physicalintelligence.company/research/real_time_chunking)
 - [Physical Intelligence Kinetix](https://github.com/Physical-Intelligence/real-time-chunking-kinetix)
+
+## How to run
+
+### Check with data from the dataset
+
+```bash
+uv run python examples/rtc/eval_dataset.py \
+--policy.path=helper2424/smolvla_check_rtc_last3 \
+--dataset.repo_id=helper2424/check_rtc \
+--rtc.execution_horizon=8 \
+--device=mps \
+--seed=42
+```
