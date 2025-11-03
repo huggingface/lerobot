@@ -5,9 +5,32 @@ from lerobot.teleoperators.so101_leader.so101_leader import SO101Leader
 from lerobot_robot_piper import Piper, PiperConfig
 
 FPS = 30
+LOG_EVERY = 10
 
-# Mapping from SO101 leader joints (5) to Piper joints (first 5)
+# SO101 leader joint names (5 DOF) in degrees
 so101_joint_names = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
+
+# Explicit mapping from leader joint -> Piper joint index (1-based)
+# Joint_4 is intentionally left unmapped and will be held steady.
+leader_to_piper = {
+    "shoulder_pan": 1,
+    "shoulder_lift": 2,
+    "elbow_flex": 3,
+    "wrist_flex": 5,
+    "wrist_roll": 6,
+}
+
+# Approx SO101 (leader) joint ranges in degrees (adjust if needed)
+leader_ranges = {
+    "shoulder_pan": (-150.0, 150.0),
+    "shoulder_lift": (-112.0, 0.0),
+    "elbow_flex": (0.0, 97.0),
+    "wrist_flex": (-70.0, 70.0),
+    "wrist_roll": (-180.0, 180.0),
+}
+
+# Shrink leader command to avoid saturating Piper limits too often
+LEADER_GAIN = 0.6  # 60% of leader normalized range
 
 register_third_party_devices()
 
@@ -21,6 +44,14 @@ leader.connect()
 robot.connect()
 
 try:
+    # Print mapping and limits once
+    if robot._iface is not None:
+        mins = robot._iface.min_pos[:6]
+        maxs = robot._iface.max_pos[:6]
+        print("Piper limits (deg):", list(zip([round(m,1) for m in mins], [round(M,1) for M in maxs])))
+        print("joint_signs:", robot.config.joint_signs)
+
+    loop_idx = 0
     while True:
         t0 = time.perf_counter()
 
@@ -31,28 +62,96 @@ try:
         # Leader joint actions (degrees)
         lead_act = leader.get_action()  # keys like 'shoulder_pan.pos', ..., 'gripper.pos'
 
-        # Map first 5 joints 1:1 to Piper joints 1..5
-        for i, name in enumerate(so101_joint_names, start=1):
-            key = f"{name}.pos"
-            if key in lead_act:
-                action[f"joint_{i}.pos"] = float(lead_act[key])
+        # Normalized control:
+        # 1) Map SO101 (degrees) -> normalized leader percents [-100,100]
+        # 2) Apply signs and gain
+        # 3) Send to Piper as normalized percents (SDK maps to its own joint limits)
+        # Joint mapping per discovered mapping:
+        #   shoulder_pan->1, shoulder_lift->2, elbow_flex->3, wrist_flex->5, wrist_roll->6
+        # Unmapped Piper joint_4 is held at its current angle. Gripper is 0..100 percent.
+        if robot._iface is not None:
+            signs = robot.config.joint_signs
 
-        # Keep Piper joint_6 at current pose (no sixth DoF on leader)
-        action["joint_6.pos"] = float(obs.get("joint_6.pos", 0.0))
+            # Prefill with holds for all 6 joints
+            pct = [0.0] * 6
+            mins_hw = robot._iface.min_pos[:6]
+            maxs_hw = robot._iface.max_pos[:6]
+            for j in range(1, 7):
+                cur = float(obs.get(f"joint_{j}.pos", 0.0))  # sign-applied
+                cur_hw = cur * signs[j - 1]  # undo sign for hw range mapping
+                jmin = mins_hw[j - 1]
+                jmax = maxs_hw[j - 1]
+                if jmax > jmin:
+                    hold = (cur_hw - jmin) / (jmax - jmin) * 200.0 - 100.0
+                else:
+                    hold = 0.0
+                pct[j - 1] = max(-100.0, min(100.0, hold))
 
-        # Map gripper percent (0..100) -> mm using Piper SDK limits
-        if robot.config.include_gripper and "gripper.pos" in lead_act and robot._iface is not None:
-            p = float(lead_act["gripper.pos"])  # 0..100 from SO101 leader
-            g_min = robot._iface.min_pos[6]
-            g_max = robot._iface.max_pos[6]
-            action["gripper.pos"] = g_min + (g_max - g_min) * (p / 100.0)
+            # Apply leader -> piper mapping for each provided leader joint
+            for name in so101_joint_names:
+                key = f"{name}.pos"
+                tgt = leader_to_piper.get(name)
+                if tgt is None:
+                    continue
+                if key in lead_act:
+                    ld = float(lead_act[key])
+                    lmin, lmax = leader_ranges[name]
+                    if lmax > lmin:
+                        lp = (ld - lmin) / (lmax - lmin) * 200.0 - 100.0
+                    else:
+                        lp = 0.0
+                    lp = lp * LEADER_GAIN * signs[tgt - 1]
+                    pct[tgt - 1] = max(-100.0, min(100.0, lp))
 
-        # Send
-        robot.send_action(action)
+            # Gripper percent 0..100 from leader if present; else hold current
+            if robot.config.include_gripper and "gripper.pos" in lead_act:
+                g_pct = float(lead_act["gripper.pos"])  # already 0..100
+            else:
+                # infer from current obs (mm) if available
+                g_min = robot._iface.min_pos[6]
+                g_max = robot._iface.max_pos[6]
+                g_mm = float(obs.get("gripper.pos", (g_min + g_max) * 0.5))
+                g_pct = (g_mm - g_min) / (g_max - g_min) * 100.0 if g_max > g_min else 50.0
+            g_pct = max(0.0, min(100.0, g_pct))
+
+            # Periodic debug print to help mapping
+            if (loop_idx % LOG_EVERY) == 0:
+                leader_vals = [round(float(lead_act.get(f"{nm}.pos", 0.0)), 1) for nm in so101_joint_names]
+                piper_obs = [round(float(obs.get(f"joint_{i}.pos", 0.0)), 1) for i in range(1, 7)]
+                print(
+                    "leader_deg=", leader_vals,
+                    "| leader_to_piper=", leader_to_piper,
+                    "| piper_obs_deg=", piper_obs,
+                    "| send_pct(j1..j6)=", [round(v, 1) for v in pct],
+                    "| g_pct=", round(g_pct, 1),
+                )
+
+            # Send normalized command via SDK helper
+            robot._iface.set_joint_positions(pct + [g_pct])
+        else:
+            # Fallback: degrees path using Robot API (less ideal if normalization is required)
+            # Hold all joints at current obs, then overwrite mapped ones from leader
+            for j in range(1, 7):
+                action[f"joint_{j}.pos"] = float(obs.get(f"joint_{j}.pos", 0.0))
+            for name in so101_joint_names:
+                tgt = leader_to_piper.get(name)
+                if tgt is None:
+                    continue
+                key = f"{name}.pos"
+                if key in lead_act:
+                    action[f"joint_{tgt}.pos"] = float(lead_act[key])
+            # Map gripper percent (0..100) -> mm using Piper SDK limits if possible
+            if robot.config.include_gripper and "gripper.pos" in lead_act:
+                p = float(lead_act["gripper.pos"])  # 0..100
+                g_min = robot._iface.min_pos[6]
+                g_max = robot._iface.max_pos[6]
+                action["gripper.pos"] = g_min + (g_max - g_min) * (p / 100.0)
+            robot.send_action(action)
 
         # Pace loop
         dt = time.perf_counter() - t0
         time.sleep(max(0.0, 1.0 / FPS - dt))
+        loop_idx += 1
 finally:
     leader.disconnect()
     robot.disconnect()

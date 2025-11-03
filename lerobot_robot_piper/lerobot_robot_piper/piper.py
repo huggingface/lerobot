@@ -54,7 +54,10 @@ class Piper(Robot):
     def connect(self, calibrate: bool = True) -> None:
         # Initialize SDK interface on demand
         if self._iface is None:
-            self._iface = PiperSDKInterface(port=self.config.can_interface)
+            self._iface = PiperSDKInterface(
+                port=self.config.can_interface,
+                enable_timeout=self.config.enable_timeout,
+            )
         for cam in self.cameras.values():
             cam.connect()
         self.configure()
