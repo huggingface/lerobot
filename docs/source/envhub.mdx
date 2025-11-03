@@ -5,6 +5,7 @@ The **EnvHub** feature allows you to load simulation environments directly from 
 ## Overview
 
 With EnvHub, you can:
+
 - Load environments from the Hub instantly
 - Share your custom simulation tasks with the community
 - Version control your environments using Git
@@ -22,7 +23,10 @@ env = make_env("lerobot/cartpole-env", trust_remote_code=True)
 ```
 
 <Tip warning={true}>
-  **Security Notice**: Loading environments from the Hub executes Python code from third-party repositories. Only use `trust_remote_code=True` with repositories you trust. We strongly recommend pinning to a specific commit hash for reproducibility and security.
+  **Security Notice**: Loading environments from the Hub executes Python code
+  from third-party repositories. Only use `trust_remote_code=True` with
+  repositories you trust. We strongly recommend pinning to a specific commit
+  hash for reproducibility and security.
 </Tip>
 
 ## What is EnvHub?
@@ -43,6 +47,7 @@ To make your environment loadable from the Hub, your repository must contain at 
 ### Required Files
 
 **`env.py`** (or custom Python file)
+
 - Must expose a `make_env(n_envs: int, use_async_envs: bool)` function
 - This function should return one of:
   - A `gym.vector.VectorEnv` (most common)
@@ -52,14 +57,17 @@ To make your environment loadable from the Hub, your repository must contain at 
 ### Optional Files
 
 **`requirements.txt`**
+
 - List any additional dependencies your environment needs
 - Users will need to install these manually before loading your environment
 
 **`README.md`**
+
 - Document your environment: what task it implements, observation/action spaces, rewards, etc.
 - Include usage examples and any special setup instructions
 
 **`.gitignore`**
+
 - Exclude unnecessary files from your repository
 
 ### Example Repository Structure
@@ -88,24 +96,24 @@ import gymnasium as gym
 def make_env(n_envs: int = 1, use_async_envs: bool = False):
     """
     Create vectorized environments for your custom task.
-    
+
     Args:
         n_envs: Number of parallel environments
         use_async_envs: Whether to use AsyncVectorEnv or SyncVectorEnv
-        
+
     Returns:
         gym.vector.VectorEnv or dict mapping suite names to vectorized envs
     """
     def _make_single_env():
         # Create your custom environment
         return gym.make("CartPole-v1")
-    
+
     # Choose vector environment type
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
-    
+
     # Create vectorized environment
     vec_env = env_cls([_make_single_env for _ in range(n_envs)])
-    
+
     return vec_env
 ```
 
@@ -239,12 +247,12 @@ envs_dict = make_env(
 
 The hub URL format supports several patterns:
 
-| Pattern | Description | Example |
-|---------|-------------|---------|
-| `user/repo` | Load `env.py` from main branch | `make_env("lerobot/pusht-env")` |
-| `user/repo@revision` | Load from specific revision | `make_env("lerobot/pusht-env@main")` |
-| `user/repo:path` | Load custom file | `make_env("lerobot/envs:pusht.py")` |
-| `user/repo@rev:path` | Revision + custom file | `make_env("lerobot/envs@v1:pusht.py")` |
+| Pattern              | Description                    | Example                                |
+| -------------------- | ------------------------------ | -------------------------------------- |
+| `user/repo`          | Load `env.py` from main branch | `make_env("lerobot/pusht-env")`        |
+| `user/repo@revision` | Load from specific revision    | `make_env("lerobot/pusht-env@main")`   |
+| `user/repo:path`     | Load custom file               | `make_env("lerobot/envs:pusht.py")`    |
+| `user/repo@rev:path` | Revision + custom file         | `make_env("lerobot/envs@v1:pusht.py")` |
 
 ## Multi-Task Environments
 
@@ -253,7 +261,7 @@ For benchmarks with multiple tasks (like LIBERO), return a nested dictionary:
 ```python
 def make_env(n_envs: int = 1, use_async_envs: bool = False):
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
-    
+
     # Return dict: {suite_name: {task_id: VectorEnv}}
     return {
         "suite_1": {
@@ -269,7 +277,8 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False):
 ## Security Considerations
 
 <Tip warning={true}>
-  **Important**: The `trust_remote_code=True` flag is required to execute environment code from the Hub. This is by design for security.
+  **Important**: The `trust_remote_code=True` flag is required to execute
+  environment code from the Hub. This is by design for security.
 </Tip>
 
 When loading environments from the Hub:
@@ -327,6 +336,7 @@ env.close()
 ## Benefits of EnvHub
 
 ### For Environment Authors
+
 - **Easy distribution**: No PyPI packaging required
 - **Version control**: Use Git for environment versioning
 - **Rapid iteration**: Push updates instantly
@@ -334,12 +344,14 @@ env.close()
 - **Community**: Reach LeRobot users directly
 
 ### For Researchers
+
 - **Quick experiments**: Load any environment in one line
 - **Reproducibility**: Pin to specific commits
 - **Discovery**: Browse environments on the Hub
 - **No conflicts**: No need to install conflicting packages
 
 ### For the Community
+
 - **Growing ecosystem**: More diverse simulation tasks
 - **Standardization**: Common `make_env` API
 - **Collaboration**: Fork and improve existing environments
@@ -377,8 +389,9 @@ def make_env(n_envs: int, use_async_envs: bool):
 ### Environment returns wrong type
 
 The `make_env` function must return:
+
 - A `gym.vector.VectorEnv`, or
-- A single `gym.Env`, or  
+- A single `gym.Env`, or
 - A dict `{suite_name: {task_id: VectorEnv}}`
 
 ## Best Practices
@@ -406,8 +419,6 @@ As more researchers and developers contribute, the diversity and quality of avai
 
 ## See Also
 
-- [Hugging Face Hub Documentation](https://huggingface.co/docs/hub)
-- [Gymnasium Documentation](https://gymnasium.farama.org/)
-- [LeRobot Environment Configs](./configs.mdx)
+- [Hugging Face Hub Documentation](https://huggingface.co/docs/hub/en/index)
+- [Gymnasium Documentation](https://gymnasium.farama.org/index.html)
 - [Example Hub Environment](https://huggingface.co/lerobot/cartpole-env)
-

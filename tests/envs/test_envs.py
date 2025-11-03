@@ -228,7 +228,7 @@ def test_make_env_from_hub_with_trust(hub_id):
     # test basic environment interaction
     obs, info = env.reset()
     assert obs is not None
-    assert isinstance(obs, dict) or isinstance(obs, np.ndarray)
+    assert isinstance(obs, (dict, np.ndarray))
 
     # take a random action
     action = env.action_space.sample()

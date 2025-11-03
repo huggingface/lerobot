@@ -47,7 +47,7 @@
     title: Using Libero
   - local: metaworld
     title: Using MetaWorld
-  - local: envhub  
+  - local: envhub
     title: Environments from the Hub
   title: "Simulation"
 - sections:
