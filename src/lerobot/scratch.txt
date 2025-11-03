@@ -1,0 +1,33 @@
+# Eun visualizer locally
+
+# login to hf an set your access token
+hf auth login
+# if not installed, install with: pip install huggingface_hub
+git clone https://github.com/huggingface/lerobot-dataset-visualizer.git
+cd lerobot-dataset-visualizer
+python -m lerobot_dataset_viz --repo-id lerobot-data-collection/repo-id-nez --episode-index 0
+git checkout feat/private_repo_viz
+npm install
+npm run dev
+# open http://localhost:3000 in your browser
+
+
+# ======================================================
+
+
+# default merge command; copy your list of datasets ids in repo_ids
+
+python -m lerobot.scripts.lerobot_edit_dataset \
+--repo_id lerobot-data-collection/repo-id-nez \
+--operation.type merge --push_to_hub true \
+--operation.repo_ids "[]"
+
+
+# merge test datasets into one
+
+python -m lerobot.scripts.lerobot_edit_dataset \
+--repo_id lerobot-data-collection/test-2025-11-03-merged \
+--operation.type merge --push_to_hub true \
+--operation.repo_ids "['lerobot-data-collection/test-2025-11-03-13-18', 'lerobot-data-collection/test-2025-11-03-13-19', 'lerobot-data-collection/test-2025-11-03-13-20', 'lerobot-data-collection/test-2025-11-03-13-21', 'lerobot-data-collection/test-2025-11-03-13-23', 'lerobot-data-collection/test-2025-11-03-13-24', 'lerobot-data-collection/test-2025-11-03-13-25', 'lerobot-data-collection/test-2025-11-03-13-26', 'lerobot-data-collection/test-2025-11-03-13-27', 'lerobot-data-collection/test-2025-11-03-13-29', 'lerobot-data-collection/test-2025-11-03-13-30', 'lerobot-data-collection/test-2025-11-03-13-31', 'lerobot-data-collection/test-2025-11-03-13-34', 'lerobot-data-collection/test-2025-11-03-13-41', 'lerobot-data-collection/test-2025-11-03-13-42', 'lerobot-data-collection/test-2025-11-03-13-43', 'lerobot-data-collection/test-2025-11-03-13-44', 'lerobot-data-collection/test-2025-11-03-13-45', 'lerobot-data-collection/test-2025-11-03-13-46', 'lerobot-data-collection/test-2025-11-03-13-47', 'lerobot-data-collection/test-2025-11-03-13-48', 'lerobot-data-collection/test-2025-11-03-13-49']"
+
+# RUN loop_dataset.py to get your repo_ids
