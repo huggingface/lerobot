@@ -13,6 +13,7 @@ function App() {
   const [robotsReady, setRobotsReady] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [currentFps, setCurrentFps] = useState(0);
+  const [loopFps, setLoopFps] = useState(0);
   const [episodeCount, setEpisodeCount] = useState(0);
   const [error, setError] = useState(null);
   const [statusMessage, setStatusMessage] = useState('Ready');
@@ -71,6 +72,7 @@ function App() {
       setRobotsReady(data.robots_ready);
       setElapsedTime(data.elapsed_time);
       setCurrentFps(data.current_fps || 0);
+      setLoopFps(data.loop_fps || 0);
       setEpisodeCount(data.episode_count);
       setError(data.error);
       setStatusMessage(data.status_message || 'Ready');
@@ -527,9 +529,14 @@ function App() {
               {isRecording && rampUpRemaining <= 0 && (
                 <div className="status recording recording-active">
                   <div className="indicator"></div>
-                  <span className="time-display">
-                    {formatTime(elapsedTime)} @ {currentFps.toFixed(1)} FPS
-                  </span>
+                  <div className="time-display">
+                    <span>{formatTime(elapsedTime)}</span>
+                    <span className="fps-display">
+                      Loop: {loopFps.toFixed(1)} Hz
+                      {loopFps > 0 && loopFps < 29 && <span className="fps-warning"> ⚠️</span>}
+                    </span>
+                    <span className="fps-display">Recording: {currentFps.toFixed(1)} FPS</span>
+                  </div>
                   <button onClick={stopRecording} className="btn-stop">
                     ⏹ Stop
                   </button>
