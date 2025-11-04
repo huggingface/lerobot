@@ -1164,7 +1164,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if not episode_data:
             # Reset episode buffer and clean up temporary images (if not already deleted during video encoding)
-            self.clear_episode_buffer(delete_images=len(self.meta.image_keys) > 0)
+            # For batched encoding, keep images until batch encoding is complete
+            delete_images = len(self.meta.image_keys) > 0 and not (has_video_keys and use_batched_encoding)
+            self.clear_episode_buffer(delete_images=delete_images)
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """
@@ -1226,6 +1228,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_df = episode_df.combine_first(video_ep_df)
             episode_df.to_parquet(episode_df_path)
             self.meta.episodes = load_episodes(self.root)
+
+            # Clean up temporary images after video encoding
+            for cam_key in self.meta.camera_keys:
+                img_dir = self._get_image_file_dir(ep_idx, cam_key)
+                if img_dir.is_dir():
+                    shutil.rmtree(img_dir)
 
     def _save_episode_data(self, episode_buffer: dict) -> dict:
         """Save episode data to a parquet file and update the Hugging Face dataset of frames data.
