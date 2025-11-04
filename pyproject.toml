@@ -142,7 +142,7 @@ video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 # Simulation
 aloha = ["gym-aloha>=0.1.2,<0.2.0"]
 pusht = ["gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
-libero = ["lerobot[transformers-dep]", "libero @ git+https://github.com/huggingface/lerobot-libero.git@main#egg=libero"]
+libero = ["lerobot[transformers-dep]", "hf-libero>=0.1.3,<0.2.0"]
 metaworld = ["metaworld==3.0.0"]
 
 # All
