@@ -1160,6 +1160,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 start_ep = self.num_episodes - self.batch_encoding_size
                 end_ep = self.num_episodes
                 self._batch_save_episode_video(start_ep, end_ep)
+
+                # Clean up temporary images after successful batch encoding
+                for ep_idx in range(start_ep, end_ep):
+                    for cam_key in self.meta.camera_keys:
+                        img_dir = self._get_image_file_dir(ep_idx, cam_key)
+                        if img_dir.is_dir():
+                            shutil.rmtree(img_dir)
+
                 self.episodes_since_last_encoding = 0
 
         if not episode_data:
@@ -1228,12 +1236,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_df = episode_df.combine_first(video_ep_df)
             episode_df.to_parquet(episode_df_path)
             self.meta.episodes = load_episodes(self.root)
-
-            # Clean up temporary images after video encoding
-            for cam_key in self.meta.camera_keys:
-                img_dir = self._get_image_file_dir(ep_idx, cam_key)
-                if img_dir.is_dir():
-                    shutil.rmtree(img_dir)
 
     def _save_episode_data(self, episode_buffer: dict) -> dict:
         """Save episode data to a parquet file and update the Hugging Face dataset of frames data.
@@ -1346,6 +1348,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.meta.episodes is not None
                 and len(self.meta.episodes) > 0
                 and f"videos/{video_key}/chunk_index" in self.meta.episodes[-1]
+                and self.meta.episodes[-1][f"videos/{video_key}/chunk_index"] is not None
             ):
                 # It means we are resuming recording with existing video metadata
                 # Update the indices to avoid overwriting the latest episode
