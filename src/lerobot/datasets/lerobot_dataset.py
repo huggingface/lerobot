@@ -1181,8 +1181,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"Batch encoding {self.batch_encoding_size} videos for episodes {start_episode} to {end_episode - 1}"
         )
 
-        # Flush metadata buffer to ensure all episode metadata is written to disk
-        self.meta._flush_metadata_buffer()
+        # Close writer to ensure all episode metadata is flushed and written to disk completely
+        # This is necessary because ParquetWriter buffers data and only writes complete files on close
+        self.meta._close_writer()
 
         # Reload episodes to ensure we have the latest metadata for all episodes,
         # especially when resuming recording with batch encoding enabled
