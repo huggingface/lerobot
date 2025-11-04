@@ -319,3 +319,34 @@ class MetaworldEnv(EnvConfig):
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
+
+@EnvConfig.register_subclass("vlabench")
+@dataclass
+class VLABenchEnv(EnvConfig):
+    task: str = "select_fruit"  # specify the vlabench task name
+    fps: int = 15
+    robot: str = "franka"
+    env_configs: dict | None = None
+    episode_configs: dict | None = None
+    render_resolution: tuple[int, int] = (480, 480)
+    max_episode_length: int = 500
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "rgb": f"{OBS_IMAGE}",
+            "q_state": OBS_STATE,
+            "ee_state": OBS_STATE,
+        }
+    )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "render_resolution": self.render_resolution,
+            "max_episode_length": self.max_episode_length,
+        }

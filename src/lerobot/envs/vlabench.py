@@ -20,6 +20,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 from VLABench.envs import load_env
+from VLABench.utils.utils import euler_to_quaternion, quaternion_to_euler
 
 VALID_OBS_KEYS = [
     "q_state",
@@ -74,6 +75,7 @@ class VLABenchEnv(gym.Env):
         assert len(obs_keys) >= 3, "obs_keys should at least include 'rgb', 'q_state' and 'ee_state'"
         assert all([key in VALID_OBS_KEYS for key in obs_keys]), f"obs_keys should be in {VALID_OBS_KEYS}"
         self.obs_keys = obs_keys
+        self.last_obs = None
         self._env = load_env(
             task,
             robot,
@@ -109,8 +111,8 @@ class VLABenchEnv(gym.Env):
         return self._env.render()
     
     def reset(self):
-        timestep = self._env.reset()
-        obs = timestep.observation
+        self._env.reset()
+        obs = self.get_obs()
         obs = self._filter_observation(obs)
         info = {"is_success": False}
         return obs, info
@@ -121,16 +123,33 @@ class VLABenchEnv(gym.Env):
         filtered_obs = {key: observation[key] for key in self.obs_keys if key in observation}
         return filtered_obs
     
-    def step(self, action: np.ndarray):
+    def step(self, action: np.ndarray, mode="eef"):
         if action.ndim != 1:
             raise ValueError(
                 f"Expected action to be 1-D (shape (action_dim,)), "
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
+        if mode == "eef" and action.shape[0] == 7:
+            pos, euler, gripper = action[:3], action[3:6], action[6]
+            gripper = np.ones(2)*0.04*gripper
+            quat = euler_to_quaternion(*euler)
+            _, action = self.robot.get_qpos_from_ee_pos(physics=self._env.physics, pos=pos, quat=quat)
+            action = np.concatenate([action, gripper])
+        elif mode == "joint":
+            action = action # TODO: should add some assertion here
+        elif mode == "delta_eef" and action.shape[0] == 7:
+            delta_pos, delta_euler, gripper = action[:3], action[3:6], action[6]
+            gripper = np.ones(2)*0.04*gripper
+            current_ee_pos, current_ee_quat = self.last_obs["ee_state"][:3], self.last_obs["ee_state"][3:7]
+            current_ee_euler = quaternion_to_euler(current_ee_quat)
+            pos, euler = current_ee_pos + delta_pos, current_ee_euler + delta_euler
+            _, action = self.robot.get_qpos_from_ee_pos(physics=self._env.physics, pos=pos, quat=euler_to_quaternion(*euler))
+            action = np.concatenate([action, gripper])
         timestep = self._env.step(action)
         obs, reward, done, info = timestep.observation, timestep.reward, timestep.last(), {}
+        obs = self.get_obs()
         obs = self._filter_observation(obs)
-        is_success = self._env.task.should_terminate_episode()
+        is_success = self._env.task.should_terminate_episode(self._env.physics)
         terminated = done or is_success
         if done:
             self.reset()
@@ -143,7 +162,13 @@ class VLABenchEnv(gym.Env):
                 }
             )
         truncated = False
+        self.last_obs= obs
         return obs, reward, terminated, truncated, info
+    
+    def get_obs(self):
+        obs = self._env.get_observation()
+        obs = self._filter_observation(obs)
+        return obs
     
     def _build_observation_space(self, n_cam, render_resolution):
         self.observation_space = spaces.Dict(
@@ -224,6 +249,7 @@ def create_vlabench_envs(
     robot="franka",
     configs: Sequence[dict] | None = None,
     episode_configs: Sequence[dict] | None = None,
+    gym_kwargs: dict | None = None,
 ):
     """
     Create vectorized VLABench environments.
@@ -235,6 +261,7 @@ def create_vlabench_envs(
             If None, the default configuration will be used for all environments.
         episode_configs: A sequence of episode configuration dicts for each environment. 
             If None, the environment will be initialized within a default random range.
+        gym_kwargs: Additional keyword arguments to pass to the gym.Env constructor.
     Notes:
         - The difference between configs and episode_configs is that configs are used to configure the environment itself such as camera settings, task settings, and engine settings;
         while episode_configs are used to configure the specific episode within the environment instead of random initialization.
@@ -255,8 +282,9 @@ def create_vlabench_envs(
             task=task,
             robot=robot,
             config=configs[i] if configs is not None else None,
-            time_limit=configs[i]['evaluation'].get("max_episode_length", 500),
+            time_limit=gym_kwargs.get("max_episode_length", 500),
             episode_config=episode_configs[i] if episode_configs is not None else None,
+            render_resolution=gym_kwargs.get("render_resolution", (480, 480)) if gym_kwargs else (480, 480),
         )
         envs[f"{task}"][f"{i}"] = env
     return envs

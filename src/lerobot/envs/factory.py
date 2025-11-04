@@ -18,7 +18,7 @@ import importlib
 import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, VLABenchEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -28,6 +28,8 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "libero":
         return LiberoEnv(**kwargs)
+    elif env_type == "vlabench":
+        return VLABenchEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
@@ -84,6 +86,20 @@ def make_env(
             n_envs=n_envs,
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
+        )
+    elif "vlabench" in cfg.type:
+        from lerobot.envs.vlabench import create_vlabench_envs
+        
+        if cfg.task is None:
+            raise ValueError("VLABench requires a task to be specified")
+        
+        return create_vlabench_envs(
+            task=cfg.task,
+            n_envs=n_envs,
+            robot=cfg.robot,
+            configs=cfg.env_configs,
+            episode_configs=cfg.episode_configs,
+            gym_kwargs=cfg.gym_kwargs,
         )
 
     if cfg.gym_id not in gym_registry:
