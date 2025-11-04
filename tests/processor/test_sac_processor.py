@@ -21,7 +21,6 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.processor_sac import make_sac_pre_post_processors
 from lerobot.processor import (
@@ -34,6 +33,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 
 def create_default_config():

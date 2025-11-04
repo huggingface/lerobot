@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from torch import Tensor
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 
 from .core import EnvTransition, PolicyAction
 from .pipeline import (

@@ -1,0 +1,125 @@
+# GR00T N1.5 Policy
+
+GR00T N1.5 is an open foundation model from NVIDIA designed for generalized humanoid robot reasoning and skills. It is a cross-embodiment model that accepts multimodal input, including language and images, to perform manipulation tasks in diverse environments.
+
+This document outlines the specifics of its integration and usage within the LeRobot framework.
+
+## Model Overview
+
+NVIDIA Isaac GR00T N1.5 is an upgraded version of the GR00T N1 foundation model. It is built to improve generalization and language-following abilities for humanoid robots.
+
+Developers and researchers can post-train GR00T N1.5 with their own real or synthetic data to adapt it for specific humanoid robots or tasks.
+
+GR00T N1.5 (specifically the GR00T-N1.5-3B model) is built using pre-trained vision and language encoders. It utilizes a flow matching action transformer to model a chunk of actions, conditioned on vision, language, and proprioception.
+
+Its strong performance comes from being trained on an expansive and diverse humanoid dataset, which includes:
+
+- Real captured data from robots.
+- Synthetic data generated using NVIDIA Isaac GR00T Blueprint.
+- Internet-scale video data.
+
+This approach allows the model to be highly adaptable through post-training for specific embodiments, tasks, and environments.
+
+## Installation Requirements
+
+As of today, GR00T N1.5 requires flash attention for it's internal working.
+
+We are working on making this optional, but in the meantime that means that we require an extra installation step and it can only be used in CUDA enabled devices.
+
+1. Following the Environment Setup of our [Installation Guide](./installation). **Attention** don't install `lerobot` in this step.
+2. Install [Flash Attention](https://github.com/Dao-AILab/flash-attention) by running:
+
+```bash
+# Check https://pytorch.org/get-started/locally/ for your system
+pip install "torch>=2.2.1,<2.8.0" "torchvision>=0.21.0,<0.23.0" # --index-url https://download.pytorch.org/whl/cu1XX
+pip install ninja "packaging>=24.2,<26.0" # flash attention dependencies
+pip install "flash-attn>=2.5.9,<3.0.0" --no-build-isolation
+python -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} imported successfully')"
+```
+
+3. Install LeRobot by running:
+
+```bash
+pip install lerobot[groot]
+```
+
+## Usage
+
+To use GR00T in your LeRobot configuration, specify the policy type as:
+
+```python
+policy.type=groot
+```
+
+## Training
+
+### Training Command Example
+
+Here's a complete training command for finetuning the base GR00T model on your own dataset:
+
+```bash
+# Using a multi-GPU setup
+accelerate launch \
+  --multi_gpu \
+  --num_processes=$NUM_GPUS \
+  $(which lerobot-train) \
+  --output_dir=$OUTPUT_DIR \
+  --save_checkpoint=true \
+  --batch_size=$BATCH_SIZE \
+  --steps=$NUM_STEPS \
+  --save_freq=$SAVE_FREQ \
+  --log_freq=$LOG_FREQ \
+  --policy.push_to_hub=true \
+  --policy.type=groot \
+  --policy.repo_id=$REPO_ID \
+  --policy.tune_diffusion_model=false \
+  --dataset.repo_id=$DATASET_ID \
+  --wandb.enable=true \
+  --wandb.disable_artifact=true \
+  --job_name=$JOB_NAME
+```
+
+## Performance Results
+
+### Libero Benchmark Results
+
+> [!NOTE]
+> Follow our instructions for Libero usage: [Libero](./libero)
+
+GR00T has demonstrated strong performance on the Libero benchmark suite. To compare and test its LeRobot implementation, we finetuned the GR00T N1.5 model for 30k steps on the Libero dataset and compared the results to the GR00T reference results.
+
+| Benchmark          | LeRobot Implementation | GR00T Reference |
+| ------------------ | ---------------------- | --------------- |
+| **Libero Spatial** | 82.0%                  | 92.0%           |
+| **Libero Object**  | 99.0%                  | 92.0%           |
+| **Libero Long**    | 82.0%                  | 76.0%           |
+| **Average**        | 87.0%                  | 87.0%           |
+
+These results demonstrate GR00T's strong generalization capabilities across diverse robotic manipulation tasks. To reproduce these results, you can follow the instructions in the [Libero](https://huggingface.co/docs/lerobot/libero) section.
+
+### Evaluate in your hardware setup
+
+Once you have trained your model using your parameters you can run inference in your downstream task. Follow the instructions in [Imitation Learning for Robots](./il_robots). For example:
+
+```bash
+lerobot-record \
+  --robot.type=bi_so100_follower \
+  --robot.left_arm_port=/dev/ttyACM1 \
+  --robot.right_arm_port=/dev/ttyACM0 \
+  --robot.id=bimanual_follower \
+  --robot.cameras='{ right: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
+    left: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
+    top: {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30},
+  }' \
+  --display_data=true \
+  --dataset.repo_id=<user>/eval_groot-bimanual  \
+  --dataset.num_episodes=10 \
+  --dataset.single_task="Grab and handover the red cube to the other arm"
+  --policy.path=<user>/groot-bimanual # your trained model
+  --dataset.episode_time_s=30
+  --dataset.reset_time_s=10
+```
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original [GR00T repository](https://github.com/NVIDIA/Isaac-GR00T).

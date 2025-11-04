@@ -1,3 +1,19 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Tests for the TokenizerProcessorStep class.
 """
@@ -9,9 +25,9 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.constants import OBS_LANGUAGE
 from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep, TransitionKey
 from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_LANGUAGE, OBS_STATE
 from tests.utils import require_package
 
 
@@ -32,10 +48,7 @@ class MockTokenizer:
         **kwargs,
     ) -> dict[str, torch.Tensor]:
         """Mock tokenization that returns deterministic tokens based on text."""
-        if isinstance(text, str):
-            texts = [text]
-        else:
-            texts = text
+        texts = [text] if isinstance(text, str) else text
 
         batch_size = len(texts)
 
@@ -503,17 +516,15 @@ def test_features_basic():
     processor = TokenizerProcessorStep(tokenizer=mock_tokenizer, max_length=128)
 
     input_features = {
-        PipelineFeatureType.OBSERVATION: {
-            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(10,))
-        },
-        PipelineFeatureType.ACTION: {"action": PolicyFeature(type=FeatureType.ACTION, shape=(5,))},
+        PipelineFeatureType.OBSERVATION: {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,))},
+        PipelineFeatureType.ACTION: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(5,))},
     }
 
     output_features = processor.transform_features(input_features)
 
     # Check that original features are preserved
-    assert "observation.state" in output_features[PipelineFeatureType.OBSERVATION]
-    assert "action" in output_features[PipelineFeatureType.ACTION]
+    assert OBS_STATE in output_features[PipelineFeatureType.OBSERVATION]
+    assert ACTION in output_features[PipelineFeatureType.ACTION]
 
     # Check that tokenized features are added
     assert f"{OBS_LANGUAGE}.tokens" in output_features[PipelineFeatureType.OBSERVATION]
@@ -797,7 +808,7 @@ def test_device_detection_cpu():
     processor = TokenizerProcessorStep(tokenizer=mock_tokenizer, max_length=10)
 
     # Create transition with CPU tensors
-    observation = {"observation.state": torch.randn(10)}  # CPU tensor
+    observation = {OBS_STATE: torch.randn(10)}  # CPU tensor
     action = torch.randn(5)  # CPU tensor
     transition = create_transition(
         observation=observation, action=action, complementary_data={"task": "test task"}
@@ -821,7 +832,7 @@ def test_device_detection_cuda():
     processor = TokenizerProcessorStep(tokenizer=mock_tokenizer, max_length=10)
 
     # Create transition with CUDA tensors
-    observation = {"observation.state": torch.randn(10).cuda()}  # CUDA tensor
+    observation = {OBS_STATE: torch.randn(10).cuda()}  # CUDA tensor
     action = torch.randn(5).cuda()  # CUDA tensor
     transition = create_transition(
         observation=observation, action=action, complementary_data={"task": "test task"}
@@ -847,7 +858,7 @@ def test_device_detection_multi_gpu():
 
     # Test with tensors on cuda:1
     device = torch.device("cuda:1")
-    observation = {"observation.state": torch.randn(10).to(device)}
+    observation = {OBS_STATE: torch.randn(10).to(device)}
     action = torch.randn(5).to(device)
     transition = create_transition(
         observation=observation, action=action, complementary_data={"task": "multi gpu test"}
@@ -943,7 +954,7 @@ def test_device_detection_preserves_dtype():
     processor = TokenizerProcessorStep(tokenizer=mock_tokenizer, max_length=10)
 
     # Create transition with float tensor (to test dtype isn't affected)
-    observation = {"observation.state": torch.randn(10, dtype=torch.float16)}
+    observation = {OBS_STATE: torch.randn(10, dtype=torch.float16)}
     transition = create_transition(observation=observation, complementary_data={"task": "dtype test"})
 
     result = processor(transition)
@@ -977,7 +988,7 @@ def test_integration_with_device_processor(mock_auto_tokenizer):
 
     # Start with CPU tensors
     transition = create_transition(
-        observation={"observation.state": torch.randn(10)},  # CPU
+        observation={OBS_STATE: torch.randn(10)},  # CPU
         action=torch.randn(5),  # CPU
         complementary_data={"task": "pipeline test"},
     )
@@ -985,7 +996,7 @@ def test_integration_with_device_processor(mock_auto_tokenizer):
     result = robot_processor(transition)
 
     # All tensors should end up on CUDA (moved by DeviceProcessorStep)
-    assert result[TransitionKey.OBSERVATION]["observation.state"].device.type == "cuda"
+    assert result[TransitionKey.OBSERVATION][OBS_STATE].device.type == "cuda"
     assert result[TransitionKey.ACTION].device.type == "cuda"
 
     # Tokenized tensors should also be on CUDA
@@ -1005,8 +1016,8 @@ def test_simulated_accelerate_scenario():
     # Simulate Accelerate scenario: batch already on GPU
     device = torch.device("cuda:0")
     observation = {
-        "observation.state": torch.randn(1, 10).to(device),  # Batched, on GPU
-        "observation.image": torch.randn(1, 3, 224, 224).to(device),  # Batched, on GPU
+        OBS_STATE: torch.randn(1, 10).to(device),  # Batched, on GPU
+        OBS_IMAGE: torch.randn(1, 3, 224, 224).to(device),  # Batched, on GPU
     }
     action = torch.randn(1, 5).to(device)  # Batched, on GPU
 

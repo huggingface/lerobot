@@ -1,3 +1,19 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import importlib
 import sys
 from types import SimpleNamespace
@@ -6,6 +22,7 @@ import numpy as np
 import pytest
 
 from lerobot.processor import TransitionKey
+from lerobot.utils.constants import OBS_STATE
 
 
 @pytest.fixture
@@ -28,7 +45,7 @@ def mock_rerun(monkeypatch):
         calls.append((key, obj, kwargs))
 
     dummy_rr = SimpleNamespace(
-        Scalar=DummyScalar,
+        Scalars=DummyScalar,
         Image=DummyImage,
         log=dummy_log,
         init=lambda *a, **k: None,
@@ -72,7 +89,7 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
 
     # Build EnvTransition dict
     obs = {
-        "observation.state.temperature": np.float32(25.0),
+        f"{OBS_STATE}.temperature": np.float32(25.0),
         # CHW image should be converted to HWC for rr.Image
         "observation.camera": np.zeros((3, 10, 20), dtype=np.uint8),
     }
@@ -92,12 +109,12 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
     vu.log_rerun_data(observation=obs_data, action=action_data)
 
     # We expect:
-    # - observation.state.temperature -> Scalar
+    # - observation.state.temperature -> Scalars
     # - observation.camera -> Image (HWC) with static=True
-    # - action.throttle -> Scalar
+    # - action.throttle -> Scalars
     # - action.vector_0, action.vector_1 -> Scalars
     expected_keys = {
-        "observation.state.temperature",
+        f"{OBS_STATE}.temperature",
         "observation.camera",
         "action.throttle",
         "action.vector_0",
@@ -106,7 +123,7 @@ def test_log_rerun_data_envtransition_scalars_and_image(mock_rerun):
     assert set(_keys(calls)) == expected_keys
 
     # Check scalar types and values
-    temp_obj = _obj_for(calls, "observation.state.temperature")
+    temp_obj = _obj_for(calls, f"{OBS_STATE}.temperature")
     assert type(temp_obj).__name__ == "DummyScalar"
     assert temp_obj.value == pytest.approx(25.0)
 

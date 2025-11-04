@@ -20,12 +20,12 @@ from typing import Any
 import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.constants import OBS_STATE
 from lerobot.processor.pipeline import (
     ObservationProcessorStep,
     ProcessorStepRegistry,
 )
 from lerobot.robots import Robot
+from lerobot.utils.constants import OBS_STATE
 
 
 @dataclass

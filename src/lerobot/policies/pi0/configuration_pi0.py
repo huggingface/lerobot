@@ -1,4 +1,6 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#!/usr/bin/env python
+
+# Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,19 +19,40 @@ from dataclasses import dataclass, field
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import (
-    CosineDecayWithWarmupSchedulerConfig,
-)
+from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.utils.constants import OBS_IMAGES
 
 
 @PreTrainedConfig.register_subclass("pi0")
 @dataclass
 class PI0Config(PreTrainedConfig):
-    # Input / output structure.
-    n_obs_steps: int = 1
-    chunk_size: int = 50
-    n_action_steps: int = 50
+    paligemma_variant: str = "gemma_2b"
+    action_expert_variant: str = "gemma_300m"
+    dtype: str = "float32"  # Options: "bfloat16", "float32"
 
+    n_obs_steps: int = 1
+    chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
+    n_action_steps: int = 50  # Number of action steps to execute
+
+    # Shorter state and action vectors will be padded to these dimensions
+    max_state_dim: int = 32
+    max_action_dim: int = 32
+
+    # Flow matching parameters: see openpi `PI0Pytorch`
+    num_inference_steps: int = 10  # Number of denoising steps during inference
+    time_sampling_beta_alpha: float = 1.5
+    time_sampling_beta_beta: float = 1.0
+    time_sampling_scale: float = 0.999
+    time_sampling_offset: float = 0.001
+    min_period: float = 4e-3
+    max_period: float = 4.0
+
+    image_resolution: tuple[int, int] = (224, 224)  # see openpi `preprocessing_pytorch.py`
+
+    # Add empty images. Used to add empty cameras when no image features are present.
+    empty_cameras: int = 0
+
+    # Normalization
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -38,87 +61,69 @@ class PI0Config(PreTrainedConfig):
         }
     )
 
-    # Shorter state and action vectors will be padded
-    max_state_dim: int = 32
-    max_action_dim: int = 32
+    # Training settings
+    gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
+    compile_model: bool = False  # Whether to use torch.compile for model optimization
+    compile_mode: str = "max-autotune"  # Torch compile mode
+    device: str | None = None  # Device to use for the model (None = auto-detect)
 
-    # Image preprocessing
-    resize_imgs_with_padding: tuple[int, int] = (224, 224)
-
-    # Add empty images. Used by pi0_aloha_sim which adds the empty
-    # left and right wrist cameras in addition to the top camera.
-    empty_cameras: int = 0
-
-    # Converts the joint and gripper values from the standard Aloha space to
-    # the space used by the pi internal runtime which was used to train the base model.
-    adapt_to_pi_aloha: bool = False
-
-    # Converts joint dimensions to deltas with respect to the current state before passing to the model.
-    # Gripper dimensions will remain in absolute values.
-    use_delta_joint_actions_aloha: bool = False
-
-    # Tokenizer
-    tokenizer_max_length: int = 48
-
-    # Projector
-    proj_width: int = 1024
-
-    # Decoding
-    num_steps: int = 10
-
-    # Attention utils
-    use_cache: bool = True
-    attention_implementation: str = "eager"  # or fa2, flex
-
-    # Finetuning settings
-    freeze_vision_encoder: bool = True
-    train_expert_only: bool = False
-    train_state_proj: bool = True
-
-    # Training presets
-    optimizer_lr: float = 2.5e-5
+    # Optimizer settings: see openpi `AdamW``
+    optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
-    optimizer_weight_decay: float = 1e-10
+    optimizer_weight_decay: float = 0.01
+    optimizer_grad_clip_norm: float = 1.0
 
+    # Scheduler settings: see openpi `CosineDecaySchedule`
+    # Note: These will auto-scale if --steps < scheduler_decay_steps
+    # For example, --steps=3000 will scale warmup to 100 and decay to 3000
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    # TODO: Add EMA
+    tokenizer_max_length: int = 48  # see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()
 
-        # TODO(Steven): Validate device and amp? in all policy configs?
-        """Input validation (not exhaustive)."""
+        # Validate configuration
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
-                f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
-                f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
-            )
-        if self.n_obs_steps != 1:
-            raise ValueError(
-                f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
+                f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
             )
 
-        if self.use_delta_joint_actions_aloha:
-            raise NotImplementedError(
-                "`use_delta_joint_actions_aloha` is used by pi0 for aloha real models. It is not ported yet in LeRobot."
-            )
+        if self.paligemma_variant not in ["gemma_300m", "gemma_2b"]:
+            raise ValueError(f"Invalid paligemma_variant: {self.paligemma_variant}")
+
+        if self.action_expert_variant not in ["gemma_300m", "gemma_2b"]:
+            raise ValueError(f"Invalid action_expert_variant: {self.action_expert_variant}")
+
+        if self.dtype not in ["bfloat16", "float32"]:
+            raise ValueError(f"Invalid dtype: {self.dtype}")
 
     def validate_features(self) -> None:
-        # TODO: implement value error
-        # if not self.image_features and not self.env_state_feature:
-        #     raise ValueError("You must provide at least one image or the environment state among the inputs.")
-
+        """Validate and set up input/output features."""
         for i in range(self.empty_cameras):
-            key = f"observation.images.empty_camera_{i}"
+            key = f"{OBS_IMAGES}.empty_camera_{i}"
             empty_camera = PolicyFeature(
                 type=FeatureType.VISUAL,
-                shape=(3, 480, 640),
+                shape=(3, *self.image_resolution),  # Use configured image resolution
             )
             self.input_features[key] = empty_camera
+
+        if "observation.state" not in self.input_features:
+            state_feature = PolicyFeature(
+                type=FeatureType.STATE,
+                shape=(self.max_state_dim,),  # Padded to max_state_dim
+            )
+            self.input_features["observation.state"] = state_feature
+
+        if "action" not in self.output_features:
+            action_feature = PolicyFeature(
+                type=FeatureType.ACTION,
+                shape=(self.max_action_dim,),  # Padded to max_action_dim
+            )
+            self.output_features["action"] = action_feature
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
@@ -126,6 +131,7 @@ class PI0Config(PreTrainedConfig):
             betas=self.optimizer_betas,
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
+            grad_clip_norm=self.optimizer_grad_clip_norm,
         )
 
     def get_scheduler_preset(self):

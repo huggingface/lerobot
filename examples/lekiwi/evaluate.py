@@ -19,11 +19,12 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import make_default_processors
-from lerobot.record import record_loop
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.scripts.lerobot_record import record_loop
+from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
+from lerobot.utils.visualization_utils import init_rerun
 
 NUM_EPISODES = 2
 FPS = 30
@@ -41,8 +42,8 @@ robot = LeKiwiClient(robot_config)
 policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
 
 # Configure the dataset features
-action_features = hw_to_dataset_features(robot.action_features, "action")
-obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+action_features = hw_to_dataset_features(robot.action_features, ACTION)
+obs_features = hw_to_dataset_features(robot.observation_features, OBS_STR)
 dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
@@ -73,7 +74,7 @@ teleop_action_processor, robot_action_processor, robot_observation_processor = m
 
 # Initialize the keyboard listener and rerun visualization
 listener, events = init_keyboard_listener()
-_init_rerun(session_name="lekiwi_evaluate")
+init_rerun(session_name="lekiwi_evaluate")
 
 if not robot.is_connected:
     raise ValueError("Robot is not connected!")
@@ -132,4 +133,6 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
 log_say("Stop recording")
 robot.disconnect()
 listener.stop()
+
+dataset.finalize()
 dataset.push_to_hub()

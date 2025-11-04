@@ -26,7 +26,6 @@ from lerobot.processor.converters import (
     transition_to_observation,
     transition_to_robot_action,
 )
-from lerobot.record import record_loop
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
@@ -36,12 +35,13 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
 from lerobot.teleoperators.phone.teleop_phone import Phone
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
+from lerobot.utils.visualization_utils import init_rerun
 
 NUM_EPISODES = 2
 FPS = 30
@@ -84,7 +84,6 @@ phone_to_robot_ee_pose_processor = RobotProcessorPipeline[tuple[RobotAction, Rob
         EEBoundsAndSafety(
             end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
             max_ee_step_m=0.20,
-            max_ee_twist_step_rad=0.50,
         ),
         GripperVelocityToJoint(speed_factor=20.0),
     ],
@@ -143,7 +142,7 @@ phone.connect()
 
 # Initialize the keyboard listener and rerun visualization
 listener, events = init_keyboard_listener()
-_init_rerun(session_name="phone_so100_record")
+init_rerun(session_name="phone_so100_record")
 
 if not robot.is_connected or not phone.is_connected:
     raise ValueError("Robot or teleop is not connected!")
@@ -201,4 +200,6 @@ log_say("Stop recording")
 robot.disconnect()
 phone.disconnect()
 listener.stop()
+
+dataset.finalize()
 dataset.push_to_hub()
