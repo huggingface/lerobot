@@ -962,7 +962,7 @@ def _copy_data_with_feature_changes(
     remove_features: list[str] | None = None,
 ) -> None:
     """Copy data while adding or removing features."""
-    data_dir = dataset.root / "data"
+    data_dir = dataset.root / DATA_DIR
     parquet_files = sorted(data_dir.glob("*/*.parquet"))
 
     if not parquet_files:
