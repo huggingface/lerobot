@@ -56,6 +56,7 @@ recording_state = {
     "status_message": "Ready",
     "upload_status": None,
     "current_fps": 0.0,
+    "loop_fps": 0.0,  # Actual control loop FPS (critical - must be 30)
     "ramp_up_remaining": 0.0,  # Remaining seconds for PID ramp-up
     "recording_started_time": None,  # Time when actual recording starts (after ramp-up)
     "moving_to_zero": False,  # Whether robot is moving to zero position
@@ -378,6 +379,10 @@ def record_loop_with_compensation():
     last_fps_update = loop_start_time
     fps_frame_count = 0
     
+    # Separate tracking for actual loop FPS (critical for control)
+    loop_fps_frame_count = 0
+    last_loop_fps_update = loop_start_time
+    
     # All joints (both arms)
     all_joints = []
     for motor in leader.bus_right.motors:
@@ -404,15 +409,28 @@ def record_loop_with_compensation():
             # Update ramp-up status for UI
             recording_state["ramp_up_remaining"] = round(ramp_up_remaining, 2)
             
-            # Track if we're falling behind - if so, skip encoding to maintain FPS
-            # Check if previous loop took too long (indicating we're falling behind)
+            # CRITICAL: Track actual control loop FPS (must be 30 Hz)
+            # Calculate every second for accurate monitoring
+            loop_fps_frame_count += 1
+            loop_elapsed = loop_start - last_loop_fps_update
+            if loop_elapsed >= 1.0:
+                actual_loop_fps = loop_fps_frame_count / loop_elapsed
+                recording_state["loop_fps"] = round(actual_loop_fps, 1)
+                loop_fps_frame_count = 0
+                last_loop_fps_update = loop_start
+                
+                # Log if we're falling behind
+                if actual_loop_fps < 29.0:
+                    print(f"[Recording] WARNING: Loop FPS low: {actual_loop_fps:.1f} Hz")
+            
+            # More aggressive skip logic: skip encoding if loop is taking >90% of frame time
+            # OR if previous loop was slow
             if hasattr(record_loop_with_compensation, '_last_loop_duration'):
-                # If previous loop took longer than frame time, we're falling behind - skip encoding
-                skip_encoding = record_loop_with_compensation._last_loop_duration > dt * 1.1
+                skip_encoding = record_loop_with_compensation._last_loop_duration > dt * 0.9
             else:
                 skip_encoding = False
             
-            # Calculate actual FPS every second (only after ramp-up)
+            # Calculate frame recording FPS every second (only after ramp-up)
             if is_ramp_up_complete:
                 elapsed = loop_start - episode_start_time
                 fps_frame_count += 1
@@ -544,6 +562,7 @@ def record_loop_with_compensation():
             encoded_frames = {}
             
             # Only encode if we're not falling behind
+            # PRIORITY: 30 Hz control loop > streaming quality
             if not skip_encoding:
                 for cam_name in ["left_wrist", "right_wrist", "base"]:
                     if cam_name in observation:
@@ -551,13 +570,13 @@ def record_loop_with_compensation():
                         if frame is not None and len(frame.shape) == 3:
                             # Frame is already RGB from OpenCVCamera (ColorMode.RGB by default)
                             # Encode once, use many times - eliminates per-stream encoding overhead
-                            # Quick encode - use lower quality if we're tight on time
+                            # Use low quality (40) for fast streaming - control loop is priority
                             encode_start = time.perf_counter()
-                            success, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                            success, jpeg_bytes = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 40])
                             encode_duration = time.perf_counter() - encode_start
                             
-                            # Only use encoded frame if encoding was fast enough (< 10ms)
-                            if success and encode_duration < 0.01:
+                            # Only use encoded frame if encoding was very fast (< 5ms = 15% of frame time)
+                            if success and encode_duration < 0.005:
                                 encoded_frames[cam_name] = jpeg_bytes.tobytes()
                             # If encoding took too long, skip this camera for this frame
             
@@ -579,7 +598,7 @@ def record_loop_with_compensation():
                     
                     # Log progress every 5 seconds (150 frames @ 30 FPS)
                     if frame_count % 150 == 0:
-                        print(f"[Recording] {frame_count} frames @ {recording_state['current_fps']} FPS")
+                        print(f"[Recording] {frame_count} frames | Loop: {recording_state['loop_fps']} Hz | Recording: {recording_state['current_fps']} FPS")
                 except Exception as frame_error:
                     print(f"[Recording] Frame error: {frame_error}")
                     # Continue recording even if one frame fails
@@ -854,7 +873,10 @@ async def disconnect_robots():
 
 @app.post("/api/robots/move-to-zero")
 async def move_to_zero():
-    """Move follower robot to zero position with reduced gains (for 2 seconds)."""
+    """Move follower robot to zero position with reduced gains (for 2 seconds).
+    
+    Also disables leader torque during the movement for safety and ease of repositioning.
+    """
     global recording_state
     
     if recording_state["is_recording"] or recording_state["is_initializing"]:
@@ -871,6 +893,14 @@ async def move_to_zero():
         recording_state["status_message"] = "Moving to zero position..."
         
         follower = robot_instances["follower"]
+        leader = robot_instances.get("leader")
+        
+        # Disable leader torque for safety and ease of repositioning
+        if leader:
+            print(f"[MoveToZero] Disabling leader torque...")
+            leader.bus_right.disable_torque()
+            leader.bus_left.disable_torque()
+            time.sleep(0.1)
         
         # Motor name to index mapping
         motor_index = {
@@ -925,14 +955,32 @@ async def move_to_zero():
             if sleep_time > 0:
                 time.sleep(sleep_time)
         
+        # Re-enable leader torque for gravity compensation
+        if leader:
+            print(f"[MoveToZero] Re-enabling leader torque...")
+            leader.bus_right.enable_torque()
+            leader.bus_left.enable_torque()
+            time.sleep(0.1)
+        
         recording_state["moving_to_zero"] = False
         recording_state["status_message"] = "Moved to zero position" if recording_state["robots_ready"] else "Ready"
         
+        print(f"[MoveToZero] Complete - leader torque re-enabled")
         return {"status": "success", "message": "Robot moved to zero position"}
     
     except Exception as e:
         recording_state["moving_to_zero"] = False
         recording_state["status_message"] = f"Error: {str(e)}"
+        
+        # Try to re-enable leader torque even on error
+        leader = robot_instances.get("leader")
+        if leader:
+            try:
+                leader.bus_right.enable_torque()
+                leader.bus_left.enable_torque()
+            except Exception as torque_error:
+                print(f"[MoveToZero] Failed to re-enable leader torque: {torque_error}")
+        
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -952,6 +1000,7 @@ async def get_status():
         "robots_ready": recording_state["robots_ready"],
         "elapsed_time": elapsed,
         "current_fps": recording_state["current_fps"],
+        "loop_fps": recording_state["loop_fps"],
         "task": recording_state["task"],
         "episode_count": recording_state["episode_count"],
         "error": recording_state["error"],

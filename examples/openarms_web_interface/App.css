@@ -433,11 +433,27 @@ button {
 
 .status.recording.recording-active .time-display {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 0.5rem;
   font-size: 1.5rem;
   font-weight: 700;
   color: white;
+}
+
+.fps-display {
+  font-size: 1rem;
+  font-weight: 500;
+  opacity: 0.95;
+}
+
+.fps-warning {
+  color: #fef2f2;
+  animation: pulse-warning 1s ease-in-out infinite;
+}
+
+@keyframes pulse-warning {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .status.recording.recording-active .btn-stop {

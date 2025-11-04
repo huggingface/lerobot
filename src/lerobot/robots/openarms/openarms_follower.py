@@ -114,16 +114,12 @@ class OpenArmsFollower(Robot):
     def _motors_ft(self) -> Dict[str, type]:
         """Motor features for observation and action spaces."""
         features = {}
-        # Right arm motors
+        # Right arm motors - only positions stored in dataset
         for motor in self.bus_right.motors:
             features[f"right_{motor}.pos"] = float
-            features[f"right_{motor}.vel"] = float
-            features[f"right_{motor}.torque"] = float
-        # Left arm motors
+        # Left arm motors - only positions stored in dataset
         for motor in self.bus_left.motors:
             features[f"left_{motor}.pos"] = float
-            features[f"left_{motor}.vel"] = float
-            features[f"left_{motor}.torque"] = float
         return features
 
     @property
@@ -301,6 +297,9 @@ class OpenArmsFollower(Robot):
         
         OPTIMIZED: Reads all motor states (pos/vel/torque) in one CAN refresh cycle
         instead of 3 separate reads.
+        
+        Note: Velocity and torque are read but not stored in dataset (only used for
+        internal calculations). Only positions and camera images are stored.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
