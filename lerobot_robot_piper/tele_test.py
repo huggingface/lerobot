@@ -21,7 +21,8 @@ leader_to_piper = {
 }
 
 # Shrink leader command to avoid saturating Piper limits too often
-LEADER_GAIN = 0.6  # 60% of leader normalized range
+LEADER_GAIN = 0.9
+ # 60% of leader normalized range
 
 def clamp(val: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, val))
