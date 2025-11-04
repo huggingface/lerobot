@@ -10,3 +10,7 @@ dependencies = [
 [project.urls]
 Home = "https://github.com/forgetwhatwant/lerobot_robot_piper"
 
+[project.scripts]
+lerobot-teleoperate-piper = "lerobot_robot_piper.teleoperate_wrapper:main"
+lerobot-record-piper = "lerobot_robot_piper.record_wrapper:main"
+

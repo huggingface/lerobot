@@ -46,7 +46,7 @@ class Piper(Robot):
 
     @property
     def action_features(self) -> dict:
-        ft = {**self._motors_ft}
+        ft = {f"{alias}.pos": float for alias in self.config.joint_aliases}
         if self.config.include_gripper:
             ft["gripper.pos"] = float
         return ft
