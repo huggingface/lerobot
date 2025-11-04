@@ -110,16 +110,12 @@ class OpenArmsLeader(Teleoperator):
     def action_features(self) -> Dict[str, type]:
         """Features produced by this teleoperator."""
         features = {}
-        # Right arm motors
+        # Right arm motors - only positions stored in dataset
         for motor in self.bus_right.motors:
             features[f"right_{motor}.pos"] = float
-            features[f"right_{motor}.vel"] = float
-            features[f"right_{motor}.torque"] = float
-        # Left arm motors
+        # Left arm motors - only positions stored in dataset
         for motor in self.bus_left.motors:
             features[f"left_{motor}.pos"] = float
-            features[f"left_{motor}.vel"] = float
-            features[f"left_{motor}.torque"] = float
         return features
 
     @property
@@ -277,7 +273,9 @@ class OpenArmsLeader(Teleoperator):
         This is the main method for teleoperators - it reads the current state
         of the leader arm and returns it as an action that can be sent to a follower.
         
-        Reads all motor states (pos/vel/torque) in one CAN refresh cycle
+        Reads all motor states (pos/vel/torque) in one CAN refresh cycle.
+        Note: Velocity and torque are read but not stored in dataset (only used for
+        gravity/friction compensation during recording).
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
