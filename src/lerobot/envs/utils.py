@@ -26,7 +26,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STATE_JOINTS
 from lerobot.utils.utils import get_channel_first_image_shape
 
 
@@ -74,6 +74,13 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             env_state = env_state.unsqueeze(0)
 
         return_observations[OBS_ENV_STATE] = env_state
+
+    if "agent_joints" in observations:
+        joints_state = torch.from_numpy(observations["agent_joints"]).float()
+        if joints_state.dim() == 1:
+            joints_state = joints_state.unsqueeze(0)
+
+        return_observations[OBS_STATE_JOINTS] = joints_state
 
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
     agent_pos = torch.from_numpy(observations["agent_pos"]).float()
