@@ -1181,6 +1181,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"Batch encoding {self.batch_encoding_size} videos for episodes {start_episode} to {end_episode - 1}"
         )
 
+        # Flush metadata buffer to ensure all episode metadata is written to disk
+        self.meta._flush_metadata_buffer()
+
         # Reload episodes to ensure we have the latest metadata for all episodes,
         # especially when resuming recording with batch encoding enabled
         self.meta.episodes = load_episodes(self.root)
