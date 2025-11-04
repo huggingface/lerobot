@@ -17,7 +17,7 @@ For XPU backend, follow instructions from [PyTorch documentation](https://docs.p
 
 ### Verifying the installation
 
-After installation, accelerator availabiliry can verified by running
+After installation, accelerator availability can be verified by running
 ```python
 import torch
 print(torch.<backend_name>.is_available())  # <backend_name> is cuda, mps, or xpu
@@ -38,4 +38,4 @@ lerobot-eval \
     --policy.device=mps ...
 ```
 
-However, in most cases, presence of an accelerator is detected automatically and `policy.device` parameter can be omitted form CLI commands.
+However, in most cases, presence of an accelerator is detected automatically and `policy.device` parameter can be omitted from CLI commands.
