@@ -14,10 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import gymnasium as gym
 import numpy as np
@@ -44,6 +47,7 @@ from lerobot.processor import (
     MotorCurrentProcessorStep,
     Numpy2TorchActionProcessorStep,
     RewardClassifierProcessorStep,
+    RewardRuleProcessorStep,
     RobotActionToPolicyActionProcessorStep,
     TimeLimitProcessorStep,
     Torch2NumpyActionProcessorStep,
@@ -56,6 +60,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     so100_follower,
+    so101_follower,
 )
 from lerobot.robots.robot import Robot
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
@@ -78,6 +83,63 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
 logging.basicConfig(level=logging.INFO)
+LOGGER = logging.getLogger(__name__)
+
+
+class RobotKinematicsServiceClient:
+    """HTTP client that mimics the RobotKinematics API."""
+
+    def __init__(self, base_url: str, timeout: float = 5.0) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+
+    def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send a JSON POST request to the configured service."""
+        request = Request(
+            url=f"{self._base_url}{endpoint}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urlopen(request, timeout=self._timeout) as response:
+                body = response.read().decode("utf-8")
+        except HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"HTTP {exc.code} from kinematics service: {error_body}") from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Failed to reach kinematics service at {self._base_url}{endpoint}: {exc.reason}"
+            ) from exc
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Invalid JSON response from kinematics service: {body}") from exc
+
+    def forward_kinematics(self, joint_pos_deg: np.ndarray) -> np.ndarray:
+        payload = {"joint_positions": np.asarray(joint_pos_deg, dtype=float).tolist()}
+        response = self._post("/fk", payload)
+        if "pose" not in response:
+            raise RuntimeError("Kinematics service response missing 'pose'.")
+        return np.asarray(response["pose"], dtype=float)
+
+    def inverse_kinematics(
+        self,
+        current_joint_pos: np.ndarray,
+        desired_ee_pose: np.ndarray,
+        position_weight: float = 1.0,
+        orientation_weight: float = 0.01,
+    ) -> np.ndarray:
+        payload = {
+            "current_joint_positions": np.asarray(current_joint_pos, dtype=float).tolist(),
+            "desired_pose": np.asarray(desired_ee_pose, dtype=float).tolist(),
+            "position_weight": position_weight,
+            "orientation_weight": orientation_weight,
+        }
+        response = self._post("/ik", payload)
+        if "joint_positions" not in response:
+            raise RuntimeError("Kinematics service response missing 'joint_positions'.")
+        return np.asarray(response["joint_positions"], dtype=float)
 
 
 @dataclass
@@ -115,6 +177,8 @@ def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> No
         action_dict = dict(zip(current_position_dict, pose, strict=False))
         robot_arm.bus.sync_write("Goal_Position", action_dict)
         busy_wait(0.015)
+    current_position_dict = robot_arm.bus.sync_read("Present_Position")
+    print("current_position_dict:", current_position_dict)
 
 
 class RobotEnv(gym.Env):
@@ -234,9 +298,9 @@ class RobotEnv(gym.Env):
         # self.robot.reset()
         start_time = time.perf_counter()
         if self.reset_pose is not None:
-            log_say("Reset the environment.", play_sounds=True)
+            print("Reset the environment.")
             reset_follower_position(self.robot, np.array(self.reset_pose))
-            log_say("Reset the environment done.", play_sounds=True)
+            print("Reset the environment done.")
 
         busy_wait(self.reset_time_s - (time.perf_counter() - start_time))
 
@@ -252,7 +316,12 @@ class RobotEnv(gym.Env):
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
         joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
+        
 
+        print("send action: ", joint_targets_dict)
+        if joint_targets_dict["elbow_flex.pos"] < 3.7037:
+            joint_targets_dict["elbow_flex.pos"] = 3.7037
+            print(joint_targets_dict["elbow_flex.pos"])
         self.robot.send_action(joint_targets_dict)
 
         obs = self._get_observation()
@@ -396,12 +465,19 @@ def make_processors(
 
     # Set up kinematics solver if inverse kinematics is configured
     kinematics_solver = None
-    if cfg.processor.inverse_kinematics is not None:
-        kinematics_solver = RobotKinematics(
-            urdf_path=cfg.processor.inverse_kinematics.urdf_path,
-            target_frame_name=cfg.processor.inverse_kinematics.target_frame_name,
-            joint_names=motor_names,
-        )
+    inverse_cfg = cfg.processor.inverse_kinematics
+    if inverse_cfg is not None:
+        if inverse_cfg.use_service:
+            if not inverse_cfg.service_url:
+                raise ValueError("cfg.processor.inverse_kinematics.service_url must be set when use_service is True.")
+            LOGGER.info("Using RobotKinematics HTTP service at %s", inverse_cfg.service_url)
+            kinematics_solver = RobotKinematicsServiceClient(base_url=inverse_cfg.service_url)
+        else:
+            kinematics_solver = RobotKinematics(
+                urdf_path=inverse_cfg.urdf_path,
+                target_frame_name=inverse_cfg.target_frame_name,
+                joint_names=motor_names,
+            )
 
     env_pipeline_steps = [VanillaObservationProcessorStep()]
 
@@ -455,6 +531,15 @@ def make_processors(
                 terminate_on_success=terminate_on_success,
             )
         )
+    elif (cfg.processor.reward_rule is not None):
+        env_pipeline_steps.append(RewardRuleProcessorStep(
+            target_x=cfg.processor.reward_rule.target_x,
+            target_y=cfg.processor.reward_rule.target_y,
+            target_z=cfg.processor.reward_rule.target_z,
+            radius=cfg.processor.reward_rule.radius,
+            radius_z=cfg.processor.reward_rule.radius_z,
+            terminate_on_success=terminate_on_success,
+        ))
 
     env_pipeline_steps.append(AddBatchDimensionProcessorStep())
     env_pipeline_steps.append(DeviceProcessorStep(device=device))
@@ -642,13 +727,14 @@ def control_loop(
     episode_start_time = time.perf_counter()
 
     while episode_idx < cfg.dataset.num_episodes_to_record:
+        print("episode_idx: ", episode_idx)
         step_start_time = time.perf_counter()
 
         # Create a neutral action (no movement)
         neutral_action = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
         if use_gripper:
             neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
-
+        #print(neutral_action)
         # Use the new step function
         transition = step_env_and_process_transition(
             env=env,
@@ -657,6 +743,7 @@ def control_loop(
             env_processor=env_processor,
             action_processor=action_processor,
         )
+        # print(transition)
         terminated = transition.get(TransitionKey.DONE, False)
         truncated = transition.get(TransitionKey.TRUNCATED, False)
 
@@ -764,6 +851,7 @@ def main(cfg: GymManipulatorConfig) -> None:
         exit()
 
     control_loop(env, env_processor, action_processor, teleop_device, cfg)
+    print("finish")
 
 
 if __name__ == "__main__":

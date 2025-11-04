@@ -157,11 +157,22 @@ class RewardClassifierConfig:
     success_threshold: float = 0.5
     success_reward: float = 1.0
 
+@dataclass
+class RewardRuleConfig:
+    """Configuration for reward rule."""
+
+    target_x: float = 0.0
+    target_y: float = 0.0
+    target_z: float = 0.0
+    radius: float = 0.01
+    radius_z: float = 0.01
 
 @dataclass
 class InverseKinematicsConfig:
     """Configuration for inverse kinematics processing."""
 
+    use_service: bool = False
+    service_url: str | None = None
     urdf_path: str | None = None
     target_frame_name: str | None = None
     end_effector_bounds: dict[str, list[float]] | None = None
@@ -206,6 +217,7 @@ class HILSerlProcessorConfig:
     reset: ResetConfig | None = None
     inverse_kinematics: InverseKinematicsConfig | None = None
     reward_classifier: RewardClassifierConfig | None = None
+    reward_rule: RewardRuleConfig | None = None
     max_gripper_pos: float | None = 100.0
 
 

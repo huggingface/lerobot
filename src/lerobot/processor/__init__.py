@@ -47,6 +47,7 @@ from .hil_processor import (
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     RewardClassifierProcessorStep,
+    RewardRuleProcessorStep,
     TimeLimitProcessorStep,
 )
 from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
@@ -116,6 +117,7 @@ __all__ = [
     "RobotObservation",
     "RenameObservationsProcessorStep",
     "RewardClassifierProcessorStep",
+    "RewardRuleProcessorStep",
     "RewardProcessorStep",
     "DataProcessorPipeline",
     "TimeLimitProcessorStep",

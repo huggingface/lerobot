@@ -1,0 +1,1 @@
+python3 src/lerobot/scripts/lerobot_dataset_viz.py   --repo-id mengke/test10   --episode-index 0

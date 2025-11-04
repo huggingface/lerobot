@@ -12,7 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Protocol
+
 import numpy as np
+
+
+class KinematicsLike(Protocol):
+    """Protocol describing the required kinematics interface."""
+
+    def forward_kinematics(self, joint_pos_deg: np.ndarray) -> np.ndarray: ...
+
+    def inverse_kinematics(
+        self,
+        current_joint_pos: np.ndarray,
+        desired_ee_pose: np.ndarray,
+        position_weight: float = 1.0,
+        orientation_weight: float = 0.01,
+    ) -> np.ndarray: ...
 
 
 class RobotKinematics:
