@@ -40,6 +40,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .lekiwi import LeKiwi
 
         return LeKiwi(config)
+    elif config.type == "lekiwi_base":
+        from .lekiwi_base import LeKiwiBase
+
+        return LeKiwiBase(config)
     elif config.type == "hope_jr_hand":
         from .hope_jr import HopeJrHand
 

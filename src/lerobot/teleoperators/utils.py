@@ -81,6 +81,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .reachy2_teleoperator import Reachy2Teleoperator
 
         return Reachy2Teleoperator(config)
+    elif config.type == "lekiwi_base_gamepad":
+        from .lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import LeKiwiBaseTeleop
+
+        return LeKiwiBaseTeleop(config)
     elif config.type == "xlerobot_mount_gamepad":
         from .xlerobot_mount_gamepad import XLeRobotMountGamepadTeleop
 
