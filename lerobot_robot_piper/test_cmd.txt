@@ -1,0 +1,3 @@
+lerobot-teleoperate \
+  --teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop.use_degrees=false \
+  --robot.type=piper --robot.can_interface=can0 --robot.include_gripper=true --robot.use_degrees=false
