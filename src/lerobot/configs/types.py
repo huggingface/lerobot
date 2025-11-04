@@ -35,9 +35,11 @@ class NormalizationMode(str, Enum):
     MIN_MAX = "MIN_MAX"
     MEAN_STD = "MEAN_STD"
     IDENTITY = "IDENTITY"
+    QUANTILES = "QUANTILES"
+    QUANTILE10 = "QUANTILE10"
 
 
 @dataclass
 class PolicyFeature:
     type: FeatureType
-    shape: tuple
+    shape: tuple[int, ...]

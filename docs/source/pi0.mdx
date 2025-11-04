@@ -1,0 +1,84 @@
+# π₀ (Pi0)
+
+π₀ is a **Vision-Language-Action model for general robot control**, from Physical Intelligence. The LeRobot implementation is adapted from their open source [OpenPI](https://github.com/Physical-Intelligence/openpi) repository.
+
+## Model Overview
+
+π₀ represents a breakthrough in robotics as the first general-purpose robot foundation model developed by [Physical Intelligence](https://www.physicalintelligence.company/blog/pi0). Unlike traditional robot programs that are narrow specialists programmed for repetitive motions, π₀ is designed to be a generalist policy that can understand visual inputs, interpret natural language instructions, and control a variety of different robots across diverse tasks.
+
+### The Vision for Physical Intelligence
+
+As described by Physical Intelligence, while AI has achieved remarkable success in digital domains, from chess-playing to drug discovery, human intelligence still dramatically outpaces AI in the physical world. To paraphrase Moravec's paradox, winning a game of chess represents an "easy" problem for AI, but folding a shirt or cleaning up a table requires solving some of the most difficult engineering problems ever conceived. π₀ represents a first step toward developing artificial physical intelligence that enables users to simply ask robots to perform any task they want, just like they can with large language models.
+
+### Architecture and Approach
+
+π₀ combines several key innovations:
+
+- **Flow Matching**: Uses a novel method to augment pre-trained VLMs with continuous action outputs via flow matching (a variant of diffusion models)
+- **Cross-Embodiment Training**: Trained on data from 8 distinct robot platforms including UR5e, Bimanual UR5e, Franka, Bimanual Trossen, Bimanual ARX, Mobile Trossen, and Mobile Fibocom
+- **Internet-Scale Pre-training**: Inherits semantic knowledge from a pre-trained 3B parameter Vision-Language Model
+- **High-Frequency Control**: Outputs motor commands at up to 50 Hz for real-time dexterous manipulation
+
+## Installation Requirements
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. Install Pi0 dependencies by running:
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+   > [!NOTE]
+   > For lerobot 0.4.0, if you want to install pi tag, you will have to do: `pip install "lerobot[pi]@git+https://github.com/huggingface/lerobot.git"`.
+   >
+   > This will be solved in the next patch release
+
+## Training Data and Capabilities
+
+π₀ is trained on the largest robot interaction dataset to date, combining three key data sources:
+
+1. **Internet-Scale Pre-training**: Vision-language data from the web for semantic understanding
+2. **Open X-Embodiment Dataset**: Open-source robot manipulation datasets
+3. **Physical Intelligence Dataset**: Large and diverse dataset of dexterous tasks across 8 distinct robots
+
+## Usage
+
+To use π₀ in LeRobot, specify the policy type as:
+
+```python
+policy.type=pi0
+```
+
+## Training
+
+For training π₀, you can use the standard LeRobot training script with the appropriate configuration:
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --output_dir=./outputs/pi0_training \
+    --job_name=pi0_training \
+    --policy.pretrained_path=lerobot/pi0_base \
+    --policy.repo_id=your_repo_id \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### Key Training Parameters
+
+- **`--policy.compile_model=true`**: Enables model compilation for faster training
+- **`--policy.gradient_checkpointing=true`**: Reduces memory usage significantly during training
+- **`--policy.dtype=bfloat16`**: Use mixed precision training for efficiency
+- **`--batch_size=32`**: Batch size for training, adapt this based on your GPU memory
+- **`--policy.pretrained_path=lerobot/pi0_base`**: The base π₀ model you want to finetune, options are:
+  - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
+  - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero) (specifically trained on the Libero dataset)
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi).

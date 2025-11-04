@@ -15,7 +15,7 @@
 """
 Example:
 ```shell
-python src/lerobot/async_inference/policy_server.py \
+python -m lerobot.async_inference.policy_server \
      --host=127.0.0.1 \
      --port=8080 \
      --fps=30 \
@@ -32,12 +32,17 @@ from concurrent import futures
 from dataclasses import asdict
 from pprint import pformat
 from queue import Empty, Queue
+from typing import Any
 
 import draccus
 import grpc
 import torch
 
-from lerobot.policies.factory import get_policy_class
+from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+from lerobot.processor import (
+    PolicyAction,
+    PolicyProcessorPipeline,
+)
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -82,6 +87,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.lerobot_features = None
         self.actions_per_chunk = None
         self.policy = None
+        self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
+        self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
 
     @property
     def running(self):
@@ -146,6 +153,19 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         start = time.perf_counter()
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         self.policy.to(self.device)
+
+        # Load preprocessor and postprocessor, overriding device to match requested device
+        device_override = {"device": self.device}
+        self.preprocessor, self.postprocessor = make_pre_post_processors(
+            self.policy.config,
+            pretrained_path=policy_specs.pretrained_name_or_path,
+            preprocessor_overrides={
+                "device_processor": device_override,
+                "rename_observations_processor": {"rename_map": policy_specs.rename_map},
+            },
+            postprocessor_overrides={"device_processor": device_override},
+        )
+
         end = time.perf_counter()
 
         self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
@@ -173,7 +193,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         # Calculate FPS metrics
         fps_metrics = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
 
-        self.logger.info(
+        self.logger.debug(
             f"Received observation #{obs_timestep} | "
             f"Avg FPS: {fps_metrics['avg_fps']:.2f} | "  # fps at which observations are received from client
             f"Target: {fps_metrics['target_fps']:.2f} | "
@@ -189,7 +209,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         if not self._enqueue_observation(
             timed_observation  # wrapping a RawObservation
         ):
-            self.logger.info(f"Observation #{obs_timestep} has been filtered out")
+            self.logger.debug(f"Observation #{obs_timestep} has been filtered out")
 
         return services_pb2.Empty()
 
@@ -301,23 +321,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             for i, action in enumerate(action_chunk)
         ]
 
-    def _prepare_observation(self, observation_t: TimedObservation) -> Observation:
-        """
-        Prepare observation, ready for policy inference.
-        E.g.: To keep observation sampling rate high (and network packet tiny) we send int8 [0,255] images from the
-        client and then convert them to float32 [0,1] images here, before running inference.
-        """
-        # RawObservation from robot.get_observation() - wrong keys, wrong dtype, wrong image shape
-        observation: Observation = raw_observation_to_observation(
-            observation_t.get_observation(),
-            self.lerobot_features,
-            self.policy_image_features,
-            self.device,
-        )
-        # processed Observation - right keys, right dtype, right image shape
-
-        return observation
-
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Get an action chunk from the policy. The chunk contains only"""
         chunk = self.policy.predict_action_chunk(observation)
@@ -327,44 +330,76 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         return chunk[:, : self.actions_per_chunk, :]
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
-        """Predict an action chunk based on an observation"""
-        inference_starts = time.perf_counter()
+        """Predict an action chunk based on an observation.
 
+        Pipeline:
+        1. Convert raw observation to LeRobot format
+        2. Apply preprocessor (tokenization, normalization, batching, device placement)
+        3. Run policy inference to get action chunk
+        4. Apply postprocessor (unnormalization, device movement)
+        5. Convert to TimedAction list
+        """
         """1. Prepare observation"""
-        start_time = time.perf_counter()
-        observation = self._prepare_observation(observation_t)
-        preprocessing_time = time.perf_counter() - start_time
+        start_prepare = time.perf_counter()
+        observation: Observation = raw_observation_to_observation(
+            observation_t.get_observation(),
+            self.lerobot_features,
+            self.policy_image_features,
+        )
+        prepare_time = time.perf_counter() - start_prepare
 
+        """2. Apply preprocessor"""
+        start_preprocess = time.perf_counter()
+        observation = self.preprocessor(observation)
         self.last_processed_obs: TimedObservation = observation_t
+        preprocessing_time = time.perf_counter() - start_preprocess
 
-        """2. Get action chunk"""
-        start_time = time.perf_counter()
+        """3. Get action chunk"""
+        start_inference = time.perf_counter()
         action_tensor = self._get_action_chunk(observation)
-        inference_time = time.perf_counter() - start_time
+        inference_time = time.perf_counter() - start_inference
+        self.logger.info(
+            f"Preprocessing and inference took {inference_time:.4f}s, action shape: {action_tensor.shape}"
+        )
 
-        """3. Post-inference processing"""
-        start_time = time.perf_counter()
-        # Move to CPU before serializing
-        action_tensor = action_tensor.cpu().squeeze(0)
+        """4. Apply postprocessor"""
+        # Apply postprocessor (handles unnormalization and device movement)
+        # Postprocessor expects (B, action_dim) per action, but we have (B, chunk_size, action_dim)
+        # So we process each action in the chunk individually
+        start_postprocess = time.perf_counter()
+        _, chunk_size, _ = action_tensor.shape
 
+        # Process each action in the chunk
+        processed_actions = []
+        for i in range(chunk_size):
+            # Extract action at timestep i: (B, action_dim)
+            single_action = action_tensor[:, i, :]
+            processed_action = self.postprocessor(single_action)
+            processed_actions.append(processed_action)
+
+        # Stack back to (B, chunk_size, action_dim), then remove batch dim
+        action_tensor = torch.stack(processed_actions, dim=1).squeeze(0)
+        self.logger.debug(f"Postprocessed action shape: {action_tensor.shape}")
+
+        """5. Convert to TimedAction list"""
         action_chunk = self._time_action_chunk(
             observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
         )
-        postprocessing_time = time.perf_counter() - start_time
-        inference_stops = time.perf_counter()
+        postprocess_stops = time.perf_counter()
+        postprocessing_time = postprocess_stops - start_postprocess
 
         self.logger.info(
-            f"Observation {observation_t.get_timestep()} |"
-            f"Inference time: {1000 * (inference_stops - inference_starts):.2f}ms"
+            f"Observation {observation_t.get_timestep()} | "
+            f"Total time: {1000 * (postprocess_stops - start_prepare):.2f}ms"
         )
 
-        # full-process latency breakdown for debugging purposes
         self.logger.debug(
             f"Observation {observation_t.get_timestep()} | "
-            f"Preprocessing time: {1000 * (preprocessing_time - inference_starts):.2f}ms | "
-            f"Inference time: {1000 * (inference_time - preprocessing_time):.2f}ms | "
-            f"Postprocessing time: {1000 * (postprocessing_time - inference_time):.2f}ms | "
-            f"Total time: {1000 * (postprocessing_time - inference_starts):.2f}ms"
+            f"Prepare time: {1000 * prepare_time:.2f}ms | "
+            f"Preprocessing time: {1000 * preprocessing_time:.2f}ms | "
+            f"Inference time: {1000 * inference_time:.2f}ms | "
+            f"Postprocessing time: {1000 * postprocessing_time:.2f}ms | "
+            f"Total time: {1000 * (postprocess_stops - start_prepare):.2f}ms"
         )
 
         return action_chunk
