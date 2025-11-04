@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from lerobot.cameras.configs import CameraConfig, Cv2Rotation
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.microphones import MicrophoneConfig
 
 from ..config import RobotConfig
 
@@ -44,6 +45,8 @@ class LeKiwiConfig(RobotConfig):
     max_relative_target: float | dict[str, float] | None = None
 
     cameras: dict[str, CameraConfig] = field(default_factory=lekiwi_cameras_config)
+
+    microphones: dict[str, MicrophoneConfig] = field(default_factory=dict)
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
@@ -91,6 +94,8 @@ class LeKiwiClientConfig(RobotConfig):
     )
 
     cameras: dict[str, CameraConfig] = field(default_factory=lekiwi_cameras_config)
+
+    microphones: dict[str, MicrophoneConfig] = field(default_factory=dict)
 
     polling_timeout_ms: int = 15
     connect_timeout_s: int = 5
