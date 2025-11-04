@@ -14,5 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_biwheel_base import BiWheelBaseConfig
 from .biwheel_base import BiWheelBase
+from .config_biwheel_base import BiWheelBaseConfig

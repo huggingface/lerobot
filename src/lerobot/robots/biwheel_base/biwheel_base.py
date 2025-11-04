@@ -29,6 +29,7 @@ from .config_biwheel_base import BiWheelBaseConfig
 
 logger = logging.getLogger(__name__)
 
+
 class BiWheelBase(Robot):
     """Bi-Wheel Base robot class driven by Feetech servos."""
 
@@ -38,7 +39,7 @@ class BiWheelBase(Robot):
     def __init__(self, config: BiWheelBaseConfig):
         super().__init__(config)
         self.config = config
-        
+
         left_id, right_id = self.config.base_motor_ids
         self.bus = FeetechMotorsBus(
             port=self.config.port,
@@ -59,10 +60,11 @@ class BiWheelBase(Robot):
             ),
             float,
         )
+
     @cached_property
     def observation_features(self) -> dict[str, type]:
         return self._state_ft
-    
+
     @cached_property
     def action_features(self) -> dict[str, type]:
         return self._state_ft
@@ -83,6 +85,7 @@ class BiWheelBase(Robot):
 
         self.configure()
         logger.info("%s connected.", self)
+
     @property
     def is_calibrated(self) -> bool:
         return bool(self.calibration) and self.bus.is_calibrated
@@ -121,7 +124,6 @@ class BiWheelBase(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-
     @staticmethod
     def _raw_to_degps(raw_speed: int) -> float:
         steps_per_deg = 4096.0 / 360.0
@@ -132,13 +134,13 @@ class BiWheelBase(Robot):
         steps_per_deg = 4096.0 / 360.0
         speed_int = int(round(degps * steps_per_deg))
         return max(min(speed_int, 0x7FFF), -0x8000)
-    
+
     def _body_to_wheel_raw(
         self,
         x: float,
         theta: float,
         wheel_radius: float = 0.05,
-        wheel_base: float  = 0.25,
+        wheel_base: float = 0.25,
         max_raw: int = 3000,
     ) -> dict[str, int]:
         """
@@ -163,8 +165,8 @@ class BiWheelBase(Robot):
         wheel_base = wheel_base or self.config.wheel_base
         max_raw = max_raw or self.config.max_wheel_raw
 
-        theta_rad = np.deg2rad(theta) 
-       
+        theta_rad = np.deg2rad(theta)
+
         half_wheelbase = wheel_base / 2
         left_wheel_speed = (x - theta_rad * half_wheelbase) / wheel_radius
         right_wheel_speed = (x + theta_rad * half_wheelbase) / wheel_radius
@@ -177,12 +179,12 @@ class BiWheelBase(Robot):
         max_raw_computed = np.max(raw_floats)
 
         if max_raw_computed > max_raw:
-            wheel_speeds_degps *= (max_raw / max_raw_computed)
+            wheel_speeds_degps *= max_raw / max_raw_computed
 
         # Convert to raw integers
         left_wheel_raw = self._degps_to_raw(wheel_speeds_degps[0])
         right_wheel_raw = self._degps_to_raw(wheel_speeds_degps[1])
-        
+
         # Apply motor direction inversion if configured
         if self.config.invert_left_motor:
             left_wheel_raw = -left_wheel_raw
@@ -193,7 +195,7 @@ class BiWheelBase(Robot):
             "base_left_wheel": left_wheel_raw,
             "base_right_wheel": right_wheel_raw,
         }
-    
+
     def _wheel_raw_to_body(
         self,
         left_wheel_speed: int,
@@ -234,17 +236,16 @@ class BiWheelBase(Robot):
         # Apply differential drive inverse kinematics
         # Linear velocity: v = (v_left + v_right) / 2
         x_vel = (left_linear_speed + right_linear_speed) / 2.0
-        
+
         # Angular velocity: ω = (v_right - v_left) / L
         theta_rad = (right_linear_speed - left_linear_speed) / wheel_base
         theta_vel = np.rad2deg(theta_rad)
 
         return {
-            "x.vel": x_vel,        # Linear velocity (m/s)
+            "x.vel": x_vel,  # Linear velocity (m/s)
             "theta.vel": theta_vel,  # Angular velocity (deg/s)
         }
-    
-    
+
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -260,6 +261,7 @@ class BiWheelBase(Robot):
             base_vel = {"x.vel": 0.0, "theta.vel": 0.0}
 
         return base_vel
+
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -273,7 +275,7 @@ class BiWheelBase(Robot):
             base_goal_vel["x.vel"],
             base_goal_vel["theta.vel"],
         )
-        
+
         # Debug logging
         logger.debug(
             f"Action: x.vel={base_goal_vel['x.vel']:.3f} m/s, theta.vel={base_goal_vel['theta.vel']:.1f} deg/s "
@@ -298,4 +300,3 @@ class BiWheelBase(Robot):
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
 
         logger.info("%s disconnected.", self)
-

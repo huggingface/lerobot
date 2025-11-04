@@ -46,12 +46,12 @@ except Exception as e:
 class SmoothBaseController:
     """
     Simplified smooth base controller with acceleration/deceleration.
-    
+
     This controller implements linear acceleration when keys are pressed and
     linear deceleration when keys are released, providing smooth motion control
     for differential drive mobile bases.
     """
-    
+
     def __init__(self, config: BiwheelKeyboardTeleopConfig):
         self.config = config
         self.current_speed = 0.0
@@ -59,7 +59,7 @@ class SmoothBaseController:
         self.last_direction = {"x.vel": 0.0, "theta.vel": 0.0}
         self.is_moving = False
         self.speed_index = config.initial_speed_index
-        
+
         # Validate speed_index
         if not (0 <= self.speed_index < len(config.speed_levels)):
             logging.warning(
@@ -67,33 +67,33 @@ class SmoothBaseController:
                 f"Setting to {len(config.speed_levels) // 2}"
             )
             self.speed_index = len(config.speed_levels) // 2
-    
+
     def change_speed_level(self, delta: int) -> None:
         """Change the speed level by delta."""
         old_index = self.speed_index
         self.speed_index = max(0, min(len(self.config.speed_levels) - 1, self.speed_index + delta))
-        
+
         if old_index != self.speed_index and self.config.debug:
             level = self.config.speed_levels[self.speed_index]
             logging.info(
                 f"[BASE] Speed level changed: {old_index + 1} -> {self.speed_index + 1} "
-                f"(Linear: {level['linear']:.1f}m/s, Angular: {level['angular']:.0f}°/s)"
+                f"(Linear: {level['linear']:.2f}m/s, Angular: {level['angular']:.0f}°/s)"
             )
-    
+
     def update(self, pressed_keys: set) -> dict[str, float]:
         """
         Update smooth control and return base action.
-        
+
         Args:
             pressed_keys: Set of currently pressed key characters
-            
+
         Returns:
             Dictionary with 'x.vel' (linear velocity) and 'theta.vel' (angular velocity)
         """
         current_time = time.time()
         dt = current_time - self.last_time
         self.last_time = current_time
-        
+
         # Check if any base movement keys are pressed
         base_keys = [
             self.config.key_forward,
@@ -102,28 +102,28 @@ class SmoothBaseController:
             self.config.key_rotate_right,
         ]
         any_key_pressed = any(key in pressed_keys for key in base_keys)
-        
+
         # Handle speed level changes
         if self.config.key_speed_up in pressed_keys:
             self.change_speed_level(1)
         if self.config.key_speed_down in pressed_keys:
             self.change_speed_level(-1)
-        
+
         # Calculate base action
         base_action = {"x.vel": 0.0, "theta.vel": 0.0}
-        
+
         if any_key_pressed:
             # Keys pressed - calculate direction and accelerate
             if not self.is_moving:
                 self.is_moving = True
                 if self.config.debug:
                     logging.info("[BASE] Starting acceleration")
-            
+
             # Get current speed level settings
             speed_setting = self.config.speed_levels[self.speed_index]
             linear_speed = speed_setting["linear"]
             angular_speed = speed_setting["angular"]
-            
+
             # Calculate direction based on pressed keys
             if self.config.key_forward in pressed_keys:
                 base_action["x.vel"] += linear_speed
@@ -133,64 +133,63 @@ class SmoothBaseController:
                 base_action["theta.vel"] += angular_speed
             if self.config.key_rotate_right in pressed_keys:
                 base_action["theta.vel"] -= angular_speed
-            
+
             # Store current direction for deceleration
             self.last_direction = base_action.copy()
-            
+
             # Accelerate
             self.current_speed += self.config.acceleration_rate * dt
             self.current_speed = min(self.current_speed, self.config.max_speed_multiplier)
-                
+
         else:
             # No keys pressed - decelerate
             if self.is_moving:
                 self.is_moving = False
                 if self.config.debug:
                     logging.info("[BASE] Starting deceleration")
-            
+
             # Use last direction for deceleration
             if self.current_speed > 0.01 and self.last_direction:
                 base_action = self.last_direction.copy()
-            
+
             # Decelerate
             self.current_speed -= self.config.deceleration_rate * dt
             self.current_speed = max(self.current_speed, 0.0)
-        
+
         # Apply speed multiplier
         if base_action:
             for key in base_action:
-                if 'vel' in key:
+                if "vel" in key:
                     original_value = base_action[key]
                     base_action[key] *= self.current_speed
-                    
+
                     # Ensure minimum velocity during deceleration
-                    if (self.current_speed > 0.01 and 
-                        abs(base_action[key]) < self.config.min_velocity_threshold):
+                    if (
+                        self.current_speed > 0.01
+                        and abs(base_action[key]) < self.config.min_velocity_threshold
+                    ):
                         base_action[key] = (
-                            self.config.min_velocity_threshold if original_value > 0 
+                            self.config.min_velocity_threshold
+                            if original_value > 0
                             else -self.config.min_velocity_threshold
                         )
-        
+
         # Debug output
         if self.config.debug:
             if any_key_pressed:
-                logging.debug(
-                    f"[BASE] ACCEL: Speed={self.current_speed:.2f}, Action={base_action}"
-                )
+                logging.debug(f"[BASE] ACCEL: Speed={self.current_speed:.2f}, Action={base_action}")
             elif self.current_speed > 0.01:
-                logging.debug(
-                    f"[BASE] DECEL: Speed={self.current_speed:.2f}, Action={base_action}"
-                )
+                logging.debug(f"[BASE] DECEL: Speed={self.current_speed:.2f}, Action={base_action}")
             elif self.is_moving:
                 logging.debug(f"[BASE] STOPPED: Speed={self.current_speed:.2f}")
-        
+
         return base_action
 
 
 class BiwheelKeyboardTeleop(Teleoperator):
     """
     Teleop class to use keyboard inputs for bidirectional wheel (differential drive) control.
-    
+
     This teleoperator provides smooth acceleration/deceleration control for mobile bases
     with differential drive kinematics. It supports configurable key mappings, multiple
     speed levels, and smooth transitions between motion states.
@@ -207,10 +206,10 @@ class BiwheelKeyboardTeleop(Teleoperator):
         self.current_pressed = {}
         self.listener = None
         self.logs = {}
-        
+
         # Initialize smooth controller
         self.smooth_controller = SmoothBaseController(config)
-        
+
         # Queue for misc keys (for teleop events)
         self.misc_keys_queue = Queue()
 
@@ -233,8 +232,7 @@ class BiwheelKeyboardTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        # Calibration not needed for keyboard teleop
-        return True
+        pass
 
     def connect(self) -> None:
         if self.is_connected:
@@ -255,24 +253,20 @@ class BiwheelKeyboardTeleop(Teleoperator):
             self.listener = None
 
     def calibrate(self) -> None:
-        # No calibration needed for keyboard
         pass
 
     def _on_press(self, key):
-        """Handle key press events."""
-        if hasattr(key, "char") and key.char is not None:
+        if hasattr(key, "char"):
             self.event_queue.put((key.char, True))
 
     def _on_release(self, key):
-        """Handle key release events."""
-        if hasattr(key, "char") and key.char is not None:
+        if hasattr(key, "char"):
             self.event_queue.put((key.char, False))
         if key == keyboard.Key.esc:
             logging.info("ESC pressed, disconnecting.")
             self.disconnect()
 
     def _drain_pressed_keys(self):
-        """Process all pending key events from the queue."""
         while not self.event_queue.empty():
             key_char, is_pressed = self.event_queue.get_nowait()
             self.current_pressed[key_char] = is_pressed
@@ -281,12 +275,6 @@ class BiwheelKeyboardTeleop(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, Any]:
-        """
-        Get the current action based on keyboard input with smooth control.
-        
-        Returns:
-            Dictionary containing 'x.vel' (linear velocity) and 'theta.vel' (angular velocity)
-        """
         before_read_t = time.perf_counter()
 
         if not self.is_connected:
@@ -296,10 +284,10 @@ class BiwheelKeyboardTeleop(Teleoperator):
 
         # Update current pressed keys
         self._drain_pressed_keys()
-        
+
         # Get set of currently pressed keys
         pressed_keys = {key for key, val in self.current_pressed.items() if val}
-        
+
         # Check for misc keys and add to queue
         control_keys = {
             self.config.key_forward,
@@ -310,14 +298,14 @@ class BiwheelKeyboardTeleop(Teleoperator):
             self.config.key_speed_down,
             self.config.key_quit,
         }
-        
+
         for key in pressed_keys:
             if key not in control_keys:
                 self.misc_keys_queue.put(key)
-        
+
         # Get smooth base action with acceleration/deceleration
         action = self.smooth_controller.update(pressed_keys)
-        
+
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         return action
@@ -332,7 +320,6 @@ class BiwheelKeyboardTeleop(Teleoperator):
             )
         if self.listener is not None:
             self.listener.stop()
-            logging.info("Biwheel keyboard listener stopped.")
 
     def get_teleop_events(self) -> dict[str, Any]:
         """
@@ -396,10 +383,7 @@ class BiwheelKeyboardTeleop(Teleoperator):
 
     def _print_keymap(self):
         """Print the keymap information to console."""
-        print("\n" + "="*80)
-        print("🤖 Bidirectional Wheel Keyboard Teleop Control")
-        print("="*80)
-        
+
         print("\n📱 Base Control (Differential Drive):")
         print(f"    {self.config.key_forward}: Forward")
         print(f"    {self.config.key_backward}: Backward")
@@ -408,27 +392,12 @@ class BiwheelKeyboardTeleop(Teleoperator):
         print(f"    {self.config.key_speed_up}: Speed Up")
         print(f"    {self.config.key_speed_down}: Speed Down")
         print(f"    {self.config.key_quit}: Quit")
-        print("    🚀 Smooth Control: Linear acceleration when holding, linear deceleration when released")
-        
-        print(f"\n⚙️ Speed Configuration:")
+
+        print("\n Speed Configuration:")
         print(f"   Current Level: {self.smooth_controller.speed_index + 1}/{len(self.config.speed_levels)}")
-        print(f"   Speed Levels:")
+        print("   Speed Levels:")
         for i, level in enumerate(self.config.speed_levels):
             marker = "→" if i == self.smooth_controller.speed_index else " "
-            print(f"      {marker} Level {i+1}: Linear {level['linear']:.1f}m/s, Angular {level['angular']:.0f}°/s")
-        
-        print(f"\n🚀 Smooth Control Parameters:")
-        print(f"   Acceleration Rate: {self.config.acceleration_rate:.1f} speed/second")
-        print(f"   Deceleration Rate: {self.config.deceleration_rate:.1f} speed/second")
-        print(f"   Max Speed Multiplier: {self.config.max_speed_multiplier:.1f}x")
-        print(f"   Min Velocity Threshold: {self.config.min_velocity_threshold:.3f}")
-        
-        print("\n📋 Episode Control:")
-        print("    s: Mark episode as successful")
-        print("    r: Rerecord episode")
-        print(f"    {self.config.key_quit}: Quit episode")
-        print("    ESC: Disconnect teleop")
-        
-        print("\n" + "="*80)
-        print("🎮 Control started! Use above keys to control robot base")
-        print("="*80 + "\n")
+            print(
+                f"      {marker} Level {i + 1}: Linear {level['linear']:.2f}m/s, Angular {level['angular']:.0f}°/s"
+            )

@@ -24,17 +24,17 @@ from ..config import TeleoperatorConfig
 class BiwheelKeyboardTeleopConfig(TeleoperatorConfig):
     """
     Configuration for bidirectional wheel (differential drive) keyboard teleop.
-    
-    This configuration supports smooth acceleration/deceleration control for 
+
+    This configuration supports smooth acceleration/deceleration control for
     differential drive mobile bases with configurable speed parameters.
     """
-    
+
     # Smooth control parameters
     acceleration_rate: float = 3.0  # acceleration slope (speed/second) - reduced from 10.0
     deceleration_rate: float = 5.0  # deceleration slope (speed/second) - reduced from 10.0
     max_speed_multiplier: float = 3.0  # maximum speed multiplier - reduced from 6.0
     min_velocity_threshold: float = 0.01  # minimum velocity to send during deceleration
-    
+
     # Key mappings for base control
     key_forward: str = "w"
     key_backward: str = "s"
@@ -43,19 +43,17 @@ class BiwheelKeyboardTeleopConfig(TeleoperatorConfig):
     key_speed_up: str = "="
     key_speed_down: str = "-"
     key_quit: str = "q"
-    
+
     # Speed level settings (list of dicts with 'linear' and 'angular' keys)
-    # Default speed levels for differential drive
-    speed_levels: list = field(default_factory=lambda: [
-        {"linear": 0.1, "angular": 10},   # Level 1: Very slow
-        {"linear": 0.2, "angular": 20},   # Level 2: Slow
-        {"linear": 0.4, "angular": 40},   # Level 3: Medium
-        {"linear": 0.6, "angular": 60},   # Level 4: Fast
-        {"linear": 0.8, "angular": 80},   # Level 5: Very fast
-    ])
-    
+    speed_levels: list = field(
+        default_factory=lambda: [
+            {"linear": 0.04, "angular": 20},  # Level 1: Slow (half of max)
+            {"linear": 0.08, "angular": 40},  # Level 2: Fast (motor limit)
+        ]
+    )
+
     # Initial speed level index (0-based)
     initial_speed_index: int = 0  # Default to very slow speed (Level 1)
-    
+
     # Enable debug output
     debug: bool = True

@@ -13,9 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..config import RobotConfig
+
 
 @RobotConfig.register_subclass("biwheel_base")
 @dataclass
@@ -31,14 +32,10 @@ class BiWheelBaseConfig(RobotConfig):
 
     # Motor IDs for the left and right wheels
     base_motor_ids: tuple[int, int] = (9, 10)
-    
+
     # Motor direction inversion flags (True to invert, False to keep original)
     # Set to True if motor rotates in opposite direction
     invert_left_motor: bool = True
     invert_right_motor: bool = False  # Right motor needs inversion for proper differential drive
 
     handshake_on_connect: bool = True
-
-
-
-
