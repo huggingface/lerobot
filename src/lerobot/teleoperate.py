@@ -64,6 +64,7 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_piper_follower,
     bi_so100_follower,
     hope_jr,
     koch_follower,
@@ -76,6 +77,7 @@ from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_so100_leader,
+    bi_so100_piper_leader,
     gamepad,
     homunculus,
     koch_leader,
