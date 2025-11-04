@@ -1342,8 +1342,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ):
             # Initialize indices for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
-            if self.meta.episodes is not None and len(self.meta.episodes) > 0:
-                # It means we are resuming recording, so we need to load the latest episode
+            if (
+                self.meta.episodes is not None
+                and len(self.meta.episodes) > 0
+                and f"videos/{video_key}/chunk_index" in self.meta.episodes[-1]
+            ):
+                # It means we are resuming recording with existing video metadata
                 # Update the indices to avoid overwriting the latest episode
                 old_chunk_idx = self.meta.episodes[-1][f"videos/{video_key}/chunk_index"]
                 old_file_idx = self.meta.episodes[-1][f"videos/{video_key}/file_index"]
