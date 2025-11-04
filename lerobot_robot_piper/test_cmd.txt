@@ -1,3 +1,24 @@
-lerobot-teleoperate \
+
+
+
+
+pip install -e /home/hls/codes/lerobot/lerobot_robot_piper
+
+
+lerobot-teleoperate-piper \
   --teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop.use_degrees=false \
-  --robot.type=piper --robot.can_interface=can0 --robot.include_gripper=true --robot.use_degrees=false
+  --robot.type=piper --robot.can_interface=can0 --robot.bitrate=1000000 \
+  --robot.include_gripper=true --robot.use_degrees=false
+
+
+lerobot-record-piper \
+--teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop.use_degrees=false \
+--robot.type=piper --robot.can_interface=can0 --robot.bitrate=1000000 \
+--robot.include_gripper=true --robot.use_degrees=false \
+--dataset.repo_id local/piper-demo \
+--dataset.root /home/hls/datasets/piper-demo \
+--dataset.single_task "Reach target" \
+--dataset.num_episodes=1 \
+--dataset.episode_time_s=30 --dataset.reset_time_s=0 \
+--dataset.video=false --dataset.push_to_hub=false \
+--display_data=true --play_sounds=true
