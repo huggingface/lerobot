@@ -22,15 +22,15 @@ leader_to_piper = {
 
 # Approx SO101 (leader) joint ranges in degrees (adjust if needed)
 leader_ranges = {
-    "shoulder_pan": (-150.0, 150.0),
-    "shoulder_lift": (-112.0, 0.0),
-    "elbow_flex": (0.0, 97.0),
-    "wrist_flex": (-70.0, 70.0),
-    "wrist_roll": (-180.0, 180.0),
+    "shoulder_pan": (-150.00, 150.00),
+    "shoulder_lift": (-118.55, 110.02),
+    "elbow_flex": (-95.12, 96.79),
+    "wrist_flex": (-109.49, 109.76),
+    "wrist_roll": (-165.85, 166.73),
 }
 
 # Shrink leader command to avoid saturating Piper limits too often
-LEADER_GAIN = 0.6  # 60% of leader normalized range
+LEADER_GAIN = 1.0#60% of leader normalized range
 
 register_third_party_devices()
 
@@ -74,6 +74,7 @@ try:
 
             # Prefill with holds for all 6 joints
             pct = [0.0] * 6
+            hold_pct = [0.0] * 6
             mins_hw = robot._iface.min_pos[:6]
             maxs_hw = robot._iface.max_pos[:6]
             for j in range(1, 7):
@@ -85,13 +86,19 @@ try:
                     hold = (cur_hw - jmin) / (jmax - jmin) * 200.0 - 100.0
                 else:
                     hold = 0.0
-                pct[j - 1] = max(-100.0, min(100.0, hold))
+                hold = max(-100.0, min(100.0, hold))
+                hold_pct[j - 1] = hold
+                pct[j - 1] = hold
 
             # Apply leader -> piper mapping for each provided leader joint
+            # Also compute raw leader normalization in [-100,100] for debugging
+            leader_norm_pct = []
             for name in so101_joint_names:
                 key = f"{name}.pos"
                 tgt = leader_to_piper.get(name)
                 if tgt is None:
+                    # still track normalization list positionally
+                    leader_norm_pct.append(0.0)
                     continue
                 if key in lead_act:
                     ld = float(lead_act[key])
@@ -100,8 +107,12 @@ try:
                         lp = (ld - lmin) / (lmax - lmin) * 200.0 - 100.0
                     else:
                         lp = 0.0
+                    # record raw leader normalization (pre gain/sign)
+                    leader_norm_pct.append(max(-100.0, min(100.0, lp)))
                     lp = lp * LEADER_GAIN * signs[tgt - 1]
                     pct[tgt - 1] = max(-100.0, min(100.0, lp))
+                else:
+                    leader_norm_pct.append(0.0)
 
             # Gripper percent 0..100 from leader if present; else hold current
             if robot.config.include_gripper and "gripper.pos" in lead_act:
@@ -120,8 +131,10 @@ try:
                 piper_obs = [round(float(obs.get(f"joint_{i}.pos", 0.0)), 1) for i in range(1, 7)]
                 print(
                     "leader_deg=", leader_vals,
+                    "| leader_norm_pct=", [round(float(v), 1) for v in leader_norm_pct],
                     "| leader_to_piper=", leader_to_piper,
                     "| piper_obs_deg=", piper_obs,
+                    "| piper_hold_pct=", [round(float(v), 1) for v in hold_pct],
                     "| send_pct(j1..j6)=", [round(v, 1) for v in pct],
                     "| g_pct=", round(g_pct, 1),
                 )
