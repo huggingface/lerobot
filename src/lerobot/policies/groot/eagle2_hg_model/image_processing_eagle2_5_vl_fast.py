@@ -441,7 +441,7 @@ class Eagle25VLImageProcessorFast(BaseImageProcessorFast):
         input_data_format = kwargs.pop("input_data_format")
         device = kwargs.pop("device")
         # Prepare input images
-        # transformers >= 4.53.0: uses _prepare_image_like_inputs instead of _prepare_input_images
+        # transformers == 4.53.x: uses _prepare_image_like_inputs instead of _prepare_input_images
         # Check which method is available for compatibility
         if hasattr(self, '_prepare_image_like_inputs'):
             prepare_fn = self._prepare_image_like_inputs
