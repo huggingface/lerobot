@@ -68,7 +68,7 @@ class RTCEvalConfig(HubMixin):
         default_factory=lambda: RTCConfig(
             enabled=True,
             execution_horizon=20,
-            max_guidance_weight=5.0,
+            max_guidance_weight=10.0,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
             debug=True,
             debug_maxlen=1000,
@@ -183,6 +183,10 @@ class RTCEvaluator:
         prev_chunk_left_over = self.policy.predict_action_chunk(
             preprocessed_first_sample,
         )[:, :25, :].squeeze(0)
+
+        self.policy.rtc_processor.reset_tracker()
+
+        logging.info("Resetting tracker")
 
         # Sample noise (use same noise for both RTC and non-RTC for fair comparison)
         noise_size = (1, self.policy.config.chunk_size, self.policy.config.max_action_dim)
@@ -299,6 +303,9 @@ class RTCEvaluator:
             x1t_axs: Matplotlib axes for x1_t plots (array of 6 axes)
             num_steps: Total number of denoising steps for colormap
         """
+
+        logging.info("=" * 80)
+        logging.info(f"Plotting {len(tracked_steps)} steps")
 
         debug_steps = tracked_steps
         if not debug_steps:
