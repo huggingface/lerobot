@@ -1,7 +1,3 @@
-
-
-
-
 pip install -e /home/hls/codes/lerobot/lerobot_robot_piper
 
 
@@ -17,8 +13,8 @@ lerobot-record-piper \
 --robot.include_gripper=true --robot.use_degrees=false \
 --dataset.repo_id local/piper-demo \
 --dataset.root /home/hls/datasets/piper-demo \
---dataset.single_task "Reach target" \
---dataset.num_episodes=1 \
+--dataset.single_task "pick green stem above red strawberries" \
+--dataset.num_episodes=5 \
 --dataset.episode_time_s=30 --dataset.reset_time_s=0 \
 --dataset.video=false --dataset.push_to_hub=false \
 --display_data=true --play_sounds=true
