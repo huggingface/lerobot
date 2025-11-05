@@ -90,6 +90,8 @@ class OpenArmsFollower(Robot):
         
         # Initialize cameras
         self.cameras = make_cameras_from_configs(config.cameras)
+        # Cache for last valid camera frames (to avoid blocking on slow USB reads)
+        self.camera_frame_cache = {key: None for key in self.cameras.keys()}
         
         # Initialize Pinocchio robot model for dynamics (optional)
         self.pin_robot = None
@@ -305,10 +307,15 @@ class OpenArmsFollower(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
         obs_dict = {}
-        start = time.perf_counter()
+        
+        # Detailed profiling for bottleneck analysis
+        timings = {}
         
         # OPTIMIZED: Use sync_read_all_states to get pos/vel/torque in one go
+        t0 = time.perf_counter()
         right_states = self.bus_right.sync_read_all_states()
+        timings["right_motors"] = (time.perf_counter() - t0) * 1000
+        
         for motor in self.bus_right.motors:
             state = right_states.get(motor, {})
             obs_dict[f"right_{motor}.pos"] = state.get("position", 0.0)
@@ -316,22 +323,43 @@ class OpenArmsFollower(Robot):
             obs_dict[f"right_{motor}.torque"] = state.get("torque", 0.0)
         
         # OPTIMIZED: Use sync_read_all_states to get pos/vel/torque in one go
+        t0 = time.perf_counter()
         left_states = self.bus_left.sync_read_all_states()
+        timings["left_motors"] = (time.perf_counter() - t0) * 1000
+        
         for motor in self.bus_left.motors:
             state = left_states.get(motor, {})
             obs_dict[f"left_{motor}.pos"] = state.get("position", 0.0)
             obs_dict[f"left_{motor}.vel"] = state.get("velocity", 0.0)
             obs_dict[f"left_{motor}.torque"] = state.get("torque", 0.0)
         
-        dt_ms = (time.perf_counter() - start) * 1e3
-        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
-        
-        # Capture images from cameras
+        # Capture images from cameras (with individual timing)
+        # Use async_read with very short timeout to avoid blocking on slow USB cameras
         for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            t0 = time.perf_counter()
+            try:
+                # Use 5ms timeout - if frame isn't ready, reuse last frame
+                frame = cam.async_read(timeout_ms=5)
+                self.camera_frame_cache[cam_key] = frame  # Update cache
+                obs_dict[cam_key] = frame
+            except TimeoutError:
+                # If no new frame available, reuse last valid frame from cache
+                # This prevents blocking the entire control loop on slow USB reads
+                if self.camera_frame_cache[cam_key] is not None:
+                    obs_dict[cam_key] = self.camera_frame_cache[cam_key]
+                    logger.debug(f"Camera {cam_key} timeout, reusing cached frame")
+
+            # Store timing with padded name to align output (e.g. "left_wrist    ")
+            timings[f"{cam_key:14s}"] = (time.perf_counter() - t0) * 1000
+        
+        # Log detailed timings (for debugging slow observations)
+        if logger.isEnabledFor(logging.DEBUG):
+            total_time = sum(timings.values())
+            breakdown = " | ".join([f"{k}: {v:.1f}ms" for k, v in timings.items()])
+            logger.debug(f"{self} get_observation: {total_time:.1f}ms total | {breakdown}")
+        
+        # Store timings in obs_dict for external profiling
+        obs_dict["_timing_breakdown"] = timings
         
         return obs_dict
 

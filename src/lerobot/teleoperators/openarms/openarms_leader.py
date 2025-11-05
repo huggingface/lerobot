@@ -145,9 +145,9 @@ class OpenArmsLeader(Teleoperator):
         self.bus_left.connect()
         
         # Run calibration if needed
-        if not self.is_calibrated and calibrate:
+        if calibrate:
             logger.info(
-                "No calibration found or calibration mismatch. Running calibration..."
+                "No calibration found or overwriting calibration. Running calibration..."
             )
             self.calibrate()
         
