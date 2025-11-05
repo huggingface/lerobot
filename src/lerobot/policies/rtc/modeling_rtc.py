@@ -260,7 +260,6 @@ class RTCProcessor:
             x1_t = x1_t.squeeze(0)
             err = err.squeeze(0)
 
-        # Record debug information (all params except x_t which is recorded externally)
         self.track(
             time=time,
             x1_t=x1_t,

@@ -798,11 +798,12 @@ class VLAFlowMatching(nn.Module):
 
             # Euler step
             x_t += dt * v_t
-            time += dt
 
             # Record x_t and v_t after Euler step (other params are recorded in rtc_processor.denoise_step)
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
+
+            time += dt
 
         return x_t
 
