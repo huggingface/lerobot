@@ -116,10 +116,15 @@ def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None)
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
+    # Convert Path objects to a list of strings
+    file_paths = [str(path) for path in paths]
+
+    # Use datasets.load_dataset to force creation of an efficient cache
+    # This pre-decodes the images and avoids the on-the-fly bottleneck.
     # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
     with SuppressProgressBars():
-        datasets = Dataset.from_parquet([str(path) for path in paths], features=features)
-    return datasets
+        dataset = datasets.load_dataset("parquet", data_files=file_paths, features=features, split="train")
+    return dataset
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
