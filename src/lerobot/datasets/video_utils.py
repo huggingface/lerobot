@@ -16,8 +16,11 @@
 import glob
 import importlib
 import logging
+import queue
 import shutil
+import subprocess
 import tempfile
+import threading
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +29,7 @@ from typing import Any, ClassVar
 
 import av
 import fsspec
+import numpy as np
 import pyarrow as pa
 import torch
 import torchvision
@@ -298,6 +302,263 @@ def decode_video_frames_torchcodec(
         )
 
     return closest_frames
+
+
+class RealtimeVideoEncoder:
+    """
+    Real-time video encoder using ffmpeg subprocess with hardware acceleration.
+
+    This encoder pipes frames directly to ffmpeg's stdin, enabling real-time encoding
+    during data collection instead of batching frames and encoding later.
+
+    Args:
+        output_path: Path where the output video will be saved
+        fps: Frames per second
+        width: Frame width in pixels
+        height: Frame height in pixels
+        vcodec: Video codec to use (libsvtav1, h264, hevc, etc.)
+        pix_fmt: Pixel format (default: yuv420p)
+        crf: Constant Rate Factor for quality (lower = better quality, default: 23)
+        preset: Encoding speed preset (ultrafast, veryfast, fast, medium, slow)
+        max_queue_size: Maximum number of frames to buffer (default: 30)
+
+    Example:
+        encoder = RealtimeVideoEncoder('output.mp4', fps=30, width=1920, height=1080)
+        for frame in frames:
+            encoder.add_frame(frame)  # frame is numpy array (H, W, 3) RGB
+        encoder.finalize()
+    """
+
+    def __init__(
+        self,
+        output_path: Path | str,
+        fps: int,
+        width: int,
+        height: int,
+        vcodec: str = "libsvtav1",
+        pix_fmt: str = "yuv420p",
+        crf: int | None = 23,
+        preset: str | None = None,
+        max_queue_size: int = 30,
+    ):
+        self.output_path = Path(output_path)
+        self.fps = fps
+        self.width = width
+        self.height = height
+        self.vcodec = vcodec
+        self.pix_fmt = pix_fmt
+        self.crf = crf
+        self.preset = preset
+        self.max_queue_size = max_queue_size
+
+        self.frame_queue: queue.Queue = queue.Queue(maxsize=max_queue_size)
+        self.ffmpeg_process: subprocess.Popen | None = None
+        self.writer_thread: threading.Thread | None = None
+        self.is_finalized = False
+        self.error: Exception | None = None
+
+        self._start_ffmpeg()
+        self._start_writer_thread()
+
+    def _build_ffmpeg_command(self) -> list[str]:
+        """Build the ffmpeg command for real-time encoding."""
+        cmd = [
+            "ffmpeg",
+            "-y",  # Overwrite output file
+            "-f",
+            "rawvideo",
+            "-vcodec",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{self.width}x{self.height}",
+            "-r",
+            str(self.fps),
+            "-i",
+            "pipe:0",  # Read from stdin
+            "-vcodec",
+            self.vcodec,
+            "-pix_fmt",
+            self.pix_fmt,
+        ]
+
+        # Add codec-specific options
+        is_videotoolbox = self.vcodec.endswith("_videotoolbox")
+
+        if is_videotoolbox:
+            # VideoToolbox (macOS hardware acceleration)
+            if self.crf is not None:
+                # Map CRF to quality (0-100, lower = better quality)
+                quality = max(0, min(100, int((self.crf / 51.0) * 100)))
+                cmd.extend(["-q:v", str(quality)])
+            cmd.extend(["-realtime", "1"])  # Enable real-time encoding mode
+        else:
+            # Software encoders (libsvtav1, h264, hevc)
+            if self.crf is not None:
+                cmd.extend(["-crf", str(self.crf)])
+
+            if self.preset:
+                if self.vcodec == "libsvtav1":
+                    # SVT-AV1 uses numeric presets (0-13, higher = faster)
+                    preset_map = {
+                        "veryslow": "0",
+                        "slower": "2",
+                        "slow": "4",
+                        "medium": "6",
+                        "fast": "8",
+                        "veryfast": "10",
+                        "ultrafast": "12",
+                    }
+                    preset_value = preset_map.get(self.preset, "8")
+                    cmd.extend(["-preset", preset_value])
+                else:
+                    # h264/hevc use named presets
+                    cmd.extend(["-preset", self.preset])
+
+        # Add output path
+        cmd.append(str(self.output_path))
+
+        return cmd
+
+    def _start_ffmpeg(self) -> None:
+        """Start the ffmpeg subprocess."""
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        cmd = self._build_ffmpeg_command()
+        logging.debug(f"Starting ffmpeg with command: {' '.join(cmd)}")
+
+        try:
+            self.ffmpeg_process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=10**8,  # Large buffer for high-resolution video
+            )
+        except Exception as e:
+            self.error = e
+            logging.error(f"Failed to start ffmpeg: {e}")
+            raise
+
+    def _writer_thread_func(self) -> None:
+        """Background thread that writes frames to ffmpeg stdin."""
+        try:
+            while True:
+                try:
+                    frame = self.frame_queue.get(timeout=0.1)
+                    if frame is None:  # Sentinel value to stop
+                        break
+
+                    # Write frame bytes to ffmpeg stdin
+                    if self.ffmpeg_process and self.ffmpeg_process.stdin:
+                        self.ffmpeg_process.stdin.write(frame.tobytes())
+                        self.ffmpeg_process.stdin.flush()
+
+                    self.frame_queue.task_done()
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    self.error = e
+                    logging.error(f"Error writing frame to ffmpeg: {e}")
+                    break
+
+            # Close stdin to signal EOF to ffmpeg after writing all frames
+            if self.ffmpeg_process and self.ffmpeg_process.stdin:
+                try:
+                    self.ffmpeg_process.stdin.close()
+                except Exception as e:
+                    logging.debug(f"Error closing stdin in writer thread: {e}")
+        except Exception as e:
+            self.error = e
+            logging.error(f"Writer thread error: {e}")
+
+    def _start_writer_thread(self) -> None:
+        """Start the background thread for writing frames."""
+        self.writer_thread = threading.Thread(target=self._writer_thread_func, daemon=True)
+        self.writer_thread.start()
+
+    def add_frame(self, frame: np.ndarray) -> None:
+        """
+        Add a frame to be encoded.
+
+        Args:
+            frame: RGB frame as numpy array with shape (H, W, 3) and dtype uint8
+
+        Raises:
+            RuntimeError: If encoder is already finalized or encountered an error
+        """
+        if self.is_finalized:
+            raise RuntimeError("Cannot add frame to finalized encoder")
+
+        if self.error:
+            raise RuntimeError(f"Encoder encountered error: {self.error}")
+
+        # Validate frame shape and type
+        if frame.shape != (self.height, self.width, 3):
+            raise ValueError(
+                f"Frame shape {frame.shape} doesn't match expected ({self.height}, {self.width}, 3)"
+            )
+
+        if frame.dtype != np.uint8:
+            raise ValueError(f"Frame dtype must be uint8, got {frame.dtype}")
+
+        # Add frame to queue (blocks if queue is full)
+        try:
+            self.frame_queue.put(frame, timeout=5.0)
+        except queue.Full:
+            logging.warning("Frame queue is full, frame encoding may be lagging behind capture")
+            raise
+
+    def finalize(self) -> None:
+        """
+        Finalize encoding and close the video file.
+
+        This method waits for all queued frames to be written and then closes
+        the ffmpeg process gracefully.
+        """
+        if self.is_finalized:
+            return
+
+        logging.debug(f"Finalizing encoder for {self.output_path}")
+
+        # Signal writer thread to stop
+        self.frame_queue.put(None)
+
+        # Wait for all frames to be written and stdin to be closed by writer thread
+        if self.writer_thread:
+            self.writer_thread.join(timeout=10.0)
+
+        # Wait for ffmpeg process to finish
+        if self.ffmpeg_process:
+            # stdin is already closed by writer thread, so we use wait() instead of communicate()
+            # to avoid "flush of closed file" error
+            try:
+                returncode = self.ffmpeg_process.wait(timeout=30.0)
+                if returncode != 0:
+                    # Read stderr for error message
+                    stderr = self.ffmpeg_process.stderr.read() if self.ffmpeg_process.stderr else b""
+                    logging.error(f"ffmpeg exited with code {returncode}, stderr: {stderr.decode()}")
+                    raise RuntimeError(f"ffmpeg exited with code {returncode}")
+            except subprocess.TimeoutExpired:
+                logging.warning("ffmpeg did not finish in time, terminating")
+                self.ffmpeg_process.terminate()
+                self.ffmpeg_process.wait()
+
+        self.is_finalized = True
+
+        # Verify output file was created
+        if not self.output_path.exists():
+            raise RuntimeError(f"Video encoding failed: {self.output_path} not found")
+
+        logging.debug(f"Successfully encoded video to {self.output_path}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.finalize()
+        return False
 
 
 def encode_video_frames(
