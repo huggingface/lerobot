@@ -189,7 +189,7 @@ def initialize_robots_only(config: RobotSetupConfig):
         can_interface="socketcan",
         id="openarms_follower",
         disable_torque_on_disconnect=True,
-        max_relative_target=10.0,
+        max_relative_target=30.0,
         cameras=camera_config,
     )
 
