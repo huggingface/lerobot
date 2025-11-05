@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.datasets.utils import combine_feature_dicts
@@ -43,9 +44,9 @@ from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
 
-HF_MODEL_ID = "<hf_username>/<model_repo_id>"  # TODO: Replace with your trained model
-HF_EVAL_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"  # TODO: Replace with your eval dataset name
-TASK_DESCRIPTION = "Your task description here"  # TODO: Replace with your task, this should match!!
+HF_MODEL_ID = "lerobot-data-collection/two-folds-act"  # TODO: Replace with your trained model
+HF_EVAL_DATASET_ID = "lerobot-data-collection/eval-two-folds-act-50k-9"  # TODO: Replace with your eval dataset name
+TASK_DESCRIPTION = "two-folds-dataset"  # TODO: Replace with your task, this should match!!
 
 NUM_EPISODES = 5
 FPS = 30
@@ -64,8 +65,8 @@ LEADER_RIGHT_PORT = "can1"
 # Camera configuration
 CAMERA_CONFIG = {
     "left_wrist": OpenCVCameraConfig(index_or_path="/dev/video0", width=640, height=480, fps=FPS),
-    "right_wrist": OpenCVCameraConfig(index_or_path="/dev/video1", width=640, height=480, fps=FPS),
-    "base": OpenCVCameraConfig(index_or_path="/dev/video4", width=640, height=480, fps=FPS),
+    "right_wrist": OpenCVCameraConfig(index_or_path="/dev/video4", width=640, height=480, fps=FPS),
+    "base": OpenCVCameraConfig(index_or_path="/dev/video7", width=640, height=480, fps=FPS),
 }
 
 def main():
@@ -121,9 +122,6 @@ def main():
         else:
             print(f"Leader connected but gravity compensation unavailable (no URDF)")
 
-
-    policy = make_policy.from_pretrained(HF_MODEL_ID)
-
     # Build default processors for action and observation
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
     
@@ -170,6 +168,11 @@ def main():
         image_writer_processes=0,
         image_writer_threads=12, 
     )
+    
+    # Load policy config from pretrained model and create policy using factory
+    policy_config = PreTrainedConfig.from_pretrained(HF_MODEL_ID)
+    policy_config.pretrained_path = HF_MODEL_ID
+    policy = make_policy(policy_config, ds_meta=dataset.meta)
     
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy.config,

@@ -377,7 +377,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         
         try:
             while len(responses) < len(expected_recv_ids) and (time.time() - start_time) < timeout:
-                msg = self.canbus.recv(timeout=0.0001)  # 100us poll timeout
+                msg = self.canbus.recv(timeout=0.0002)  # 200us poll timeout (increased from 100us for better reliability)
                 if msg and msg.arbitration_id in expected_set:
                     responses[msg.arbitration_id] = msg
                     if len(responses) == len(expected_recv_ids):
@@ -633,7 +633,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         
         # Step 2: Collect all responses at once (batch receive)
         expected_recv_ids = [self._get_motor_recv_id(motor) for motor in motors]
-        responses = self._recv_all_responses(expected_recv_ids, timeout=0.003)  # 3ms total timeout
+        responses = self._recv_all_responses(expected_recv_ids, timeout=0.01)  # 10ms total timeout
         
         # Step 3: Parse responses
         for motor in motors:
@@ -688,16 +688,17 @@ class DamiaoMotorsBus(MotorsBusBase):
         motors = self._get_motors_list(motors)
         result = {}
 
-        # Step 1: Send refresh commands to ALL motors first (no waiting)
+        # Step 1: Send refresh commands to ALL motors first (with small delays to reduce bus congestion)
         for motor in motors:
             motor_id = self._get_motor_id(motor)
             data = [motor_id & 0xFF, (motor_id >> 8) & 0xFF, CAN_CMD_REFRESH, 0, 0, 0, 0, 0]
             msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False)
             self.canbus.send(msg)
+            time.sleep(0.0001)  # 100us delay between commands to reduce bus congestion
         
         # Step 2: Collect all responses at once (batch receive)
         expected_recv_ids = [self._get_motor_recv_id(motor) for motor in motors]
-        responses = self._recv_all_responses(expected_recv_ids, timeout=0.003)  # 3ms total timeout
+        responses = self._recv_all_responses(expected_recv_ids, timeout=0.015)  # 15ms timeout (increased for reliability)
         
         # Step 3: Parse responses and extract ALL state values
         for motor in motors:
@@ -774,10 +775,11 @@ class DamiaoMotorsBus(MotorsBusBase):
                 
                 msg = can.Message(arbitration_id=motor_id, data=data, is_extended_id=False)
                 self.canbus.send(msg)
+                time.sleep(0.0001)  # 100us delay between commands to reduce bus congestion
             
             # Step 2: Collect all responses at once
             expected_recv_ids = [self._get_motor_recv_id(motor) for motor in values.keys()]
-            self._recv_all_responses(expected_recv_ids, timeout=0.002)  # 2ms timeout
+            self._recv_all_responses(expected_recv_ids, timeout=0.015)  # 15ms timeout (increased for reliability)
         else:
             # Fall back to individual writes for other data types
             for motor, value in values.items():
