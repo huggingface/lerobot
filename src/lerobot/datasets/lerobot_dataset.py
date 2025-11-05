@@ -693,6 +693,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
 
+        # Pre-load episodes metadata into memory to avoid file I/O in __getitem__
+        self.episodes_metadata_list = [ep for ep in self.meta.episodes]
+
         # Track dataset state for efficient incremental writing
         self._lazy_loading = False
         self._recorded_frames = self.meta.total_frames
@@ -909,7 +912,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return get_hf_features_from_features(self.features)
 
     def _get_query_indices(self, idx: int, ep_idx: int) -> tuple[dict[str, list[int | bool]]]:
-        ep = self.meta.episodes[ep_idx]
+        ep = self.episodes_metadata_list[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
         query_indices = {
@@ -952,7 +955,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Segmentation Fault. This probably happens because a memory reference to the video loader is created in
         the main process and a subprocess fails to access it.
         """
-        ep = self.meta.episodes[ep_idx]
+        ep = self.episodes_metadata_list[ep_idx]
         item = {}
         for vid_key, query_ts in query_timestamps.items():
             # Episodes are stored sequentially on a single mp4 to reduce the number of files.
