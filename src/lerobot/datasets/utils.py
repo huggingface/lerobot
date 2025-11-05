@@ -35,7 +35,6 @@ from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
-from torchvision import transforms
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.backward_compatibility import (
@@ -397,33 +396,6 @@ def load_image_as_numpy(
     if np.issubdtype(dtype, np.floating):
         img_array /= 255.0
     return img_array
-
-
-def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:
-    """Convert a batch from a Hugging Face dataset to torch tensors.
-
-    This transform function converts items from Hugging Face dataset format (pyarrow)
-    to torch tensors. Importantly, images are converted from PIL objects (H, W, C, uint8)
-    to a torch image representation (C, H, W, float32) in the range [0, 1]. Other
-    types are converted to torch.tensor.
-
-    Args:
-        items_dict (dict): A dictionary representing a batch of data from a
-            Hugging Face dataset.
-
-    Returns:
-        dict: The batch with items converted to torch tensors.
-    """
-    for key in items_dict:
-        first_item = items_dict[key][0]
-        if isinstance(first_item, PILImage.Image):
-            to_tensor = transforms.ToTensor()
-            items_dict[key] = [to_tensor(img) for img in items_dict[key]]
-        elif first_item is None:
-            pass
-        else:
-            items_dict[key] = [x if isinstance(x, str) else torch.tensor(x) for x in items_dict[key]]
-    return items_dict
 
 
 def is_valid_version(version: str) -> bool:
