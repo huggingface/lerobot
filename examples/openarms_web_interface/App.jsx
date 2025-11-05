@@ -177,6 +177,42 @@ function App() {
     }
   };
 
+  // Set task only (for pedal use)
+  const setTaskOnly = async () => {
+    if (!task.trim()) {
+      setError('Please enter a task description');
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/recording/set-task`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task, ...config })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to set task');
+      }
+
+      const result = await response.json();
+      setStatusMessage(result.message || `Task set: ${task}`);
+      saveConfig(config);
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => {
+        if (!isRecording && !isInitializing) {
+          setStatusMessage('Ready');
+        }
+      }, 3000);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   // Start recording
   const startRecording = async () => {
     if (!task.trim()) {
@@ -497,7 +533,20 @@ function App() {
                   onChange={(e) => setTask(e.target.value)}
                   placeholder="Task description (e.g., 'pick and place')"
                   disabled={isRecording || isInitializing || isEncoding || isUploading}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter' && robotsReady) {
+                      setTaskOnly();
+                    }
+                  }}
                 />
+                <button
+                  onClick={setTaskOnly}
+                  disabled={isRecording || isInitializing || isEncoding || isUploading || !robotsReady}
+                  className="btn-set-task"
+                  title={!robotsReady ? 'Please setup robots first' : 'Store task for pedal use (Enter key)'}
+                >
+                  💾 Set Task
+                </button>
                 <button
                   onClick={startRecording}
                   disabled={isRecording || isInitializing || isEncoding || isUploading || !robotsReady}
