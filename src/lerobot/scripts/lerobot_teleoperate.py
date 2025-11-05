@@ -51,6 +51,8 @@ lerobot-teleoperate \
 
 """
 
+from __future__ import annotations
+
 import logging
 import time
 from dataclasses import asdict, dataclass
@@ -58,37 +60,11 @@ from pprint import pformat
 
 import rerun as rr
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.processor import (
-    RobotAction,
-    RobotObservation,
-    RobotProcessorPipeline,
-    make_default_processors,
-)
-from lerobot.robots import (  # noqa: F401
-    Robot,
-    RobotConfig,
-    bi_so100_follower,
-    hope_jr,
-    koch_follower,
-    make_robot_from_config,
-    so100_follower,
-    so101_follower,
-)
-from lerobot.teleoperators import (  # noqa: F401
-    Teleoperator,
-    TeleoperatorConfig,
-    bi_so100_leader,
-    gamepad,
-    homunculus,
-    koch_leader,
-    make_teleoperator_from_config,
-    so100_leader,
-    so101_leader,
-)
-from lerobot.utils.import_utils import register_third_party_devices
+from lerobot.processor import make_default_processors
+from lerobot.robots import Robot, RobotConfig, make_robot_from_config
+from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
+from lerobot.utils.import_utils import register_builtin_devices, register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
@@ -110,9 +86,9 @@ def teleop_loop(
     teleop: Teleoperator,
     robot: Robot,
     fps: int,
-    teleop_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
-    robot_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
-    robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
+    teleop_action_processor,
+    robot_action_processor,
+    robot_observation_processor,
     display_data: bool = False,
     duration: float | None = None,
 ):
@@ -216,6 +192,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
 
 def main():
+    register_builtin_devices()
     register_third_party_devices()
     teleoperate()
 

@@ -16,6 +16,7 @@
 import importlib
 import logging
 import pkgutil
+from collections.abc import Sequence
 from typing import Any
 
 from draccus.choice_types import ChoiceRegistry
@@ -130,6 +131,53 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     )
 
 
+def _import_modules(package_name: str, include_patterns: Sequence[str] | None = None) -> None:
+    """Import all modules within ``package_name`` whose dotted path matches ``include_patterns``.
+
+    ``include_patterns`` contains simple substring filters that are matched against the fully qualified
+    module path. When ``None`` or empty, every submodule found via ``pkgutil.walk_packages`` is imported.
+    Failures are logged but do not raise to keep discovery best-effort.
+    """
+
+    try:
+        package = importlib.import_module(package_name)
+    except ModuleNotFoundError:
+        logging.debug("Skipping missing package during import discovery: %s", package_name)
+        return
+
+    package_path = getattr(package, "__path__", None)
+    if package_path is None:
+        logging.debug("Package %s has no __path__; skipping discovery", package_name)
+        return
+
+    for module_info in pkgutil.walk_packages(package_path, prefix=f"{package.__name__}."):
+        module_name = module_info.name
+        if include_patterns and not any(pattern in module_name for pattern in include_patterns):
+            continue
+        try:
+            importlib.import_module(module_name)
+        except Exception:  # pragma: no cover - best effort logging only
+            logging.exception("Could not import module discovered during registry loading: %s", module_name)
+
+
+def register_builtin_devices() -> None:
+    """Import built-in device modules so registries are populated before CLI parsing.
+
+    Built-in robots, teleoperators, and cameras register their configuration classes via module import side
+    effects. This helper ensures those modules are eagerly imported so ``draccus`` can resolve the
+    ``ChoiceRegistry`` entries without requiring every script to import each module manually.
+    """
+
+    package_filters: dict[str, tuple[str, ...]] = {
+        "lerobot.robots": ("config",),
+        "lerobot.teleoperators": ("config",),
+        "lerobot.cameras": ("config", "configuration"),
+    }
+
+    for package_name, patterns in package_filters.items():
+        _import_modules(package_name, patterns)
+
+
 def register_third_party_devices() -> None:
     """
     Discover and import third-party lerobot_* plugins so they can register themselves.
@@ -148,7 +196,7 @@ def register_third_party_devices() -> None:
                 importlib.import_module(name)
                 imported.append(name)
                 logging.info("Imported third-party plugin: %s", name)
-            except Exception:
+            except Exception:  # pragma: no cover - best effort logging only
                 logging.exception("Could not import third-party plugin: %s", name)
                 failed.append(name)
 
