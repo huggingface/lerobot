@@ -352,6 +352,21 @@ button {
   transition: all 0.2s;
 }
 
+.btn-set-task {
+  background: #3b82f6;
+  color: white;
+  min-width: 120px;
+}
+
+.btn-set-task:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.btn-set-task:disabled {
+  background: #d1d5db;
+  cursor: not-allowed;
+}
+
 .btn-start {
   background: #10b981;
   color: white;
