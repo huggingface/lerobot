@@ -616,7 +616,10 @@ class SACObservationEncoder(nn.Module):
             Tensor: The encoded image features.
         """
         feats = []
-        for k, feat in cache.items():
+        # Use self.image_keys for deterministic iteration order (torch.compile compatibility)
+        # instead of cache.items() which may have non-deterministic order
+        for k in self.image_keys:
+            feat = cache[k]
             safe_key = k.replace(".", "_")
             x = self.spatial_embeddings[safe_key](feat)
             x = self.post_encoders[safe_key](x)
@@ -749,7 +752,8 @@ class CriticEnsemble(nn.Module):
     ) -> torch.Tensor:
         device = get_device_from_parameters(self)
         # Move each tensor in observations to device
-        observations = {k: v.to(device) for k, v in observations.items()}
+        # Use sorted keys for deterministic iteration order (torch.compile compatibility)
+        observations = {k: observations[k].to(device) for k in sorted(observations.keys())}
 
         obs_enc = self.encoder(observations, cache=observation_features)
 
@@ -799,10 +803,11 @@ class DiscreteCritic(nn.Module):
             orthogonal_init()(self.output_layer.weight)
 
     def forward(
-        self, observations: torch.Tensor, observation_features: torch.Tensor | None = None
+        self, observations: dict[str, torch.Tensor], observation_features: torch.Tensor | None = None
     ) -> torch.Tensor:
         device = get_device_from_parameters(self)
-        observations = {k: v.to(device) for k, v in observations.items()}
+        # Use sorted keys for deterministic iteration order (torch.compile compatibility)
+        observations = {k: observations[k].to(device) for k in sorted(observations.keys())}
         obs_enc = self.encoder(observations, cache=observation_features)
         return self.output_layer(self.net(obs_enc))
 
