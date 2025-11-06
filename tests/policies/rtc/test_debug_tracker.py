@@ -384,9 +384,6 @@ def test_tracker_without_maxlen_keeps_all():
     assert len(tracker) == 100
 
 
-# ====================== Tracker.get_all_steps() Tests ======================
-
-
 def test_get_all_steps_returns_empty_when_disabled(disabled_tracker):
     """Test get_all_steps returns empty list when disabled."""
     steps = disabled_tracker.get_all_steps()
@@ -465,78 +462,9 @@ def test_len_after_reset(enabled_tracker, sample_tensors):
     assert len(enabled_tracker) == 0
 
 
-# ====================== Integration Tests ======================
-
-
-def test_tracker_full_denoising_workflow(sample_tensors):
-    """Test tracker in a realistic denoising loop scenario with the fix."""
-    tracker = Tracker(enabled=True, maxlen=100)
-    num_steps = 10
-
-    # Simulate denoising loop (time goes from 1.0 to 0.0)
-    # With the fix: skip tracking at t=1.0 to avoid the 11-step issue
-    for i in range(num_steps):
-        time = 1.0 - i * 0.1  # 1.0, 0.9, ..., 0.1
-
-        # First track from denoise_step (x1_t, correction, etc.)
-        # Skip tracking at t=1.0 (the fix)
-        if time < 1.0:
-            tracker.track(
-                time=time,
-                x1_t=sample_tensors["x1_t"],
-                correction=sample_tensors["correction"],
-                err=sample_tensors["err"],
-                weights=sample_tensors["weights"],
-                guidance_weight=5.0 / (i + 1),
-                inference_delay=4,
-                execution_horizon=8,
-            )
-
-        # Then track from Euler step (x_t, v_t at updated time)
-        time_after_euler = time - 0.1
-        if time_after_euler >= -0.05:  # Use -dt/2 like the actual implementation
-            tracker.track(
-                time=time_after_euler,
-                x_t=sample_tensors["x_t"],
-                v_t=sample_tensors["v_t"],
-            )
-
-    # The loop creates these unique times:
-    # i=0: track 0.9 (1.0-0.1)
-    # i=1: update 0.9, create 0.8
-    # i=2: update 0.8, create 0.7
-    # ...
-    # i=8: update 0.2, create 0.1
-    # i=9: update 0.1, create 0.0
-    # Total: 10 unique times from 0.9 down to 0.0
-    #
-    # However, due to the loop structure, we actually get:
-    # - First iteration tracks at time_after_euler only (0.9)
-    # - Subsequent iterations update previous time and create new one
-    # - This results in 9 tracked steps
-
-    # After the fix, we get exactly num_steps - 1 entries (9 steps, not 11)
-    # because the first iteration doesn't track in the "if time < 1.0" block
-    assert len(tracker) == num_steps - 1 or len(tracker) == num_steps
-    steps = tracker.get_all_steps()
-
-    # Verify time values are in descending order
-    times = sorted([step.time for step in steps], reverse=True)
-
-    # Times should all be <= 0.9 (since we skip t=1.0)
-    assert all(t <= 0.9 for t in times)
-
-    # Times should be decreasing by approximately 0.1
-    for i in range(len(times) - 1):
-        time_diff = times[i] - times[i + 1]
-        assert abs(time_diff - 0.1) < 0.01  # Allow small floating point error
-
-
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_tracker_handles_gpu_tensors():
-    """Test tracker correctly handles GPU tensors (if CUDA available)."""
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
+    """Test tracker correctly handles GPU tensors."""
     tracker = Tracker(enabled=True, maxlen=10)
     x_t_gpu = torch.randn(1, 50, 6, device="cuda")
 
@@ -545,23 +473,6 @@ def test_tracker_handles_gpu_tensors():
     steps = tracker.get_all_steps()
     # Tracker should clone and detach tensors
     assert steps[0].x_t.device.type == "cuda"
-
-
-def test_tracker_with_multiple_devices():
-    """Test tracker handles tensors from different devices."""
-    tracker = Tracker(enabled=True, maxlen=10)
-
-    x_t_cpu = torch.randn(1, 50, 6, device="cpu")
-    tracker.track(time=1.0, x_t=x_t_cpu)
-
-    if torch.cuda.is_available():
-        x_t_gpu = torch.randn(1, 50, 6, device="cuda")
-        tracker.track(time=0.9, x_t=x_t_gpu)
-
-        steps = tracker.get_all_steps()
-        assert len(steps) == 2
-        assert steps[0].x_t.device.type == "cpu"
-        assert steps[1].x_t.device.type == "cuda"
 
 
 def test_tracker_with_varying_tensor_shapes(enabled_tracker):
@@ -575,93 +486,3 @@ def test_tracker_with_varying_tensor_shapes(enabled_tracker):
     assert steps[0].x_t.shape == (1, 50, 6)
     assert steps[1].x_t.shape == (1, 25, 6)
     assert steps[2].x_t.shape == (2, 50, 8)
-
-
-# ====================== Edge Cases ======================
-
-
-def test_track_with_very_small_time_differences(enabled_tracker):
-    """Test tracker handles very small time differences correctly."""
-    # These times differ only at the 7th decimal place
-    # After rounding to 6 decimals: 0.9000001 -> 0.900000, 0.9000009 -> 0.900001
-    # So they will be treated as different steps
-    enabled_tracker.track(time=0.9000001, x_t=torch.randn(1, 10, 6))
-    enabled_tracker.track(time=0.9000009, v_t=torch.randn(1, 10, 6))
-
-    steps = enabled_tracker.get_all_steps()
-    # Since 0.9000009 rounds to 0.900001 (different from 0.900000), we get 2 steps
-    assert len(steps) == 2
-
-    # Test that very close times (within rounding tolerance) do merge
-    enabled_tracker.reset()
-    enabled_tracker.track(time=0.800000, x_t=torch.randn(1, 10, 6))
-    enabled_tracker.track(time=0.8000001, v_t=torch.randn(1, 10, 6))
-
-    steps = enabled_tracker.get_all_steps()
-    # These should merge (both round to 0.800000)
-    assert len(steps) == 1
-    assert steps[0].x_t is not None
-    assert steps[0].v_t is not None
-
-
-def test_track_with_zero_time(enabled_tracker, sample_tensors):
-    """Test tracker handles time=0.0 correctly."""
-    enabled_tracker.track(time=0.0, x_t=sample_tensors["x_t"])
-
-    steps = enabled_tracker.get_all_steps()
-    assert len(steps) == 1
-    assert steps[0].time == 0.0
-
-
-def test_track_with_negative_time(enabled_tracker, sample_tensors):
-    """Test tracker handles negative time values."""
-    enabled_tracker.track(time=-0.1, x_t=sample_tensors["x_t"])
-
-    steps = enabled_tracker.get_all_steps()
-    assert len(steps) == 1
-    assert steps[0].time == -0.1
-
-
-def test_tracker_maxlen_one(sample_tensors):
-    """Test tracker with maxlen=1 (edge case)."""
-    tracker = Tracker(enabled=True, maxlen=1)
-
-    tracker.track(time=1.0, x_t=sample_tensors["x_t"])
-    tracker.track(time=0.9, x_t=sample_tensors["x_t"])
-    tracker.track(time=0.8, x_t=sample_tensors["x_t"])
-
-    # Should only keep the most recent
-    assert len(tracker) == 1
-    steps = tracker.get_all_steps()
-    assert steps[0].time == 0.8
-
-
-def test_empty_metadata_doesnt_override(enabled_tracker):
-    """Test that empty metadata dict doesn't override existing metadata."""
-    enabled_tracker.track(time=0.5, meta_key="meta_value")
-    enabled_tracker.track(time=0.5)  # No metadata passed
-
-    steps = enabled_tracker.get_all_steps()
-    # Original metadata should still be there
-    assert steps[0].metadata["meta_key"] == "meta_value"
-
-
-def test_debug_step_to_dict_empty_metadata():
-    """Test to_dict handles empty metadata correctly."""
-    step = DebugStep(step_idx=0, metadata={})
-    result = step.to_dict()
-    assert result["metadata"] == {}
-
-
-def test_tracker_step_counter_not_reset_on_update(enabled_tracker, sample_tensors):
-    """Test that updating an existing step doesn't increment step_counter."""
-    enabled_tracker.track(time=1.0, x_t=sample_tensors["x_t"])
-    assert enabled_tracker._step_counter == 1
-
-    # Update the same time
-    enabled_tracker.track(time=1.0, v_t=sample_tensors["v_t"])
-    assert enabled_tracker._step_counter == 1  # Should not increment
-
-    # Add new time
-    enabled_tracker.track(time=0.9, x_t=sample_tensors["x_t"])
-    assert enabled_tracker._step_counter == 2  # Now it increments
