@@ -25,9 +25,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
-
-# Enable TensorFloat32 for better torch.compile performance
-torch.set_float32_matmul_precision('high')
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
@@ -42,6 +39,19 @@ DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 class SACPolicy(
     PreTrainedPolicy,
 ):
+    """Soft Actor-Critic (SAC) policy implementation.
+    
+    This implementation is optimized for torch.compile compatibility:
+    - Uses deterministic actions in inference mode
+    - Avoids .item() calls that cause graph breaks
+    - Uses tensor operations instead of conditional control flow
+    - Supports deterministic critic subsampling for torch.compile
+    - Uses sorted dictionary keys for deterministic iteration order
+    
+    When use_torch_compile=True, deterministic_critic_subsample is automatically enabled
+    to ensure full compatibility. Set deterministic_critic_subsample=False manually if you
+    need random subsampling (may cause graph breaks with torch.compile).
+    """
     config_class = SACConfig
     name = "sac"
 
@@ -49,9 +59,29 @@ class SACPolicy(
         self,
         config: SACConfig | None = None,
     ):
+        """Initialize the SAC policy.
+
+        Notes:
+            deterministic_critic_subsample (bool, default=``use_torch_compile``):
+                Enables deterministic critic subsampling to avoid random graph breaks when compiling.
+            allow_tf32 (bool, default=False):
+                Allows TF32 matrix multiplies on supported CUDA devices (Ampere+) when available.
+        """
         super().__init__(config)
         config.validate_features()
         self.config = config
+
+        if not hasattr(self.config, "deterministic_target_policy"):
+            self.config.deterministic_target_policy = False
+
+        if not hasattr(self.config, "deterministic_critic_subsample"):
+            self.config.deterministic_critic_subsample = bool(
+                getattr(self.config, "use_torch_compile", False)
+            )
+
+        allow_tf32 = bool(getattr(self.config, "allow_tf32", False))
+        if allow_tf32 and torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 8:
+            torch.set_float32_matmul_precision("high")
 
         # Determine action dimension and initialize all components
         continuous_action_dim = config.output_features[ACTION].shape[0]
@@ -84,22 +114,27 @@ class SACPolicy(
         raise NotImplementedError("SACPolicy does not support action chunking. It returns single actions!")
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select action for inference/evaluation
-        
-        Uses deterministic actions (mean) for reproducible inference and torch.compile compatibility.
+    def select_action(self, observation: dict[str, Tensor], deterministic: bool = False) -> Tensor:
+        """Select action for inference/evaluation.
+
+        Default behaviour remains stochastic to match the legacy implementation.
+        The ``deterministic`` flag skips distribution sampling and uses the policy mean, which
+        speeds up compiled inference.
         """
 
         observations_features = None
         if self.shared_encoder and self.actor.encoder.has_images:
-            observations_features = self.actor.encoder.get_cached_image_features(batch)
+            observations_features = self.actor.encoder.get_cached_image_features(observation)
 
-        # Use deterministic=True for inference to ensure reproducible results
-        # This is crucial for torch.compile correctness testing
-        actions, _, _ = self.actor(batch, observations_features, deterministic=True)
+        actions, _, _ = self.actor(
+            observation,
+            observations_features,
+            deterministic=deterministic,
+            return_log_prob=False,
+        )
 
         if self.config.num_discrete_actions is not None:
-            discrete_action_value = self.discrete_critic(batch, observations_features)
+            discrete_action_value = self.discrete_critic(observation, observations_features)
             discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
             actions = torch.cat([actions, discrete_action], dim=-1)
 
@@ -248,8 +283,16 @@ class SACPolicy(
                 )
 
     def update_temperature(self):
-        # Keep as tensor for torch.compile compatibility
+        """Update temperature parameter from log_alpha.
+        
+        Keeps temperature as tensor (not Python float) for torch.compile compatibility.
+        This avoids graph breaks that would occur with .item() calls.
+        """
         self.temperature = self.log_alpha.exp()
+
+    @property
+    def temperature_value(self) -> float:
+        return float(self.temperature.detach().item())
 
     def compute_loss_critic(
         self,
@@ -279,7 +322,8 @@ class SACPolicy(
             next_action_preds, next_log_probs, _ = self.actor(
                 next_observations,
                 next_observation_features,
-                deterministic=True,
+                deterministic=self.config.deterministic_target_policy,
+                return_log_prob=self.config.use_backup_entropy,
             )
 
             # 2- compute q targets
@@ -291,20 +335,23 @@ class SACPolicy(
             ).to(torch.float64)
 
             # subsample critics to prevent overfitting if use high UTD (update to date)
-            # For torch.compile compatibility, use deterministic indexing instead of torch.randperm
-            # Use simple deterministic selection for reproducibility and torch.compile compatibility
             if self.config.num_subsample_critics is not None:
-                # Simple deterministic selection: always take first num_subsample_critics critics
-                # This ensures complete reproducibility and torch.compile compatibility
-                # Note: while this is less diverse than random sampling, it ensures deterministic behavior
-                # which is critical for torch.compile correctness testing
-                q_targets = q_targets[: self.config.num_subsample_critics]
+                total_num = q_targets.shape[0]
+                num_to_use = min(self.config.num_subsample_critics, total_num)
+                if self.config.deterministic_critic_subsample:
+                    idx = torch.arange(num_to_use, device=q_targets.device)
+                else:
+                    idx = torch.randperm(total_num, device=q_targets.device)[:num_to_use]
+                q_targets = q_targets[idx]
 
             # critics subsample size
             min_q, _ = q_targets.min(dim=0)  # Get values from min operation
             # Use tensor operation instead of conditional to avoid graph breaks with torch.compile
             temperature = self.log_alpha.exp().to(torch.float64)
-            next_log_probs = next_log_probs.to(torch.float64)
+            if next_log_probs is None:
+                next_log_probs = torch.zeros_like(min_q, dtype=torch.float64)
+            else:
+                next_log_probs = next_log_probs.to(torch.float64)
             min_q = min_q - (use_backup_scale * temperature * next_log_probs)
 
             td_target = rewards_f + (1 - done_f) * discount * min_q
@@ -405,7 +452,8 @@ class SACPolicy(
             _, log_probs, _ = self.actor(
                 observations,
                 observation_features,
-                deterministic=True,
+                deterministic=False,
+                return_log_prob=True,
             )
         log_probs = log_probs.to(torch.float64)
         temperature = self.log_alpha.exp().to(torch.float64)
@@ -488,8 +536,11 @@ class SACPolicy(
             **asdict(self.config.discrete_critic_network_kwargs),
         )
 
-        # TODO: (maractingi, azouitine) Compile the discrete critic
         self.discrete_critic_target.load_state_dict(self.discrete_critic.state_dict())
+
+        if getattr(self.config, "use_torch_compile", False):
+            self.discrete_critic = torch.compile(self.discrete_critic, mode="default", fullgraph=False)
+            self.discrete_critic_target = torch.compile(self.discrete_critic_target, mode="default", fullgraph=False)
 
     def _init_actor(self, continuous_action_dim):
         """Initialize policy actor network and default target entropy."""
@@ -501,6 +552,9 @@ class SACPolicy(
             encoder_is_shared=self.shared_encoder,
             **asdict(self.config.policy_kwargs),
         )
+
+        if getattr(self.config, "use_torch_compile", False):
+            self.actor = torch.compile(self.actor, mode="reduce-overhead", fullgraph=False)
 
         self.target_entropy = self.config.target_entropy
         if self.target_entropy is None:
@@ -527,6 +581,7 @@ class SACObservationEncoder(nn.Module):
 
     def _init_image_layers(self) -> None:
         self.image_keys = [k for k in self.config.input_features if is_image_feature(k)]
+        self.image_keys = sorted(self.image_keys)
         self.has_images = bool(self.image_keys)
         if not self.has_images:
             return
@@ -899,10 +954,11 @@ class Policy(nn.Module):
 
     def forward(
         self,
-        observations: torch.Tensor,
-        observation_features: torch.Tensor | None = None,
+        observations: dict[str, torch.Tensor],
+        observation_features: dict[str, torch.Tensor] | None = None,
         deterministic: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return_log_prob: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, dict[str, torch.Tensor]]:
         # We detach the encoder if it is shared to avoid backprop through it
         # This is important to avoid the encoder to be updated through the policy
         obs_enc = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)
@@ -919,22 +975,23 @@ class Policy(nn.Module):
         else:
             std = self.fixed_std.expand_as(means)
 
+        if deterministic:
+            actions = torch.tanh(means)
+            if return_log_prob:
+                log_probs = torch.zeros(actions.shape[0], device=actions.device, dtype=actions.dtype)
+            else:
+                log_probs = None
+            return actions, log_probs, {"mean": means, "std": std}
+
         # Build transformed distribution
         dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
 
-        # Sample actions (reparameterized) or use mean for deterministic behavior
-        # For torch.compile compatibility and deterministic inference, use mean in eval mode
-        if deterministic:
-            # Use mode (mean passed through tanh) for deterministic actions
-            actions = dist.mode()
-        else:
-            # Use reparameterized sampling for training
-            actions = dist.rsample()
+        # Sample actions (reparameterized)
+        actions = dist.rsample()
 
-        # Compute log_probs
-        log_probs = dist.log_prob(actions)
+        log_probs = dist.log_prob(actions) if return_log_prob else None
 
-        return actions, log_probs, means
+        return actions, log_probs, {"mean": means, "std": std}
 
     def get_features(self, observations: torch.Tensor) -> torch.Tensor:
         """Get encoded features from observations"""
