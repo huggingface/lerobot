@@ -25,6 +25,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+
+# Enable TensorFloat32 for better torch.compile performance
+torch.set_float32_matmul_precision('high')
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
@@ -258,8 +261,26 @@ class SACPolicy(
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
     ) -> Tensor:
+        orig_dtype = rewards.dtype
+        rewards_f = rewards.to(torch.float64)
+        done_f = done.to(torch.float64)
+        discount = torch.as_tensor(
+            self.config.discount,
+            dtype=torch.float64,
+            device=rewards.device,
+        )
+        use_backup_scale = torch.as_tensor(
+            1.0 if self.config.use_backup_entropy else 0.0,
+            dtype=torch.float64,
+            device=rewards.device,
+        )
+
         with torch.no_grad():
-            next_action_preds, next_log_probs, _ = self.actor(next_observations, next_observation_features)
+            next_action_preds, next_log_probs, _ = self.actor(
+                next_observations,
+                next_observation_features,
+                deterministic=True,
+            )
 
             # 2- compute q targets
             q_targets = self.critic_forward(
@@ -267,7 +288,7 @@ class SACPolicy(
                 actions=next_action_preds,
                 use_target=True,
                 observation_features=next_observation_features,
-            )
+            ).to(torch.float64)
 
             # subsample critics to prevent overfitting if use high UTD (update to date)
             # For torch.compile compatibility, use deterministic indexing instead of torch.randperm
@@ -282,11 +303,11 @@ class SACPolicy(
             # critics subsample size
             min_q, _ = q_targets.min(dim=0)  # Get values from min operation
             # Use tensor operation instead of conditional to avoid graph breaks with torch.compile
-            temperature = self.log_alpha.exp()
-            use_backup = torch.tensor(float(self.config.use_backup_entropy), device=min_q.device, dtype=min_q.dtype)
-            min_q = min_q - (use_backup * temperature * next_log_probs)
+            temperature = self.log_alpha.exp().to(torch.float64)
+            next_log_probs = next_log_probs.to(torch.float64)
+            min_q = min_q - (use_backup_scale * temperature * next_log_probs)
 
-            td_target = rewards + (1 - done) * self.config.discount * min_q
+            td_target = rewards_f + (1 - done_f) * discount * min_q
 
         # 3- compute predicted qs using continuous action component only
         continuous_actions = actions[..., : self.actor.action_dim]
@@ -295,7 +316,7 @@ class SACPolicy(
             actions=continuous_actions,
             use_target=False,
             observation_features=observation_features,
-        )
+        ).to(torch.float64)
 
         # 4- Calculate loss
         # Compute state-action value loss (TD loss) for all of the Q functions in the ensemble.
@@ -308,7 +329,7 @@ class SACPolicy(
                 reduction="none",
             ).mean(dim=1)
         ).sum()
-        return critics_loss
+        return critics_loss.to(orig_dtype)
 
     def compute_loss_discrete_critic(
         self,
@@ -321,23 +342,24 @@ class SACPolicy(
         next_observation_features=None,
         complementary_info=None,
     ):
+        orig_dtype = rewards.dtype
         # Extract the discrete action component from the full action tensor
         actions_discrete: Tensor = actions[..., self.actor.action_dim :].clone()
         actions_discrete = torch.round(actions_discrete)
         actions_discrete = actions_discrete.long()
 
         # Prepare discrete penalties tensor deterministically
-        discrete_penalties = torch.zeros_like(rewards)
+        discrete_penalties = torch.zeros_like(rewards, dtype=torch.float64)
         if complementary_info is not None:
             penalty = complementary_info.get("discrete_penalty")
             if penalty is not None:
-                discrete_penalties = penalty.to(rewards)
+                discrete_penalties = penalty.to(torch.float64)
 
         with torch.no_grad():
             # For DQN, select actions using online network, evaluate with target network
             next_discrete_qs = self.discrete_critic_forward(
                 next_observations, use_target=False, observation_features=next_observation_features
-            )
+            ).to(torch.float64)
             best_next_discrete_action = torch.argmax(next_discrete_qs, dim=-1, keepdim=True)
 
             # Get target Q-values from target network
@@ -345,7 +367,7 @@ class SACPolicy(
                 observations=next_observations,
                 use_target=True,
                 observation_features=next_observation_features,
-            )
+            ).to(torch.float64)
 
             # Use gather to select Q-values for best actions
             target_next_discrete_q = torch.gather(
@@ -353,28 +375,47 @@ class SACPolicy(
             ).squeeze(-1)
 
             # Compute target Q-value with Bellman equation using penalties tensor
-            rewards_discrete = rewards + discrete_penalties
-            target_discrete_q = rewards_discrete + (1 - done) * self.config.discount * target_next_discrete_q
+            rewards_discrete = rewards.to(torch.float64) + discrete_penalties
+            discount = torch.as_tensor(
+                self.config.discount,
+                dtype=torch.float64,
+                device=rewards.device,
+            )
+            target_discrete_q = rewards_discrete + (1 - done.to(torch.float64)) * discount * target_next_discrete_q
 
         # Get predicted Q-values for current observations
         predicted_discrete_qs = self.discrete_critic_forward(
             observations=observations, use_target=False, observation_features=observation_features
-        )
+        ).to(torch.float64)
 
         # Use gather to select Q-values for taken actions
         predicted_discrete_q = torch.gather(predicted_discrete_qs, dim=1, index=actions_discrete).squeeze(-1)
 
         # Compute MSE loss between predicted and target Q-values
-        discrete_critic_loss = F.mse_loss(input=predicted_discrete_q, target=target_discrete_q)
-        return discrete_critic_loss
+        discrete_critic_loss = F.mse_loss(
+            input=predicted_discrete_q,
+            target=target_discrete_q,
+        )
+        return discrete_critic_loss.to(orig_dtype)
 
     def compute_loss_temperature(self, observations, observation_features: Tensor | None = None) -> Tensor:
         """Compute the temperature loss"""
         # calculate temperature loss
         with torch.no_grad():
-            _, log_probs, _ = self.actor(observations, observation_features)
-        temperature_loss = (-self.log_alpha.exp() * (log_probs + self.target_entropy)).mean()
-        return temperature_loss
+            _, log_probs, _ = self.actor(
+                observations,
+                observation_features,
+                deterministic=True,
+            )
+        log_probs = log_probs.to(torch.float64)
+        temperature = self.log_alpha.exp().to(torch.float64)
+        target_entropy = torch.as_tensor(
+            self.target_entropy,
+            dtype=torch.float64,
+            device=log_probs.device,
+        )
+        temperature_loss = (-temperature * (log_probs + target_entropy)).mean()
+        return temperature_loss.to(self.log_alpha.dtype)
 
     def compute_loss_actor(
         self,
@@ -388,13 +429,14 @@ class SACPolicy(
             actions=actions_pi,
             use_target=False,
             observation_features=observation_features,
-        )
+        ).to(torch.float64)
         min_q_preds = q_preds.min(dim=0)[0]
 
-        # Use log_alpha.exp() directly to avoid graph breaks with torch.compile
-        temperature = self.log_alpha.exp()
+        log_probs = log_probs.to(torch.float64)
+        temperature = self.log_alpha.exp().to(torch.float64)
+
         actor_loss = ((temperature * log_probs) - min_q_preds).mean()
-        return actor_loss
+        return actor_loss.to(actions_pi.dtype)
 
     def _init_encoders(self):
         """Initialize shared or separate encoders for actor and critic."""
@@ -512,8 +554,9 @@ class SACObservationEncoder(nn.Module):
                 channel=channels,
                 num_features=self.config.image_embedding_pooling_dim,
             )
+            dropout_layer = nn.Identity() if self.config.use_torch_compile else nn.Dropout(0.1)
             self.post_encoders[name] = nn.Sequential(
-                nn.Dropout(0.1),
+                dropout_layer,
                 nn.Linear(
                     in_features=channels * self.config.image_embedding_pooling_dim,
                     out_features=self.config.latent_dim,
