@@ -190,8 +190,6 @@ class RTCProcessor:
         # So we need to invert the time
         tau = 1 - time
 
-        x_t = x_t.clone().detach()
-
         if prev_chunk_left_over is None:
             # First step, no guidance - return v_t
             v_t = original_denoise_step_partial(x_t)
@@ -237,6 +235,7 @@ class RTCProcessor:
 
         with torch.enable_grad():
             v_t = original_denoise_step_partial(x_t)
+            x_t = x_t.clone().detach()
             x_t.requires_grad_(True)
 
             x1_t = x_t - time * v_t  # noqa: N806
