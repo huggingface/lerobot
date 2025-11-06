@@ -383,38 +383,26 @@ class RealtimeVideoEncoder:
             self.pix_fmt,
         ]
 
-        # Add codec-specific options
-        is_videotoolbox = self.vcodec.endswith("_videotoolbox")
+        if self.crf is not None:
+            cmd.extend(["-crf", str(self.crf)])
 
-        if is_videotoolbox:
-            # VideoToolbox (macOS hardware acceleration)
-            if self.crf is not None:
-                # Map CRF to quality (0-100, lower = better quality)
-                quality = max(0, min(100, int((self.crf / 51.0) * 100)))
-                cmd.extend(["-q:v", str(quality)])
-            cmd.extend(["-realtime", "1"])  # Enable real-time encoding mode
-        else:
-            # Software encoders (libsvtav1, h264, hevc)
-            if self.crf is not None:
-                cmd.extend(["-crf", str(self.crf)])
-
-            if self.preset:
-                if self.vcodec == "libsvtav1":
-                    # SVT-AV1 uses numeric presets (0-13, higher = faster)
-                    preset_map = {
-                        "veryslow": "0",
-                        "slower": "2",
-                        "slow": "4",
-                        "medium": "6",
-                        "fast": "8",
-                        "veryfast": "10",
-                        "ultrafast": "12",
-                    }
-                    preset_value = preset_map.get(self.preset, "8")
-                    cmd.extend(["-preset", preset_value])
-                else:
-                    # h264/hevc use named presets
-                    cmd.extend(["-preset", self.preset])
+        if self.preset:
+            if self.vcodec == "libsvtav1":
+                # SVT-AV1 uses numeric presets (0-13, higher = faster)
+                preset_map = {
+                    "veryslow": "0",
+                    "slower": "2",
+                    "slow": "4",
+                    "medium": "6",
+                    "fast": "8",
+                    "veryfast": "10",
+                    "ultrafast": "12",
+                }
+                preset_value = preset_map.get(self.preset, "8")
+                cmd.extend(["-preset", preset_value])
+            else:
+                # h264/hevc use named presets
+                cmd.extend(["-preset", self.preset])
 
         # Add output path
         cmd.append(str(self.output_path))

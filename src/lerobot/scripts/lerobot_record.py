@@ -164,7 +164,7 @@ class DatasetRecordConfig:
     # Number of episodes to record before batch encoding videos
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
-    # Video codec to use for encoding. Options: libsvtav1, h264, hevc, h264_videotoolbox, hevc_videotoolbox
+    # Video codec to use for encoding. Options: libsvtav1, h264, hevc
     video_codec: str = "libsvtav1"
     # Enable real-time video encoding during recording (eliminates post-episode encoding delay)
     # When enabled, videos are encoded in real-time as frames are captured using ffmpeg subprocess

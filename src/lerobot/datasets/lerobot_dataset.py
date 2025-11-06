@@ -1714,8 +1714,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
         video_backend: str | None = None,
-        # Video codec to use for encoding. Options: libsvtav1, h264, hevc, h264_videotoolbox, hevc_videotoolbox
-        video_codec: str = "libsvtav1",
+        # Video codec to use for encoding. Options: libsvtav1, h264, hevc
         batch_encoding_size: int = 1,
         # Enable real-time video encoding during recording (eliminates post-episode encoding delay)
         # When enabled, videos are encoded in real-time as frames are captured using ffmpeg subprocess
