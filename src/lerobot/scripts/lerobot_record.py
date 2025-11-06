@@ -164,8 +164,6 @@ class DatasetRecordConfig:
     # Number of episodes to record before batch encoding videos
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
-    # Video codec to use for encoding. Options: libsvtav1, h264, hevc
-    video_codec: str = "libsvtav1"
     # Enable real-time video encoding during recording (eliminates post-episode encoding delay)
     # When enabled, videos are encoded in real-time as frames are captured using ffmpeg subprocess
     realtime_encoding: bool = False
@@ -411,7 +409,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         # Set realtime encoding parameters for resumed dataset
         dataset.realtime_encoding = cfg.dataset.realtime_encoding
         dataset.realtime_encoders = {}
-        dataset.video_codec = cfg.dataset.video_codec
 
         # Only start image writer if not using realtime encoding
         if hasattr(robot, "cameras") and len(robot.cameras) > 0 and not cfg.dataset.realtime_encoding:
@@ -432,7 +429,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             use_videos=cfg.dataset.video,
             image_writer_processes=cfg.dataset.num_image_writer_processes,
             image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
-            video_codec=cfg.dataset.video_codec,
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
             realtime_encoding=cfg.dataset.realtime_encoding,
         )
