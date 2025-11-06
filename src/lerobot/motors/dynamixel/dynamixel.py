@@ -84,7 +84,13 @@ class TorqueMode(Enum):
 
 
 def _split_into_byte_chunks(value: int, length: int) -> list[int]:
-    import dynamixel_sdk as dxl
+    try:
+        import dynamixel_sdk as dxl
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
+        raise ImportError(
+            "Dynamixel support requires the optional 'dynamixel-sdk' package. "
+            "Install with `pip install lerobot[dynamixel]`."
+        ) from exc
 
     if length == 1:
         data = [value]
@@ -125,7 +131,13 @@ class DynamixelMotorsBus(MotorsBus):
         calibration: dict[str, MotorCalibration] | None = None,
     ):
         super().__init__(port, motors, calibration)
-        import dynamixel_sdk as dxl
+        try:
+            import dynamixel_sdk as dxl
+        except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
+            raise ImportError(
+                "Dynamixel support requires the optional 'dynamixel-sdk' package. "
+                "Install with `pip install lerobot[dynamixel]`."
+            ) from exc
 
         self.port_handler = dxl.PortHandler(self.port)
         self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)

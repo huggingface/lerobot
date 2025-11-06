@@ -22,9 +22,7 @@ import logging
 import threading
 import time
 
-import hebi
 import numpy as np
-from teleop import Teleop
 
 from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.teleoperator import Teleoperator
@@ -84,6 +82,9 @@ class IOSPhone(BasePhone, Teleoperator):
     def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
+
+        # Lazy import to avoid hard dependency unless this feature is used
+        import hebi  # type: ignore
 
         logger.info("Connecting to IPhone, make sure to open the HEBI Mobile I/O app.")
         lookup = hebi.Lookup()
@@ -207,7 +208,6 @@ class IOSPhone(BasePhone, Teleoperator):
     def disconnect(self) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self._group = None
 
 
@@ -230,6 +230,9 @@ class AndroidPhone(BasePhone, Teleoperator):
     def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
+
+        # Lazy import to avoid hard dependency unless this feature is used
+        from teleop import Teleop  # type: ignore
 
         logger.info("Starting teleop stream for Android...")
         self._teleop = Teleop()
@@ -353,6 +356,9 @@ class AndroidPhone(BasePhone, Teleoperator):
     def disconnect(self) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        # Lazy import to avoid hard dependency unless this feature is used
+        from teleop import Teleop  # type: ignore
 
         self._teleop = None
         if self._teleop_thread and self._teleop_thread.is_alive():
