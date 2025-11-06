@@ -357,9 +357,6 @@ class AndroidPhone(BasePhone, Teleoperator):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Lazy import to avoid hard dependency unless this feature is used
-        from teleop import Teleop  # type: ignore
-
         self._teleop = None
         if self._teleop_thread and self._teleop_thread.is_alive():
             self._teleop_thread.join(timeout=1.0)
