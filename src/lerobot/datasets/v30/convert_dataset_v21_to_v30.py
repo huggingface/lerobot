@@ -175,12 +175,10 @@ def convert_tasks(root, new_root):
     write_tasks(df_tasks, new_root)
 
 
-def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
+def concat_data_files(
+    paths_to_cat: list[Path], new_root: Path, chunk_idx: int, file_idx: int, image_keys: list[str]
+):
     """Concatenate multiple parquet data files into a single file.
-
-    This function uses HuggingFace datasets to properly handle image embedding,
-    ensuring the output has the same internal structure as datasets created through
-    live recording. This is critical for training performance.
 
     Args:
         paths_to_cat: List of parquet file paths to concatenate
