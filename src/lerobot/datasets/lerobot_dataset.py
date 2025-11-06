@@ -1714,19 +1714,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
         video_backend: str | None = None,
-        # Video codec to use for encoding. Options: libsvtav1, h264, hevc
+        video_codec: str = "libsvtav1",
         batch_encoding_size: int = 1,
-        # Enable real-time video encoding during recording (eliminates post-episode encoding delay)
-        # When enabled, videos are encoded in real-time as frames are captured using ffmpeg subprocess
         realtime_encoding: bool = False,
-        # CRF (Constant Rate Factor) for video quality (lower = better quality, 0-51 for most codecs)
-        # Recommended: 18-28 for good quality, 23 is default
         video_crf: int = 23,
-        # Encoding speed preset (ultrafast, veryfast, fast, medium, slow, slower, veryslow)
-        # Faster presets = lower quality at same bitrate. For libsvtav1, uses numeric 0-13.
         video_preset: str | None = None,
-        # Maximum number of frames to buffer in realtime encoder queue (per camera)
-        # Higher values use more memory but provide more tolerance for encoding lag
         realtime_encoder_max_queue_size: int = 30,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""

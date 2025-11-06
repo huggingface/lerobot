@@ -36,6 +36,13 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
+# RealtimeVideoEncoder configuration constants
+FFMPEG_SUBPROCESS_BUFFER_SIZE = 10**8  # 100 MB buffer for high-res video
+WRITER_THREAD_QUEUE_GET_TIMEOUT_S = 0.1  # Polling interval for stop signal
+FRAME_QUEUE_PUT_TIMEOUT_S = 5.0  # Max wait when encoder queue is full
+WRITER_THREAD_JOIN_TIMEOUT_S = 10.0  # Max wait for thread to finish writing
+FFMPEG_PROCESS_WAIT_TIMEOUT_S = 30.0  # Max wait for ffmpeg to finish encoding
+
 
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
@@ -422,7 +429,7 @@ class RealtimeVideoEncoder:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                bufsize=10**8,  # Large buffer for high-resolution video
+                bufsize=FFMPEG_SUBPROCESS_BUFFER_SIZE,
             )
         except Exception as e:
             self.error = e
@@ -434,7 +441,7 @@ class RealtimeVideoEncoder:
         try:
             while True:
                 try:
-                    frame = self.frame_queue.get(timeout=0.1)
+                    frame = self.frame_queue.get(timeout=WRITER_THREAD_QUEUE_GET_TIMEOUT_S)
                     if frame is None:  # Sentinel value to stop
                         break
 
@@ -493,7 +500,7 @@ class RealtimeVideoEncoder:
 
         # Add frame to queue (blocks if queue is full)
         try:
-            self.frame_queue.put(frame, timeout=5.0)
+            self.frame_queue.put(frame, timeout=FRAME_QUEUE_PUT_TIMEOUT_S)
         except queue.Full:
             logging.warning("Frame queue is full, frame encoding may be lagging behind capture")
             raise
@@ -515,14 +522,14 @@ class RealtimeVideoEncoder:
 
         # Wait for all frames to be written and stdin to be closed by writer thread
         if self.writer_thread:
-            self.writer_thread.join(timeout=10.0)
+            self.writer_thread.join(timeout=WRITER_THREAD_JOIN_TIMEOUT_S)
 
         # Wait for ffmpeg process to finish
         if self.ffmpeg_process:
             # stdin is already closed by writer thread, so we use wait() instead of communicate()
             # to avoid "flush of closed file" error
             try:
-                returncode = self.ffmpeg_process.wait(timeout=30.0)
+                returncode = self.ffmpeg_process.wait(timeout=FFMPEG_PROCESS_WAIT_TIMEOUT_S)
                 if returncode != 0:
                     # Read stderr for error message
                     stderr = self.ffmpeg_process.stderr.read() if self.ffmpeg_process.stderr else b""
