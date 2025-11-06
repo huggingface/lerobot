@@ -148,7 +148,7 @@ class ZedCamera(Camera):
 
         # Set initialization parameters
         init_params = sl.InitParameters()
-        init_params.camera_resolution = sl.RESOLUTION.HD720  # Default, can be overridden
+        init_params.camera_resolution = sl.RESOLUTION.HD1080  # Default, can be overridden
         init_params.camera_fps = self.fps or 30
         init_params.depth_mode = self._get_zed_depth_mode()
         init_params.coordinate_units = sl.UNIT.METER
