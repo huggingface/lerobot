@@ -1288,6 +1288,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
 
+        temp_stat_keys = [k for k in list(episode_buffer.keys()) if k.endswith("_arrays_for_stats")]
+        for k in temp_stat_keys:
+            del episode_buffer[k]
+
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 
         # size and task are special cases that won't be added to hf_dataset
