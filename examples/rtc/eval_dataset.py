@@ -11,10 +11,17 @@ It compares action predictions with and without RTC on dataset samples,
 measuring consistency and ground truth alignment.
 
 Usage:
-    # Basic usage
+    # Basic usage with smolvla policy
     uv run python examples/rtc/eval_dataset.py \
         --policy.path=helper2424/smolvla_check_rtc_last3 \
         --dataset.repo_id=helper2424/check_rtc \
+        --rtc.execution_horizon=8 \
+        --device=mps
+
+    # Basic usage with pi0.5 policy
+    uv run python examples/rtc/eval_dataset.py \
+        --policy.path=lerobot/pi05_libero_finetuned \
+        --dataset.repo_id=HuggingFaceVLA/libero \
         --rtc.execution_horizon=8 \
         --device=mps
 
