@@ -32,6 +32,7 @@ from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
+    DEFAULT_FEATURES,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
     LEGACY_EPISODES_PATH,
@@ -55,6 +56,14 @@ from lerobot.utils.utils import init_logging
 # script to convert one single task to v3.1
 # TASK = 1
 NEW_ROOT = Path("/fsx/jade_choghari/tmp/bb")
+
+
+def fix_episode_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    # Inject per-episode frame_index if missing (0..N-1 within each episode)
+    if "frame_index" not in df.columns:
+        df["frame_index"] = range(len(df))
+
+    return df
 
 
 def get_total_episodes_task(local_dir: Path, task_id: int, task_ranges: dict, step) -> int:
@@ -88,6 +97,7 @@ def convert_info(
 ):
     info = load_info(root)
     info["codebase_version"] = "v3.0"
+    info["features"] = {**info["features"], **DEFAULT_FEATURES}
     del info["total_videos"]
     info["data_files_size_in_mb"] = data_file_size_in_mb
     info["video_files_size_in_mb"] = video_file_size_in_mb
@@ -133,7 +143,12 @@ def convert_tasks(root, new_root, task_id: int):
 
 def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
     # TODO(rcadene): to save RAM use Dataset.from_parquet(file) and concatenate_datasets
-    dataframes = [pd.read_parquet(file) for file in paths_to_cat]
+    dataframes = []
+    for file in paths_to_cat:
+        df = pd.read_parquet(file)
+        df = fix_episode_dataframe(df)
+        dataframes.append(df)
+
     # Concatenate all DataFrames along rows
     concatenated_df = pd.concat(dataframes, ignore_index=True)
 
