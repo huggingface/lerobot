@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib.util
+import os
 import warnings
 from collections.abc import Mapping, Sequence
 from functools import singledispatch
@@ -22,6 +24,7 @@ import einops
 import gymnasium as gym
 import numpy as np
 import torch
+from huggingface_hub import hf_hub_download, snapshot_download
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -195,3 +198,132 @@ def _(envs: Sequence) -> None:
 @close_envs.register
 def _(env: gym.Env) -> None:
     _close_single_env(env)
+
+
+# helper to safely load a python file as a module
+def _load_module_from_path(path: str, module_name: str | None = None):
+    module_name = module_name or f"hub_env_{os.path.basename(path).replace('.', '_')}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None:
+        raise ImportError(f"Could not load module spec for {module_name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore
+    return module
+
+
+# helper to parse hub string (supports "user/repo", "user/repo@rev", optional path)
+# examples:
+#   "user/repo" -> will look for env.py at repo root
+#   "user/repo@main:envs/my_env.py" -> explicit revision and path
+def _parse_hub_url(hub_uri: str):
+    # very small parser: [repo_id][@revision][:path]
+    # repo_id is required (user/repo or org/repo)
+    revision = None
+    file_path = "env.py"
+    if "@" in hub_uri:
+        repo_and_rev, *rest = hub_uri.split(":", 1)
+        repo_id, rev = repo_and_rev.split("@", 1)
+        revision = rev
+        if rest:
+            file_path = rest[0]
+    else:
+        repo_id, *rest = hub_uri.split(":", 1)
+        if rest:
+            file_path = rest[0]
+    return repo_id, revision, file_path
+
+
+def _download_hub_file(
+    cfg_str: str,
+    trust_remote_code: bool,
+    hub_cache_dir: str | None,
+) -> tuple[str, str, str, str]:
+    """
+    Parse `cfg_str` (hub URL), enforce `trust_remote_code`, and return
+    (repo_id, file_path, local_file, revision).
+    """
+    if not trust_remote_code:
+        raise RuntimeError(
+            f"Refusing to execute remote code from the Hub for '{cfg_str}'. "
+            "Executing hub env modules runs arbitrary Python code from third-party repositories. "
+            "If you trust this repo and understand the risks, call `make_env(..., trust_remote_code=True)` "
+            "and prefer pinning to a specific revision: 'user/repo@<commit-hash>:env.py'."
+        )
+
+    repo_id, revision, file_path = _parse_hub_url(cfg_str)
+
+    try:
+        local_file = hf_hub_download(
+            repo_id=repo_id, filename=file_path, revision=revision, cache_dir=hub_cache_dir
+        )
+    except Exception as e:
+        # fallback to snapshot download
+        snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
+        local_file = os.path.join(snapshot_dir, file_path)
+        if not os.path.exists(local_file):
+            raise FileNotFoundError(
+                f"Could not find {file_path} in repository {repo_id}@{revision or 'main'}"
+            ) from e
+
+    return repo_id, file_path, local_file, revision
+
+
+def _import_hub_module(local_file: str, repo_id: str) -> Any:
+    """
+    Import the downloaded file as a module and surface helpful import error messages.
+    """
+    module_name = f"hub_env_{repo_id.replace('/', '_')}"
+    try:
+        module = _load_module_from_path(local_file, module_name=module_name)
+    except ModuleNotFoundError as e:
+        missing = getattr(e, "name", None) or str(e)
+        raise ModuleNotFoundError(
+            f"Hub env '{repo_id}:{os.path.basename(local_file)}' failed to import because the dependency "
+            f"'{missing}' is not installed locally.\n\n"
+        ) from e
+    except ImportError as e:
+        raise ImportError(
+            f"Failed to load hub env module '{repo_id}:{os.path.basename(local_file)}'. Import error: {e}\n\n"
+        ) from e
+    return module
+
+
+def _call_make_env(module: Any, n_envs: int, use_async_envs: bool) -> Any:
+    """
+    Ensure module exposes make_env and call it.
+    """
+    if not hasattr(module, "make_env"):
+        raise AttributeError(
+            f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
+        )
+    entry_fn = module.make_env
+    return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs)
+
+
+def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
+    """
+    Normalize possible return types from hub `make_env` into the mapping:
+      { suite_name: { task_id: vector_env } }
+    Accepts:
+      - dict (assumed already correct)
+      - gym.vector.VectorEnv
+      - gym.Env (will be wrapped into SyncVectorEnv)
+    """
+    if isinstance(result, dict):
+        return result
+
+    # VectorEnv: use its spec.id if available
+    if isinstance(result, gym.vector.VectorEnv):
+        suite_name = getattr(result, "spec", None) and getattr(result.spec, "id", None) or "hub_env"
+        return {suite_name: {0: result}}
+
+    # Single Env: wrap into SyncVectorEnv
+    if isinstance(result, gym.Env):
+        vec = gym.vector.SyncVectorEnv([lambda: result])
+        suite_name = getattr(result, "spec", None) and getattr(result.spec, "id", None) or "hub_env"
+        return {suite_name: {0: vec}}
+
+    raise ValueError(
+        "Hub `make_env` must return either a mapping {suite: {task_id: vec_env}}, "
+        "a gym.vector.VectorEnv, or a single gym.Env."
+    )
