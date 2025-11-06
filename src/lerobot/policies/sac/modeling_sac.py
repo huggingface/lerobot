@@ -288,7 +288,7 @@ class SACPolicy(
         Keeps temperature as tensor (not Python float) for torch.compile compatibility.
         This avoids graph breaks that would occur with .item() calls.
         """
-        self.temperature = self.log_alpha.exp()
+        self.temperature = self.log_alpha.detach().exp()
 
     @property
     def temperature_value(self) -> float:
@@ -566,7 +566,7 @@ class SACPolicy(
         temp_init = self.config.temperature_init
         self.log_alpha = nn.Parameter(torch.tensor([math.log(temp_init)]))
         # Keep as tensor for torch.compile compatibility
-        self.temperature = self.log_alpha.exp()
+        self.temperature = self.log_alpha.detach().exp()
 
 
 class SACObservationEncoder(nn.Module):
