@@ -188,7 +188,7 @@ def concat_data_files(
         image_keys: List of feature keys that contain images
     """
 
-    datasets_list: list[Dataset] = [Dataset.from_parquet(str(file)) for file in paths_to_cat]  # type: ignore[misc]
+    datasets_list: list[Dataset] = [Dataset.from_parquet(str(file)) for file in paths_to_cat]
     concatenated_ds: Dataset = concatenate_datasets(datasets_list)
 
     if len(image_keys) > 0:
