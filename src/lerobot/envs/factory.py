@@ -16,8 +16,10 @@
 import importlib
 
 import gymnasium as gym
+from gymnasium.envs.registration import registry as gym_registry
 
-from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv, XarmEnv
+from lerobot.envs.configs import AlohaEnv, EnvConfig, LiberoEnv, PushtEnv
+from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -25,8 +27,6 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return AlohaEnv(**kwargs)
     elif env_type == "pusht":
         return PushtEnv(**kwargs)
-    elif env_type == "xarm":
-        return XarmEnv(**kwargs)
     elif env_type == "libero":
         return LiberoEnv(**kwargs)
     else:
@@ -34,15 +34,24 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
 
 
 def make_env(
-    cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False
+    cfg: EnvConfig | str,
+    n_envs: int = 1,
+    use_async_envs: bool = False,
+    hub_cache_dir: str | None = None,
+    trust_remote_code: bool = False,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """Makes a gym vector environment according to the config.
+    """Makes a gym vector environment according to the config or Hub reference.
 
     Args:
-        cfg (EnvConfig): the config of the environment to instantiate.
+        cfg (EnvConfig | str): Either an `EnvConfig` object describing the environment to build locally,
+            or a Hugging Face Hub repository identifier (e.g. `"username/repo"`). In the latter case,
+            the repo must include a Python file (usually `env.py`).
         n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
         use_async_envs (bool, optional): Whether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
             False.
+        hub_cache_dir (str | None): Optional cache path for downloaded hub files.
+        trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
+            Default False — must be set to True to import/exec hub `env.py`.
 
     Raises:
         ValueError: if n_envs < 1
@@ -55,6 +64,21 @@ def make_env(
             - For single-task environments: a single suite entry (cfg.type) with task_id=0.
 
     """
+    # if user passed a hub id string (e.g., "username/repo", "username/repo@main:env.py")
+    # simplified: only support hub-provided `make_env`
+    if isinstance(cfg, str):
+        # _download_hub_file will raise the same RuntimeError if trust_remote_code is False
+        repo_id, file_path, local_file, revision = _download_hub_file(cfg, trust_remote_code, hub_cache_dir)
+
+        # import and surface clear import errors
+        module = _import_hub_module(local_file, repo_id)
+
+        # call the hub-provided make_env
+        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs)
+
+        # normalize the return into {suite: {task_id: vec_env}}
+        return _normalize_hub_result(raw_result)
+
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
 
@@ -74,20 +98,38 @@ def make_env(
             gym_kwargs=cfg.gym_kwargs,
             env_cls=env_cls,
         )
+    elif "metaworld" in cfg.type:
+        from lerobot.envs.metaworld import create_metaworld_envs
 
-    package_name = f"gym_{cfg.type}"
-    try:
-        importlib.import_module(package_name)
-    except ModuleNotFoundError as e:
-        print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
-        raise e
+        if cfg.task is None:
+            raise ValueError("MetaWorld requires a task to be specified")
 
-    gym_handle = f"{package_name}/{cfg.task}"
+        return create_metaworld_envs(
+            task=cfg.task,
+            n_envs=n_envs,
+            gym_kwargs=cfg.gym_kwargs,
+            env_cls=env_cls,
+        )
+
+    if cfg.gym_id not in gym_registry:
+        print(f"gym id '{cfg.gym_id}' not found, attempting to import '{cfg.package_name}'...")
+        try:
+            importlib.import_module(cfg.package_name)
+        except ModuleNotFoundError as e:
+            raise ModuleNotFoundError(
+                f"Package '{cfg.package_name}' required for env '{cfg.type}' not found. "
+                f"Please install it or check PYTHONPATH."
+            ) from e
+
+        if cfg.gym_id not in gym_registry:
+            raise gym.error.NameNotFound(
+                f"Environment '{cfg.gym_id}' not registered even after importing '{cfg.package_name}'."
+            )
 
     def _make_one():
-        return gym.make(gym_handle, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
+        return gym.make(cfg.gym_id, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
 
-    vec = env_cls([_make_one for _ in range(n_envs)])
+    vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
 
     # normalize to {suite: {task_id: vec_env}} for consistency
     suite_name = cfg.type  # e.g., "pusht", "aloha"

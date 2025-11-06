@@ -7,8 +7,6 @@
 - sections:
   - local: il_robots
     title: Imitation Learning for Robots
-  - local: il_sim
-    title: Imitation Learning in Sim
   - local: cameras
     title: Cameras
   - local: integrate_hardware
@@ -19,23 +17,39 @@
     title: Train RL in Simulation
   - local: async
     title: Use Async Inference
+  - local: multi_gpu_training
+    title: Multi GPU training
   title: "Tutorials"
 - sections:
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
   - local: porting_datasets_v3
     title: Porting Large Datasets
+  - local: using_dataset_tools
+    title: Using the Dataset Tools
   title: "Datasets"
 - sections:
+  - local: act
+    title: ACT
   - local: smolvla
     title: SmolVLA
   - local: pi0
     title: π₀ (Pi0)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: groot
+    title: NVIDIA GR00T N1.5
+  title: "Policies"
+- sections:
+  - local: envhub
+    title: Environments from the Hub
+  - local: il_sim
+    title: Imitation Learning in Sim
   - local: libero
     title: Using Libero
-  title: "Policies"
+  - local: metaworld
+    title: Using MetaWorld
+  title: "Simulation"
 - sections:
   - local: introduction_processors
     title: Introduction to Robot Processors

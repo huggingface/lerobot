@@ -78,7 +78,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install lerobot with all extras
-        run: uv sync --all-extras
+        run: uv sync --all-extras --no-extra groot # TODO(Steven): Make flash-attn optional
 
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv --maxfail=10
