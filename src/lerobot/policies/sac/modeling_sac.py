@@ -266,12 +266,15 @@ class SACPolicy(
 
             # subsample critics to prevent overfitting if use high UTD (update to date)
             # For torch.compile compatibility, use deterministic indexing instead of torch.randperm
-            # If subsampling is needed, take first num_subsample_critics critics
-            # This maintains the same functionality while being compile-compatible
+            # Use a deterministic selection based on batch data to maintain diversity while being compile-compatible
             if self.config.num_subsample_critics is not None:
-                # Use deterministic slicing instead of random permutation for torch.compile compatibility
-                # This is equivalent to random sampling over many iterations
-                q_targets = q_targets[: self.config.num_subsample_critics]
+                # Deterministic selection: use sum of rewards (mod num_critics) as starting index
+                # This provides diversity across batches while remaining deterministic and torch.compile-compatible
+                # Compute indices using tensor operations (avoid .item() for full torch.compile compatibility)
+                start_idx = (rewards.sum().long() % self.config.num_critics)
+                # Create indices for selection: [start_idx, start_idx+1, ..., start_idx+num_subsample_critics-1] with wrapping
+                indices = (start_idx + torch.arange(self.config.num_subsample_critics, device=q_targets.device, dtype=torch.long)) % self.config.num_critics
+                q_targets = q_targets[indices]
 
             # critics subsample size
             min_q, _ = q_targets.min(dim=0)  # Get values from min operation
