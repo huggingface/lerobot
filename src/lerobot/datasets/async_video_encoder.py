@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,22 +23,20 @@ It encodes videos to temporary files, which are then finalized by the main
 LeRobotDataset class.
 """
 
-import contextlib
 import logging
 import queue
 import shutil
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import total_ordering
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
-from .video_utils import encode_video_frames
+from lerobot.datasets.video_utils import encode_video_frames
 
 
+@total_ordering
 @dataclass
 class EncodingTask:
     """Represents a video encoding task."""
@@ -55,6 +53,9 @@ class EncodingTask:
         if self.priority != other.priority:
             return self.priority > other.priority
         return self.episode_index < other.episode_index
+
+    def __eq__(self, other):
+        return self.priority == other.priority and self.episode_index == other.episode_index
 
 
 @dataclass
@@ -82,33 +83,31 @@ class AsyncVideoEncoder:
 
     def __init__(
         self,
-        num_workers: int = 2,
-        max_queue_size: int = 100,
-        enable_logging: bool = True,
-        vcodec: str = "h264",
+        vcodec: str = "libsvtav1",
+        pix_fmt: str = "yuv420p",
+        g: int | None = 2,
+        crf: int | None = 30,
+        fast_decode: int = 0,
     ):
         """
         Initialize the async video encoder.
 
-        Args:
-            num_workers: Number of worker threads for encoding
-            max_queue_size: Maximum number of tasks in the queue
-            enable_logging: Whether to enable detailed logging
+        Args: see encode_video_frames
         """
-        self.num_workers = num_workers
-        self.max_queue_size = max_queue_size
-        self.enable_logging = enable_logging
         self.vcodec = vcodec
+        self.pix_fmt = pix_fmt
+        self.g = g
+        self.crf = crf
+        self.fast_decode = fast_decode
 
         # Task queue (priority queue)
-        self.task_queue = queue.PriorityQueue(maxsize=max_queue_size)
+        self.task_queue = queue.PriorityQueue()
 
         # Results storage
         self.results: list[EncodingResult] = []
         self.results_lock = threading.Lock()
 
-        # Worker thread pool
-        self.executor: ThreadPoolExecutor | None = None
+        # Worker thread
         self.worker_thread: threading.Thread | None = None
 
         # Control flags
@@ -125,8 +124,7 @@ class AsyncVideoEncoder:
         }
         self.stats_lock = threading.Lock()
 
-        if self.enable_logging:
-            logging.info(f"AsyncVideoEncoder initialized with {num_workers} workers")
+        logging.info("AsyncVideoEncoder initialized")
 
     def start(self) -> None:
         """Start the async video encoder."""
@@ -137,49 +135,37 @@ class AsyncVideoEncoder:
         self.running = True
         self.shutdown_event.clear()
 
-        # Create thread pool
-        self.executor = ThreadPoolExecutor(max_workers=self.num_workers, thread_name_prefix="VideoEncoder")
-
         # Start worker thread
         self.worker_thread = threading.Thread(
             target=self._worker_loop, name="AsyncVideoEncoder-Worker", daemon=True
         )
         self.worker_thread.start()
 
-        if self.enable_logging:
-            logging.info("AsyncVideoEncoder started")
+        logging.info("AsyncVideoEncoder started")
 
     def stop(self, wait: bool = True, timeout: float | None = None) -> None:
         """
         Stop the async video encoder.
 
         Args:
-            wait: Whether to wait for pending tasks to complete
-            timeout: Maximum time to wait for completion
+            timeout: Maximum time to wait for completion.
         """
         if not self.running:
             return
 
-        if self.enable_logging:
-            logging.info("Stopping AsyncVideoEncoder...")
+        logging.info("Stopping AsyncVideoEncoder...")
 
-        # Signal shutdown
+        # Signal shutdown. Worker loop will continue consuming queue until it is empty
         self.shutdown_event.set()
         self.running = False
 
-        contextlib.suppress(queue.Full)
-        # Use a sentinel to unblock the queue.get() call
-        self.task_queue.put_nowait((float("-inf"), None))
-
         # Wait for worker thread to finish
+        if not wait:
+            self.timeout = 0
         if self.worker_thread and self.worker_thread.is_alive():
             self.worker_thread.join(timeout=timeout)
 
-        if self.executor:
-            self.executor.shutdown(wait=wait)
-
-        if self.enable_logging:
-            logging.info("AsyncVideoEncoder stopped")
+        logging.info("AsyncVideoEncoder stopped")
 
     def submit_encoding_task(
         self,
@@ -217,21 +203,15 @@ class AsyncVideoEncoder:
             priority=priority,
         )
 
-        try:
-            # Use negative priority for max-heap behavior (higher priority first)
-            self.task_queue.put_nowait((-priority, task))
+        # Use negative priority for max-heap behavior (higher priority first)
+        self.task_queue.put(task)
 
-            with self.stats_lock:
-                self.stats["tasks_submitted"] += 1
+        with self.stats_lock:
+            self.stats["tasks_submitted"] += 1
 
-            if self.enable_logging:
-                logging.debug(f"Submitted encoding task for episode {episode_index}")
+        logging.debug(f"Submitted encoding task for episode {episode_index}")
 
-            return True
-
-        except queue.Full:
-            logging.error(f"Encoding task queue is full. Episode {episode_index} not submitted.")
-            return False
+        return True
 
     def get_completed_tasks(self, clear: bool = True) -> list[EncodingResult]:
         """
@@ -244,18 +224,18 @@ class AsyncVideoEncoder:
             List of encoding results
         """
         with self.results_lock:
-            results_copy = list(self.results)
+            results_copy = self.results.copy()
             if clear:
                 self.results.clear()
-            return results_copy
+        return results_copy
 
     def get_stats(self) -> dict[str, Any]:
         """Get encoding statistics."""
         with self.stats_lock:
             stats = self.stats.copy()
-            if stats["tasks_completed"] > 0:
-                stats["average_encoding_time"] = stats["total_encoding_time"] / stats["tasks_completed"]
-            return stats
+        if stats["tasks_completed"] > 0:
+            stats["average_encoding_time"] = stats["total_encoding_time"] / stats["tasks_completed"]
+        return stats
 
     def wait_for_completion(self, timeout: float | None = None) -> bool:
         """
@@ -284,21 +264,20 @@ class AsyncVideoEncoder:
 
     def _worker_loop(self) -> None:
         """Main worker loop that processes encoding tasks."""
-        if self.enable_logging:
-            logging.info("AsyncVideoEncoder worker started")
+        logging.info("AsyncVideoEncoder worker started")
 
-        while self.running and not self.shutdown_event.is_set():
+        while True:
             try:
                 # Blocks until a task is available or timeout occurs
-                _, task = self.task_queue.get(timeout=1.0)
-                if task is None:  # Sentinel value
-                    break
+                task = self.task_queue.get(timeout=1.0)
                 self._process_encoding_task(task)
             except queue.Empty:
+                if self.shutdown_event.is_set():
+                    # We have finished processing all tasks and this event being set tells us that no more will be equeued.
+                    break
                 continue  # Go back to waiting
 
-        if self.enable_logging:
-            logging.info("AsyncVideoEncoder worker stopped")
+        logging.info("AsyncVideoEncoder worker stopped")
 
     def _process_encoding_task(self, task: EncodingTask) -> None:
         """Process a single encoding task."""
@@ -307,8 +286,7 @@ class AsyncVideoEncoder:
         error_message = None
         temp_video_paths = {}
 
-        if self.enable_logging:
-            logging.info(f"Processing encoding task for episode {task.episode_index}")
+        logging.info(f"Processing encoding task for episode {task.episode_index}")
 
         try:
             for video_key in task.video_keys:
@@ -350,42 +328,8 @@ class AsyncVideoEncoder:
                 img_dir = self._get_image_dir(task.root_path, task.episode_index, video_key)
                 shutil.rmtree(img_dir, ignore_errors=True)
 
-        if self.enable_logging:
-            status = "completed" if success else "failed"
-            logging.info(f"Encoding task for episode {task.episode_index} {status} in {duration:.2f}s")
-
-    def _wait_for_images(self, img_dir: Path, timeout_s: int = 10):
-        """
-        Wait for the last frame in an image directory to be fully written, as indicated by whether PIL can decode it.
-
-        the async image writer (separate from the async video encoder) may still be writing to the image folder for
-        an episode when the video encoding task begins.
-        the image writer has a wait function, but not a function to wait only on images in a certain directory.
-        therefore in order to wait only until the images in this directory are complete, we can periodically try to decode the last frame.
-        as long as decoding fails, wait another half second, up to a reasonable timeout of ten seconds.
-        """
-        start_time = time.monotonic()
-        while time.monotonic() - start_time < timeout_s:
-            try:
-                # Find the last frame by sorting the filenames
-                files = sorted(img_dir.glob("*.png"))
-                if not files:
-                    # No images yet, wait a bit
-                    time.sleep(0.5)
-                    continue
-                last_frame_path = files[-1]
-
-                # Try to open the image. If it's still being written it will appear truncated to PIL
-                with Image.open(last_frame_path) as img:
-                    img.load()  # Try to fully decode the PNG
-                return
-
-            except OSError:
-                if self.enable_logging:
-                    logging.debug(f"Waiting for images in {img_dir} to be fully written...")
-                time.sleep(0.5)
-
-        raise TimeoutError(f"Timed out after {timeout_s}s waiting for images in {img_dir}.")
+        status = "completed" if success else "failed"
+        logging.info(f"Encoding task for episode {task.episode_index} {status} in {duration:.2f}s")
 
     def _get_image_dir(self, root_path: Path, episode_index: int, image_key: str) -> Path:
         """Helper to construct the path to the raw images for an episode."""
@@ -393,32 +337,29 @@ class AsyncVideoEncoder:
         return root_path / "images" / image_key / f"episode-{episode_index:06d}"
 
     def _encode_to_temp_video(self, task: EncodingTask, video_key: str) -> Path:
-        """Encode a single video to a temporary file."""
+        """
+        Encode a single video to a temporary file.
+        it is assumed that LerobotDataset called _wait_image_writer before enqueuing this task.
+        """
         img_dir = self._get_image_dir(task.root_path, task.episode_index, video_key)
 
         if not img_dir.exists():
             raise FileNotFoundError(f"Image directory not found: {img_dir}")
 
-        # wait for all images in the image dir to be completely written
-        self._wait_for_images(img_dir)
-
         # Output to a unique file inside the task's dedicated temporary directory
         output_path = task.temp_dir / f"{video_key}.mp4"
 
         encode_video_frames(
-            imgs_dir=img_dir, video_path=output_path, fps=task.fps, overwrite=True, vcodec=self.vcodec
+            imgs_dir=img_dir,
+            video_path=output_path,
+            fps=task.fps,
+            overwrite=False,  # there should be nothing in this temp dir
+            vcodec=self.vcodec,
+            pix_fmt=self.pix_fmt,
+            g=self.g,
+            crf=self.crf,
+            fast_decode=self.fast_decode,
         )
 
-        if self.enable_logging:
-            logging.debug(f"Encoded temporary video: {output_path}")
-
+        logging.debug(f"Encoded temporary video: {output_path}")
         return output_path
-
-    def __enter__(self):
-        """Context manager entry."""
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.stop(wait=True)

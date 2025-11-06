@@ -165,8 +165,6 @@ class DatasetRecordConfig:
     rename_map: dict[str, str] = field(default_factory=dict)
     # Enable asynchronous video encoding to avoid blocking the recording thread
     async_video_encoding: bool = True
-    # Number of worker threads for async video encoding
-    video_encoding_workers: int = 2
     # Maximum number of encoding tasks in the queue
     video_encoding_queue_size: int = 100
 
@@ -408,7 +406,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         # Start async video encoder if enabled
         if cfg.dataset.async_video_encoding:
             dataset.async_video_encoding = True
-            dataset.video_encoding_workers = cfg.dataset.video_encoding_workers
             dataset.video_encoding_queue_size = cfg.dataset.video_encoding_queue_size
             dataset.start_async_video_encoder()
 
@@ -431,7 +428,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             image_writer_processes=cfg.dataset.num_image_writer_processes,
             image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
             async_video_encoding=cfg.dataset.async_video_encoding,
-            video_encoding_workers=cfg.dataset.video_encoding_workers,
             video_encoding_queue_size=cfg.dataset.video_encoding_queue_size,
         )
 

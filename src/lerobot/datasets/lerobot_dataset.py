@@ -560,7 +560,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         async_video_encoding: bool = False,
-        video_encoding_workers: int = 2,
         video_encoding_queue_size: int = 100,
         vcodec: str = "libsvtav1",
     ):
@@ -675,8 +674,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             async_video_encoding (bool, optional): Flag to enable non-blocking video encoding.
                 If true save_episde() returns after writing the non video data which is fairly fast. defaults to true
-            video_encoding_workers (int, optional): Number of concurrent async encoding tasks.
-                Defaults to 2. A too-low value for this would show up as stop_async_video_encoder taking a long time.
             video_encoding_queue_size (int, optional): Maximum number of video encoding tasks that can be enqueued.
                 If the limit is reached, save_episode() will become blocking again.
             vcodec (str, optional): video codec to use. One of ["h264", "hevc", "libsvtav1"].
@@ -735,7 +732,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Recording attributes
         self.episode_buffer = None
         self.async_video_encoding = async_video_encoding
-        self.video_encoding_workers = video_encoding_workers
         self.video_encoding_queue_size = video_encoding_queue_size
         self.async_video_encoder = None
         self._temp_dir_for_encoding = None
@@ -1508,11 +1504,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return
         # Create a single temporary directory to hold all per-episode temp dirs
         self._temp_dir_for_encoding = tempfile.mkdtemp(prefix="lerobot_async_videos_")
-        self.async_video_encoder = AsyncVideoEncoder(
-            num_workers=self.video_encoding_workers,
-            max_queue_size=self.video_encoding_queue_size,
-            vcodec=self.vcodec,
-        )
+        self.async_video_encoder = AsyncVideoEncoder(vcodec=self.vcodec)
         self.async_video_encoder.start()
         logging.info(f"Started async video encoder. Temporary files will be in {self._temp_dir_for_encoding}")
 
@@ -1545,7 +1537,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         video_backend: str | None = None,
         async_video_encoding: bool = False,
-        video_encoding_workers: int = 2,
         video_encoding_queue_size: int = 100,
         vcodec: str = "libsvtav1",
     ) -> "LeRobotDataset":
@@ -1590,7 +1581,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Recording attributes
         obj.episode_buffer = None
         obj.async_video_encoding = async_video_encoding
-        obj.video_encoding_workers = video_encoding_workers
         obj.video_encoding_queue_size = video_encoding_queue_size
         obj.async_video_encoder = None
         obj._temp_dir_for_encoding = None
