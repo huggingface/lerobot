@@ -74,6 +74,46 @@ from lerobot.processor.processor_factory import make_robot_action_processor, mak
 
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.async_inference import koch_utils
+from lerobot.utils.control_utils import is_headless
+
+
+def init_pause_keyboard_listener():
+    """
+    Initializes a keyboard listener for pause/resume functionality.
+
+    Similar to control_utils.init_keyboard_listener but specifically for pause control.
+
+    Returns:
+        A tuple containing:
+        - The keyboard.Listener instance, or None if in a headless environment.
+        - A dictionary with the 'paused' event flag.
+    """
+    events = {"paused": False}
+
+    if is_headless():
+        logging.warning(
+            "Headless environment detected. Keyboard pause functionality will not be available."
+        )
+        return None, events
+
+    # Only import pynput if not in a headless environment
+    from pynput import keyboard
+
+    def on_press(key):
+        try:
+            if key == keyboard.Key.space:
+                events["paused"] = not events["paused"]
+                if events["paused"]:
+                    print("🔴 PAUSED - Press SPACEBAR to resume")
+                else:
+                    print("🟢 RESUMED - Press SPACEBAR to pause")
+        except Exception as e:
+            print(f"Error handling key press: {e}")
+
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
+
+    return listener, events
 
 
 class RobotOpenpiClient:
@@ -139,10 +179,19 @@ class RobotOpenpiClient:
         self.robot.disconnect()
         self.logger.debug("Robot disconnected")
 
-    def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
-        """Combined function for executing actions and streaming observations"""
+    def control_loop(self, task: str, events: dict | None = None, verbose: bool = False) -> tuple[Observation, Action]:
+        """Combined function for executing actions and streaming observations
+
+        Args:
+            task: Task description string
+            events: Dictionary with event flags (e.g., 'paused')
+            verbose: Whether to log verbose output
+        """
         # Wait at barrier for synchronized start
         self.logger.info("Control loop thread starting")
+
+        if events is None:
+            events = {}
 
         _performed_action = None
         _captured_observation = None
@@ -171,6 +220,11 @@ class RobotOpenpiClient:
         task_completed = False
 
         while self.running:
+            # Check if paused
+            if events.get("paused", False):
+                time.sleep(0.1)  # Sleep briefly to avoid busy waiting
+                continue
+
             control_loop_start = time.perf_counter()
             start_time = time.perf_counter()
             raw_observation: RawObservation = self.robot.get_observation()
@@ -299,11 +353,18 @@ def synchronous_client(cfg: RobotOpenpiClientConfig):
     if cfg.robot.type not in SUPPORTED_ROBOTS:
         raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
 
+    # Initialize keyboard listener for pause functionality
+    listener, events = init_pause_keyboard_listener()
+    if listener is not None:
+        logging.info("Press SPACEBAR to pause/resume the robot")
+
     client = RobotOpenpiClient(cfg)
     try:
-        client.control_loop(task=cfg.task)
+        client.control_loop(task=cfg.task, events=events)
     finally:
         client.stop()
+        if listener is not None:
+            listener.stop()
         client.logger.info("Client stopped")
 
 

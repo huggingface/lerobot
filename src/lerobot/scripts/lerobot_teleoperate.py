@@ -49,6 +49,23 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
+Example with DINOv3 vision feature visualization:
+
+```shell
+lerobot-teleoperate \
+  --robot.type=so101_follower \
+  --robot.port=/dev/tty.usbmodem58760431541 \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+  --robot.id=black \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/tty.usbmodem58760431551 \
+  --teleop.id=blue \
+  --display_data=true \
+  --vision_visualizer=dinov2 \
+  --dinov2_model=facebook/dinov3-vit-base-pretrain-lvd1689m \
+  --visualize_attention=false
+```
+
 """
 
 import logging
@@ -94,6 +111,7 @@ from lerobot.teleoperators import (  # noqa: F401
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, log_rerun_action_chunk
+from lerobot.utils.vision_visualizers import VisionVisualizer, make_vision_visualizer
 
 from lerobot.processor.processor_factory import make_robot_action_processor, make_teleop_action_processor
 
@@ -109,6 +127,15 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+    # Vision feature visualization ("none", "dinov2", or None to disable)
+    vision_visualizer: str | None = None
+    # DINOv2/v3 model to use if vision_visualizer="dinov2"
+    # DINOv3 ViT: facebook/dinov3-vit-{small/base/large/huge}-pretrain-{lvd1689m/sat493m}
+    # DINOv3 ConvNeXt: facebook/dinov3-convnext-{tiny/small/base/large}-pretrain-{lvd1689m/sat493m}
+    # DINOv2: facebook/dinov2-{small/base/large/giant}
+    dinov2_model: str = "facebook/dinov3-vit-base-pretrain-lvd1689m"
+    # Whether to visualize attention maps (ViT only, slower)
+    visualize_attention: bool = False
 
 
 def teleop_loop(
@@ -120,6 +147,7 @@ def teleop_loop(
     robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
     display_data: bool = False,
     duration: float | None = None,
+    vision_visualizer: VisionVisualizer | None = None,
 ):
     """
     This function continuously reads actions from a teleoperation device, processes them through optional
@@ -135,6 +163,7 @@ def teleop_loop(
         teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
         robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
         robot_observation_processor: An optional pipeline to process raw observations from the robot.
+        vision_visualizer: An optional vision feature visualizer (e.g., DINOv2).
     """
 
     display_len = max(len(key) for key in robot.action_features)
@@ -170,6 +199,15 @@ def teleop_loop(
             raw_observation = None
         if display_data:
             log_rerun_data(obs, raw_action)
+
+        # Visualize vision features if enabled
+        if vision_visualizer is not None:
+            # Extract camera images from observation and visualize features
+            for key, value in obs.items():
+                if key.startswith("observation.image"):
+                    # Extract camera name (e.g., "observation.image.top" -> "top")
+                    camera_name = key.split(".")[-1] if len(key.split(".")) > 2 else "camera"
+                    vision_visualizer(value, camera_name)
 
         # Process teleop action through pipeline
         teleop_action = teleop_action_processor((raw_action, obs))
@@ -267,6 +305,17 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
+    # # Create vision visualizer if requested
+    vision_visualizer = None
+    # if cfg.vision_visualizer is not None:
+    #     logging.info(f"Creating vision visualizer: {cfg.vision_visualizer}")
+    #     vision_visualizer = make_vision_visualizer(
+    #         visualizer_type=cfg.vision_visualizer,
+    #         model_name=cfg.dinov2_model,
+    #         visualize_attention=cfg.visualize_attention,
+    #         log_to_rerun=cfg.display_data,
+    #     )
+
     _, _, robot_observation_processor = make_default_processors()
     try:
         teleop_loop(
@@ -278,6 +327,7 @@ def teleoperate(cfg: TeleoperateConfig):
             teleop_action_processor=make_teleop_action_processor(cfg.teleop, teleop, cfg.display_data),
             robot_action_processor=make_robot_action_processor(cfg.robot, robot, cfg.display_data),
             robot_observation_processor=robot_observation_processor,
+            vision_visualizer=vision_visualizer,
         )
     except KeyboardInterrupt:
         pass

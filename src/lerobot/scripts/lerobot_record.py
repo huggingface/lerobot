@@ -394,6 +394,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if cfg.teleop is not None:
         teleop_action_processor = make_teleop_action_processor(cfg.teleop, teleop, cfg.display_data)
+    elif cfg.policy is not None:
+        # When using policy without teleop, we need an FK processor for the dataset features
+        # This ensures the dataset is created with EE action space (which the policy expects)
+        # We create a "dummy teleop processor" that's actually just the FK for the robot
+        from lerobot.processor.processor_factory import make_fk_processor
+        teleop_action_processor = make_fk_processor(cfg.robot, robot, cfg.display_data)
+
     robot_action_processor = make_robot_action_processor(cfg.robot, robot, cfg.display_data)
 
     dataset_features = combine_feature_dicts(
