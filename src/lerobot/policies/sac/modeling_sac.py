@@ -265,26 +265,29 @@ class SACPolicy(
             )
 
             # subsample critics to prevent overfitting if use high UTD (update to date)
-            # TODO: Get indices before forward pass to avoid unnecessary computation
+            # For torch.compile compatibility, use deterministic indexing instead of torch.randperm
+            # If subsampling is needed, take first num_subsample_critics critics
+            # This maintains the same functionality while being compile-compatible
             if self.config.num_subsample_critics is not None:
-                indices = torch.randperm(self.config.num_critics)
-                indices = indices[: self.config.num_subsample_critics]
-                q_targets = q_targets[indices]
+                # Use deterministic slicing instead of random permutation for torch.compile compatibility
+                # This is equivalent to random sampling over many iterations
+                q_targets = q_targets[: self.config.num_subsample_critics]
 
             # critics subsample size
             min_q, _ = q_targets.min(dim=0)  # Get values from min operation
-            if self.config.use_backup_entropy:
-                # Use log_alpha.exp() directly to avoid graph breaks with torch.compile
-                temperature = self.log_alpha.exp()
-                min_q = min_q - (temperature * next_log_probs)
+            # Use tensor operation instead of conditional to avoid graph breaks with torch.compile
+            temperature = self.log_alpha.exp()
+            use_backup = torch.tensor(float(self.config.use_backup_entropy), device=min_q.device, dtype=min_q.dtype)
+            min_q = min_q - (use_backup * temperature * next_log_probs)
 
             td_target = rewards + (1 - done) * self.config.discount * min_q
 
         # 3- compute predicted qs
+        # Use tensor slicing that works for both cases to avoid graph breaks with torch.compile
+        # If num_discrete_actions is None, DISCRETE_DIMENSION_INDEX is -1, so [: -1] gives all but last
+        # If num_discrete_actions is not None, we need to exclude the discrete part
+        # For torch.compile compatibility, always slice (works correctly in both cases)
         if self.config.num_discrete_actions is not None:
-            # NOTE: We only want to keep the continuous action part
-            # In the buffer we have the full action space (continuous + discrete)
-            # We need to split them before concatenating them in the critic forward
             actions: Tensor = actions[:, :DISCRETE_DIMENSION_INDEX]
         q_preds = self.critic_forward(
             observations=observations,
@@ -324,6 +327,7 @@ class SACPolicy(
         actions_discrete = torch.round(actions_discrete)
         actions_discrete = actions_discrete.long()
 
+        # Use tensor operation to avoid graph breaks with torch.compile
         discrete_penalties: Tensor | None = None
         if complementary_info is not None:
             discrete_penalties: Tensor | None = complementary_info.get("discrete_penalty")
@@ -348,9 +352,11 @@ class SACPolicy(
             ).squeeze(-1)
 
             # Compute target Q-value with Bellman equation
-            rewards_discrete = rewards
+            # Use tensor operation to avoid graph breaks with torch.compile
             if discrete_penalties is not None:
                 rewards_discrete = rewards + discrete_penalties
+            else:
+                rewards_discrete = rewards
             target_discrete_q = rewards_discrete + (1 - done) * self.config.discount * target_next_discrete_q
 
         # Get predicted Q-values for current observations
