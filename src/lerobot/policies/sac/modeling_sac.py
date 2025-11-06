@@ -288,16 +288,11 @@ class SACPolicy(
 
             td_target = rewards + (1 - done) * self.config.discount * min_q
 
-        # 3- compute predicted qs
-        # Use tensor slicing that works for both cases to avoid graph breaks with torch.compile
-        # If num_discrete_actions is None, DISCRETE_DIMENSION_INDEX is -1, so [: -1] gives all but last
-        # If num_discrete_actions is not None, we need to exclude the discrete part
-        # For torch.compile compatibility, always slice (works correctly in both cases)
-        if self.config.num_discrete_actions is not None:
-            actions: Tensor = actions[:, :DISCRETE_DIMENSION_INDEX]
+        # 3- compute predicted qs using continuous action component only
+        continuous_actions = actions[..., : self.actor.action_dim]
         q_preds = self.critic_forward(
             observations=observations,
-            actions=actions,
+            actions=continuous_actions,
             use_target=False,
             observation_features=observation_features,
         )
@@ -326,17 +321,17 @@ class SACPolicy(
         next_observation_features=None,
         complementary_info=None,
     ):
-        # NOTE: We only want to keep the discrete action part
-        # In the buffer we have the full action space (continuous + discrete)
-        # We need to split them before concatenating them in the critic forward
-        actions_discrete: Tensor = actions[:, DISCRETE_DIMENSION_INDEX:].clone()
+        # Extract the discrete action component from the full action tensor
+        actions_discrete: Tensor = actions[..., self.actor.action_dim :].clone()
         actions_discrete = torch.round(actions_discrete)
         actions_discrete = actions_discrete.long()
 
-        # Use tensor operation to avoid graph breaks with torch.compile
-        discrete_penalties: Tensor | None = None
+        # Prepare discrete penalties tensor deterministically
+        discrete_penalties = torch.zeros_like(rewards)
         if complementary_info is not None:
-            discrete_penalties: Tensor | None = complementary_info.get("discrete_penalty")
+            penalty = complementary_info.get("discrete_penalty")
+            if penalty is not None:
+                discrete_penalties = penalty.to(rewards)
 
         with torch.no_grad():
             # For DQN, select actions using online network, evaluate with target network
@@ -357,12 +352,8 @@ class SACPolicy(
                 target_next_discrete_qs, dim=1, index=best_next_discrete_action
             ).squeeze(-1)
 
-            # Compute target Q-value with Bellman equation
-            # Use tensor operation to avoid graph breaks with torch.compile
-            if discrete_penalties is not None:
-                rewards_discrete = rewards + discrete_penalties
-            else:
-                rewards_discrete = rewards
+            # Compute target Q-value with Bellman equation using penalties tensor
+            rewards_discrete = rewards + discrete_penalties
             target_discrete_q = rewards_discrete + (1 - done) * self.config.discount * target_next_discrete_q
 
         # Get predicted Q-values for current observations
