@@ -806,7 +806,7 @@ class VLAFlowMatching(nn.Module):
                 prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
                 execution_horizon = kwargs.get("execution_horizon")
 
-                v_t = self.rtc_processor.denoise_step(
+                v_t, x_t = self.rtc_processor.denoise_step(
                     x_t=x_t,
                     prev_chunk_left_over=prev_chunk_left_over,
                     inference_delay=inference_delay,

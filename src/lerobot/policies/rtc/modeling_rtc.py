@@ -270,7 +270,7 @@ class RTCProcessor:
             execution_horizon=execution_horizon,
         )
 
-        return result
+        return result, x_t
 
     def get_prefix_weights(self, start, end, total):
         start = min(start, end)
