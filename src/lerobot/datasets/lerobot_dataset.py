@@ -512,9 +512,7 @@ class LeRobotDatasetMetadata:
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
-        assert set(DEFAULT_FEATURES.keys()).issubset(set(features.keys())), (
-            f"Default features must be a subset of the provided features! Got {set(features.keys())} and {set(DEFAULT_FEATURES.keys())}"
-        )
+        features = {**features, **DEFAULT_FEATURES}
         _validate_feature_names(features)
 
         obj.tasks = None
