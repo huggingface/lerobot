@@ -19,6 +19,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+import torch
 from torch import Tensor
 
 
@@ -120,6 +121,7 @@ class Tracker:
             self._steps.clear()
         self._step_counter = 0
 
+    @torch._dynamo.disable
     def track(
         self,
         time: float | Tensor,
@@ -138,6 +140,9 @@ class Tracker:
 
         If a step with the given time already exists, it will be updated with the new data.
         Otherwise, a new step will be created. Only non-None fields are updated/set.
+
+        Note: This method is excluded from torch.compile to avoid graph breaks from
+        operations like .item() which are incompatible with compiled graphs.
 
         Args:
             time (float | Tensor): Time parameter - used as the key to identify the step.
