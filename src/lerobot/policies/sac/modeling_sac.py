@@ -240,7 +240,8 @@ class SACPolicy(
                 )
 
     def update_temperature(self):
-        self.temperature = self.log_alpha.exp().item()
+        # Keep as tensor for torch.compile compatibility
+        self.temperature = self.log_alpha.exp()
 
     def compute_loss_critic(
         self,
@@ -273,7 +274,9 @@ class SACPolicy(
             # critics subsample size
             min_q, _ = q_targets.min(dim=0)  # Get values from min operation
             if self.config.use_backup_entropy:
-                min_q = min_q - (self.temperature * next_log_probs)
+                # Use log_alpha.exp() directly to avoid graph breaks with torch.compile
+                temperature = self.log_alpha.exp()
+                min_q = min_q - (temperature * next_log_probs)
 
             td_target = rewards + (1 - done) * self.config.discount * min_q
 
@@ -385,7 +388,9 @@ class SACPolicy(
         )
         min_q_preds = q_preds.min(dim=0)[0]
 
-        actor_loss = ((self.temperature * log_probs) - min_q_preds).mean()
+        # Use log_alpha.exp() directly to avoid graph breaks with torch.compile
+        temperature = self.log_alpha.exp()
+        actor_loss = ((temperature * log_probs) - min_q_preds).mean()
         return actor_loss
 
     def _init_encoders(self):
@@ -461,7 +466,8 @@ class SACPolicy(
         """Set up temperature parameter and initial log_alpha."""
         temp_init = self.config.temperature_init
         self.log_alpha = nn.Parameter(torch.tensor([math.log(temp_init)]))
-        self.temperature = self.log_alpha.exp().item()
+        # Keep as tensor for torch.compile compatibility
+        self.temperature = self.log_alpha.exp()
 
 
 class SACObservationEncoder(nn.Module):
