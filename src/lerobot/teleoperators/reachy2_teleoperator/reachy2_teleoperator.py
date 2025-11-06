@@ -18,6 +18,7 @@ import logging
 import time
 
 from ..teleoperator import Teleoperator
+from lerobot.utils.optional import optional_import
 from .config_reachy2_teleoperator import Reachy2TeleoperatorConfig
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ class Reachy2Teleoperator(Teleoperator):
         return self.reachy.is_connected() if self.reachy is not None else False
 
     def connect(self, calibrate: bool = True) -> None:
-        from reachy2_sdk import ReachySDK
+        ReachySDK = optional_import("reachy2_sdk", "reachy2", attr="ReachySDK")
         self.reachy = ReachySDK(self.config.ip_address)
         if not self.is_connected:
             raise ConnectionError()

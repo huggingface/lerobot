@@ -231,8 +231,7 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                     cli_args = filter_arg("config_path", cli_args)
                     cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
                 else:
-                    # Use positional arguments to match draccus.parse signature (cls, config_path, args)
-                    cfg = draccus.parse(argtype, config_path, args=cli_args)
+                    cfg = draccus.parse(config_class=argtype, config_path=config_path, args=cli_args)
             response = fn(cfg, *args, **kwargs)
             return response
 

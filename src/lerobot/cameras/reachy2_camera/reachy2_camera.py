@@ -32,6 +32,7 @@ import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 import numpy as np  # type: ignore  # TODO: add type stubs for numpy
 
 from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.optional import optional_import
 
 from ..camera import Camera
 from .configuration_reachy2_camera import ColorMode, Reachy2CameraConfig
@@ -98,7 +99,9 @@ class Reachy2Camera(Camera):
         """
         Connects to the Reachy2 CameraManager as specified in the configuration.
         """
-        from reachy2_sdk.media.camera_manager import CameraManager  # type: ignore
+        CameraManager = optional_import(
+            "reachy2_sdk.media.camera_manager", "reachy2", attr="CameraManager"
+        )
         self.cam_manager = CameraManager(host=self.config.ip_address, port=self.config.port)
         self.cam_manager.initialize_cameras()
 
@@ -114,7 +117,9 @@ class Reachy2Camera(Camera):
             where each dictionary contains 'name', 'stereo',
             and the default profile properties (width, height, fps).
         """
-        from reachy2_sdk.media.camera_manager import CameraManager  # type: ignore
+        CameraManager = optional_import(
+            "reachy2_sdk.media.camera_manager", "reachy2", attr="CameraManager"
+        )
         initialized_cameras = []
         camera_manager = CameraManager(host=ip_address, port=port)
 
@@ -165,7 +170,7 @@ class Reachy2Camera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
         else:
             if self.config.name == "teleop" and hasattr(self.cam_manager, "teleop"):
-                from reachy2_sdk.media.camera import CameraView  # type: ignore
+                CameraView = optional_import("reachy2_sdk.media.camera", "reachy2", attr="CameraView")
                 if self.config.image_type == "left":
                     frame = self.cam_manager.teleop.get_frame(CameraView.LEFT, size=(640, 480))[0]
                 elif self.config.image_type == "right":

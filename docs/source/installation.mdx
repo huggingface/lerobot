@@ -99,6 +99,16 @@ For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/
 
 LeRobot provides optional extras for specific functionalities. Multiple extras can be combined (e.g., `.[aloha,feetech]`). For all available extras, refer to `pyproject.toml`.
 
+### Extras quick reference
+
+- reachy2 — Reachy 2 robot and cameras (reachy2_sdk)
+- intelrealsense — Intel RealSense cameras (pyrealsense2 / pyrealsense2-macosx on macOS)
+- phone — Phone teleoperation (hebi-py, teleop, fastapi)
+- dynamixel — Dynamixel motors (dynamixel-sdk)
+- feetech — Feetech motors (feetech-servo-sdk)
+- lekiwi — LeKiwi robot client/host (pyzmq)
+- gamepad — Gamepad input (pygame, hidapi)
+
 ### Simulations
 
 Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht))
@@ -115,6 +125,14 @@ For Koch v1.1 install the Dynamixel SDK, for SO100/SO101/Moss install the Feetec
 ```bash
 pip install -e ".[feetech]" # or "[dynamixel]" for example
 ```
+
+### Missing optional dependency errors
+
+If you call a feature that needs an optional dependency and it isn’t installed, LeRobot raises a friendly ImportError telling you exactly what to install, for example:
+
+> RealSenseCamera requires the optional 'pyrealsense2' package. Install with `pip install lerobot[intelrealsense]`.
+
+Just copy the suggested pip command and re-run your script.
 
 ### Experiment Tracking
 

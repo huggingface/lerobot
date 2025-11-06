@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 import cv2
 import draccus
 
+from lerobot.utils.optional import optional_import
 from .config_lekiwi import LeKiwiConfig, LeKiwiHostConfig
 from .lekiwi import LeKiwi
 
@@ -37,7 +38,7 @@ class LeKiwiServerConfig:
 
 class LeKiwiHost:
     def __init__(self, config: LeKiwiHostConfig):
-        import zmq  # Lazy import to avoid hard dependency unless host is used
+        zmq = optional_import("zmq", "lekiwi")
         self.zmq_context = zmq.Context()
         self.zmq_cmd_socket = self.zmq_context.socket(zmq.PULL)
         self.zmq_cmd_socket.setsockopt(zmq.CONFLATE, 1)
@@ -59,7 +60,7 @@ class LeKiwiHost:
 
 @draccus.wrap()
 def main(cfg: LeKiwiServerConfig):
-    import zmq  # Lazy import within the CLI entrypoint
+    zmq = optional_import("zmq", "lekiwi")
     logging.info("Configuring LeKiwi")
     robot = LeKiwi(cfg.robot)
 
