@@ -25,12 +25,19 @@ Usage:
         --rtc.execution_horizon=8 \
         --device=mps
 
-    # Basic usage with pi0.5 policy
+    # Basic usage with pi0.5 policy with cuda device
     uv run python examples/rtc/eval_dataset.py \
         --policy.path=lerobot/pi05_libero_finetuned \
         --dataset.repo_id=HuggingFaceVLA/libero \
         --rtc.execution_horizon=8 \
-        --device=mps
+        --device=cuda
+
+    # Basic usage with pi0 policy with cuda device
+    uv run python examples/rtc/eval_dataset.py \
+        --policy.path=lerobot/pi0_libero_finetuned \
+        --dataset.repo_id=HuggingFaceVLA/libero \
+        --rtc.execution_horizon=8 \
+        --device=cuda
 
     # With torch.compile for faster inference (PyTorch 2.0+)
     # Note: CUDA graphs disabled by default due to in-place ops in denoising loop
