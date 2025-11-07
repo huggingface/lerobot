@@ -109,6 +109,7 @@ from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
     bi_so100_leader,
     bi_so101_leader,
+    biwheel_gamepad,
     biwheel_keyboard,
     homunculus,
     koch_leader,
