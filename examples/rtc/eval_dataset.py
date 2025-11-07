@@ -276,6 +276,7 @@ class RTCEvaluator:
 
         logging.info(f"  RTC enabled: {rtc_enabled}")
         logging.info(f"  RTC debug: {rtc_debug}")
+        logging.info(f"  Policy config: {config}")
 
         # Apply torch.compile to predict_action_chunk method if enabled
         if self.cfg.use_torch_compile:
