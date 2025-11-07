@@ -39,6 +39,12 @@ Usage:
         --rtc.execution_horizon=8 \
         --device=cuda
 
+    uv run python examples/rtc/eval_dataset.py \
+        --policy.path=lipsop/reuben_pi0 \
+        --dataset.repo_id=ReubenLim/so101_cube_in_cup \
+        --rtc.execution_horizon=8 \
+        --device=cuda
+
     # With torch.compile for faster inference (PyTorch 2.0+)
     # Note: CUDA graphs disabled by default due to in-place ops in denoising loop
     uv run python examples/rtc/eval_dataset.py \
