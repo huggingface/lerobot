@@ -472,13 +472,17 @@ def generate_episode_metadata_dict(
         else:
             ep_video = episodes_videos[i]
             ep_ids_set.add(ep_video["episode_index"])
-        # we skip this check because ep_ids have a step of 10, whereas we convert with a step of 1
-        # if len(ep_ids_set) != 1:
-        #     raise ValueError(f"Number of episodes is not the same ({ep_ids_set}).")
 
-        ep_dict = {**ep_metadata, **ep_video, **ep_legacy_metadata, **flatten_dict({"stats": ep_stats})}
-        ep_dict["meta/episodes/chunk_index"] = 0
-        ep_dict["meta/episodes/file_index"] = 0
+        ep_dict = {
+            **ep_legacy_metadata,
+            **ep_video,
+            **ep_metadata,
+            **flatten_dict({"stats": ep_stats}),
+        }
+
+        # enforce contiguous indexing 0..n-1, but also stores the legacy episode index
+        ep_dict["episode_index"] = i
+
         yield ep_dict
 
 
