@@ -55,6 +55,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_so100_follower,
     bi_so101_follower,
+    biwheel_base,
     hope_jr,
     koch_follower,
     lekiwi_base,
