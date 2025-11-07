@@ -202,6 +202,12 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int, task_ind
         size_in_mb += ep_size_in_mb
         num_frames += ep_num_frames
         episodes_metadata.append(ep_metadata)
+
+        # write 0-based episode index instead of custom episode index (otherwise breaks compatibility with LeRobotDataset)
+        tmp_df = pd.read_parquet(ep_path)
+        tmp_df["episode_index"] = ep_idx
+        tmp_df.to_parquet(ep_path)
+
         ep_idx += 1
 
         if size_in_mb < data_file_size_in_mb:
