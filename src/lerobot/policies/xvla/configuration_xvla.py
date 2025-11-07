@@ -129,7 +129,7 @@ class XVLAConfig(PreTrainedConfig):
                     config_dict['vision_config'] = {
                         'model_type': 'davit',
                         'drop_path_rate': 0.1,
-                        'patch_size': [7, 3, 3, 3],
+                        'patch_size': [14, 7, 7, 7],
                         'patch_stride': [4, 2, 2, 2],
                         'patch_padding': [3, 1, 1, 1],
                         'patch_prenorm': [False, True, True, True],
