@@ -260,7 +260,7 @@ class RTCEvaluator:
         config = PreTrainedConfig.from_pretrained(self.cfg.policy.pretrained_path)
 
         if self.cfg.policy.type == "pi05" or self.cfg.policy.type == "pi0":
-            config.compile_model = self.cfg.torch_compile_mode
+            config.compile_model = self.cfg.use_torch_compile
 
         policy = policy_class.from_pretrained(self.cfg.policy.pretrained_path, config=config)
         policy = policy.to(self.device)
