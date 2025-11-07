@@ -4,6 +4,7 @@ lerobot-train \
   --output_dir=outputs/train/act_your_dataset \
   --job_name=xvla_so101_pickplace \
   --policy.device=cuda \
+  --policy.action_mode=franka_joint7 \
   --wandb.enable=true \
   --policy.repo_id=jadechoghari/xvla_policy \
   --steps=10000

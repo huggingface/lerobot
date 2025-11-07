@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Dict
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -87,7 +86,7 @@ class XVLAModel(nn.Module):
         input_ids: torch.LongTensor,
         pixel_values: torch.FloatTensor,
         image_mask: torch.Tensor,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """
         Encode text and multi-view images via Florence2 encoder.
         """
@@ -129,13 +128,14 @@ class XVLAModel(nn.Module):
         domain_id: torch.LongTensor,
         proprio: torch.Tensor,
         action: torch.Tensor,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         enc = self.forward_vlm(input_ids, image_input, image_mask)
 
         batch_size = input_ids.shape[0]
-        t = (torch.rand(1, device=input_ids.device) + torch.arange(batch_size, device=input_ids.device) / batch_size) % (
-            1 - 1e-5
-        )
+        t = (
+            torch.rand(1, device=input_ids.device)
+            + torch.arange(batch_size, device=input_ids.device) / batch_size
+        ) % (1 - 1e-5)
 
         action_noisy = torch.randn_like(action) * t.view(-1, 1, 1) + action * (1 - t).view(-1, 1, 1)
         proprio_m, action_noisy_m = self.action_space.preprocess(proprio, action_noisy)
@@ -350,7 +350,9 @@ def resize_with_pad(img: torch.Tensor, height: int, width: int, pad_value: float
     ratio = max(current_width / width, current_height / height)
     resized_height = int(current_height / ratio)
     resized_width = int(current_width / ratio)
-    resized_img = F.interpolate(img, size=(resized_height, resized_width), mode="bilinear", align_corners=False)
+    resized_img = F.interpolate(
+        img, size=(resized_height, resized_width), mode="bilinear", align_corners=False
+    )
 
     pad_height = max(0, height - resized_height)
     pad_width = max(0, width - resized_width)

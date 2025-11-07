@@ -14,7 +14,7 @@
 # limitations under the License.
 # ------------------------------------------------------------------------------
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import torch
 from transformers import ProcessorMixin
@@ -88,7 +88,7 @@ class XVLAProcessor(ProcessorMixin):
         super().__init__(image_processor, tokenizer)
 
     # ================== LANGUAGE ENCODING ==================
-    def encode_language(self, language_instruction: Union[str, List[str]]) -> Dict[str, torch.Tensor]:
+    def encode_language(self, language_instruction: str | list[str]) -> dict[str, torch.Tensor]:
         """
         Tokenize one or more language instructions.
 
@@ -117,11 +117,7 @@ class XVLAProcessor(ProcessorMixin):
         return {"input_ids": inputs["input_ids"]}
 
     # ================== IMAGE ENCODING ==================
-    def encode_image(
-        self,
-        images: Union[List, List[List]],
-        **kwargs
-    ) -> Dict[str, torch.Tensor]:
+    def encode_image(self, images: list | list[list], **kwargs) -> dict[str, torch.Tensor]:
         """
         Preprocess one or more sets of multi-view images.
 
@@ -157,8 +153,7 @@ class XVLAProcessor(ProcessorMixin):
             # Pad to self.num_views
             if V_exist < self.num_views:
                 processed = torch.cat(
-                    [processed,
-                     processed.new_zeros(self.num_views - V_exist, *processed.shape[1:])],
+                    [processed, processed.new_zeros(self.num_views - V_exist, *processed.shape[1:])],
                     dim=0,
                 )
 
@@ -177,10 +172,10 @@ class XVLAProcessor(ProcessorMixin):
     # ================== COMBINED CALL ==================
     def __call__(
         self,
-        images: Optional[Union[List, List[List]]] = None,
-        language_instruction: Optional[Union[str, List[str]]] = None,
-        **kwargs
-    ) -> Dict[str, torch.Tensor]:
+        images: list | list[list] | None = None,
+        language_instruction: str | list[str] | None = None,
+        **kwargs,
+    ) -> dict[str, torch.Tensor]:
         """
         Combine image and text encoding into a unified multimodal input.
 
@@ -202,7 +197,7 @@ class XVLAProcessor(ProcessorMixin):
               "image_mask": [B, num_views], optional
             }
         """
-        outputs: Dict[str, Any] = {}
+        outputs: dict[str, Any] = {}
 
         # Encode language if provided
         if language_instruction is not None:
@@ -243,7 +238,9 @@ def make_xvla_pre_post_processors(
             padding_side=config.tokenizer_padding_side,
         ),
         DeviceProcessorStep(device=config.device),
-        NormalizerProcessorStep(features=features, norm_map=config.normalization_mapping, stats=dataset_stats),
+        NormalizerProcessorStep(
+            features=features, norm_map=config.normalization_mapping, stats=dataset_stats
+        ),
     ]
     output_steps = [
         UnnormalizerProcessorStep(

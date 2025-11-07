@@ -17,17 +17,18 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from functools import partial
-from typing import Final, Iterable, Tuple
+from typing import Final
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 # ------------------------------- Small utils ----------------------------------
 
-def _to_2tuple(x) -> Tuple:
+
+def _to_2tuple(x) -> tuple:
     """Minimal replacement for timm.layers.to_2tuple."""
     if isinstance(x, Iterable) and not isinstance(x, (str, bytes)):
         t = tuple(x)
@@ -42,6 +43,7 @@ def _has_sdp_attention() -> bool:
 
 # ---------------------------------- MLP --------------------------------------
 
+
 class Mlp(nn.Module):
     """
     MLP used in ViT-style blocks.
@@ -55,8 +57,8 @@ class Mlp(nn.Module):
         hidden_features: int | None = None,
         out_features: int | None = None,
         norm_layer: type[nn.Module] | None = None,
-        bias: bool | Tuple[bool, bool] = True,
-        drop: float | Tuple[float, float] = 0.0,
+        bias: bool | tuple[bool, bool] = True,
+        drop: float | tuple[float, float] = 0.0,
         use_conv: bool = False,
     ) -> None:
         super().__init__()
@@ -86,6 +88,7 @@ class Mlp(nn.Module):
 
 # -------------------------------- Attention ----------------------------------
 
+
 class Attention(nn.Module):
     """
     Multi-Head Self-Attention with optional fused SDPA fallback.
@@ -110,7 +113,7 @@ class Attention(nn.Module):
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.fused_attn = _has_sdp_attention()
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
@@ -143,23 +146,26 @@ class Attention(nn.Module):
 
         if self.fused_attn:
             x = F.scaled_dot_product_attention(
-                q, k, v,
+                q,
+                k,
+                v,
                 dropout_p=self.attn_drop.p if self.training else 0.0,
             )  # [B, H, T, Dh]
         else:
             q = q * self.scale
-            attn = q @ k.transpose(-2, -1)        # [B, H, T, T]
+            attn = q @ k.transpose(-2, -1)  # [B, H, T, T]
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
-            x = attn @ v                           # [B, H, T, Dh]
+            x = attn @ v  # [B, H, T, Dh]
 
-        x = x.transpose(1, 2).reshape(B, T, C)     # [B, T, C]
+        x = x.transpose(1, 2).reshape(B, T, C)  # [B, T, C]
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
 
 
 # ------------------------------- Utilities -----------------------------------
+
 
 def basic_init(module: nn.Module) -> None:
     """
@@ -194,9 +200,7 @@ def timestep_embedding(t: torch.Tensor, dim: int, max_period: int = 100) -> torc
     """
     half = dim // 2
     freqs = torch.exp(
-        -math.log(max_period)
-        * torch.arange(start=0, end=half, dtype=t.dtype, device=t.device)
-        / half
+        -math.log(max_period) * torch.arange(start=0, end=half, dtype=t.dtype, device=t.device) / half
     )
     args = t[:, None] * freqs[None]
     embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
@@ -206,6 +210,7 @@ def timestep_embedding(t: torch.Tensor, dim: int, max_period: int = 100) -> torc
 
 
 # ------------------------------- Core Layers ----------------------------------
+
 
 class DomainAwareLinear(nn.Module):
     """
@@ -283,6 +288,7 @@ class TransformerBlock(nn.Module):
 
 # --------------------------- Main Model ---------------------------------------
 
+
 class SoftPromptedTransformer(nn.Module):
     """
     Multi-modal, domain-aware Transformer with optional soft prompts.
@@ -318,7 +324,9 @@ class SoftPromptedTransformer(nn.Module):
 
         if use_hetero_proj:
             self.vlm_proj = DomainAwareLinear(multi_modal_input_size, hidden_size, num_domains=num_domains)
-            self.aux_visual_proj = DomainAwareLinear(multi_modal_input_size, hidden_size, num_domains=num_domains)
+            self.aux_visual_proj = DomainAwareLinear(
+                multi_modal_input_size, hidden_size, num_domains=num_domains
+            )
         else:
             self.vlm_proj = nn.Linear(multi_modal_input_size, hidden_size)
             self.aux_visual_proj = nn.Linear(multi_modal_input_size, hidden_size)
@@ -367,16 +375,20 @@ class SoftPromptedTransformer(nn.Module):
         B, num_actions = action_with_noise.shape[:2]
 
         # Encode (action + proprio + time) → tokens
-        time_emb = timestep_embedding(t, self.dim_time)                     # [B, dim_time]
+        time_emb = timestep_embedding(t, self.dim_time)  # [B, dim_time]
         time_tokens = time_emb.unsqueeze(1).expand(B, num_actions, self.dim_time)
         proprio_tokens = proprio.unsqueeze(1).expand(B, num_actions, proprio.shape[-1])
         action_tokens = torch.cat([action_with_noise, proprio_tokens, time_tokens], dim=-1)
-        x = self.action_encoder(action_tokens, domain_id)                   # [B, T_action, H]
+        x = self.action_encoder(action_tokens, domain_id)  # [B, T_action, H]
 
         # Project visual streams and concatenate
         if self.use_hetero_proj:
             x = torch.cat(
-                [x, self.vlm_proj(vlm_features, domain_id), self.aux_visual_proj(aux_visual_inputs, domain_id)],
+                [
+                    x,
+                    self.vlm_proj(vlm_features, domain_id),
+                    self.aux_visual_proj(aux_visual_inputs, domain_id),
+                ],
                 dim=1,
             )
         else:
@@ -385,9 +397,7 @@ class SoftPromptedTransformer(nn.Module):
         # Add positional embeddings (truncate if needed)
         seq_len = x.shape[1]
         if seq_len > self.pos_emb.shape[1]:
-            raise ValueError(
-                f"Sequence length {seq_len} exceeds max_len_seq={self.pos_emb.shape[1]}."
-            )
+            raise ValueError(f"Sequence length {seq_len} exceeds max_len_seq={self.pos_emb.shape[1]}.")
         x = x + self.pos_emb[:, :seq_len, :]
 
         # Append soft prompts

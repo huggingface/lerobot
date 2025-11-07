@@ -1,6 +1,5 @@
-from lerobot.policies.factory import make_policy
-from lerobot.policies.factory import make_policy_config
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.policies.factory import make_policy, make_policy_config
 
 cfg = make_policy_config("xvla")
 

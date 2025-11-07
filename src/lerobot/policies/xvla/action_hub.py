@@ -15,18 +15,21 @@
 # ------------------------------------------------------------------------------
 
 from __future__ import annotations
-from typing import Iterable, Tuple, Dict, Type
+
+from collections.abc import Iterable
+
 import torch
 import torch.nn as nn
 
 # =============================================================================
 # Registry
 # =============================================================================
-ACTION_REGISTRY: Dict[str, Type["BaseActionSpace"]] = {}
+ACTION_REGISTRY: dict[str, type[BaseActionSpace]] = {}
 
 
 def register_action(name: str):
     """Decorator for registering a new action space."""
+
     def _wrap(cls):
         key = name.lower()
         if key in ACTION_REGISTRY:
@@ -34,10 +37,11 @@ def register_action(name: str):
         ACTION_REGISTRY[key] = cls
         cls.name = key
         return cls
+
     return _wrap
 
 
-def build_action_space(name: str, **kwargs) -> "BaseActionSpace":
+def build_action_space(name: str, **kwargs) -> BaseActionSpace:
     """Instantiate a registered action space by name."""
     key = name.lower()
     if key not in ACTION_REGISTRY:
@@ -62,7 +66,7 @@ class BaseActionSpace(nn.Module):
 
     name: str = "base"
     dim_action: int = 0
-    gripper_idx: Tuple[int, ...] = ()
+    gripper_idx: tuple[int, ...] = ()
 
     def __init__(self):
         super().__init__()
@@ -70,10 +74,10 @@ class BaseActionSpace(nn.Module):
     # ---------------------------------------------------------------------
     # Core supervised loss
     # ---------------------------------------------------------------------
-    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> dict[str, torch.Tensor]:
         raise NotImplementedError
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> dict[str, torch.Tensor]:
         """Alias for compute_loss."""
         return self.compute_loss(pred, target)
 
@@ -85,7 +89,7 @@ class BaseActionSpace(nn.Module):
         proprio: torch.Tensor,
         action: torch.Tensor,
         mode: str = "train",
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Default: return unchanged."""
         return proprio, action
 
@@ -137,14 +141,14 @@ class EE6DActionSpace(BaseActionSpace):
 
         # XYZ position
         pos_loss = (
-            self.mse(pred[:, :, self.POS_IDX_1], target[:, :, self.POS_IDX_1]) +
-            self.mse(pred[:, :, self.POS_IDX_2], target[:, :, self.POS_IDX_2])
+            self.mse(pred[:, :, self.POS_IDX_1], target[:, :, self.POS_IDX_1])
+            + self.mse(pred[:, :, self.POS_IDX_2], target[:, :, self.POS_IDX_2])
         ) * self.XYZ_SCALE
 
         # Rotation 6D
         rot_loss = (
-            self.mse(pred[:, :, self.ROT_IDX_1], target[:, :, self.ROT_IDX_1]) +
-            self.mse(pred[:, :, self.ROT_IDX_2], target[:, :, self.ROT_IDX_2])
+            self.mse(pred[:, :, self.ROT_IDX_1], target[:, :, self.ROT_IDX_1])
+            + self.mse(pred[:, :, self.ROT_IDX_2], target[:, :, self.ROT_IDX_2])
         ) * self.ROT_SCALE
 
         return {
@@ -236,14 +240,16 @@ class AGIBOTEE6DActionSpace(BaseActionSpace):
         B, T, D = pred.shape
         _ensure_indices_valid(D, self.gripper_idx, "gripper_idx")
 
-        gripper_loss = self.mse(pred[:, :, self.gripper_idx], target[:, :, self.gripper_idx]) * self.GRIPPER_SCALE
+        gripper_loss = (
+            self.mse(pred[:, :, self.gripper_idx], target[:, :, self.gripper_idx]) * self.GRIPPER_SCALE
+        )
         pos_loss = (
-            self.mse(pred[:, :, self.POS_IDX_1], target[:, :, self.POS_IDX_1]) +
-            self.mse(pred[:, :, self.POS_IDX_2], target[:, :, self.POS_IDX_2])
+            self.mse(pred[:, :, self.POS_IDX_1], target[:, :, self.POS_IDX_1])
+            + self.mse(pred[:, :, self.POS_IDX_2], target[:, :, self.POS_IDX_2])
         ) * self.XYZ_SCALE
         rot_loss = (
-            self.mse(pred[:, :, self.ROT_IDX_1], target[:, :, self.ROT_IDX_1]) +
-            self.mse(pred[:, :, self.ROT_IDX_2], target[:, :, self.ROT_IDX_2])
+            self.mse(pred[:, :, self.ROT_IDX_1], target[:, :, self.ROT_IDX_1])
+            + self.mse(pred[:, :, self.ROT_IDX_2], target[:, :, self.ROT_IDX_2])
         ) * self.ROT_SCALE
 
         return {
@@ -261,6 +267,32 @@ class AGIBOTEE6DActionSpace(BaseActionSpace):
         return action
 
 
+@register_action("franka_joint7")
+class FrankaJoint7ActionSpace(BaseActionSpace):
+    """Franka Panda joint-space: 7 joints, no gripper."""
+
+    dim_action = 7
+    JOINTS_SCALE = 1.0
+
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss()
+
+    def compute_loss(self, pred, target):
+        assert pred.shape == target.shape, "pred/target shapes must match"
+        B, T, D = pred.shape
+        joints_loss = self.mse(pred, target) * self.JOINTS_SCALE
+        return {"joints_loss": joints_loss}
+
+    def preprocess(self, proprio, action, mode="train"):
+        """No preprocessing needed for 7 joint actions."""
+        return proprio, action
+
+    def postprocess(self, action: torch.Tensor) -> torch.Tensor:
+        """Return directly (no sigmoid since no gripper)."""
+        return action
+
+
 # =============================================================================
 # Exports
 # =============================================================================
@@ -271,5 +303,6 @@ __all__ = [
     "EE6DActionSpace",
     "JointActionSpace",
     "AGIBOTEE6DActionSpace",
+    "FrankaJoint7ActionSpace",
     "ACTION_REGISTRY",
 ]

@@ -124,43 +124,37 @@ class XVLAConfig(PreTrainedConfig):
                 # TODO: jadechoghari: provide default way, and do not hardcode
                 # Ensure vision_config and text_config are provided with defaults if not specified
                 config_dict = dict(self.florence_config)
-                if 'vision_config' not in config_dict or config_dict['vision_config'] is None:
+                if "vision_config" not in config_dict or config_dict["vision_config"] is None:
                     # Provide default vision config
-                    config_dict['vision_config'] = {
-                        'model_type': 'davit',
-                        'drop_path_rate': 0.1,
-                        'patch_size': [14, 7, 7, 7],
-                        'patch_stride': [4, 2, 2, 2],
-                        'patch_padding': [3, 1, 1, 1],
-                        'patch_prenorm': [False, True, True, True],
-                        'dim_embed': [256, 512, 1024, 2048],
-                        'num_heads': [8, 16, 32, 64],
-                        'num_groups': [8, 16, 32, 64],
-                        'depths': [1, 1, 9, 1],
-                        'window_size': 12,
-                        'projection_dim': 1024,
-                        'visual_temporal_embedding': {
-                            'type': 'COSINE',
-                            'max_temporal_embeddings': 100
-                        },
-                        'image_pos_embed': {
-                            'type': 'learned_abs_2d',
-                            'max_pos_embeddings': 50
-                        },
-                        'image_feature_source': ['spatial_avg_pool', 'temporal_avg_pool']
+                    config_dict["vision_config"] = {
+                        "model_type": "davit",
+                        "drop_path_rate": 0.1,
+                        "patch_size": [14, 7, 7, 7],
+                        "patch_stride": [4, 2, 2, 2],
+                        "patch_padding": [3, 1, 1, 1],
+                        "patch_prenorm": [False, True, True, True],
+                        "dim_embed": [256, 512, 1024, 2048],
+                        "num_heads": [8, 16, 32, 64],
+                        "num_groups": [8, 16, 32, 64],
+                        "depths": [1, 1, 9, 1],
+                        "window_size": 12,
+                        "projection_dim": 1024,
+                        "visual_temporal_embedding": {"type": "COSINE", "max_temporal_embeddings": 100},
+                        "image_pos_embed": {"type": "learned_abs_2d", "max_pos_embeddings": 50},
+                        "image_feature_source": ["spatial_avg_pool", "temporal_avg_pool"],
                     }
-                if 'text_config' not in config_dict or config_dict['text_config'] is None:
+                if "text_config" not in config_dict or config_dict["text_config"] is None:
                     # Provide default text config
-                    config_dict['text_config'] = {
-                        'model_type': 'florence2_language',
-                        'vocab_size': 51289,
-                        'd_model': 1024,
-                        'encoder_layers': 12,
-                        'decoder_layers': 12,
-                        'encoder_attention_heads': 16,
-                        'decoder_attention_heads': 16,
-                        'encoder_ffn_dim': 4096,
-                        'decoder_ffn_dim': 4096,
+                    config_dict["text_config"] = {
+                        "model_type": "florence2_language",
+                        "vocab_size": 51289,
+                        "d_model": 1024,
+                        "encoder_layers": 12,
+                        "decoder_layers": 12,
+                        "encoder_attention_heads": 16,
+                        "decoder_attention_heads": 16,
+                        "encoder_ffn_dim": 4096,
+                        "decoder_ffn_dim": 4096,
                     }
                 self._florence_config_obj = Florence2Config(**config_dict)
         return self._florence_config_obj
