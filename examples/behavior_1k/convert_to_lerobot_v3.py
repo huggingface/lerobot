@@ -174,7 +174,7 @@ def get_image_keys(root):
 
 
 def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int, task_index: int):
-    task_dir_name = f"task-00{task_index}"
+    task_dir_name = f"task-{task_index:04d}"
     data_dir = root / "data" / task_dir_name
     ep_paths = sorted(data_dir.glob("*.parquet"))
     image_keys = get_image_keys(root)
@@ -230,7 +230,7 @@ def convert_videos_of_camera(
     # Access old paths to mp4
     # videos_dir = root / "videos"
     # ep_paths = sorted(videos_dir.glob(f"*/{video_key}/*.mp4"))
-    task_dir_name = f"task-00{task_index}"
+    task_dir_name = f"task-{task_index:04d}"
     videos_dir = root / "videos" / task_dir_name / video_key
     ep_paths = sorted(videos_dir.glob("*.mp4"))
     print("ep_paths", ep_paths)
