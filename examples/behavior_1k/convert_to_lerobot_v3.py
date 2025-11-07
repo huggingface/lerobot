@@ -331,7 +331,7 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int, task_
     if len(set(num_eps_per_cam)) != 1:
         raise ValueError(f"All cams dont have same number of episodes ({num_eps_per_cam}).")
 
-    episods_metadata = []
+    episodes_metadata = []
     num_cameras = len(video_keys)
     num_episodes = num_eps_per_cam[0]
     for ep_idx in tqdm.tqdm(range(num_episodes), desc="convert videos"):
@@ -344,9 +344,9 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int, task_
         ep_dict = {}
         for cam_idx in range(num_cameras):
             ep_dict.update(eps_metadata_per_cam[cam_idx][ep_idx])
-        episods_metadata.append(ep_dict)
+        episodes_metadata.append(ep_dict)
 
-    return episods_metadata
+    return episodes_metadata
 
 
 def infer_task_episode_ranges(episodes_jsonl_path: Path) -> dict:
