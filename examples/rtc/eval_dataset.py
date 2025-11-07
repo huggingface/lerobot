@@ -482,7 +482,12 @@ class RTCEvaluator:
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
 
         # Save num_steps before destroying policy (needed for plotting)
-        num_steps = policy_rtc_policy.config.num_steps
+        try:
+            num_steps = policy_rtc_policy.config.num_steps
+        except Exception as e:
+            logging.error(f"  Error getting num_steps: {e}")
+            num_steps = policy_rtc_policy.config.num_inference_steps
+            logging.warning(f"  Using num_inference_steps: {num_steps} instead of num_steps")
 
         # Destroy policy_rtc after final use
         self._destroy_policy(policy_rtc_policy, "policy_rtc")
