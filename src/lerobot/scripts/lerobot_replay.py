@@ -54,12 +54,16 @@ from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     bi_so100_follower,
+    bi_so101_follower,
     biwheel_base,
     hope_jr,
     koch_follower,
+    lekiwi_base,
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xlerobot_mount,
+    xlerobot
 )
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_devices
