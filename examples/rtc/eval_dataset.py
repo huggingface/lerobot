@@ -256,7 +256,9 @@ class RTCEvaluator:
 
         # Load policy from pretrained
         policy_class = get_policy_class(self.cfg.policy.type)
-        policy = policy_class.from_pretrained(self.cfg.policy.pretrained_path)
+
+        config = PreTrainedConfig.from_pretrained(self.cfg.policy.pretrained_path)
+        policy = policy_class.from_pretrained(self.cfg.policy.pretrained_path, config=config)
         policy = policy.to(self.device)
         policy.eval()
 
@@ -292,6 +294,11 @@ class RTCEvaluator:
         Returns:
             Policy with compiled predict_action_chunk method
         """
+
+        # PI models handle their own compilation
+        if policy.type == "pi05" or policy.type == "pi0":
+            return policy
+
         try:
             # Check if torch.compile is available (PyTorch 2.0+)
             if not hasattr(torch, "compile"):
