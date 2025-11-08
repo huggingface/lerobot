@@ -23,6 +23,7 @@ import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from ..bi_so101_follower.bi_so101_follower import BiSO101Follower
+from ..biwheel_base.biwheel_base import BiWheelBase
 from ..lekiwi_base.lekiwi_base import LeKiwiBase
 from ..robot import Robot
 from ..xlerobot_mount.xlerobot_mount import XLeRobotMount
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class XLeRobot(Robot):
-    """Combined platform: bimanual SO-101 follower arms mounted on a LeKiwi base."""
+    """Combined platform: bimanual SO-101 follower arms mounted on a configurable mobile base."""
 
     config_class = XLeRobotConfig
     name = "xlerobot"
@@ -56,8 +57,7 @@ class XLeRobot(Robot):
         if base_type == XLeRobotConfig.BASE_TYPE_LEKIWI:
             return LeKiwiBase(replace(self.config.base_config))
         if base_type == XLeRobotConfig.BASE_TYPE_BIWHEEL:
-            # TODO: instantiate biwheel base robot once available.
-            raise NotImplementedError("TODO: add biwheel base robot support.")
+            return BiWheelBase(replace(self.config.base_config))
         raise ValueError(f"Unsupported base robot type: {base_type}")
 
     def _make_blank_camera_obs(self, cam_key: str) -> np.ndarray:

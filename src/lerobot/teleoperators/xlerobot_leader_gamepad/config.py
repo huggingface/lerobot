@@ -17,6 +17,7 @@ from typing import Any
 
 from ..config import TeleoperatorConfig
 from ..bi_so101_leader.config_bi_so101_leader import BiSO101LeaderConfig
+from ..biwheel_gamepad.config_biwheel_gamepad import BiwheelGamepadTeleopConfig
 from ..lekiwi_base_gamepad.config_lekiwi_base_gamepad import LeKiwiBaseTeleopConfig
 from ..xlerobot_mount_gamepad.config import XLeRobotMountGamepadTeleopConfig
 
@@ -25,7 +26,7 @@ from ..xlerobot_mount_gamepad.config import XLeRobotMountGamepadTeleopConfig
 @dataclass
 class XLeRobotLeaderGamepadConfig(TeleoperatorConfig):
     BASE_TYPE_LEKIWI = "lekiwi_base_gamepad"
-    BASE_TYPE_BIWHEEL = "biwheel_base_gamepad"  # TODO: hook up when biwheel teleop exists.
+    BASE_TYPE_BIWHEEL = "biwheel_gamepad"
 
     """Configuration for composite XLeRobot teleoperation with leader arms and gamepad.
 
@@ -46,8 +47,7 @@ class XLeRobotLeaderGamepadConfig(TeleoperatorConfig):
         if base_type == self.BASE_TYPE_LEKIWI:
             base_cfg = self.base if isinstance(self.base, LeKiwiBaseTeleopConfig) else LeKiwiBaseTeleopConfig(**self.base)
         elif base_type == self.BASE_TYPE_BIWHEEL:
-            # TODO: Replace with the biwheel teleop config once it is available.
-            base_cfg = self.base
+            base_cfg = self.base if isinstance(self.base, BiwheelGamepadTeleopConfig) else BiwheelGamepadTeleopConfig(**self.base)
         else:
             raise ValueError(f"Unsupported XLeRobot base type: {base_type}")
         mount_cfg = self.mount if isinstance(self.mount, XLeRobotMountGamepadTeleopConfig) else XLeRobotMountGamepadTeleopConfig(**self.mount)

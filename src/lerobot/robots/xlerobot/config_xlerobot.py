@@ -18,6 +18,7 @@ from typing import Any
 from lerobot.cameras import CameraConfig
 
 from ..bi_so101_follower.config_bi_so101_follower import BiSO101FollowerConfig
+from ..biwheel_base.config_biwheel_base import BiWheelBaseConfig
 from ..config import RobotConfig
 from ..lekiwi_base.config import LeKiwiBaseConfig
 from ..xlerobot_mount.config import XLeRobotMountConfig
@@ -27,7 +28,7 @@ from ..xlerobot_mount.config import XLeRobotMountConfig
 @dataclass
 class XLeRobotConfig(RobotConfig):
     BASE_TYPE_LEKIWI = "lekiwi_base"
-    BASE_TYPE_BIWHEEL = "biwheel_base"  # TODO: add config/dataclass once biwheel base exists.
+    BASE_TYPE_BIWHEEL = "biwheel_base"
 
     arms: dict[str, Any] = field(default_factory=dict)
     base: dict[str, Any] = field(default_factory=dict)
@@ -49,8 +50,10 @@ class XLeRobotConfig(RobotConfig):
             else:
                 base_cfg = LeKiwiBaseConfig(**self.base)
         elif base_type == self.BASE_TYPE_BIWHEEL:
-            # TODO: Replace with the biwheel base config once it is implemented.
-            base_cfg = self.base
+            if isinstance(self.base, BiWheelBaseConfig):
+                base_cfg = self.base
+            else:
+                base_cfg = BiWheelBaseConfig(**self.base)
         else:
             raise ValueError(f"Unsupported XLeRobot base type: {base_type}")
         if isinstance(self.mount, XLeRobotMountConfig):

@@ -81,6 +81,7 @@ from typing import Any, Dict
 
 from ..teleoperator import Teleoperator
 from ..bi_so101_leader.bi_so101_leader import BiSO101Leader
+from ..biwheel_gamepad.teleop_biwheel_gamepad import BiwheelGamepadTeleop
 from ..lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import LeKiwiBaseTeleop
 from ..xlerobot_mount_gamepad.teleop import XLeRobotMountGamepadTeleop
 from .config import XLeRobotLeaderGamepadConfig
@@ -113,8 +114,7 @@ class XLeRobotLeaderGamepad(Teleoperator):
         if base_type == XLeRobotLeaderGamepadConfig.BASE_TYPE_LEKIWI:
             return LeKiwiBaseTeleop(self.config.base_config)
         if base_type == XLeRobotLeaderGamepadConfig.BASE_TYPE_BIWHEEL:
-            # TODO: Instantiate biwheel teleoperator once available.
-            raise NotImplementedError("TODO: add biwheel base teleoperator support.")
+            return BiwheelGamepadTeleop(self.config.base_config)
         raise ValueError(f"Unsupported base teleoperator type: {base_type}")
 
     @cached_property
