@@ -110,6 +110,8 @@ class RobotEnv(gym.Env):
         robot,
         action_dim: int,
         use_gripper: bool = False,
+        min_bound_gripper_pos: float = 0.0,
+        max_bound_gripper_pos: float = 2.0,
         display_cameras: bool = False,
         reset_pose: list[float] | None = None,
         reset_time_s: float = 5.0,
@@ -143,6 +145,8 @@ class RobotEnv(gym.Env):
 
         self.action_dim = action_dim
         self.use_gripper = use_gripper
+        self.min_bound_gripper_pos = min_bound_gripper_pos
+        self.max_bound_gripper_pos = max_bound_gripper_pos
 
         self._joint_names = list(self.robot.bus.motors.keys())
         self._raw_joint_positions = None
@@ -196,12 +200,8 @@ class RobotEnv(gym.Env):
         if self.use_gripper:
             action_dim += 1
             # TODO(jpizarrom): bounds should part of the config
-            bounds["min"] = np.concatenate(
-                [bounds["min"], [self.robot.processor.gripper.min_bound_gripper_pos]]
-            )
-            bounds["max"] = np.concatenate(
-                [bounds["max"], [self.robot.processor.gripper.max_bound_gripper_pos]]
-            )
+            bounds["min"] = np.concatenate([bounds["min"], [self.min_bound_gripper_pos]])
+            bounds["max"] = np.concatenate([bounds["max"], [self.max_bound_gripper_pos]])
 
         self.action_space = gym.spaces.Box(
             low=bounds["min"],
@@ -353,6 +353,8 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         robot=robot,
         action_dim=action_dim,
         use_gripper=use_gripper,
+        min_bound_gripper_pos=cfg.processor.gripper.min_bound_gripper_pos,
+        max_bound_gripper_pos=cfg.processor.gripper.max_bound_gripper_pos,
         display_cameras=display_cameras,
         reset_pose=reset_pose,
     )
