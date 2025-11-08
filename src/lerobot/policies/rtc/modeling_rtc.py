@@ -87,15 +87,6 @@ class RTCProcessor:
                 **metadata,
             )
 
-    def get_tracker_stats(self) -> dict | None:
-        """Get tracker statistics summary.
-
-        Returns None if tracker is disabled or None.
-        """
-        if self.tracker is not None:
-            return self.tracker.get_step_stats_summary()
-        return None
-
     def get_all_debug_steps(self) -> list:
         """Get all debug steps from tracker.
 
@@ -103,15 +94,6 @@ class RTCProcessor:
         """
         if self.tracker is not None:
             return self.tracker.get_all_steps()
-        return []
-
-    def get_recent_debug_steps(self, n: int = 1) -> list:
-        """Get recent debug steps from tracker.
-
-        Returns empty list if tracker is disabled or None.
-        """
-        if self.tracker is not None:
-            return self.tracker.get_recent_steps(n)
         return []
 
     def is_debug_enabled(self) -> bool:
@@ -128,15 +110,6 @@ class RTCProcessor:
         """
         if self.tracker is not None:
             self.tracker.reset()
-
-    def get_tracker_length(self) -> int:
-        """Get the number of recorded debug steps.
-
-        Returns 0 if tracker is disabled or None.
-        """
-        if self.tracker is not None:
-            return len(self.tracker)
-        return 0
 
     # ====================== End Tracker Proxy Methods ======================
 
