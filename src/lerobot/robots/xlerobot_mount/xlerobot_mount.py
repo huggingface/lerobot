@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 
 class XLeRobotMount(Robot):
-
     config_class = XLeRobotMountConfig
     name = "xlerobot_mount"
 
@@ -90,7 +89,6 @@ class XLeRobotMount(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        
         logger.info("Calibrating %s", self)
 
         if self.calibration:
@@ -147,7 +145,6 @@ class XLeRobotMount(Robot):
                 self.bus.write("D_Coefficient", motor, 32)
 
     def disconnect(self) -> None:
-        
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} not connected")
 
@@ -156,7 +153,6 @@ class XLeRobotMount(Robot):
         logger.info("%s disconnected.", self)
 
     def get_observation(self) -> dict[str, Any]:
-        
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} not connected")
 
@@ -167,18 +163,13 @@ class XLeRobotMount(Robot):
         }
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} not connected")
 
         # Enforce safety limits
-        pan_cmd = max(
-            self.config.pan_range[0],
-            min(self.config.pan_range[1], action[self.config.pan_key])
-        )
+        pan_cmd = max(self.config.pan_range[0], min(self.config.pan_range[1], action[self.config.pan_key]))
         tilt_cmd = max(
-            self.config.tilt_range[0],
-            min(self.config.tilt_range[1], action[self.config.tilt_key])
+            self.config.tilt_range[0], min(self.config.tilt_range[1], action[self.config.tilt_key])
         )
 
         # Send commands to motors

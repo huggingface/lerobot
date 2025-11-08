@@ -79,8 +79,8 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xlerobot,
     xlerobot_mount,
-    xlerobot
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -96,8 +96,8 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
-    xlerobot_mount_gamepad,
     xlerobot_leader_gamepad,
+    xlerobot_mount_gamepad,
 )
 from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait

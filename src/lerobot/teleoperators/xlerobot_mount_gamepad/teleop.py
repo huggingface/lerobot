@@ -26,12 +26,14 @@
 # limitations under the License.
 
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import draccus
 import numpy as np
+
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
@@ -47,7 +49,6 @@ class MountGamepadCalibration:
 
 
 class XLeRobotMountGamepadTeleop(Teleoperator):
-    
     config_class = XLeRobotMountGamepadTeleopConfig
     name = "xlerobot_mount_gamepad"
 
@@ -224,7 +225,6 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
             self._current_tilt = float(tilt_val)
 
     def get_action(self) -> dict[str, Any]:
-        
         if not self.is_connected or self._pygame is None:
             raise DeviceNotConnectedError("Mount gamepad teleoperator is not connected.")
 
@@ -266,16 +266,8 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         self._current_tilt += tilt_input * self.config.max_tilt_speed_dps * dt
 
         # Clamp to safe ranges
-        self._current_pan = np.clip(
-            self._current_pan,
-            self.config.pan_range[0],
-            self.config.pan_range[1]
-        )
-        self._current_tilt = np.clip(
-            self._current_tilt,
-            self.config.tilt_range[0],
-            self.config.tilt_range[1]
-        )
+        self._current_pan = np.clip(self._current_pan, self.config.pan_range[0], self.config.pan_range[1])
+        self._current_tilt = np.clip(self._current_tilt, self.config.tilt_range[0], self.config.tilt_range[1])
 
         action = {
             "mount_pan.pos": self._current_pan,
@@ -289,36 +281,28 @@ class XLeRobotMountGamepadTeleop(Teleoperator):
         return action
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-
         del feedback
 
     def disconnect(self) -> None:
         if self._joystick is not None:
             # Not all pygame versions expose quit() on Joystick, guard accordingly
             if hasattr(self._joystick, "quit"):
-                try:
+                with suppress(Exception):
                     self._joystick.quit()
-                except Exception:
-                    pass
             self._joystick = None
 
         if self._pygame is not None:
-            try:
+            with suppress(Exception):
                 if hasattr(self._pygame, "joystick"):
                     self._pygame.joystick.quit()
-            except Exception:
-                pass
-            try:
+            with suppress(Exception):
                 if hasattr(self._pygame, "quit"):
                     self._pygame.quit()
-            except Exception:
-                pass
             self._pygame = None
 
         self._clock = None
 
     def _apply_deadzone(self, value: float) -> float:
-        
         if abs(value) < self.config.deadzone:
             return 0.0
         return max(-1.0, min(1.0, value))

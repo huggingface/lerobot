@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 import draccus
+
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator

@@ -15,9 +15,9 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..config import TeleoperatorConfig
 from ..bi_so101_leader.config_bi_so101_leader import BiSO101LeaderConfig
 from ..biwheel_gamepad.config_biwheel_gamepad import BiwheelGamepadTeleopConfig
+from ..config import TeleoperatorConfig
 from ..lekiwi_base_gamepad.config_lekiwi_base_gamepad import LeKiwiBaseTeleopConfig
 from ..xlerobot_mount_gamepad.config import XLeRobotMountGamepadTeleopConfig
 
@@ -42,15 +42,29 @@ class XLeRobotLeaderGamepadConfig(TeleoperatorConfig):
     base_type: str = BASE_TYPE_LEKIWI
 
     def __post_init__(self) -> None:
-        arms_cfg = self.arms if isinstance(self.arms, BiSO101LeaderConfig) else BiSO101LeaderConfig(**self.arms)
+        arms_cfg = (
+            self.arms if isinstance(self.arms, BiSO101LeaderConfig) else BiSO101LeaderConfig(**self.arms)
+        )
         base_type = self.base_type or self.BASE_TYPE_LEKIWI
         if base_type == self.BASE_TYPE_LEKIWI:
-            base_cfg = self.base if isinstance(self.base, LeKiwiBaseTeleopConfig) else LeKiwiBaseTeleopConfig(**self.base)
+            base_cfg = (
+                self.base
+                if isinstance(self.base, LeKiwiBaseTeleopConfig)
+                else LeKiwiBaseTeleopConfig(**self.base)
+            )
         elif base_type == self.BASE_TYPE_BIWHEEL:
-            base_cfg = self.base if isinstance(self.base, BiwheelGamepadTeleopConfig) else BiwheelGamepadTeleopConfig(**self.base)
+            base_cfg = (
+                self.base
+                if isinstance(self.base, BiwheelGamepadTeleopConfig)
+                else BiwheelGamepadTeleopConfig(**self.base)
+            )
         else:
             raise ValueError(f"Unsupported XLeRobot base type: {base_type}")
-        mount_cfg = self.mount if isinstance(self.mount, XLeRobotMountGamepadTeleopConfig) else XLeRobotMountGamepadTeleopConfig(**self.mount)
+        mount_cfg = (
+            self.mount
+            if isinstance(self.mount, XLeRobotMountGamepadTeleopConfig)
+            else XLeRobotMountGamepadTeleopConfig(**self.mount)
+        )
         self.arms_config = arms_cfg
         self.base_config = base_cfg
         self.mount_config = mount_cfg

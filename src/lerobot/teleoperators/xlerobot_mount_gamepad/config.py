@@ -21,7 +21,6 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("xlerobot_mount_gamepad")
 @dataclass
 class XLeRobotMountGamepadTeleopConfig(TeleoperatorConfig):
-
     joystick_index: int = 0  # Controller index (0 for first controller)
     deadzone: float = 0.15  # Deadzone threshold (0.0-1.0)
     polling_fps: int = 50  # Control loop frequency in Hz

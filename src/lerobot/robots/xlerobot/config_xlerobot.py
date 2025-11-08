@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# XLeRobot integration based on
+#   https://www.hackster.io/brainbot/brainbot-big-brain-with-xlerobot-ad1b4c
+#   https://github.com/Astera-org/brainbot
+#   https://github.com/Vector-Wangel/XLeRobot
+#   https://github.com/bingogome/lerobot
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,10 +51,7 @@ class XLeRobotConfig(RobotConfig):
             arms_cfg = BiSO101FollowerConfig(**self.arms)
         base_type = self.base_type or self.BASE_TYPE_LEKIWI
         if base_type == self.BASE_TYPE_LEKIWI:
-            if isinstance(self.base, LeKiwiBaseConfig):
-                base_cfg = self.base
-            else:
-                base_cfg = LeKiwiBaseConfig(**self.base)
+            base_cfg = self.base if isinstance(self.base, LeKiwiBaseConfig) else LeKiwiBaseConfig(**self.base)
         elif base_type == self.BASE_TYPE_BIWHEEL:
             if isinstance(self.base, BiWheelBaseConfig):
                 base_cfg = self.base

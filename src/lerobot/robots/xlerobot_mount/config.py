@@ -20,7 +20,6 @@ from ..config import RobotConfig
 @RobotConfig.register_subclass("xlerobot_mount")
 @dataclass
 class XLeRobotMountConfig(RobotConfig):
-
     # Serial communication
     port: str = "/dev/ttyACM5"  # USB-to-serial port (adjust for your system)
 

@@ -76,13 +76,14 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from functools import cached_property
-from typing import Any, Dict
+from typing import Any
 
-from ..teleoperator import Teleoperator
 from ..bi_so101_leader.bi_so101_leader import BiSO101Leader
 from ..biwheel_gamepad.teleop_biwheel_gamepad import BiwheelGamepadTeleop
 from ..lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import LeKiwiBaseTeleop
+from ..teleoperator import Teleoperator
 from ..xlerobot_mount_gamepad.teleop import XLeRobotMountGamepadTeleop
 from .config import XLeRobotLeaderGamepadConfig
 
@@ -132,9 +133,7 @@ class XLeRobotLeaderGamepad(Teleoperator):
     @property
     def is_connected(self) -> bool:
         return (
-            self.arm_teleop.is_connected
-            and self.base_teleop.is_connected
-            and self.mount_teleop.is_connected
+            self.arm_teleop.is_connected and self.base_teleop.is_connected and self.mount_teleop.is_connected
         )
 
     def connect(self, calibrate: bool = True) -> None:
@@ -158,18 +157,16 @@ class XLeRobotLeaderGamepad(Teleoperator):
 
     def on_observation(self, robot_obs: dict[str, Any]) -> None:
         if hasattr(self.mount_teleop, "on_observation"):
-            try:
+            with suppress(Exception):
                 self.mount_teleop.on_observation(robot_obs)
-            except Exception:
-                pass
 
-    def get_action(self) -> Dict[str, float]:
+    def get_action(self) -> dict[str, float]:
         action = dict(self.arm_teleop.get_action())
         action.update(self.base_teleop.get_action())
         action.update(self.mount_teleop.get_action())
         return action
 
-    def send_feedback(self, feedback: Dict[str, float]) -> None:
+    def send_feedback(self, feedback: dict[str, float]) -> None:
         self.arm_teleop.send_feedback(feedback)
 
     @property

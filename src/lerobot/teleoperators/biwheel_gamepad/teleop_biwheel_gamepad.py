@@ -28,11 +28,13 @@
 from __future__ import annotations
 
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import draccus
+
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
@@ -109,7 +111,6 @@ class BiwheelGamepadTeleop(Teleoperator):
         if not self.is_connected or self._pygame is None:
             raise DeviceNotConnectedError("Biwheel gamepad teleoperator is not connected.")
 
-        pygame = self._pygame
         axis_threshold = 0.6
         release_threshold = 0.2
         poll_interval = 0.05
@@ -198,18 +199,14 @@ class BiwheelGamepadTeleop(Teleoperator):
     def disconnect(self) -> None:
         if self._joystick is not None:
             if hasattr(self._joystick, "quit"):
-                try:
+                with suppress(Exception):
                     self._joystick.quit()
-                except Exception:
-                    pass
             self._joystick = None
 
         if self._pygame is not None:
-            try:
+            with suppress(Exception):
                 if hasattr(self._pygame, "joystick"):
                     self._pygame.joystick.quit()
-            except Exception:
-                pass
             self._pygame = None
 
         self._clock = None

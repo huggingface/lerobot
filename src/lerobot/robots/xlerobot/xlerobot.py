@@ -14,6 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# XLeRobot integration based on
+#   https://www.hackster.io/brainbot/brainbot-big-brain-with-xlerobot-ad1b4c
+#   https://github.com/Astera-org/brainbot
+#   https://github.com/Vector-Wangel/XLeRobot
+#   https://github.com/bingogome/lerobot
+
 import logging
 from dataclasses import replace
 from functools import cached_property
@@ -22,13 +28,14 @@ from typing import Any
 import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.utils.errors import DeviceNotConnectedError
+
 from ..bi_so101_follower.bi_so101_follower import BiSO101Follower
 from ..biwheel_base.biwheel_base import BiWheelBase
 from ..lekiwi_base.lekiwi_base import LeKiwiBase
 from ..robot import Robot
 from ..xlerobot_mount.xlerobot_mount import XLeRobotMount
 from .config_xlerobot import XLeRobotConfig
-from lerobot.utils.errors import DeviceNotConnectedError
 
 logger = logging.getLogger(__name__)
 
