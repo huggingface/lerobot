@@ -38,6 +38,7 @@ from lerobot.processor import (
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     JointVelocityProcessorStep,
+    LeaderFollowerProcessor,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
     MotorCurrentProcessorStep,
@@ -76,6 +77,7 @@ from lerobot.teleoperators import (
     make_teleoperator_from_config,
     so101_leader,  # noqa: F401
 )
+from lerobot.teleoperators.so101_leader.so101_leader_follower import SO101LeaderFollower
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
@@ -240,7 +242,9 @@ class RobotEnv(gym.Env):
         self.episode_data = None
         obs = self._get_observation()
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
-        return obs, {TeleopEvents.IS_INTERVENTION: False}
+        return obs, {
+            TeleopEvents.IS_INTERVENTION: False,
+        }
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
@@ -477,15 +481,41 @@ def make_processors(
     env_pipeline_steps.append(AddBatchDimensionProcessorStep())
     env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
+    # Get control mode
+    control_mode = cfg.processor.control_mode if cfg.processor is not None else "gamepad"
+
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
         AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
+    ]
+
+    # Check for leader control mode
+    if control_mode == "leader":
+        assert isinstance(teleop_device, SO101LeaderFollower), (
+            "Leader control mode requires SO101LeaderFollower teleop device"
+        )
+
+        action_pipeline_steps.append(
+            LeaderFollowerProcessor(
+                leader_device=teleop_device,
+                motor_names=motor_names,
+                robot=env.robot,
+                kinematics=kinematics_solver,
+                end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
+                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+                max_gripper_pos=cfg.processor.max_gripper_pos
+                if cfg.processor.max_gripper_pos is not None
+                else 100.0,
+            )
+        )
+
+    action_pipeline_steps.append(
         InterventionActionProcessorStep(
-            use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+            use_gripper=(cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False),
             use_rotation=True,  # TODO(jpizarrom): make this configurable
             terminate_on_success=terminate_on_success,
-        ),
-    ]
+        )
+    )
 
     # Replace InverseKinematicsProcessor with new kinematic processors
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
@@ -501,7 +531,7 @@ def make_processors(
                 end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
                 motor_names=motor_names,
                 use_latched_reference=False,
-                use_ik_solution=True,
+                use_ik_solution=False,
             ),
             EEBoundsAndSafety(
                 end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
@@ -514,7 +544,7 @@ def make_processors(
                 scale_velocity=True,  # TODO(jpizarrom): make this configurable
             ),
             InverseKinematicsRLStep(
-                kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=False
+                kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=True
             ),
         ]
         action_pipeline_steps.extend(inverse_kinematics_steps)
