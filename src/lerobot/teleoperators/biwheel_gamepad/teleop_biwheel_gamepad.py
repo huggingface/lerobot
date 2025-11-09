@@ -56,8 +56,9 @@ class BiwheelGamepadTeleop(Teleoperator):
     name = "biwheel_gamepad"
 
     def __init__(self, config: BiwheelGamepadTeleopConfig):
-        super().__init__(config)
+        # _load_calibration which in turn calls _apply_calibration_to_config that needs self.config
         self.config = config
+        super().__init__(config)
         self._pygame = None
         self._joystick = None
         self._clock = None
@@ -111,7 +112,7 @@ class BiwheelGamepadTeleop(Teleoperator):
         if not self.is_connected or self._pygame is None:
             raise DeviceNotConnectedError("Biwheel gamepad teleoperator is not connected.")
 
-        axis_threshold = 0.6
+        axis_threshold = 0.4
         release_threshold = 0.2
         poll_interval = 0.05
 
@@ -229,24 +230,27 @@ class BiwheelGamepadTeleop(Teleoperator):
         joystick = self._joystick
 
         print(prompt)
+        pygame.event.pump()
+        baseline = [joystick.get_axis(i) for i in range(joystick.get_numaxes())]
+
         while True:
             pygame.event.pump()
             num_axes = joystick.get_numaxes()
-            values = [joystick.get_axis(i) for i in range(num_axes)]
             best_axis = None
-            best_value = 0.0
-            for idx, value in enumerate(values):
+            best_delta = 0.0
+            for idx in range(num_axes):
                 if idx in exclude_axes:
                     continue
-                if abs(value) > abs(best_value):
-                    best_value = value
+                delta = joystick.get_axis(idx) - baseline[idx]
+                if abs(delta) > abs(best_delta):
+                    best_delta = delta
                     best_axis = idx
-            if best_axis is not None and abs(best_value) >= axis_threshold:
-                invert = best_value < 0
+            if best_axis is not None and abs(best_delta) >= axis_threshold:
+                invert = best_delta < 0
                 direction = "negative" if invert else "positive"
                 print(f"Detected axis {best_axis} ({direction})")
                 print("Release the stick to continue.")
-                while abs(joystick.get_axis(best_axis)) > release_threshold:
+                while abs(joystick.get_axis(best_axis) - baseline[best_axis]) > release_threshold:
                     pygame.event.pump()
                     time.sleep(poll_interval)
                 return best_axis, invert

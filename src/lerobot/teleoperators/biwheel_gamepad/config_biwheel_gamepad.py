@@ -25,8 +25,8 @@ class BiwheelGamepadTeleopConfig(TeleoperatorConfig):
     """Configuration for the differential (biwheel) base gamepad teleoperator."""
 
     joystick_index: int = 0
-    max_speed_mps: float = 0.9
-    yaw_speed_deg: float = 60.0
+    max_speed_mps: float = 0.2
+    yaw_speed_deg: float = 40.0
     deadzone: float = 0.15
     polling_fps: int = 60
     axis_forward: int = 1
