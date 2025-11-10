@@ -61,7 +61,8 @@ from lerobot.rl.gym_manipulator import (
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
-    so100_follower,
+    so100_follower,  # noqa: F401
+    so101_follower,  # noqa: F401
 )
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
@@ -111,6 +112,7 @@ class RobotEnv(gym.Env):
     def __init__(
         self,
         robot,
+        teleop_device: Teleoperator,
         action_dim: int,
         use_gripper: bool = False,
         min_bound_gripper_pos: float = 0.0,
@@ -131,6 +133,7 @@ class RobotEnv(gym.Env):
         super().__init__()
 
         self.robot = robot
+        self.teleop_device = teleop_device
         self.display_cameras = display_cameras
 
         # Connect to the robot if not already connected.
@@ -225,17 +228,20 @@ class RobotEnv(gym.Env):
         Returns:
             Tuple of (observation, info) dictionaries.
         """
+        log_say("Reset the environment.", play_sounds=True)
         # Reset the robot
         # self.robot.reset()
         start_time = time.perf_counter()
         if self.reset_pose is not None:
-            log_say("Reset the environment.", play_sounds=True)
             reset_follower_position(self.robot, np.array(self.reset_pose), steps=100)
+            if isinstance(self.teleop_device, SO101LeaderFollower):
+                reset_follower_position(self.teleop_device, np.array(self.reset_pose), steps=100)
             log_say("Reset the environment done.", play_sounds=True)
 
         busy_wait(self.reset_time_s - (time.perf_counter() - start_time))
 
         super().reset(seed=seed, options=options)
+        log_say("Environment reset complete.", play_sounds=True)
 
         # Reset episode tracking variables.
         self.current_step = 0
@@ -356,12 +362,14 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
 
     env = RobotEnv(
         robot=robot,
+        teleop_device=teleop_device,
         action_dim=action_dim,
         use_gripper=use_gripper,
         min_bound_gripper_pos=cfg.processor.gripper.min_bound_gripper_pos,
         max_bound_gripper_pos=cfg.processor.gripper.max_bound_gripper_pos,
         display_cameras=display_cameras,
         reset_pose=reset_pose,
+        reset_time_s=cfg.processor.reset.reset_time_s if cfg.processor.reset is not None else 5.0,
     )
 
     return env, teleop_device
