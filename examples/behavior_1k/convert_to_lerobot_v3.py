@@ -59,9 +59,18 @@ NEW_ROOT = Path("/fsx/jade_choghari/tmp/bb")
 
 
 def fix_episode_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Performs several fixes to an underlying dataframe to make it LeRobotDataset-v3 compatible"""
     # Inject per-episode frame_index if missing (0..N-1 within each episode)
     if "frame_index" not in df.columns:
         df["frame_index"] = range(len(df))
+
+    # Remove variable-length task_info feature (NOTE(fracapuano): change to padding at some point?)
+    if "observation.task_info" in df.columns:
+        df = df.drop(columns=["observation.task_info"])
+
+    # NOTE(fracapuano): tasks are ordered (and there is one task per file/dataset)
+    if "task_index" in df.columns:
+        df["task_index"] = 0
 
     return df
 
@@ -96,8 +105,13 @@ def convert_info(
     root, new_root, data_file_size_in_mb, video_file_size_in_mb, meta_path, task_id: int, task_ranges, step
 ):
     info = load_info(root)
+    features = {**info["features"], **DEFAULT_FEATURES}
+    del features[
+        "observation.task_info"
+    ]  # variable-length task_info is not supported in LeRobotDataset v3.0!
+    
     info["codebase_version"] = "v3.0"
-    info["features"] = {**info["features"], **DEFAULT_FEATURES}
+    info["features"] = features
     del info["total_videos"]
     info["data_files_size_in_mb"] = data_file_size_in_mb
     info["video_files_size_in_mb"] = video_file_size_in_mb
@@ -135,7 +149,8 @@ def convert_tasks(root, new_root, task_id: int):
     if task_id not in tasks:
         raise ValueError(f"Task ID {task_id} not found in tasks (available: {list(tasks.keys())})")
     tasks = {task_id: tasks[task_id]}
-    task_indices = tasks.keys()
+    # Tasks are ordered with 0..ntasks-1 in the converted dataset
+    task_indices = range(len(tasks.keys()))
     task_strings = tasks.values()
     df_tasks = pd.DataFrame({"task_index": task_indices}, index=task_strings)
     write_tasks(df_tasks, new_root)
@@ -502,11 +517,16 @@ def convert_episodes_metadata(
     if len(num_eps_set) != 1:
         raise ValueError(f"Number of episodes is not the same ({num_eps_set}).")
 
+    # Single file approach: set meta indices to 0 for all rows and write once
     ds_episodes = Dataset.from_generator(
         lambda: generate_episode_metadata_dict(
             episodes_legacy_metadata, episodes_metadata, episodes_stats, episodes_video_metadata
         )
     )
+    num_eps = len(ds_episodes)
+    # NOTE(fracapuano): for the size of the average dataset this is fine!
+    ds_episodes = ds_episodes.add_column("meta/episodes/chunk_index", [0] * num_eps)
+    ds_episodes = ds_episodes.add_column("meta/episodes/file_index", [0] * num_eps)
     write_episodes(ds_episodes, new_root)
 
     stats = aggregate_stats(list(episodes_stats.values()))
