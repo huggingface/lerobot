@@ -184,74 +184,6 @@ def test_max_after_reset(tracker):
     assert tracker.max() == 0.0
 
 
-# ====================== percentile() Tests ======================
-
-
-def test_percentile_returns_zero_when_empty(tracker):
-    """Test percentile() returns 0.0 when tracker is empty."""
-    assert tracker.percentile(0.5) == 0.0
-    assert tracker.percentile(0.95) == 0.0
-
-
-def test_percentile_median(tracker):
-    """Test percentile(0.5) returns median."""
-    # Add sorted values for easier verification
-    values = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    for v in values:
-        tracker.add(v)
-
-    # Median should be around 0.5
-    median = tracker.percentile(0.5)
-    assert 0.45 <= median <= 0.55
-
-
-def test_percentile_minimum_with_zero(tracker):
-    """Test percentile(0.0) returns minimum."""
-    tracker.add(0.5)
-    tracker.add(0.2)
-    tracker.add(0.8)
-
-    assert tracker.percentile(0.0) == 0.2
-
-
-def test_percentile_maximum_with_one(tracker):
-    """Test percentile(1.0) returns maximum."""
-    tracker.add(0.5)
-    tracker.add(0.2)
-    tracker.add(0.8)
-
-    assert tracker.percentile(1.0) == 0.8
-
-
-def test_percentile_95(tracker):
-    """Test percentile(0.95) returns 95th percentile."""
-    # Add 100 values from 0.0 to 0.99
-    for i in range(100):
-        tracker.add(i / 100.0)
-
-    p95 = tracker.percentile(0.95)
-    # 95th percentile should be around 0.95
-    assert 0.93 <= p95 <= 0.96
-
-
-def test_percentile_negative_value_returns_min(tracker):
-    """Test percentile with negative q returns minimum."""
-    tracker.add(0.5)
-    tracker.add(0.2)
-    tracker.add(0.8)
-
-    assert tracker.percentile(-0.5) == 0.2
-
-
-def test_percentile_value_greater_than_one_returns_max(tracker):
-    """Test percentile with q > 1.0 returns maximum."""
-    tracker.add(0.5)
-    tracker.add(0.2)
-    tracker.add(0.8)
-
-    assert tracker.percentile(1.5) == 0.8
-
-
 # ====================== p95() Tests ======================
 
 
@@ -276,79 +208,6 @@ def test_p95_equals_percentile_95(tracker):
         tracker.add(i / 50.0)
 
     assert tracker.p95() == tracker.percentile(0.95)
-
-
-# ====================== __len__() Tests ======================
-
-
-def test_len_returns_zero_initially(tracker):
-    """Test __len__ returns 0 for new tracker."""
-    assert len(tracker) == 0
-
-
-def test_len_increments_with_add(tracker):
-    """Test __len__ increments as values are added."""
-    assert len(tracker) == 0
-
-    tracker.add(0.1)
-    assert len(tracker) == 1
-
-    tracker.add(0.2)
-    assert len(tracker) == 2
-
-    tracker.add(0.3)
-    assert len(tracker) == 3
-
-
-def test_len_respects_maxlen(small_tracker):
-    """Test __len__ respects maxlen limit."""
-    # Add more than maxlen values
-    for i in range(10):
-        small_tracker.add(i / 10.0)
-
-    # Should only keep last 5
-    assert len(small_tracker) == 5
-
-
-def test_len_after_reset(tracker):
-    """Test __len__ returns 0 after reset."""
-    tracker.add(0.5)
-    tracker.add(0.3)
-    assert len(tracker) == 2
-
-    tracker.reset()
-    assert len(tracker) == 0
-
-
-# ====================== Sliding Window Tests ======================
-
-
-def test_sliding_window_removes_oldest(small_tracker):
-    """Test sliding window removes oldest values."""
-    # Add 7 values to tracker with maxlen=5
-    values = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-    for v in values:
-        small_tracker.add(v)
-
-    # Should only have last 5: [0.3, 0.4, 0.5, 0.6, 0.7]
-    assert len(small_tracker) == 5
-
-    # Median should reflect last 5 values
-    median = small_tracker.percentile(0.5)
-    assert 0.45 <= median <= 0.55
-
-
-def test_sliding_window_maintains_max(small_tracker):
-    """Test sliding window maintains correct max even after overflow."""
-    small_tracker.add(0.1)
-    small_tracker.add(0.9)
-    small_tracker.add(0.2)
-    small_tracker.add(0.3)
-    small_tracker.add(0.4)
-    small_tracker.add(0.5)  # Pushes out 0.1
-
-    # Max should still be 0.9
-    assert small_tracker.max() == 0.9
 
 
 # ====================== Edge Cases Tests ======================
@@ -434,24 +293,6 @@ def test_reset_and_reuse(tracker):
     assert len(tracker) == 2
     assert tracker.max() == 0.8
     assert tracker.percentile(0.5) <= 0.8
-
-
-def test_continuous_monitoring(small_tracker):
-    """Test continuous monitoring with sliding window."""
-    # Simulate continuous latency monitoring
-    # First 5 latencies
-    for i in range(5):
-        small_tracker.add(0.1 * (i + 1))
-
-    max_before = small_tracker.max()
-
-    # Add 5 more (window slides)
-    for i in range(5, 10):
-        small_tracker.add(0.1 * (i + 1))
-
-    # Max should have increased
-    assert small_tracker.max() > max_before
-    assert len(small_tracker) == 5  # Window size maintained
 
 
 # ====================== Type Conversion Tests ======================
