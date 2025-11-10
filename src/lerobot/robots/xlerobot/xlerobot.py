@@ -129,9 +129,7 @@ class XLeRobot(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return all(
-            comp.is_calibrated for comp in (self.arms, self.base, self.mount) if comp is not None
-        )
+        return all(comp.is_calibrated for comp in (self.arms, self.base, self.mount) if comp is not None)
 
     def calibrate(self) -> None:
         logger.info("Calibrating XLeRobot components")

@@ -56,7 +56,7 @@ lerobot-teleoperate \
 
 
 # # Or, if you want to run without a sub-robot, say the arms:
-# 
+#
 # lerobot-teleoperate \
 #     --robot.type=xlerobot \
 #     --robot.base_type=lekiwi_base \

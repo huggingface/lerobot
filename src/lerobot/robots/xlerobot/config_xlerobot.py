@@ -55,9 +55,13 @@ class XLeRobotConfig(RobotConfig):
         base_type = self.base_type or self.BASE_TYPE_LEKIWI
         if self.base:
             if base_type == self.BASE_TYPE_LEKIWI:
-                base_cfg = self.base if isinstance(self.base, LeKiwiBaseConfig) else LeKiwiBaseConfig(**self.base)
+                base_cfg = (
+                    self.base if isinstance(self.base, LeKiwiBaseConfig) else LeKiwiBaseConfig(**self.base)
+                )
             elif base_type == self.BASE_TYPE_BIWHEEL:
-                base_cfg = self.base if isinstance(self.base, BiWheelBaseConfig) else BiWheelBaseConfig(**self.base)
+                base_cfg = (
+                    self.base if isinstance(self.base, BiWheelBaseConfig) else BiWheelBaseConfig(**self.base)
+                )
             else:
                 raise ValueError(f"Unsupported XLeRobot base type: {base_type}")
         else:
