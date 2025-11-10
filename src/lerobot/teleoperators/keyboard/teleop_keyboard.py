@@ -158,8 +158,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
     name = "keyboard_ee"
 
     def __init__(self, config: KeyboardEndEffectorTeleopConfig):
-        super().__init__(config)
         self.config = config
+        super().__init__(config)
         self.misc_keys_queue = Queue()
 
     @property

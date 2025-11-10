@@ -50,21 +50,24 @@ class XLeRobot(Robot):
         super().__init__(config)
         self.config = config
 
-        self.arms = BiSO101Follower(replace(config.arms_config))
+        self.arms = BiSO101Follower(replace(config.arms_config)) if config.arms_config else None
         self.base = self._build_base_robot()
-        self.mount = XLeRobotMount(replace(config.mount_config))
+        self.mount = XLeRobotMount(replace(config.mount_config)) if config.mount_config else None
         self.camera_configs = dict(config.cameras)
         self.cameras = make_cameras_from_configs(self.camera_configs)
         self._last_camera_obs: dict[str, np.ndarray] = {
             name: self._make_blank_camera_obs(name) for name in self.cameras
         }
 
-    def _build_base_robot(self) -> Robot:
-        base_type = getattr(self.config, "base_type", XLeRobotConfig.BASE_TYPE_LEKIWI)
+    def _build_base_robot(self) -> Robot | None:
+        base_config = getattr(self.config, "base_config", None)
+        if base_config is None:
+            return None
+        base_type = getattr(self.config, "base_type", None) or XLeRobotConfig.BASE_TYPE_LEKIWI
         if base_type == XLeRobotConfig.BASE_TYPE_LEKIWI:
-            return LeKiwiBase(replace(self.config.base_config))
+            return LeKiwiBase(replace(base_config))
         if base_type == XLeRobotConfig.BASE_TYPE_BIWHEEL:
-            return BiWheelBase(replace(self.config.base_config))
+            return BiWheelBase(replace(base_config))
         raise ValueError(f"Unsupported base robot type: {base_type}")
 
     def _make_blank_camera_obs(self, cam_key: str) -> np.ndarray:
@@ -85,58 +88,74 @@ class XLeRobot(Robot):
     @cached_property
     def observation_features(self) -> dict[str, Any]:
         features: dict[str, Any] = {}
-        features.update(self.arms.observation_features)
-        features.update(self.base.observation_features)
-        features.update(self.mount.observation_features)
+        if self.arms:
+            features.update(self.arms.observation_features)
+        if self.base:
+            features.update(self.base.observation_features)
+        if self.mount:
+            features.update(self.mount.observation_features)
         features.update(self._cameras_ft)
         return features
 
     @cached_property
     def action_features(self) -> dict[str, Any]:
         features: dict[str, Any] = {}
-        features.update(self.arms.action_features)
-        features.update(self.base.action_features)
-        features.update(self.mount.action_features)
+        if self.arms:
+            features.update(self.arms.action_features)
+        if self.base:
+            features.update(self.base.action_features)
+        if self.mount:
+            features.update(self.mount.action_features)
         return features
 
     @property
     def is_connected(self) -> bool:
-        return (
-            self.arms.is_connected
-            and self.base.is_connected
-            and self.mount.is_connected
-            and all(cam.is_connected for cam in self.cameras.values())
+        components_connected = all(
+            comp.is_connected for comp in (self.arms, self.base, self.mount) if comp is not None
         )
+        cameras_connected = all(cam.is_connected for cam in self.cameras.values())
+        return components_connected and cameras_connected
 
     def connect(self, calibrate: bool = True) -> None:
-        self.mount.connect(calibrate=calibrate)
-        handshake = getattr(self.base.config, "handshake_on_connect", True)
-        self.base.connect(calibrate=calibrate, handshake=handshake)
-        self.arms.connect(calibrate=calibrate)
+        if self.mount:
+            self.mount.connect(calibrate=calibrate)
+        if self.base:
+            handshake = getattr(self.base.config, "handshake_on_connect", True)
+            self.base.connect(calibrate=calibrate, handshake=handshake)
+        if self.arms:
+            self.arms.connect(calibrate=calibrate)
         for cam in self.cameras.values():
             cam.connect()
 
     @property
     def is_calibrated(self) -> bool:
-        return self.arms.is_calibrated and self.base.is_calibrated and self.mount.is_calibrated
+        return all(
+            comp.is_calibrated for comp in (self.arms, self.base, self.mount) if comp is not None
+        )
 
     def calibrate(self) -> None:
         logger.info("Calibrating XLeRobot components")
-        self.base.calibrate()
-        self.arms.calibrate()
-        self.mount.calibrate()
+        if self.base:
+            self.base.calibrate()
+        if self.arms:
+            self.arms.calibrate()
+        if self.mount:
+            self.mount.calibrate()
 
     def configure(self) -> None:
-        self.base.configure()
-        self.arms.configure()
-        self.mount.configure()
+        if self.base:
+            self.base.configure()
+        if self.arms:
+            self.arms.configure()
+        if self.mount:
+            self.mount.configure()
 
     def setup_motors(self) -> None:
-        if hasattr(self.arms, "setup_motors"):
+        if self.arms and hasattr(self.arms, "setup_motors"):
             self.arms.setup_motors()
-        if hasattr(self.base, "setup_motors"):
+        if self.base and hasattr(self.base, "setup_motors"):
             self.base.setup_motors()
-        if hasattr(self.mount, "setup_motors"):
+        if self.mount and hasattr(self.mount, "setup_motors"):
             self.mount.setup_motors()
 
     def get_observation(self) -> dict[str, Any]:
@@ -144,9 +163,12 @@ class XLeRobot(Robot):
             raise DeviceNotConnectedError("XLeRobot is not connected.")
 
         obs = {}
-        obs.update(self.arms.get_observation())
-        obs.update(self.base.get_observation())
-        obs.update(self.mount.get_observation())
+        if self.arms:
+            obs.update(self.arms.get_observation())
+        if self.base:
+            obs.update(self.base.get_observation())
+        if self.mount:
+            obs.update(self.mount.get_observation())
         for name, cam in self.cameras.items():
             try:
                 frame = cam.async_read()
@@ -179,18 +201,19 @@ class XLeRobot(Robot):
                     base_action[key] = action[prefixed]
 
         mount_action: dict[str, float] = {}
-        mount_keys = set(self.mount.action_features.keys())
-        for key in mount_keys:
-            if key in action:
-                mount_action[key] = action[key]
+        if self.mount:
+            mount_keys = set(self.mount.action_features.keys())
+            for key in mount_keys:
+                if key in action:
+                    mount_action[key] = action[key]
 
-        sent_arm = self.arms.send_action(arm_action)
-        sent_base = self.base.send_action(base_action)
-        sent_mount = self.mount.send_action(mount_action) if mount_action else {}
+        sent_arm = self.arms.send_action(arm_action) if self.arms else {}
+        sent_base = self.base.send_action(base_action) if self.base else {}
+        sent_mount = self.mount.send_action(mount_action) if self.mount and mount_action else {}
         return {**sent_arm, **sent_base, **sent_mount}
 
     def disconnect(self) -> None:
-        if self.base.is_connected:
+        if self.base and self.base.is_connected:
             try:
                 if hasattr(self.base, "stop_base"):
                     self.base.stop_base()
@@ -199,12 +222,12 @@ class XLeRobot(Robot):
                 logger.debug("Base already disconnected", exc_info=False)
             except Exception:
                 logger.warning("Failed to disconnect base", exc_info=True)
-        if self.mount.is_connected:
+        if self.mount and self.mount.is_connected:
             try:
                 self.mount.disconnect()
             except DeviceNotConnectedError:
                 logger.debug("Mount already disconnected", exc_info=False)
-        if self.arms.is_connected:
+        if self.arms and self.arms.is_connected:
             try:
                 self.arms.disconnect()
             except DeviceNotConnectedError:

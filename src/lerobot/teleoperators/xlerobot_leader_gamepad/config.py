@@ -39,32 +39,41 @@ class XLeRobotLeaderGamepadConfig(TeleoperatorConfig):
     arms: dict[str, Any] = field(default_factory=dict)
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
-    base_type: str = BASE_TYPE_LEKIWI
+    base_type: str | None = BASE_TYPE_LEKIWI
 
     def __post_init__(self) -> None:
-        arms_cfg = (
-            self.arms if isinstance(self.arms, BiSO101LeaderConfig) else BiSO101LeaderConfig(**self.arms)
-        )
+        arms_cfg: BiSO101LeaderConfig | None = None
+        if isinstance(self.arms, BiSO101LeaderConfig):
+            arms_cfg = self.arms
+        elif self.arms:
+            arms_cfg = BiSO101LeaderConfig(**self.arms)
+
+        base_cfg: LeKiwiBaseTeleopConfig | BiwheelGamepadTeleopConfig | None = None
         base_type = self.base_type or self.BASE_TYPE_LEKIWI
-        if base_type == self.BASE_TYPE_LEKIWI:
-            base_cfg = (
-                self.base
-                if isinstance(self.base, LeKiwiBaseTeleopConfig)
-                else LeKiwiBaseTeleopConfig(**self.base)
-            )
-        elif base_type == self.BASE_TYPE_BIWHEEL:
-            base_cfg = (
-                self.base
-                if isinstance(self.base, BiwheelGamepadTeleopConfig)
-                else BiwheelGamepadTeleopConfig(**self.base)
-            )
+        if self.base:
+            if base_type == self.BASE_TYPE_LEKIWI:
+                base_cfg = (
+                    self.base
+                    if isinstance(self.base, LeKiwiBaseTeleopConfig)
+                    else LeKiwiBaseTeleopConfig(**self.base)
+                )
+            elif base_type == self.BASE_TYPE_BIWHEEL:
+                base_cfg = (
+                    self.base
+                    if isinstance(self.base, BiwheelGamepadTeleopConfig)
+                    else BiwheelGamepadTeleopConfig(**self.base)
+                )
+            else:
+                raise ValueError(f"Unsupported XLeRobot base type: {base_type}")
         else:
-            raise ValueError(f"Unsupported XLeRobot base type: {base_type}")
-        mount_cfg = (
-            self.mount
-            if isinstance(self.mount, XLeRobotMountGamepadTeleopConfig)
-            else XLeRobotMountGamepadTeleopConfig(**self.mount)
-        )
+            base_type = None
+
+        mount_cfg: XLeRobotMountGamepadTeleopConfig | None = None
+        if isinstance(self.mount, XLeRobotMountGamepadTeleopConfig):
+            mount_cfg = self.mount
+        elif self.mount:
+            mount_cfg = XLeRobotMountGamepadTeleopConfig(**self.mount)
+
         self.arms_config = arms_cfg
         self.base_config = base_cfg
         self.mount_config = mount_cfg

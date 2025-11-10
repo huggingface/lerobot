@@ -199,8 +199,8 @@ class BiwheelKeyboardTeleop(Teleoperator):
     name = "biwheel_keyboard"
 
     def __init__(self, config: BiwheelKeyboardTeleopConfig):
-        super().__init__(config)
         self.config = config
+        super().__init__(config)
 
         self.event_queue = Queue()
         self.current_pressed = {}

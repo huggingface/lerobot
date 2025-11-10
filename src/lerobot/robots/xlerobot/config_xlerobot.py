@@ -40,50 +40,55 @@ class XLeRobotConfig(RobotConfig):
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-    base_type: str = BASE_TYPE_LEKIWI
+    base_type: str | None = BASE_TYPE_LEKIWI
 
     def __post_init__(self) -> None:
         super().__post_init__()
 
+        arms_cfg: BiSO101FollowerConfig | None = None
         if isinstance(self.arms, BiSO101FollowerConfig):
             arms_cfg = self.arms
-        else:
+        elif self.arms:
             arms_cfg = BiSO101FollowerConfig(**self.arms)
+
+        base_cfg: LeKiwiBaseConfig | BiWheelBaseConfig | None = None
         base_type = self.base_type or self.BASE_TYPE_LEKIWI
-        if base_type == self.BASE_TYPE_LEKIWI:
-            base_cfg = self.base if isinstance(self.base, LeKiwiBaseConfig) else LeKiwiBaseConfig(**self.base)
-        elif base_type == self.BASE_TYPE_BIWHEEL:
-            if isinstance(self.base, BiWheelBaseConfig):
-                base_cfg = self.base
+        if self.base:
+            if base_type == self.BASE_TYPE_LEKIWI:
+                base_cfg = self.base if isinstance(self.base, LeKiwiBaseConfig) else LeKiwiBaseConfig(**self.base)
+            elif base_type == self.BASE_TYPE_BIWHEEL:
+                base_cfg = self.base if isinstance(self.base, BiWheelBaseConfig) else BiWheelBaseConfig(**self.base)
             else:
-                base_cfg = BiWheelBaseConfig(**self.base)
+                raise ValueError(f"Unsupported XLeRobot base type: {base_type}")
         else:
-            raise ValueError(f"Unsupported XLeRobot base type: {base_type}")
+            base_type = None
+
+        mount_cfg: XLeRobotMountConfig | None = None
         if isinstance(self.mount, XLeRobotMountConfig):
             mount_cfg = self.mount
-        else:
+        elif self.mount:
             mount_cfg = XLeRobotMountConfig(**self.mount)
 
         self.arms = arms_cfg
         self.base = base_cfg
         self.mount = mount_cfg
-        self.arms_config: BiSO101FollowerConfig = arms_cfg
-        self.base_config = base_cfg
-        self.mount_config: XLeRobotMountConfig = mount_cfg
+        self.arms_config: BiSO101FollowerConfig | None = arms_cfg
+        self.base_config: LeKiwiBaseConfig | BiWheelBaseConfig | None = base_cfg
+        self.mount_config: XLeRobotMountConfig | None = mount_cfg
         self.base_type = base_type
 
         if self.id:
-            if arms_cfg.id is None:
+            if arms_cfg and arms_cfg.id is None:
                 arms_cfg.id = f"{self.id}_arms"
-            if base_cfg.id is None:
+            if base_cfg and getattr(base_cfg, "id", None) is None:
                 base_cfg.id = f"{self.id}_base"
-            if mount_cfg.id is None:
+            if mount_cfg and mount_cfg.id is None:
                 mount_cfg.id = f"{self.id}_mount"
 
         if self.calibration_dir:
-            if arms_cfg.calibration_dir is None:
+            if arms_cfg and arms_cfg.calibration_dir is None:
                 arms_cfg.calibration_dir = self.calibration_dir
-            if base_cfg.calibration_dir is None:
+            if base_cfg and getattr(base_cfg, "calibration_dir", None) is None:
                 base_cfg.calibration_dir = self.calibration_dir
-            if mount_cfg.calibration_dir is None:
+            if mount_cfg and mount_cfg.calibration_dir is None:
                 mount_cfg.calibration_dir = self.calibration_dir

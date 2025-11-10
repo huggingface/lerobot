@@ -57,8 +57,8 @@ class LeKiwiBaseTeleop(Teleoperator):
     name = "lekiwi_base_gamepad"
 
     def __init__(self, config: LeKiwiBaseTeleopConfig):
-        super().__init__(config)
         self.config = config
+        super().__init__(config)
         self._pygame = None
         self._joystick = None
         self._clock = None
