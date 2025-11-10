@@ -168,6 +168,8 @@ class RTCProcessor:
             v_t = original_denoise_step_partial(x_t)
             return v_t
 
+        x_t = x_t.clone().detach()
+
         squeezed = False
         if len(x_t.shape) < 3:
             # Add batch dimension
@@ -208,7 +210,6 @@ class RTCProcessor:
 
         with torch.enable_grad():
             v_t = original_denoise_step_partial(x_t)
-            x_t = x_t.clone().detach()
             x_t.requires_grad_(True)
 
             x1_t = x_t - time * v_t  # noqa: N806
