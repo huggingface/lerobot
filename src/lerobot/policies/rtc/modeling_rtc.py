@@ -217,6 +217,11 @@ class RTCProcessor:
             grad_outputs = err.clone().detach()
             correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
 
+        # Explicitly nullify correction after execution horizon to ensure exact match with no-RTC
+        # Create a mask that zeros out correction after execution_horizon
+        correction_mask = weights.clone()  # weights already have zeros after execution_horizon
+        correction = correction * correction_mask
+
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
         tau_tensor = torch.as_tensor(tau)
         squared_one_minus_tau = (1 - tau_tensor) ** 2
