@@ -428,6 +428,8 @@ def make_policy(
     else:
         # Make a fresh policy.
         policy = policy_cls(**kwargs)
+        kwargs["pretrained_name_or_path"] = "/fsx/jade_choghari/.cache/huggingface/model/xvla-libero"
+        policy = policy_cls.from_pretrained(**kwargs)
 
     policy.to(cfg.device)
     assert isinstance(policy, torch.nn.Module)

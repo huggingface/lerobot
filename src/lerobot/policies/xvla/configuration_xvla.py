@@ -70,7 +70,7 @@ class XVLAConfig(PreTrainedConfig):
     num_domains: int = 30
     len_soft_prompts: int = 32
     dim_time: int = 32
-    max_len_seq: int = 512
+    max_len_seq: int = 512 #TODO: jadechoghari: change to 512 1024
     use_hetero_proj: bool = False
 
     # Action & proprioception

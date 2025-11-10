@@ -16,7 +16,7 @@ for name, param in policy.state_dict().items():
 import safetensors.torch
 from huggingface_hub import snapshot_download
 
-cache_dir = snapshot_download(repo_id="2toINF/X-VLA-Libero", repo_type="model")
+cache_dir = snapshot_download(repo_id="2toINF/X-VLA-Libero", repo_type="model", cache_dir="/fsx/jade_choghari/.cache/huggingface/model")
 state_dict = safetensors.torch.load_file(os.path.join(cache_dir, "model.safetensors"))
 # policy.load_state_dict(state_dict)
 # 3. Add "model." prefix to every key
