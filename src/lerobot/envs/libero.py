@@ -241,7 +241,7 @@ class LiberoEnv(gym.Env):
         if self.init_states and self._init_states is not None:
             self._env.set_init_state(self._init_states[self._init_state_id])
             raw_obs = self._env.env._get_observations()
-        
+
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
         # Step the simulator with a no-op action for a few frames so everything settles.
         # Increasing this value can improve determinism and reproducibility across resets.
