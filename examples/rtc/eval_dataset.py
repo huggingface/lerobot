@@ -18,7 +18,7 @@ Usage:
         --rtc.execution_horizon=8 \
         --device=mps \
         --rtc.max_guidance_weight=10.0 \
-        --rtc.prefix_attention_schedule=ONES \
+        --rtc.prefix_attention_schedule=EXP \
         --seed=10
 
     # Basic usage with pi0.5 policy
