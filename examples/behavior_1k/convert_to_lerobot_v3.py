@@ -28,6 +28,7 @@ import tqdm
 from datasets import Dataset, Features, Image
 
 from lerobot.datasets.compute_stats import aggregate_stats
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -109,7 +110,7 @@ def convert_info(
     del features[
         "observation.task_info"
     ]  # variable-length task_info is not supported in LeRobotDataset v3.0!
-    
+
     info["codebase_version"] = "v3.0"
     info["features"] = features
     del info["total_videos"]
@@ -637,6 +638,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Force overwrite of existing conversion output if present.",
     )
+    parser.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help="Push the (converted) dataset to the hub.",
+    )
 
     args = parser.parse_args()
 
@@ -648,3 +654,7 @@ if __name__ == "__main__":
         video_file_size_in_mb=args.video_file_size_in_mb,
         force_conversion=args.force_conversion,
     )
+
+    if args.push_to_hub:
+        ds = LeRobotDataset(repo_id=f"fracapuano/behavior1k-task{args.task_id:04d}", root=args.new_repo)
+        ds.push_to_hub()
