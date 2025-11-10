@@ -14,6 +14,7 @@ RTC can be integrated with any policy that supports flow mathicng for chunking:
 
 - **SmolVLA**: Vision-language-action model with RTC support
 - **Pi0**: Action prediction model with adaptive chunking
+- **Pi05**: Action prediction model with adaptive chunking
 
 ## Original Implementation
 
@@ -39,3 +40,10 @@ uv run python examples/rtc/eval_dataset.py \
 --device=mps \
 --seed=42
 ```
+
+This script will evaluate RTC on a data from a dataset and save the results to a file, u can check the results in the `rtc_debug_output` directory.
+
+The example output should look like this:
+![Flow Matching with RTC](./flow_matching.png)
+
+It shows how flow matching works with RTC and without it. The chart shows values of action predictions for each timestep. The colour shows the the generation progress. The blue ones - earlier timesteps, the yellow ones - later timesteps. The red line is the ground truth (previous action chunk).
