@@ -916,8 +916,8 @@ class PI0Policy(PreTrainedPolicy):
         self.config = config
 
         # Initialize the core PI0 model
-        self.model = PI0Pytorch(config, rtc_processor=self.rtc_processor)
         self.init_rtc_processor()
+        self.model = PI0Pytorch(config, rtc_processor=self.rtc_processor)
 
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
@@ -1116,9 +1116,9 @@ class PI0Policy(PreTrainedPolicy):
         if self.config.rtc_config is not None:
             self.rtc_processor = RTCProcessor(self.config.rtc_config)
 
-            # Set rtc_processor to the model if it exists
-            if self.model is not None:
-                self.model.rtc_processor = self.rtc_processor
+            model_value = getattr(self, "model", None)
+            if model_value is not None:
+                model_value.rtc_processor = self.rtc_processor
 
     def _rtc_enabled(self) -> bool:
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
