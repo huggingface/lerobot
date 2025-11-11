@@ -1,3 +1,6 @@
+# Demo video
+# https://drive.google.com/file/d/1Kqvb8zP6Zjkz2CuB5h4jL4ymOBka8ckQ/view?usp=sharing
+
 lerobot-teleoperate \
     --robot.type=xlerobot \
     --robot.base_type=lekiwi_base \
