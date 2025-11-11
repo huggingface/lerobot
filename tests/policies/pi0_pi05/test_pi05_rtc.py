@@ -141,6 +141,25 @@ def test_pi05_rtc_initialization():
 
 
 @require_cuda
+def test_pi05_rtc_initialization_without_rtc_config():
+    """Test PI0.5 policy can initialize without RTC config."""
+    set_seed(42)
+
+    config = PI05Config(max_action_dim=7, max_state_dim=14, dtype="float32")
+
+    # Instantiate policy
+    policy = PI05Policy(config)
+
+    # Verify RTC processor is not initialized
+    assert hasattr(policy, "rtc_processor")
+    assert policy.rtc_processor is None
+    assert policy.model.rtc_processor is None
+    assert policy._rtc_enabled() is False
+
+    print("✓ PI0.5 RTC initialization without RTC config: Test passed")
+
+
+@require_cuda
 def test_pi05_rtc_inference_with_prev_chunk():
     """Test PI0.5 policy inference with RTC and previous chunk."""
     set_seed(42)

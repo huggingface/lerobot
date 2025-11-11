@@ -135,6 +135,25 @@ def test_smolvla_rtc_initialization():
 
 
 @require_cuda
+def test_smolvla_rtc_initialization_without_rtc_config():
+    """Test SmolVLA policy can initialize without RTC config."""
+    set_seed(42)
+
+    config = SmolVLAConfig(max_action_dim=7, chunk_size=50)
+
+    # Instantiate policy
+    policy = SmolVLAPolicy(config)
+
+    # Verify RTC processor is not initialized
+    assert hasattr(policy, "rtc_processor")
+    assert policy.rtc_processor is None
+    assert policy.model.rtc_processor is None
+    assert policy._rtc_enabled() is False
+
+    print("✓ SmolVLA RTC initialization without RTC config: Test passed")
+
+
+@require_cuda
 @pytest.mark.skipif(True, reason="Requires pretrained SmolVLA model weights")
 def test_smolvla_rtc_inference_with_prev_chunk():
     """Test SmolVLA policy inference with RTC and previous chunk."""
