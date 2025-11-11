@@ -15,15 +15,31 @@
 # limitations under the License.
 
 import logging
+import os
+import sys
 import time
 from collections import deque
 from threading import Event, Thread
 
 import numpy as np
-from pynput import keyboard
 
 from lerobot.teleoperators.so101_leader.so101_leader import SO101Leader
 from lerobot.teleoperators.utils import TeleopEvents
+
+PYNPUT_AVAILABLE = True
+try:
+    if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
+        logging.info("No DISPLAY set. Skipping pynput import.")
+        raise ImportError("pynput blocked intentionally due to no display.")
+
+    from pynput import keyboard
+except ImportError:
+    keyboard = None
+    PYNPUT_AVAILABLE = False
+except Exception as e:
+    keyboard = None
+    PYNPUT_AVAILABLE = False
+    logging.info(f"Could not import pynput: {e}")
 
 logger = logging.getLogger(__name__)
 
