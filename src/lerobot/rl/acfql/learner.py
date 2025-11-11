@@ -73,7 +73,7 @@ from lerobot.rl.learner import (
 )
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
-from lerobot.robots import so100_follower  # noqa: F401
+from lerobot.robots import so100_follower, so101_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.transport.utils import (
     bytes_to_transitions,
