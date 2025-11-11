@@ -52,12 +52,12 @@ from lerobot.robots import (
     RobotConfig,  # noqa: F401
     make_robot_from_config,
 )
-from lerobot.robots.utils import register_third_party_devices
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
+from lerobot.utils.import_utils import register_third_party_devices
 
 from .configs import RobotClientConfig
 from .helpers import (
@@ -464,6 +464,7 @@ class RobotClient:
 def async_client(cfg: RobotClientConfig):
     logging.info(pformat(asdict(cfg)))
 
+    # TODO: Assert if checking robot support is still needed with the plugin system
     # if cfg.robot.type not in SUPPORTED_ROBOTS:
     #     raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
 
