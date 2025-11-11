@@ -18,6 +18,7 @@
 import argparse
 import json
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -255,7 +256,6 @@ def convert_videos_of_camera(
     task_dir_name = f"task-{task_index:04d}"
     videos_dir = root / "videos" / task_dir_name / video_key
     ep_paths = sorted(videos_dir.glob("*.mp4"))
-    print("ep_paths", ep_paths)
     ep_idx = 0
     chunk_idx = 0
     file_idx = 0
@@ -646,6 +646,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if args.push_to_hub:
+        HF_USER = os.environ.get("HF_USER", "fracapuano")
+        if HF_USER is None:
+            raise ValueError(
+                "HF_USER environment variable is not set! Set before converting and pushing to hub."
+            )
+
     convert_dataset_local(
         data_path=Path(args.data_path),
         new_repo=Path(args.new_repo),
@@ -656,5 +663,5 @@ if __name__ == "__main__":
     )
 
     if args.push_to_hub:
-        ds = LeRobotDataset(repo_id=f"fracapuano/behavior1k-task{args.task_id:04d}", root=args.new_repo)
+        ds = LeRobotDataset(repo_id=f"{HF_USER}/behavior1k-task{args.task_id:04d}", root=args.new_repo)
         ds.push_to_hub()
