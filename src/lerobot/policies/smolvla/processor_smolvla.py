@@ -23,6 +23,7 @@ from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
+    ObservationProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
@@ -33,7 +34,9 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
-from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME, OBS_STATE
+from lerobot.configs.types import FeatureType
+from copy import deepcopy
 
 
 def make_smolvla_pre_post_processors(
@@ -69,6 +72,9 @@ def make_smolvla_pre_post_processors(
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
+        EnsureStateObservationProcessorStep(
+            state_dim=(config.robot_state_feature.shape[0] if config.robot_state_feature else 0)
+        ),
         SmolVLANewLineProcessor(),
         TokenizerProcessorStep(
             tokenizer_name=config.vlm_model_name,
@@ -101,6 +107,47 @@ def make_smolvla_pre_post_processors(
             to_output=transition_to_policy_action,
         ),
     )
+
+@ProcessorStepRegistry.register(name="ensure_state_observation_processor")
+class EnsureStateObservationProcessorStep(ObservationProcessorStep):
+    """
+    Обеспечивает наличие `observation.state` в батче: если его нет, добавляет нулевой вектор.
+    """
+
+    def __init__(self, state_dim: int):
+        super().__init__()
+        self.state_dim = int(state_dim) if state_dim is not None else 0
+
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        if OBS_STATE in observation:
+            return observation
+        import torch
+
+        batch_size = None
+        for value in observation.values():
+            if isinstance(value, torch.Tensor):
+                batch_size = value.shape[0] if value.ndim >= 1 else 1
+                break
+        if batch_size is None:
+            batch_size = 1
+
+        dim = max(self.state_dim, 0)
+        if dim == 0:
+            observation[OBS_STATE] = torch.zeros((batch_size, 0), dtype=torch.float32)
+        else:
+            observation[OBS_STATE] = torch.zeros((batch_size, dim), dtype=torch.float32)
+        return observation
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        new_features = deepcopy(features)
+        obs_bucket = new_features.get(PipelineFeatureType.OBSERVATION, {})
+        if OBS_STATE not in obs_bucket:
+            dim = max(self.state_dim, 0)
+            obs_bucket[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(dim,))
+            new_features[PipelineFeatureType.OBSERVATION] = obs_bucket
+        return new_features
 
 
 @ProcessorStepRegistry.register(name="smolvla_new_line_processor")

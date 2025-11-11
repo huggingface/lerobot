@@ -412,7 +412,32 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
     def prepare_state(self, batch):
         """Pad state"""
-        state = batch[OBS_STATE][:, -1, :] if batch[OBS_STATE].ndim > 2 else batch[OBS_STATE]
+        # Handle datasets without observation.state by creating a zero state.
+        if OBS_STATE not in batch:
+            # Infer batch size from available tensors (prefer language tokens, then images).
+            bsize = None
+            if OBS_LANGUAGE_TOKENS in batch:
+                bsize = batch[OBS_LANGUAGE_TOKENS].shape[0]
+            else:
+                # Try any configured image feature present in the batch
+                for key in self.config.image_features:
+                    if key in batch:
+                        img = batch[key]
+                        bsize = img.shape[0] if img.ndim >= 4 else img.shape[0]
+                        break
+            if bsize is None:
+                # Fallback: first tensor in batch
+                for v in batch.values():
+                    if isinstance(v, torch.Tensor):
+                        bsize = v.shape[0] if v.ndim >= 1 else 1
+                        break
+            if bsize is None:
+                bsize = 1
+            # Create an empty (B, 0) state which will be padded to max_state_dim
+            device = next(self.parameters()).device
+            state = torch.zeros((bsize, 0), dtype=torch.float32, device=device)
+        else:
+            state = batch[OBS_STATE][:, -1, :] if batch[OBS_STATE].ndim > 2 else batch[OBS_STATE]
         state = pad_vector(state, self.config.max_state_dim)
         return state
 

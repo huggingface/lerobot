@@ -331,6 +331,20 @@ ignore_errors = false
 module = "lerobot.cameras.*"
 ignore_errors = false
 
+[tool.uv.workspace]
+members = [
+    ".",
+    ".",
+]
+
+[tool.uv.sources]
+lerobot = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "lerobot[grpcio-dep,smolvla]",
+]
+
 # [[tool.mypy.overrides]]
 # module = "lerobot.motors.*"
 # ignore_errors = false

@@ -125,7 +125,16 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
 
         policy_specs = pickle.loads(request.data)  # nosec
-
+        # Backward/interop: accept plain dict from external clients
+        if isinstance(policy_specs, dict):
+            policy_specs = RemotePolicyConfig(
+                policy_type=policy_specs["policy_type"],
+                pretrained_name_or_path=policy_specs["pretrained_name_or_path"],
+                lerobot_features=policy_specs["lerobot_features"],
+                actions_per_chunk=policy_specs["actions_per_chunk"],
+                device=policy_specs.get("device", "cpu"),
+                rename_map=policy_specs.get("rename_map", {}),
+            )
         if not isinstance(policy_specs, RemotePolicyConfig):
             raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
 
@@ -183,6 +192,18 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
         timed_observation = pickle.loads(received_bytes)  # nosec
+        # Interop: accept plain dict and rebuild TimedObservation
+        if isinstance(timed_observation, dict):
+            try:
+                timed_observation = TimedObservation(**timed_observation)
+            except TypeError:
+                # Minimal dict variant
+                timed_observation = TimedObservation(
+                    timestamp=timed_observation["timestamp"],
+                    timestep=timed_observation["timestep"],
+                    observation=timed_observation["observation"],
+                    must_go=timed_observation.get("must_go", False),
+                )
         deserialize_time = time.perf_counter() - start_deserialize
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
@@ -235,7 +256,16 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             inference_time = time.perf_counter() - start_time
 
             start_time = time.perf_counter()
-            actions_bytes = pickle.dumps(action_chunk)  # nosec
+            # Interop: send actions as list of dicts to avoid class pickling requirements on client
+            actions_serializable = [
+                {
+                    "timestamp": a.get_timestamp(),
+                    "timestep": a.get_timestep(),
+                    "action": a.get_action().detach().to("cpu").tolist(),
+                }
+                for a in action_chunk
+            ]
+            actions_bytes = pickle.dumps(actions_serializable)  # nosec
             serialize_time = time.perf_counter() - start_time
 
             # Create and return the action chunk
@@ -382,6 +412,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.debug(f"Postprocessed action shape: {action_tensor.shape}")
 
         """5. Convert to TimedAction list"""
+        # Ensure actions are serialized from CPU to avoid CUDA deserialization issues client-side
+        action_tensor = action_tensor.detach().to("cpu")
         action_chunk = self._time_action_chunk(
             observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
         )
