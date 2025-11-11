@@ -151,7 +151,10 @@ def test_pi0_rtc_initialization_without_rtc_config():
     policy = PI0Policy(config)
 
     # Verify RTC processor is not initialized
-    assert not hasattr(policy, "rtc_processor")
+    assert hasattr(policy, "rtc_processor")
+    assert policy.rtc_processor is None
+    assert policy.model.rtc_processor is None
+    assert policy.is_rtc_enabled() is False
 
     print("✓ PI0 RTC initialization without RTC config: Test passed")
 
