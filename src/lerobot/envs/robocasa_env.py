@@ -53,7 +53,7 @@ class EnvArgs:
     camera_heights: int = 128
     camera_widths: int = 128
     camera_depths: bool = False
-    camera_segmentations: str = "segmentation_level"
+    camera_segmentations: str = "instance"
     seed: int = 0
     controller_configs: dict = field(default_factory=dict)
     layout_ids: list = field(default_factory=list)

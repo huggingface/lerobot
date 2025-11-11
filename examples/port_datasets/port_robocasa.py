@@ -10,13 +10,13 @@ discovered and included by:
 - Preserving all episode attributes and metadata
 
 Usage:
-    python robocasa/scripts/robocasa_to_lerobot.py --dataset_path /path/to/dataset.hdf5 --repo_name your_hf_username/robocasa_dataset
+    python examples/port_datasets/port_robocasa.py --dataset_path /path/to/dataset.hdf5 --repo_name your_hf_username/robocasa_dataset
 
 If you want to push your dataset to the Hugging Face Hub:
-    python robocasa/scripts/robocasa_to_lerobot.py --dataset_path /path/to/dataset.hdf5 --repo_name your_hf_username/robocasa_dataset --push_to_hub
+    python examples/port_datasets/port_robocasa.py --dataset_path /path/to/dataset.hdf5 --repo_name your_hf_username/robocasa_dataset --push_to_hub
 
 You can also process multiple datasets:
-    python robocasa/scripts/robocasa_to_lerobot.py --dataset_path /path/to/dataset1.hdf5 /path/to/dataset2.hdf5 --repo_name your_hf_username/robocasa_combined
+    python examples/port_datasets/port_robocasa.py --dataset_path /path/to/dataset1.hdf5 /path/to/dataset2.hdf5 --repo_name your_hf_username/robocasa_combined
 
 Note: The resulting dataset will get saved to the $HF_LEROBOT_HOME directory.
 """
@@ -81,7 +81,22 @@ def get_clip_embedding(text, tokenizer, model, device: torch.device, max_length=
     
     return embedding.squeeze()
 
-def discover_dataset_properties(hdf5_path: str) -> Dict[str, Any]:
+def get_max_dims(hdf5_paths: List[str], keys_with_variable_length: List[str]) -> Dict[str, int]:
+    max_dims = {}
+    for hdf5_path in hdf5_paths:
+        with h5py.File(hdf5_path, "r") as f:
+            demo_keys = list(f['data'].keys())
+            for demo_key in demo_keys:
+                demo_group = f['data'][demo_key]
+                for key in keys_with_variable_length:
+                    if key not in max_dims:
+                        max_dims[key] = (0,)
+                    data = demo_group[key][:][0] # take the first timestep
+                    max_dims[key] = (max(max_dims[key][0], data.shape[0]),) + tuple(data.shape[1:])
+    return max_dims
+
+
+def discover_dataset_properties(hdf5_paths: List[str]) -> Dict[str, Any]:
     """
     Discover image names, state/action shapes, and other properties from a RoboCasa HDF5 dataset.
     Checks ALL episodes to ensure all keys are discovered.
@@ -95,6 +110,9 @@ def discover_dataset_properties(hdf5_path: str) -> Dict[str, Any]:
             - action_shape: Shape of action array
             - other_keys: Dict mapping other episode-level dataset keys to their shapes/dtypes
     """
+    keys_with_variable_length = ['states', 'obs/object-state', 'obs/objects-joint-state', 'obs/object']
+    max_dims = get_max_dims(hdf5_paths, keys_with_variable_length)
+    hdf5_path = hdf5_paths[0]
     with h5py.File(hdf5_path, "r") as f:
         # Get all episodes to discover structure (check multiple episodes to find all keys)
         demos = sorted(list(f["data"].keys()))
@@ -132,6 +150,11 @@ def discover_dataset_properties(hdf5_path: str) -> Dict[str, Any]:
                                 image_names.add(image_name)
                                 if image_name not in image_shapes:
                                     image_shapes[image_name] = obs_group[obs_key].shape[1:]  # Skip time dimension
+                            elif f'obs/{obs_key}' in max_dims:
+                                state_keys.add(obs_key)
+                                if obs_key not in state_shapes:
+                                    state_shapes[obs_key] = max_dims[f'obs/{obs_key}']  # Skip time dimension
+                                    state_dtypes[obs_key] = obs_group[obs_key].dtype
                             else:
                                 # This might be state/proprioceptive data
                                 state_keys.add(obs_key)
@@ -144,9 +167,10 @@ def discover_dataset_properties(hdf5_path: str) -> Dict[str, Any]:
                         pass
                 elif isinstance(item, h5py.Dataset):
                     # It's a dataset (like "actions", "states", "policy_mode", etc.)
-                    if key not in ["actions"]:  # Skip actions as it's handled separately
-                        if key not in other_keys:
-                            # other_keys[key] = (item.shape[1:], str(item.dtype)) if len(item.shape) > 1 else ((1,), str(item.dtype))
+                    if (key not in ["actions"]) and (key not in other_keys):  # Skip actions as it's handled separately
+                        if key in max_dims:
+                            other_keys[key] = (max_dims[key], str(item.dtype))
+                        else:
                             other_keys[key] = (item.shape[1:], str(item.dtype)) if len(item.shape) > 1 else ((1,), str(item.dtype))
         
         # Get action shape from first episode
@@ -178,6 +202,7 @@ def discover_dataset_properties(hdf5_path: str) -> Dict[str, Any]:
             "action_dtype": action_dtype,
             "other_keys": other_keys,  # Other episode-level datasets
             "fps": fps,
+            "max_dims": max_dims,
         }
 
 
@@ -248,7 +273,7 @@ def create_lerobot_features(properties: Dict[str, Any]) -> Dict[str, Any]:
 
     features["task_clip_embedding"] = {
         "dtype": "float32",
-        "shape": (768,),
+        "shape": (512,),
         "names": ["task_clip_embedding"],
     }
     return features
@@ -326,7 +351,7 @@ def convert_robocasa_to_lerobot(
     """
     # Discover properties from first dataset
     print(f"Discovering properties from {dataset_paths[0]}...")
-    properties = discover_dataset_properties(dataset_paths[0])
+    properties = discover_dataset_properties(dataset_paths)
     
     print(f"Discovered properties:")
     print(f"  Image names: {properties['image_names']}")
@@ -337,7 +362,7 @@ def convert_robocasa_to_lerobot(
     print(f"  FPS (from dataset): {properties['fps']}")
     if properties.get('other_keys'):
         print(f"  Other episode-level datasets: {list(properties['other_keys'].keys())}")
-    
+    print(f"  Max dims: {properties['max_dims']}")
     # Use discovered FPS or provided/default
     fps = properties["fps"]
     print(f"  Using FPS: {fps}")
@@ -365,8 +390,8 @@ def convert_robocasa_to_lerobot(
     all_total_episodes = 0
     all_datasets = []
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
-    tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+    model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+    tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
     for dataset_name, paths in dataset_groups.items():
         dataset_repo_id = f"{repo_name}-{dataset_name}"
         output_path = HF_LEROBOT_HOME / dataset_repo_id
@@ -443,12 +468,21 @@ def convert_robocasa_to_lerobot(
                         
                         # Add each state key as a separate feature (use ALL keys found in episode)
                         for state_key in properties["state_keys"]:
-                            frame_data[state_key] = ep_data["obs"][state_key][t]
+                            if 'obs/' + state_key in properties["max_dims"]:
+                                frame_data[state_key] = np.full(properties["max_dims"][f'obs/{state_key}'], -np.inf)
+                                frame_data[state_key][:ep_data["obs"][state_key][t].shape[0]] = ep_data["obs"][state_key][t]
+                            else:
+                                frame_data[state_key] = ep_data["obs"][state_key][t]
                         for key in properties["other_keys"].keys():
                             data = np.array(ep_data["other_data"][key][t])
                             if data.shape == ():
                                 data = np.array([data])
-                            frame_data[key] = data
+                            if key in properties["max_dims"]:
+                                # pad it with -np.inf
+                                frame_data[key] = np.full(properties["max_dims"][key], -np.inf)
+                                frame_data[key][:data.shape[0]] = data
+                            else:
+                                frame_data[key] = data
 
                         # Combine robot state keys into OBS_STATE
                         arm_state = np.concatenate([
