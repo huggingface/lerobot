@@ -48,6 +48,7 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -77,6 +78,9 @@ from .helpers import (
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
 )
+
+
+register_third_party_devices()
 
 
 class RobotClient:

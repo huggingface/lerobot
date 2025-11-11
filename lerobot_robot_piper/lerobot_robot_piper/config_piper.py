@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots import RobotConfig
+
 
 
 @RobotConfig.register_subclass("piper")
@@ -26,7 +28,17 @@ class PiperConfig(RobotConfig):
     # Expose gripper as "gripper.pos" in mm if True
     include_gripper: bool = False
     # Optional cameras; leave empty when not used
-    cameras: dict[str, CameraConfig] = field(default_factory=dict)
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "wrist": OpenCVCameraConfig(
+                index_or_path=2, 
+                width=480, 
+                height=640, 
+                fps=30, 
+                fourcc="MJPG"
+            )
+        }
+    )
     # When False, expose normalized [-100,100] joint percents; when True, degrees/mm
     use_degrees: bool = True
     # Timeout in seconds to wait for SDK EnablePiper during connect
