@@ -13,14 +13,16 @@
 # limitations under the License.
 
 import datetime as dt
-import logging
 from dataclasses import dataclass, field
+from logging import getLogger
 from pathlib import Path
 
 from lerobot import envs, policies  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.default import EvalConfig
 from lerobot.configs.policies import PreTrainedConfig
+
+logger = getLogger(__name__)
 
 
 @dataclass
@@ -34,25 +36,31 @@ class EvalPipelineConfig:
     output_dir: Path | None = None
     job_name: str | None = None
     seed: int | None = 1000
+    # Rename map for the observation to override the image and state keys
+    rename_map: dict[str, str] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = policy_path
+            self.policy.pretrained_path = Path(policy_path)
 
         else:
-            logging.warning(
+            logger.warning(
                 "No pretrained path was provided, evaluated policy will be built from scratch (random weights)."
             )
 
         if not self.job_name:
             if self.env is None:
-                self.job_name = f"{self.policy.type}"
+                self.job_name = f"{self.policy.type if self.policy is not None else 'scratch'}"
             else:
-                self.job_name = f"{self.env.type}_{self.policy.type}"
+                self.job_name = (
+                    f"{self.env.type}_{self.policy.type if self.policy is not None else 'scratch'}"
+                )
+
+            logger.warning(f"No job name provided, using '{self.job_name}' as job name.")
 
         if not self.output_dir:
             now = dt.datetime.now()

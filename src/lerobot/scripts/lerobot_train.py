@@ -203,6 +203,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
+        rename_map=cfg.rename_map,
     )
 
     # Wait for all processes to finish policy creation before continuing
@@ -223,6 +224,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
+        }
+        processor_kwargs["preprocessor_overrides"]["rename_observations_processor"] = {
+            "rename_map": cfg.rename_map
         }
         postprocessor_kwargs["postprocessor_overrides"] = {
             "unnormalizer_processor": {

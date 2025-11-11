@@ -104,14 +104,14 @@ LeRobot works with Python 3.10+ and PyTorch 2.2+.
 
 ### Environment Setup
 
-Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
+Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniforge`](https://conda-forge.org/download/):
 
 ```bash
 conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
-When using `miniconda`, install `ffmpeg` in your environment:
+When using `conda`, install `ffmpeg` in your environment:
 
 ```bash
 conda install ffmpeg -c conda-forge
@@ -184,6 +184,11 @@ _Replace `[...]` with your desired features._
 **Available Tags:**
 For a full list of optional dependencies, see:
 https://pypi.org/project/lerobot/
+
+> [!NOTE]
+> For lerobot 0.4.0, if you want to install pi tags, you will have to do: `pip install "lerobot[pi]@git+https://github.com/huggingface/lerobot.git"`.
+>
+> This will be solved in the next patch release
 
 ### Weights & Biases
 
@@ -337,7 +342,3 @@ If you want, you can cite this work with:
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)
-
-```
-
-```
