@@ -263,8 +263,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
             # In case of calling init_rtc_processor after the model is created
             # We need to set the rtc_processor to the model
             # During the normal initialization process the model is not created yet
-            if self.model is not None:
-                self.model.rtc_processor = self.rtc_processor
+            model_value = getattr(self, "model", None)
+            if model_value is not None:
+                model_value.rtc_processor = self.rtc_processor
 
     def get_optim_params(self) -> dict:
         return self.parameters()
