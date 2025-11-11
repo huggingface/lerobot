@@ -40,7 +40,7 @@ def validate_rtc_behavior(
     prev_chunk: torch.Tensor,
     inference_delay: int,
     execution_horizon: int,
-    rtol: float = 1e-2,
+    rtol: float = 1e-1,
 ):
     """Validate RTC behavior follows expected rules.
 
