@@ -326,7 +326,7 @@ class ZedCamera(Camera):
         depth_map_processed = self._postprocess_image(depth_map, depth_frame=True)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} read_depth took: {read_duration_ms:.1f}ms")
+        logger.info(f"{self} read_depth took: {read_duration_ms:.1f}ms")
 
         return depth_map_processed
 
@@ -372,7 +372,7 @@ class ZedCamera(Camera):
             depth_key = get_image_modality_key(image=depth_map_processed, is_depth=True)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
+        # print(f"{self} read took: {read_duration_ms:.1f}ms")
 
         rgb_key = get_image_modality_key(image=color_image_processed)
         images = {rgb_key: color_image_processed}

@@ -47,7 +47,7 @@ class ZedCameraConfig(CameraConfig):
     use_depth: bool = True
     rotation: Cv2Rotation = Cv2Rotation.ROTATE_180
     warmup_s: int = 3  # ZED cameras need longer warmup time
-    depth_mode: str = "QUALITY"
+    depth_mode: str = "NEURAL"
     camera_view: sl.VIEW = sl.VIEW.LEFT
 
     def __post_init__(self):

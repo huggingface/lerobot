@@ -35,7 +35,7 @@
         "processor": {
             "control_mode": "leader",
             "observation": {
-                "display_cameras": true,
+                "display_cameras": false,
                 "add_joint_velocity_to_observation": true,
                 "add_current_to_observation": true
             },
@@ -60,7 +60,7 @@
                     -94.5,
                     0
                 ],
-                "reset_time_s": 15,
+                "reset_time_s": 10,
                 "control_time_s": 60.0,
                 "terminate_on_success": true
             },
@@ -89,7 +89,7 @@
         "repo_id": "weiwenliu/lerobot-serl-test",
         "root": null,
         "task": "Test SERL in cardbox perturbation",
-        "num_episodes_to_record": 2,
+        "num_episodes_to_record": 5,
         "replay_episode": 0,
         "push_to_hub": true
     },

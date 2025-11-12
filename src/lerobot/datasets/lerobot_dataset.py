@@ -1198,7 +1198,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             latest_size_in_mb = get_video_size_in_mb(latest_path)
             latest_duration_in_s = get_video_duration_in_s(latest_path)
 
-            if latest_size_in_mb + ep_size_in_mb >= self.meta.video_files_size_in_mb:
+            disable_concatenate_video = True
+            if disable_concatenate_video or latest_size_in_mb + ep_size_in_mb >= self.meta.video_files_size_in_mb:
                 # Move temporary episode video to a new video file in the dataset
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
                 new_path = self.root / self.meta.video_path.format(

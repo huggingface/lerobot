@@ -1,0 +1,206 @@
+{
+    "output_dir": "outputs/train/serl_test_joint",
+    "job_name": "serl_test_joint_initial",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 128,
+    "steps": 50000,
+    "log_freq": 500,
+    "save_checkpoint": true,
+    "save_freq": 5000,
+    "wandb": {
+        "enable": false,
+        "project": "lerobot-serl-test",
+        "entity": "weiwenliu",
+        "disable_artifact": true
+    },
+    "dataset": {
+        "repo_id": "weiwenliu/lerobot-serl-test",
+        "use_imagenet_stats": false
+    },
+    "policy": {
+        "type": "sac",
+        "n_obs_steps": 1,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "input_features": {
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.images.head_rgb": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.images.head_depth": {
+                "type": "VISUAL",
+                "shape": [1, 128, 128]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [18]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [6]
+            }
+        },
+        "device": "cuda",
+        "use_amp": false,
+        "num_discrete_actions": 6,
+        "storage_device": "cuda",
+        "vision_encoder_name": "helper2424/resnet10",
+        "freeze_vision_encoder": false,
+        "image_encoder_hidden_dim": 32,
+        "shared_encoder": false,
+        "online_steps": 1000000,
+        "online_buffer_capacity": 50000,
+        "offline_buffer_capacity": 30000,
+        "online_step_before_learning": 10,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "async_prefetch": false,
+        "temperature_init": 0.01,
+        "num_critics": 2,
+        "num_subsample_critics": null,
+        "critic_lr": 0.0003,
+        "actor_lr": 0.0003,
+        "temperature_lr": 0.0003,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "state_encoder_hidden_dim": 256,
+        "latent_dim": 256,
+        "target_entropy": null,
+        "use_backup_entropy": true,
+        "grad_clip_norm": 40.0,
+        "critic_network_kwargs": {
+            "hidden_dims": [256, 256],
+            "activate_final": true,
+            "final_activation": null
+        },
+        "actor_network_kwargs": {
+            "hidden_dims": [256, 256],
+            "activate_final": true
+        },
+        "policy_kwargs": {
+            "use_tanh_squash": true,
+            "std_min": -5,
+            "std_max": 2,
+            "init_final": 0.05
+        },
+        "actor_learner_config": {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50061,
+            "policy_parameters_push_frequency": 2
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        },
+        "repo_id": "weiwenliu/lerobot-serl-test-policy"
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "robot": {
+            "type": "so101_follower",
+            "port": "/dev/ttyACM1",
+            "id": "follower_arm",
+            "use_degrees": true,
+            "cameras": {
+                "wrist": {
+                    "type": "opencv",
+                    "index_or_path": 0,
+                    "width": 640,
+                    "height": 480,
+                    "fps": 30
+                },
+                "head": {
+                    "type": "zed",
+                    "rotation": "ROTATE_180",
+                    "width": 1920,
+                    "height": 1080,
+                    "fps": 30
+                }
+            },
+            "urdf_path": "./src/lerobot/robots/so100_follower/SO101/so101_new_calib.urdf",
+            "target_frame_name": "gripper_frame_link"
+        },
+        "teleop": {
+            "type": "so101_leader",
+            "port": "/dev/ttyACM0",
+            "id": "leader_arm",
+            "use_degrees": true
+        },
+        "processor": {
+            "control_mode": "leader",
+            "observation": {
+                "display_cameras": false,
+                "add_joint_velocity_to_observation": true,
+                "add_current_to_observation": true
+            },
+            "image_preprocessing": {
+                "crop_params_dict": {
+                    "observation.images.wrist": [30, 100, 400, 380],
+                    "observation.images.head_rgb": [100, 100, 1120, 1120],
+                    "observation.images.head_depth": [100, 100, 1120, 1120]
+                },
+                "resize_size": [128, 128]
+            },
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [-9.5, -102, 20, 99, -94.5, 0],
+                "reset_time_s": 10,
+                "control_time_s": 60.0,
+                "terminate_on_success": true
+            },
+            "reward_classifier": {
+                "pretrained_path": null,
+                "success_threshold": 0.5,
+                "success_reward": 1.0
+            },
+            "max_gripper_pos": 100
+        },
+        "name": "real_robot",
+        "fps": 30,
+        "task": "Test SERL in cardbox perturbation",
+        "features": {
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.images.head_rgb": {
+                "type": "VISUAL",
+                "shape": [3, 128, 128]
+            },
+            "observation.images.head_depth": {
+                "type": "VISUAL",
+                "shape": [1, 128, 128]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [18]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [6]
+            }
+        },
+        "features_map": {
+            "observation.images.wrist": "observation.images.wrist",
+            "observation.images.head_rgb": "observation.images.head_rgb",
+            "observation.images.head_depth": "observation.images.head_depth",
+            "observation.state": "observation.state",
+            "action": "action"
+        }
+    }
+}

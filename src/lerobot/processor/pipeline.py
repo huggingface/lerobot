@@ -34,6 +34,7 @@ import importlib
 import json
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
@@ -290,9 +291,15 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         Returns:
             The processed data in the specified output format.
         """
+        start_time = time.perf_counter()
+
         transition = self.to_transition(data)
         transformed_transition = self._forward(transition)
-        return self.to_output(transformed_transition)
+        result = self.to_output(transformed_transition)
+
+        cycle_duration_ms = (time.perf_counter() - start_time) * 1e3
+        # print(f"Processor Proc cycle took: {cycle_duration_ms:.1f}ms")
+        return result
 
     def _forward(self, transition: EnvTransition) -> EnvTransition:
         """Executes all processing steps and hooks in sequence.

@@ -16,6 +16,7 @@
 
 import logging
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -245,12 +246,14 @@ class RobotEnv(gym.Env):
         # Reset the robot
         # self.robot.reset()
         start_time = time.perf_counter()
+        print(f"Reseting the environment in {self.reset_time_s}s")
         if self.reset_pose is not None:
             log_say("Reset the environment.", play_sounds=True)
             reset_follower_position(self.robot, np.array(self.reset_pose))
             log_say("Reset the environment done.", play_sounds=True)
 
         busy_wait(self.reset_time_s - (time.perf_counter() - start_time))
+        print("Reset the environment end ------")
 
         super().reset(seed=seed, options=options)
 
@@ -261,24 +264,38 @@ class RobotEnv(gym.Env):
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
         return obs, {TeleopEvents.IS_INTERVENTION: False}
 
-    def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
+    def step(
+        self, action
+    ) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
-        joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
+        with timer("Environment step - Total"):
+            with timer("Environment step - Action conversion"):
+                joint_targets_dict = {
+                    f"{key}.pos": action[i]
+                    for i, key in enumerate(self.robot.bus.motors.keys())
+                }
 
-        self.robot.send_action(joint_targets_dict)
+            with timer("Environment step - Send action"):
+                self.robot.send_action(joint_targets_dict)
 
-        obs = self._get_observation()
+            with timer("Environment step - Get observation"):
+                obs = self._get_observation()
 
-        self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
+            with timer("Environment step - Save joint positions"):
+                self._raw_joint_positions = {
+                    f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names
+                }
 
-        if self.display_cameras:
-            self.render()
+            if self.display_cameras:
+                with timer("Environment step - Render"):
+                    self.render()
 
-        self.current_step += 1
+            with timer("Environment step - Step counter"):
+                self.current_step += 1
 
-        reward = 0.0
-        terminated = False
-        truncated = False
+            reward = 0.0
+            terminated = False
+            truncated = False
 
         return (
             obs,
@@ -358,6 +375,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         use_gripper=use_gripper,
         display_cameras=display_cameras,
         reset_pose=reset_pose,
+        reset_time_s=cfg.processor.reset.reset_time_s,
     )
 
     return env, teleop_device
@@ -608,6 +626,13 @@ def debug_observation_structure(transition: EnvTransition) -> dict:
         "has_observation_state": "observation.state" in observation,
     }
 
+@contextmanager
+def timer(description):
+    start = time.perf_counter()
+    yield
+    end = time.perf_counter()
+    elapsed_ms = (end - start) * 1000
+    # print(f"{description}: {elapsed_ms:.2f}ms")
 
 def step_env_and_process_transition(
     env: gym.Env,
@@ -618,46 +643,49 @@ def step_env_and_process_transition(
 ) -> EnvTransition:
     """
     Execute one step with processor pipeline.
-
-    Args:
-        env: The robot environment
-        transition: Current transition state
-        action: Action to execute
-        env_processor: Environment processor
-        action_processor: Action processor
-
-    Returns:
-        Processed transition with updated state.
     """
+    print(f"Timestamp: {time.perf_counter()}")
+    with timer("Total function execution"):
+        # Create action transition
+        with timer("Transition preparation"):
+            transition[TransitionKey.ACTION] = action
+            transition[TransitionKey.OBSERVATION] = (
+                env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
+            )
 
-    # Create action transition
-    transition[TransitionKey.ACTION] = action
-    transition[TransitionKey.OBSERVATION] = (
-        env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
-    )
+        # Action processor
+        with timer("Action processor"):
+            processed_action_transition = action_processor(transition)
+            processed_action = processed_action_transition[TransitionKey.ACTION]
 
-    processed_action_transition = action_processor(transition)
-    processed_action = processed_action_transition[TransitionKey.ACTION]
+        # Environment step
+        with timer("Environment step"):
+            obs, reward, terminated, truncated, info = env.step(processed_action)
 
-    obs, reward, terminated, truncated, info = env.step(processed_action)
+        # Post-processing
+        with timer("Post-processing"):
+            reward = reward + processed_action_transition[TransitionKey.REWARD]
+            terminated = terminated or processed_action_transition[TransitionKey.DONE]
+            truncated = truncated or processed_action_transition[TransitionKey.TRUNCATED]
+            complementary_data = processed_action_transition[TransitionKey.COMPLEMENTARY_DATA].copy()
+            new_info = processed_action_transition[TransitionKey.INFO].copy()
+            new_info.update(info)
 
-    reward = reward + processed_action_transition[TransitionKey.REWARD]
-    terminated = terminated or processed_action_transition[TransitionKey.DONE]
-    truncated = truncated or processed_action_transition[TransitionKey.TRUNCATED]
-    complementary_data = processed_action_transition[TransitionKey.COMPLEMENTARY_DATA].copy()
-    new_info = processed_action_transition[TransitionKey.INFO].copy()
-    new_info.update(info)
+        # Create new transition
+        with timer("Create transition"):
+            new_transition = create_transition(
+                observation=obs,
+                action=processed_action,
+                reward=reward,
+                done=terminated,
+                truncated=truncated,
+                info=new_info,
+                complementary_data=complementary_data,
+            )
 
-    new_transition = create_transition(
-        observation=obs,
-        action=processed_action,
-        reward=reward,
-        done=terminated,
-        truncated=truncated,
-        info=new_info,
-        complementary_data=complementary_data,
-    )
-    new_transition = env_processor(new_transition)
+        # Environment processor
+        with timer("Environment processor"):
+            new_transition = env_processor(new_transition)
 
     return new_transition
 

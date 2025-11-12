@@ -646,8 +646,9 @@ class LeaderArmInterventionProcessorStep(ProcessorStep):
         self._stable_frames_required = 10
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        self._debug_frame_count += 1
+        start_time = time.perf_counter()
 
+        self._debug_frame_count += 1
         action = transition.get(TransitionKey.ACTION)
         if not isinstance(action, PolicyAction):
             raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
