@@ -48,10 +48,14 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.robots import RobotConfig  # Import RobotConfig first so register_subclass works
 from lerobot.utils.import_utils import register_third_party_devices
+
+# Register third-party devices BEFORE importing configs so robot choices are available
+register_third_party_devices()
+
 from lerobot.robots import (  # noqa: F401
     Robot,
-    RobotConfig,
     bi_so100_follower,
     koch_follower,
     make_robot_from_config,
@@ -78,9 +82,6 @@ from .helpers import (
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
 )
-
-
-register_third_party_devices()
 
 
 class RobotClient:

@@ -136,14 +136,35 @@ def register_third_party_devices() -> None:
 
     Scans top-level modules on sys.path for packages starting with
     'lerobot_robot_', 'lerobot_camera_' or 'lerobot_teleoperator_' and imports them.
+    Also tries to import known common packages directly.
     """
     prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_")
     imported: list[str] = []
     failed: list[str] = []
 
+    # First try known common packages directly (handles editable installs)
+    known_packages = ["lerobot_robot_piper"]
+    for package in known_packages:
+        try:
+            importlib.import_module(package)
+            imported.append(package)
+            logging.info("Imported known third-party plugin: %s", package)
+            # For editable packages, also import the config module explicitly
+            try:
+                importlib.import_module(f"{package}.config_piper")
+                logging.info("Imported config module: %s.config_piper", package)
+            except ImportError:
+                logging.debug("Could not import config module for %s", package)
+        except ImportError:
+            pass  # Package not available, that's ok
+        except Exception:
+            logging.exception("Could not import known third-party plugin: %s", package)
+            failed.append(package)
+
+    # Then scan for other packages
     for module_info in pkgutil.iter_modules():
         name = module_info.name
-        if name.startswith(prefixes):
+        if name.startswith(prefixes) and name not in imported:
             try:
                 importlib.import_module(name)
                 imported.append(name)

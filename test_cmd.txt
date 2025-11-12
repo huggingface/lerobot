@@ -1,0 +1,95 @@
+#set
+pip install -e /home/hls/codes/lerobot/lerobot_robot_piper
+bash can_activate.sh can0 1000000
+
+#tele
+lerobot-teleoperate \
+  --teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop.use_degrees=false \
+  --robot.type=piper --robot.can_interface=can0 --robot.bitrate=1000000 \
+  --robot.include_gripper=true --robot.use_degrees=false
+
+#record
+lerobot-record \
+--teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop.use_degrees=false \
+--robot.type=piper --robot.can_interface=can0 --robot.bitrate=1000000 \
+--robot.include_gripper=true --robot.use_degrees=false \
+--robot.cameras='{"wrist": {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"}, "front":{"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"}}' \
+--dataset.repo_id local/piper-demo-test \
+--dataset.root /home/hls/datasets/piper-demo-test-2 \
+--dataset.single_task "pick green stem above the red strawberries" \
+--dataset.num_episodes=10 \
+--dataset.episode_time_s=45 --dataset.reset_time_s=10 \
+--dataset.video=true --dataset.push_to_hub=false \
+--display_data=true --play_sounds=true
+
+
+# Merge train and validation splits back into one dataset
+HF_LEROBOT_HOME=/home/hls/datasets \
+lerobot-edit-dataset \
+  --repo_id piper-demo-merge-251111 \
+  --operation.type merge \
+  --operation.repo_ids "['piper-demo-251112-1', 'piper-demo-251112-2', 'piper-demo-251112-3']"
+
+
+python src/lerobot/scripts/lerobot_train.py\
+  --dataset.repo_id=local/piper-demo-0 \
+  --dataset.root=/home/hls/datasets/piper-demo-0 \
+  --dataset.video_backend=pyav \
+  --policy.type=pi05 \
+  --policy.normalization_mapping='{"ACTION":"MEAN_STD","STATE":"MEAN_STD","VISUAL":"IDENTITY"}' \
+  --output_dir=./outputs/pi05_training_run2 \
+  --job_name=pi05_training_run2 \
+  --policy.repo_id=pi05_sbp \
+  --policy.pretrained_path=lerobot/pi05_libero \
+  --policy.compile_model=true \
+  --policy.gradient_checkpointing=true \
+  --wandb.enable=false \
+  --policy.dtype=bfloat16 \
+  --steps=3000 \
+  --policy.device=cuda \
+  --batch_size=4
+
+
+  #ACT#
+HF_LEROBOT_HOME=/home/hls/datasets \
+HF_HUB_OFFLINE=1 \        # drop if you want to push to the Hub
+python src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=piper-demo-251110-merged \
+  --dataset.root=/home/hls/datasets/piper-demo-251110-merged \
+  --policy.type=act \
+  --policy.device=cuda \
+  --batch_size=8 \
+  --steps=10000 \
+  --output_dir=./outputs/act_piper_demo_merged \
+  --job_name=act_piper_demo_merged \
+  --policy.repo_id=piper-demo-act \
+  --policy.push_to_hub=false \
+  --wandb.enable=false
+
+
+python -m lerobot.async_inference.robot_client \
+  --server_address 127.0.0.1:8080 \
+  --robot.type piper \
+  --robot.can_interface can0 \
+  --robot.bitrate 1000000 \
+  --robot.include_gripper true \
+  --robot.use_degrees false \
+  --robot.cameras '{"wrist": {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"}, "front":{"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"}}' \
+  --task "pick green stem above the red strawberries" \
+  --policy_type act \
+  --pretrained_name_or_path /home/hls/codes/lerobot/outputs/act_piper_251112/checkpoints/020000/pretrained_model \
+  --policy_device cuda \
+  --actions_per_chunk 50 \
+  --chunk_size_threshold 0.5 \
+  --aggregate_fn_name weighted_average \
+  --debug_visualize_queue_size true
+
+
+python - <<'PY'
+import sys
+import lerobot_robot_piper
+print('python executable:', sys.executable)
+print('module repr:', lerobot_robot_piper)
+print('has PiperConfig:', hasattr(lerobot_robot_piper, 'PiperConfig'))
+print('spec origin:', getattr(lerobot_robot_piper.__spec__, 'origin', None))
+PY
