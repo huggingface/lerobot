@@ -30,11 +30,11 @@ NUM_EPISODES = 2
 FPS = 30
 EPISODE_TIME_SEC = 60
 TASK_DESCRIPTION = "My task description"
-HF_MODEL_ID = "<hf_username>/<model_repo_id>"
-HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
+HF_MODEL_ID = "davidlau90/<model_repo_id>"
+HF_DATASET_ID = "davidlau90/<eval_dataset_repo_id>"
 
 # Create the robot configuration & robot
-robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
+robot_config = LeKiwiClientConfig(remote_ip="192.168.0.207", id="didi")
 
 robot = LeKiwiClient(robot_config)
 
