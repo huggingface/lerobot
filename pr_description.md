@@ -54,14 +54,15 @@ def get_supported_robots():
 
 ## Testing
 
-Verified with Piper robot integration:
-```bash
-# Both installation methods now work
-pip install lerobot-robot-piper          # ✅ Regular install
-pip install -e lerobot-robot-piper       # ✅ Editable install
+The implementation enables automatic discovery of third-party robots:
 
-# Commands work immediately
-python -m lerobot.async_inference.robot_client --robot.type=piper  # ✅
-lerobot-record --robot.type=piper                                 # ✅
-lerobot-teleoperate --robot.type=piper                            # ✅
+```bash
+# Any third-party robot package installed via:
+pip install lerobot-robot-custom          # ✅ Regular install
+pip install -e lerobot-robot-custom       # ✅ Editable install
+
+# Will be automatically discovered and available:
+python -m lerobot.async_inference.robot_client --robot.type=custom  # ✅
+lerobot-record --robot.type=custom                                 # ✅
+lerobot-teleoperate --robot.type=custom                            # ✅
 ```
