@@ -144,7 +144,7 @@ def register_third_party_devices() -> None:
 
     # First try known common packages directly (handles editable installs)
     # TODO: Implement auto-discovery of installed third-party packages
-    known_packages = []  # Will be populated by auto-discovery in future
+    known_packages = ["lerobot_robot_piper"]  # TEMP: For testing our async inference fixes
     for package in known_packages:
         try:
             importlib.import_module(package)
