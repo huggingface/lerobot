@@ -15,6 +15,7 @@
 from dataclasses import dataclass, field
 
 from ..config import RobotConfig
+from lerobot.cameras import CameraConfig
 
 
 @RobotConfig.register_subclass("crane_x7_ros")
@@ -41,11 +42,24 @@ class CraneX7ROSConfig(RobotConfig):
     # 観測の joint_states 受信待ちタイムアウト [秒]
     joint_state_wait_timeout: float = 3.0
 
-    # MoveIt を用いたIKをこのRobotで扱うか（本実装では未使用のプレースホルダ）
-    use_moveit_ik: bool = False
+    # MoveIt 連携設定
+    # MoveGroup のグループ名（crane_x7 の MoveIt 設定に合わせて変更）
+    moveit_group_name: str = "arm"
+    # EEFリンク名（省略時はMoveGroupの設定を利用）
+    moveit_end_effector_link: str | None = None
+    # 計画時間 [秒]
+    moveit_planning_time: float = 2.0
+    # 目標姿勢の参照座標系（省略時はMoveItデフォルト）
+    moveit_pose_reference_frame: str | None = None
+    # 速度/加速度スケーリング（0.0-1.0）
+    moveit_velocity_scaling: float = 0.1
+    moveit_acceleration_scaling: float = 0.1
 
     # ジョイント値に角度[rad]を想定（true: rad / false: controller基準）
     use_radians: bool = True
+
+    # カメラ設定（キー名が観測辞書のキーになる）
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     # 余白: 将来の拡張用
     extra: dict[str, object] = field(default_factory=dict)
