@@ -599,7 +599,18 @@ def control_loop(
 
     dataset = None
     if cfg.mode == "record":
-        action_features = teleop_device.action_features
+        # Get action features from teleop device or environment action space
+        if teleop_device is not None:
+            action_features = teleop_device.action_features
+        else:
+            # For gym_hil environments without teleop device, derive from action space
+            action_space = env.action_space
+            action_features = {
+                "dtype": "float32",
+                "shape": action_space.shape,
+                "names": None,
+            }
+
         features = {
             ACTION: action_features,
             REWARD: {"dtype": "float32", "shape": (1,), "names": None},
