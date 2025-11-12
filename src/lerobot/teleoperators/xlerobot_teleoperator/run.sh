@@ -29,7 +29,7 @@ lerobot-teleoperate \
     --robot.cameras='{
         "top":   {"type": "opencv", "index_or_path": 8, "width": 640, "height": 480, "fps": 30}
     }' \
-    --teleop.type=xlerobot_leader_gamepad \
+    --teleop.type=xlerobot_default_composite \
     --teleop.base_type=lekiwi_base_gamepad \
     --teleop.arms='{
         "left_arm_port": "/dev/ttyACM0",
@@ -82,7 +82,7 @@ lerobot-teleoperate \
 #         "tilt_range": [-30.0, 60.0]
 #     }' \
 #     --robot.cameras='{}' \
-#     --teleop.type=xlerobot_leader_gamepad \
+#     --teleop.type=xlerobot_default_composite \
 #     --teleop.base_type=lekiwi_base_gamepad \
 #     --teleop.arms='{}' \
 #     --teleop.base='{

@@ -36,7 +36,7 @@ import numpy as np
 
 from lerobot.utils.errors import DeviceNotConnectedError
 
-from ..teleoperator import Teleoperator
+from ....teleoperator import Teleoperator
 from .config import XLeRobotMountGamepadTeleopConfig
 
 

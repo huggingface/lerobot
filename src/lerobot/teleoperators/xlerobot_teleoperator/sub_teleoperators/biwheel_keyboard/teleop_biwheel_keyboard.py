@@ -23,8 +23,8 @@ from typing import Any
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from ..teleoperator import Teleoperator
-from ..utils import TeleopEvents
+from ....teleoperator import Teleoperator
+from ....utils import TeleopEvents
 from .configuration_biwheel_keyboard import BiwheelKeyboardTeleopConfig
 
 PYNPUT_AVAILABLE = True

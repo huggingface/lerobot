@@ -24,10 +24,10 @@ from typing import Any
 from lerobot.cameras import CameraConfig
 
 from ..bi_so101_follower.config_bi_so101_follower import BiSO101FollowerConfig
-from ..biwheel_base.config_biwheel_base import BiWheelBaseConfig
 from ..config import RobotConfig
-from ..lekiwi_base.config import LeKiwiBaseConfig
-from ..xlerobot_mount.config import XLeRobotMountConfig
+from .sub_robots.biwheel_base.config_biwheel_base import BiWheelBaseConfig
+from .sub_robots.lekiwi_base.config import LeKiwiBaseConfig
+from .sub_robots.xlerobot_mount.config import XLeRobotMountConfig
 
 
 @RobotConfig.register_subclass("xlerobot")

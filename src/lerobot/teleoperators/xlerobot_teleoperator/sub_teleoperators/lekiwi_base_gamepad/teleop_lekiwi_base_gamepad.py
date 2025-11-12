@@ -35,7 +35,7 @@ import draccus
 
 from lerobot.utils.errors import DeviceNotConnectedError
 
-from ..teleoperator import Teleoperator
+from ....teleoperator import Teleoperator
 from .config_lekiwi_base_gamepad import LeKiwiBaseTeleopConfig
 
 

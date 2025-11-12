@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass, field
 
-from ..config import TeleoperatorConfig
+from ....config import TeleoperatorConfig
 
 
 @TeleoperatorConfig.register_subclass("biwheel_keyboard")

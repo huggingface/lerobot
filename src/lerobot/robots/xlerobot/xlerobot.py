@@ -31,10 +31,10 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..bi_so101_follower.bi_so101_follower import BiSO101Follower
-from ..biwheel_base.biwheel_base import BiWheelBase
-from ..lekiwi_base.lekiwi_base import LeKiwiBase
 from ..robot import Robot
-from ..xlerobot_mount.xlerobot_mount import XLeRobotMount
+from .sub_robots.biwheel_base.biwheel_base import BiWheelBase
+from .sub_robots.lekiwi_base.lekiwi_base import LeKiwiBase
+from .sub_robots.xlerobot_mount.xlerobot_mount import XLeRobotMount
 from .config_xlerobot import XLeRobotConfig
 
 logger = logging.getLogger(__name__)

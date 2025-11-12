@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,20 +14,24 @@
 
 from dataclasses import dataclass
 
-from ..config import TeleoperatorConfig
+from ....config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("biwheel_gamepad")
+@TeleoperatorConfig.register_subclass("lekiwi_base_gamepad")
 @dataclass
-class BiwheelGamepadTeleopConfig(TeleoperatorConfig):
-    """Configuration for the differential (biwheel) base gamepad teleoperator."""
+class LeKiwiBaseTeleopConfig(TeleoperatorConfig):
+    """Configuration for the LeKiwi base gamepad teleoperator."""
 
     joystick_index: int = 0
-    max_speed_mps: float = 0.2
-    yaw_speed_deg: float = 40.0
+    max_speed_mps: float = 1.0
     deadzone: float = 0.15
+    yaw_speed_deg: float = 30.0
     polling_fps: int = 60
-    axis_forward: int = 1
-    axis_yaw: int = 0
-    invert_forward: bool = True
-    invert_yaw: bool = False
+    normalize_diagonal: bool = True
+    axis_x: int = 0
+    axis_y: int = 1
+    invert_x: bool = False
+    invert_y: bool = True
+    hat_index: int = 0
+    dpad_left_button: int = 14
+    dpad_right_button: int = 13

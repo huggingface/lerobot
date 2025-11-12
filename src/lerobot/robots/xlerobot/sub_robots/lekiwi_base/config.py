@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,29 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from dataclasses import dataclass
 
-from ..config import RobotConfig
+from ....config import RobotConfig
 
 
-@RobotConfig.register_subclass("biwheel_base")
+@RobotConfig.register_subclass("lekiwi_base")
 @dataclass
-class BiWheelBaseConfig(RobotConfig):
+class LeKiwiBaseConfig(RobotConfig):
     port: str = "/dev/ttyACM0"
 
     disable_torque_on_disconnect: bool = True
 
-    # Differential drive parameters
-    wheel_radius: float = 0.05
-    wheel_base: float = 0.25
-    max_wheel_raw: int = 2000  # Reduced from 3000 for safety
+    # Geometry and kinematics parameters of the omni-wheel base
+    wheel_radius_m: float = 0.05
+    base_radius_m: float = 0.125
+    wheel_axis_angles_deg: tuple[float, float, float] = (240.0, 0.0, 120.0)
+    # Motor IDs in order: (left, back, right). Defaults match legacy setup (back=0, left=1, right=2).
+    base_motor_ids: tuple[int, int, int] = (1, 0, 2)
+    max_wheel_raw: int = 3000
 
-    # Motor IDs for the left and right wheels
-    base_motor_ids: tuple[int, int] = (9, 10)
-
-    # Motor direction inversion flags (True to invert, False to keep original)
-    # Set to True if motor rotates in opposite direction
-    invert_left_motor: bool = True
-    invert_right_motor: bool = False  # Right motor needs inversion for proper differential drive
-
+    # Whether to perform the UART handshake when connecting to the bus.
     handshake_on_connect: bool = True

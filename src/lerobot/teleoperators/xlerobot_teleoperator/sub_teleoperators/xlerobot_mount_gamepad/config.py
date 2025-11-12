@@ -15,7 +15,7 @@
 
 from dataclasses import dataclass
 
-from ..config import TeleoperatorConfig
+from ....config import TeleoperatorConfig
 
 
 @TeleoperatorConfig.register_subclass("xlerobot_mount_gamepad")

@@ -14,7 +14,7 @@
 
 from dataclasses import dataclass
 
-from ..config import RobotConfig
+from ....config import RobotConfig
 
 
 @RobotConfig.register_subclass("xlerobot_mount")

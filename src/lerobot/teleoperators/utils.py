@@ -82,21 +82,23 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
 
         return Reachy2Teleoperator(config)
     elif config.type == "lekiwi_base_gamepad":
-        from .lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import LeKiwiBaseTeleop
+        from .xlerobot_teleoperator.sub_teleoperators.lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import (
+            LeKiwiBaseTeleop,
+        )
 
         return LeKiwiBaseTeleop(config)
     elif config.type == "biwheel_gamepad":
-        from .biwheel_gamepad import BiwheelGamepadTeleop
+        from .xlerobot_teleoperator.sub_teleoperators.biwheel_gamepad import BiwheelGamepadTeleop
 
         return BiwheelGamepadTeleop(config)
     elif config.type == "xlerobot_mount_gamepad":
-        from .xlerobot_mount_gamepad import XLeRobotMountGamepadTeleop
+        from .xlerobot_teleoperator.sub_teleoperators.xlerobot_mount_gamepad import XLeRobotMountGamepadTeleop
 
         return XLeRobotMountGamepadTeleop(config)
-    elif config.type == "xlerobot_leader_gamepad":
-        from .xlerobot_leader_gamepad import XLeRobotLeaderGamepad
+    elif config.type == "xlerobot_default_composite":
+        from .xlerobot_teleoperator.default_composite import XLeRobotDefaultComposite
 
-        return XLeRobotLeaderGamepad(config)
+        return XLeRobotDefaultComposite(config)
     else:
         try:
             return cast(Teleoperator, make_device_from_device_class(config))

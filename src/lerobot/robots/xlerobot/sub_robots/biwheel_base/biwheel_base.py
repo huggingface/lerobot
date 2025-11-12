@@ -24,7 +24,7 @@ from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from ..robot import Robot
+from ....robot import Robot
 from .config_biwheel_base import BiWheelBaseConfig
 
 logger = logging.getLogger(__name__)

@@ -30,7 +30,7 @@
 #     --robot.cameras='{
 #         "top":   {"type": "opencv", "index_or_path": 8, "width": 640, "height": 480, "fps": 30}
 #     }' \
-#     --teleop.type=xlerobot_leader_gamepad \
+#     --teleop.type=xlerobot_default_composite \
 #     --teleop.base_type=lekiwi_base_gamepad \
 #     --teleop.arms='{
 #         "left_arm_port": "/dev/ttyACM0",
@@ -78,16 +78,16 @@ from contextlib import suppress
 from functools import cached_property
 from typing import Any
 
-from ..bi_so101_leader.bi_so101_leader import BiSO101Leader
-from ..biwheel_gamepad.teleop_biwheel_gamepad import BiwheelGamepadTeleop
-from ..lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import LeKiwiBaseTeleop
-from ..teleoperator import Teleoperator
-from ..xlerobot_mount_gamepad.teleop import XLeRobotMountGamepadTeleop
-from .config import XLeRobotLeaderGamepadConfig
+from ...bi_so101_leader.bi_so101_leader import BiSO101Leader
+from ...teleoperator import Teleoperator
+from ..sub_teleoperators.biwheel_gamepad.teleop_biwheel_gamepad import BiwheelGamepadTeleop
+from ..sub_teleoperators.lekiwi_base_gamepad.teleop_lekiwi_base_gamepad import LeKiwiBaseTeleop
+from ..sub_teleoperators.xlerobot_mount_gamepad.teleop import XLeRobotMountGamepadTeleop
+from .config import XLeRobotDefaultCompositeConfig
 
 
-class XLeRobotLeaderGamepad(Teleoperator):
-    """Composite teleoperator for XLeRobot with leader arms and gamepad control.
+class XLeRobotDefaultComposite(Teleoperator):
+    """Composite teleoperator for XLeRobot combining leader arms with gamepad inputs.
 
     This teleoperator combines three input methods:
     - BiSO101Leader: Leader arms for controlling follower arms
@@ -98,10 +98,10 @@ class XLeRobotLeaderGamepad(Teleoperator):
     the complete XLeRobot system.
     """
 
-    config_class = XLeRobotLeaderGamepadConfig
-    name = "xlerobot_leader_gamepad"
+    config_class = XLeRobotDefaultCompositeConfig
+    name = "xlerobot_default_composite"
 
-    def __init__(self, config: XLeRobotLeaderGamepadConfig):
+    def __init__(self, config: XLeRobotDefaultCompositeConfig):
         self.config = config
         super().__init__(config)
         self.arm_teleop = BiSO101Leader(config.arms_config) if config.arms_config else None
@@ -112,10 +112,10 @@ class XLeRobotLeaderGamepad(Teleoperator):
         base_config = getattr(self.config, "base_config", None)
         if base_config is None:
             return None
-        base_type = getattr(self.config, "base_type", None) or XLeRobotLeaderGamepadConfig.BASE_TYPE_LEKIWI
-        if base_type == XLeRobotLeaderGamepadConfig.BASE_TYPE_LEKIWI:
+        base_type = getattr(self.config, "base_type", None) or XLeRobotDefaultCompositeConfig.BASE_TYPE_LEKIWI
+        if base_type == XLeRobotDefaultCompositeConfig.BASE_TYPE_LEKIWI:
             return LeKiwiBaseTeleop(base_config)
-        if base_type == XLeRobotLeaderGamepadConfig.BASE_TYPE_BIWHEEL:
+        if base_type == XLeRobotDefaultCompositeConfig.BASE_TYPE_BIWHEEL:
             return BiwheelGamepadTeleop(base_config)
         raise ValueError(f"Unsupported base teleoperator type: {base_type}")
 
@@ -180,3 +180,4 @@ class XLeRobotLeaderGamepad(Teleoperator):
     @property
     def is_calibrated(self) -> bool:
         return all(getattr(teleop, "is_calibrated", True) for teleop in self._iter_active_teleops())
+

@@ -41,7 +41,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
         return LeKiwi(config)
     elif config.type == "lekiwi_base":
-        from .lekiwi_base import LeKiwiBase
+        from .xlerobot.sub_robots.lekiwi_base import LeKiwiBase
 
         return LeKiwiBase(config)
     elif config.type == "hope_jr_hand":
@@ -69,11 +69,11 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
         return MockRobot(config)
     elif config.type == "biwheel_base":
-        from .biwheel_base import BiWheelBase
+        from .xlerobot.sub_robots.biwheel_base import BiWheelBase
 
         return BiWheelBase(config)
     elif config.type == "xlerobot_mount":
-        from .xlerobot_mount import XLeRobotMount
+        from .xlerobot.sub_robots.xlerobot_mount import XLeRobotMount
 
         return XLeRobotMount(config)
     elif config.type == "xlerobot":
