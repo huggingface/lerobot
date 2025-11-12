@@ -553,6 +553,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        storage_backend: str | None = None,
+        storage_backend_params: dict | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -678,6 +680,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
+
+        # Optional storage backend selection (default keeps existing Parquet behavior)
+        self.storage_backend = storage_backend
+        self.storage_backend_params = storage_backend_params or {}
 
         # Unused attributes
         self.image_writer = None
@@ -828,9 +834,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return fpaths
 
     def load_hf_dataset(self) -> datasets.Dataset:
-        """hf_dataset contains all the observations, states, actions, rewards, etc."""
+        """hf_dataset contains all the observations, states, actions, rewards, etc.
+
+        When storage_backend='lance', use LanceBackend to read .lance files; otherwise keep existing Parquet behavior unchanged.
+        """
         features = get_hf_features_from_features(self.features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features)
+        if self.storage_backend and self.storage_backend.lower() == "lance":
+            try:
+                # Import only when needed to avoid extra dependency
+                from lerobot.datasets.storage.lance_backend import LanceBackend
+            except Exception as e:
+                raise ImportError(
+                    "storage_backend='lance' selected but dependencies are missing or the module is unavailable. Please `pip install lance`."
+                ) from e
+            backend = LanceBackend(params=self.storage_backend_params)
+            hf_dataset = backend.load_hf_dataset(self.root, features=features, episodes=self.episodes)
+        else:
+            hf_dataset = load_nested_dataset(self.root / "data", features=features)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
