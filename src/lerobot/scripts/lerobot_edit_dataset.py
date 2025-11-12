@@ -549,7 +549,6 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
 
 
 def handle_rename_feature(cfg: EditDatasetConfig) -> None:
-    print(cfg)
     if not isinstance(cfg.operation, RenameFeatureConfig):
         raise ValueError("Operation config must be RenameFeatureConfig")
 
