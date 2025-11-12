@@ -68,7 +68,7 @@ def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) 
     return PIL.Image.fromarray(image_array)
 
 
-def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1):
+def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 0):
     """
     Saves a NumPy array or PIL Image to a file.
 
