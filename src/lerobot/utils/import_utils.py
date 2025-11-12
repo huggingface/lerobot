@@ -143,7 +143,8 @@ def register_third_party_devices() -> None:
     failed: list[str] = []
 
     # First try known common packages directly (handles editable installs)
-    known_packages = ["lerobot_robot_piper"]
+    # TODO: Implement auto-discovery of installed third-party packages
+    known_packages = []  # Will be populated by auto-discovery in future
     for package in known_packages:
         try:
             importlib.import_module(package)
