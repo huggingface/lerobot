@@ -136,6 +136,7 @@ def register_third_party_devices() -> None:
 
     Scans top-level modules on sys.path for packages starting with
     'lerobot_robot_', 'lerobot_camera_' or 'lerobot_teleoperator_' and imports them.
+    Also handles editable package finder objects.
     """
     prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_")
     imported: list[str] = []
@@ -143,7 +144,55 @@ def register_third_party_devices() -> None:
 
     for module_info in pkgutil.iter_modules():
         name = module_info.name
-        if name.startswith(prefixes):
+
+        # Handle editable package finder objects (e.g., __editable___lerobot_robot_piper_0_1_0_finder)
+        if name.startswith("__editable___"):
+            for prefix in prefixes:
+                if prefix in name:
+                    # Extract package name from finder (e.g., lerobot_robot_piper)
+                    # Pattern: __editable___[package_name]_[version]_finder
+                    after_editable = name[len("__editable___"):]
+                    # Remove everything from first underscore followed by digit or _finder
+                    package_name = after_editable
+                    # Find first underscore followed by digit
+                    for i, char in enumerate(after_editable):
+                        if char == '_' and (i + 1 < len(after_editable) and after_editable[i + 1].isdigit()):
+                            package_name = after_editable[:i]
+                            break
+                    # Also check for _finder
+                    finder_pos = package_name.find('_finder')
+                    if finder_pos > 0:
+                        package_name = package_name[:finder_pos]
+
+                    if package_name.startswith(prefix):
+                            try:
+                                # Import the package
+                                importlib.import_module(package_name)
+                                imported.append(package_name)
+                                logging.info("Imported third-party plugin from editable install: %s", package_name)
+
+                                # For robot packages, also try to import the config module
+                                if prefix == "lerobot_robot_":
+                                    config_module = f"{package_name}.config_{package_name.replace('lerobot_robot_', '')}"
+                                    try:
+                                        importlib.import_module(config_module)
+                                        logging.info("Imported robot config: %s", config_module)
+                                    except ImportError:
+                                        # Try alternative config module name
+                                        alt_config = f"{package_name}.{package_name.replace('lerobot_robot_', 'config_')}"
+                                        try:
+                                            importlib.import_module(alt_config)
+                                            logging.info("Imported robot config: %s", alt_config)
+                                        except ImportError:
+                                            logging.debug("Could not find config module for %s", package_name)
+
+                            except Exception:
+                                logging.exception("Could not import third-party plugin: %s", package_name)
+                                failed.append(package_name)
+                            break
+
+        # Handle regular packages
+        elif name.startswith(prefixes):
             try:
                 importlib.import_module(name)
                 imported.append(name)

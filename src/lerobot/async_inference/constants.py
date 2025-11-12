@@ -40,6 +40,5 @@ def get_supported_robots():
         return ["so100_follower", "so101_follower", "bi_so100_follower", "koch_follower"]
 
 
-# For backward compatibility, provide a static reference
-# This will be populated after register_third_party_devices() is called
-SUPPORTED_ROBOTS = get_supported_robots()
+# SUPPORTED_ROBOTS is now computed dynamically in robot_client.py
+# after register_third_party_devices() has been called

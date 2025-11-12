@@ -54,13 +54,6 @@ from lerobot.utils.import_utils import register_third_party_devices
 # Register third-party devices BEFORE importing configs so robot choices are available
 register_third_party_devices()
 
-# TEMP: Manually import third-party robot configs for editable installs
-# TODO: Improve device discovery to handle editable packages automatically
-try:
-    from lerobot_robot_piper.config_piper import PiperConfig  # noqa: F401
-except ImportError:
-    pass  # Package not available
-
 from lerobot.robots import (  # noqa: F401
     Robot,
     bi_so100_follower,
