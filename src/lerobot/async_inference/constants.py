@@ -25,5 +25,21 @@ DEFAULT_OBS_QUEUE_TIMEOUT = 2
 # All action chunking policies
 SUPPORTED_POLICIES = ["act", "smolvla", "diffusion", "tdmpc", "vqbet", "pi0", "pi05"]
 
-# TODO: Add all other robots
-SUPPORTED_ROBOTS = ["so100_follower", "so101_follower", "bi_so100_follower", "koch_follower"]
+
+def get_supported_robots():
+    """Get dynamically supported robots from registered RobotConfig subclasses.
+
+    This function should be called after register_third_party_devices() has been called
+    to ensure all third-party robots are registered.
+    """
+    try:
+        from lerobot.robots.config import RobotConfig
+        return list(RobotConfig.get_known_choices().keys())
+    except ImportError:
+        # Fallback to hardcoded list if RobotConfig not available
+        return ["so100_follower", "so101_follower", "bi_so100_follower", "koch_follower"]
+
+
+# For backward compatibility, provide a static reference
+# This will be populated after register_third_party_devices() is called
+SUPPORTED_ROBOTS = get_supported_robots()

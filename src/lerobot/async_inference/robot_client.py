@@ -69,7 +69,7 @@ from lerobot.transport import (
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 
 from .configs import RobotClientConfig
-from .constants import SUPPORTED_ROBOTS
+from .constants import get_supported_robots
 from .helpers import (
     Action,
     FPSTracker,
@@ -474,8 +474,9 @@ class RobotClient:
 def async_client(cfg: RobotClientConfig):
     logging.info(pformat(asdict(cfg)))
 
-    if cfg.robot.type not in SUPPORTED_ROBOTS:
-        raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
+    supported_robots = get_supported_robots()
+    if cfg.robot.type not in supported_robots:
+        raise ValueError(f"Robot {cfg.robot.type} not yet supported! Available: {supported_robots}")
 
     client = RobotClient(cfg)
 
