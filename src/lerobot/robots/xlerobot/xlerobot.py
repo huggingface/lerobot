@@ -21,7 +21,6 @@
 #   https://github.com/bingogome/lerobot
 
 import logging
-from dataclasses import replace
 from functools import cached_property
 from typing import Any
 
@@ -30,12 +29,17 @@ import numpy as np
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.errors import DeviceNotConnectedError
 
-from ..bi_so101_follower.bi_so101_follower import BiSO101Follower
 from ..robot import Robot
-from .sub_robots.biwheel_base.biwheel_base import BiWheelBase
-from .sub_robots.lekiwi_base.lekiwi_base import LeKiwiBase
-from .sub_robots.xlerobot_mount.xlerobot_mount import XLeRobotMount
+from ..so101_follower.config_so101_follower import SO101FollowerConfig
+from ..so101_follower.so101_follower import SO101Follower
 from .config_xlerobot import XLeRobotConfig
+from .shared_bus_mode.shared_bus import SharedComponentAttachment, build_shared_bus_group
+from .sub_robots.biwheel_base.biwheel_base import BiWheelBase
+from .sub_robots.biwheel_base.config_biwheel_base import BiWheelBaseConfig
+from .sub_robots.lekiwi_base.config import LeKiwiBaseConfig
+from .sub_robots.lekiwi_base.lekiwi_base import LeKiwiBase
+from .sub_robots.xlerobot_mount.config import XLeRobotMountConfig
+from .sub_robots.xlerobot_mount.xlerobot_mount import XLeRobotMount
 
 logger = logging.getLogger(__name__)
 
@@ -49,26 +53,55 @@ class XLeRobot(Robot):
     def __init__(self, config: XLeRobotConfig):
         super().__init__(config)
         self.config = config
+        self._component_ports = dict(getattr(config, "component_ports", {}))
 
-        self.arms = BiSO101Follower(replace(config.arms_config)) if config.arms_config else None
+        self.left_arm = self._build_arm("left_arm")
+        self.right_arm = self._build_arm("right_arm")
         self.base = self._build_base_robot()
-        self.mount = XLeRobotMount(replace(config.mount_config)) if config.mount_config else None
+        self.mount = self._build_mount_robot()
         self.camera_configs = dict(config.cameras)
         self.cameras = make_cameras_from_configs(self.camera_configs)
         self._last_camera_obs: dict[str, np.ndarray] = {
             name: self._make_blank_camera_obs(name) for name in self.cameras
         }
+        self._shared_buses: dict[str, Any] = {}
+        self._setup_shared_buses()
+
+    def _build_arm(self, component_name: str) -> SO101Follower | None:
+        if component_name not in self._component_ports:
+            return None
+        spec = getattr(self.config, component_name, {}) or {}
+        cfg_dict = self._prepare_component_spec(component_name, spec)
+        arm_config = SO101FollowerConfig(**cfg_dict)
+        return SO101Follower(arm_config)
 
     def _build_base_robot(self) -> Robot | None:
-        base_config = getattr(self.config, "base_config", None)
-        if base_config is None:
+        if "base" not in self._component_ports:
             return None
-        base_type = getattr(self.config, "base_type", None) or XLeRobotConfig.BASE_TYPE_LEKIWI
-        if base_type == XLeRobotConfig.BASE_TYPE_LEKIWI:
-            return LeKiwiBase(replace(base_config))
-        if base_type == XLeRobotConfig.BASE_TYPE_BIWHEEL:
-            return BiWheelBase(replace(base_config))
-        raise ValueError(f"Unsupported base robot type: {base_type}")
+        spec = getattr(self.config, "base", {}) or {}
+        base_type = spec.get("type")
+        if base_type == "lekiwi_base":
+            cfg_cls = LeKiwiBaseConfig
+            robot_cls = LeKiwiBase
+        elif base_type == "biwheel_base":
+            cfg_cls = BiWheelBaseConfig
+            robot_cls = BiWheelBase
+        else:
+            raise ValueError("Base configuration must include a supported 'type' (lekiwi_base or biwheel_base).")
+
+        spec_copy = dict(spec)
+        spec_copy.pop("type", None)
+        cfg_dict = self._prepare_component_spec("base", spec_copy)
+        base_config = cfg_cls(**cfg_dict)
+        return robot_cls(base_config)
+
+    def _build_mount_robot(self) -> XLeRobotMount | None:
+        if "mount" not in self._component_ports:
+            return None
+        spec = getattr(self.config, "mount", {}) or {}
+        cfg_dict = self._prepare_component_spec("mount", spec)
+        mount_config = XLeRobotMountConfig(**cfg_dict)
+        return XLeRobotMount(mount_config)
 
     def _make_blank_camera_obs(self, cam_key: str) -> np.ndarray:
         cam_config = self.camera_configs.get(cam_key)
@@ -88,8 +121,10 @@ class XLeRobot(Robot):
     @cached_property
     def observation_features(self) -> dict[str, Any]:
         features: dict[str, Any] = {}
-        if self.arms:
-            features.update(self.arms.observation_features)
+        if self.left_arm:
+            features.update(self._prefixed_features(self.left_arm.observation_features, "left_"))
+        if self.right_arm:
+            features.update(self._prefixed_features(self.right_arm.observation_features, "right_"))
         if self.base:
             features.update(self.base.observation_features)
         if self.mount:
@@ -100,8 +135,10 @@ class XLeRobot(Robot):
     @cached_property
     def action_features(self) -> dict[str, Any]:
         features: dict[str, Any] = {}
-        if self.arms:
-            features.update(self.arms.action_features)
+        if self.left_arm:
+            features.update(self._prefixed_features(self.left_arm.action_features, "left_"))
+        if self.right_arm:
+            features.update(self._prefixed_features(self.right_arm.action_features, "right_"))
         if self.base:
             features.update(self.base.action_features)
         if self.mount:
@@ -111,46 +148,58 @@ class XLeRobot(Robot):
     @property
     def is_connected(self) -> bool:
         components_connected = all(
-            comp.is_connected for comp in (self.arms, self.base, self.mount) if comp is not None
+            comp.is_connected
+            for comp in (self.left_arm, self.right_arm, self.base, self.mount)
+            if comp is not None
         )
         cameras_connected = all(cam.is_connected for cam in self.cameras.values())
         return components_connected and cameras_connected
 
     def connect(self, calibrate: bool = True) -> None:
-        if self.mount:
-            self.mount.connect(calibrate=calibrate)
+        if self.left_arm:
+            self.left_arm.connect(calibrate=calibrate)
+        if self.right_arm:
+            self.right_arm.connect(calibrate=calibrate)
         if self.base:
             handshake = getattr(self.base.config, "handshake_on_connect", True)
             self.base.connect(calibrate=calibrate, handshake=handshake)
-        if self.arms:
-            self.arms.connect(calibrate=calibrate)
+        if self.mount:
+            self.mount.connect(calibrate=calibrate)
         for cam in self.cameras.values():
             cam.connect()
 
     @property
     def is_calibrated(self) -> bool:
-        return all(comp.is_calibrated for comp in (self.arms, self.base, self.mount) if comp is not None)
+        return all(
+            comp.is_calibrated for comp in (self.left_arm, self.right_arm, self.base, self.mount) if comp is not None
+        )
 
     def calibrate(self) -> None:
         logger.info("Calibrating XLeRobot components")
+        if self.left_arm:
+            self.left_arm.calibrate()
+        if self.right_arm:
+            self.right_arm.calibrate()
         if self.base:
             self.base.calibrate()
-        if self.arms:
-            self.arms.calibrate()
         if self.mount:
             self.mount.calibrate()
 
     def configure(self) -> None:
+        if self.left_arm:
+            self.left_arm.configure()
+        if self.right_arm:
+            self.right_arm.configure()
         if self.base:
             self.base.configure()
-        if self.arms:
-            self.arms.configure()
         if self.mount:
             self.mount.configure()
 
     def setup_motors(self) -> None:
-        if self.arms and hasattr(self.arms, "setup_motors"):
-            self.arms.setup_motors()
+        if self.left_arm and hasattr(self.left_arm, "setup_motors"):
+            self.left_arm.setup_motors()
+        if self.right_arm and hasattr(self.right_arm, "setup_motors"):
+            self.right_arm.setup_motors()
         if self.base and hasattr(self.base, "setup_motors"):
             self.base.setup_motors()
         if self.mount and hasattr(self.mount, "setup_motors"):
@@ -161,8 +210,10 @@ class XLeRobot(Robot):
             raise DeviceNotConnectedError("XLeRobot is not connected.")
 
         obs = {}
-        if self.arms:
-            obs.update(self.arms.get_observation())
+        if self.left_arm:
+            obs.update(self._prefixed_obs(self.left_arm.get_observation(), "left_"))
+        if self.right_arm:
+            obs.update(self._prefixed_obs(self.right_arm.get_observation(), "right_"))
         if self.base:
             obs.update(self.base.get_observation())
         if self.mount:
@@ -185,53 +236,37 @@ class XLeRobot(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError("XLeRobot is not connected.")
 
-        arm_prefixes = ("left_", "right_")
-        arm_action = {k: v for k, v in action.items() if k.startswith(arm_prefixes)}
+        sent: dict[str, Any] = {}
 
-        base_keys = ("x.vel", "y.vel", "theta.vel")
-        base_action = {}
-        for key in base_keys:
-            if key in action:
-                base_action[key] = action[key]
-            else:
-                prefixed = f"base.{key}"
-                if prefixed in action:
-                    base_action[key] = action[prefixed]
+        if self.left_arm:
+            left_action = self._extract_prefixed_action(action, "left_")
+            sent.update(self._prefixed_obs(self.left_arm.send_action(left_action), "left_"))
 
-        mount_action: dict[str, float] = {}
+        if self.right_arm:
+            right_action = self._extract_prefixed_action(action, "right_")
+            sent.update(self._prefixed_obs(self.right_arm.send_action(right_action), "right_"))
+
+        if self.base:
+            base_action = {}
+            for key in ("x.vel", "y.vel", "theta.vel"):
+                if key in action:
+                    base_action[key] = action[key]
+                elif f"base.{key}" in action:
+                    base_action[key] = action[f"base.{key}"]
+            sent.update(self.base.send_action(base_action))
+
         if self.mount:
             mount_keys = set(self.mount.action_features.keys())
-            for key in mount_keys:
-                if key in action:
-                    mount_action[key] = action[key]
+            mount_action = {key: value for key, value in action.items() if key in mount_keys}
+            if mount_action:
+                sent.update(self.mount.send_action(mount_action))
 
-        sent_arm = self.arms.send_action(arm_action) if self.arms else {}
-        sent_base = self.base.send_action(base_action) if self.base else {}
-        sent_mount = self.mount.send_action(mount_action) if self.mount and mount_action else {}
-        return {**sent_arm, **sent_base, **sent_mount}
+        return sent
 
     def disconnect(self) -> None:
-        if self.base and self.base.is_connected:
-            try:
-                if hasattr(self.base, "stop_base"):
-                    self.base.stop_base()
-                self.base.disconnect()
-            except DeviceNotConnectedError:
-                logger.debug("Base already disconnected", exc_info=False)
-            except Exception:
-                logger.warning("Failed to disconnect base", exc_info=True)
-        if self.mount and self.mount.is_connected:
-            try:
-                self.mount.disconnect()
-            except DeviceNotConnectedError:
-                logger.debug("Mount already disconnected", exc_info=False)
-        if self.arms and self.arms.is_connected:
-            try:
-                self.arms.disconnect()
-            except DeviceNotConnectedError:
-                logger.debug("Arms already disconnected", exc_info=False)
-            except Exception:
-                logger.warning("Failed to disconnect arms", exc_info=True)
+        for comp in (self.base, self.mount, self.left_arm, self.right_arm):
+            if comp and comp.is_connected:
+                self._safe_disconnect(comp)
         for cam in self.cameras.values():
             try:
                 cam.disconnect()
@@ -239,3 +274,111 @@ class XLeRobot(Robot):
                 logger.debug("Camera %s not connected during disconnect", cam, exc_info=False)
             except Exception:
                 logger.warning("Failed to disconnect camera", exc_info=True)
+
+    def _prefixed_features(self, features: dict[str, Any], prefix: str) -> dict[str, Any]:
+        return {f"{prefix}{key}": value for key, value in features.items()}
+
+    def _prefixed_obs(self, obs: dict[str, Any], prefix: str) -> dict[str, Any]:
+        return {f"{prefix}{key}": value for key, value in obs.items()}
+
+    def _extract_prefixed_action(self, action: dict[str, Any], prefix: str) -> dict[str, Any]:
+        return {key.removeprefix(prefix): value for key, value in action.items() if key.startswith(prefix)}
+
+    def _component_port(self, component_name: str) -> str:
+        port = self._component_ports.get(component_name)
+        if not port:
+            raise ValueError(
+                f"No shared bus provides a port for component '{component_name}'. "
+                "Declare it in `shared_buses`."
+            )
+        return port
+
+    def _prepare_component_spec(self, component_name: str, spec: dict[str, Any]) -> dict[str, Any]:
+        cfg = dict(spec)
+        port = self._component_port(component_name)
+        existing_port = cfg.get("port")
+        if existing_port and existing_port != port:
+            raise ValueError(
+                f"Component '{component_name}' specifies port '{existing_port}' but shared bus assigns '{port}'."
+            )
+        cfg["port"] = port
+        if self.config.id and "id" not in cfg:
+            cfg["id"] = f"{self.config.id}_{component_name}"
+        if self.config.calibration_dir and cfg.get("calibration_dir") is None:
+            cfg["calibration_dir"] = self.config.calibration_dir
+        return cfg
+
+    def _setup_shared_buses(self) -> None:
+        if not getattr(self.config, "shared_buses_config", None):
+            return
+
+        component_map = {
+            "left_arm": self.left_arm,
+            "right_arm": self.right_arm,
+            "base": self.base,
+            "mount": self.mount,
+        }
+
+        for name, bus_cfg in self.config.shared_buses_config.items():
+            attachments: list[SharedComponentAttachment] = []
+            for device_cfg in bus_cfg.components:
+                component = component_map.get(device_cfg.component)
+                if component is None or not hasattr(component, "bus"):
+                    continue
+                motor_names = tuple(component.bus.motors.keys())
+                attachments.append(
+                    SharedComponentAttachment(
+                        name=device_cfg.component,
+                        component=component,
+                        motor_names=motor_names,
+                        motor_id_offset=device_cfg.motor_id_offset,
+                    )
+                )
+            if attachments:
+                group, _ = build_shared_bus_group(
+                    name,
+                    port=bus_cfg.port,
+                    attachments=attachments,
+                    handshake_on_connect=bus_cfg.handshake_on_connect,
+                )
+                self._shared_buses[name] = group
+
+    def _safe_disconnect(self, component: Robot) -> None:
+        try:
+            if hasattr(component, "stop_base"):
+                component.stop_base()
+            component.disconnect()
+        except DeviceNotConnectedError:
+            logger.debug("%s already disconnected", component, exc_info=False)
+        except Exception as exc:
+            detail = self._describe_component(component)
+            exc_type = type(exc).__name__
+            logger.warning(
+                "Failed to disconnect %s (%s: %s). Details: %s",
+                component,
+                exc_type,
+                exc,
+                detail,
+                exc_info=True,
+            )
+            print(f"[XLeRobot] Failed to disconnect {component}: {exc_type}: {exc} | {detail}")
+
+    def _describe_component(self, component: Robot) -> str:
+        parts: list[str] = [f"class={component.__class__.__name__}"]
+        config = getattr(component, "config", None)
+        if config:
+            comp_id = getattr(config, "id", None)
+            if comp_id:
+                parts.append(f"id={comp_id}")
+            port = getattr(config, "port", None)
+            if port:
+                parts.append(f"port={port}")
+        bus = getattr(component, "bus", None)
+        if bus:
+            bus_port = getattr(bus, "port", None)
+            if bus_port:
+                parts.append(f"bus_port={bus_port}")
+            motors = getattr(bus, "motors", None)
+            if motors:
+                parts.append(f"motors={list(motors.keys())}")
+        return ", ".join(parts)

@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,25 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from __future__ import annotations
 
-from ....config import RobotConfig
+from dataclasses import dataclass, field
 
 
-@RobotConfig.register_subclass("lekiwi_base")
 @dataclass
-class LeKiwiBaseConfig(RobotConfig):
-    port: str = "/dev/ttyACM0"
+class SharedBusDeviceConfig:
+    """Describes how a logical component attaches to a shared bus."""
 
-    disable_torque_on_disconnect: bool = True
+    component: str
+    motor_id_offset: int = 0
 
-    # Geometry and kinematics parameters of the omni-wheel base
-    wheel_radius_m: float = 0.05
-    base_radius_m: float = 0.125
-    wheel_axis_angles_deg: tuple[float, float, float] = (240.0, 0.0, 120.0)
-    # Motor IDs in order: (left, back, right). 
-    base_motor_ids: tuple[int, int, int] = (2, 1, 3)
-    max_wheel_raw: int = 3000
 
-    # Whether to perform the UART handshake when connecting to the bus.
+@dataclass
+class SharedBusConfig:
+    """Configuration for a shared Feetech motor bus."""
+
+    port: str
+    components: list[SharedBusDeviceConfig] = field(default_factory=list)
     handshake_on_connect: bool = True
+

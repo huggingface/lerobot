@@ -18,81 +18,118 @@
 #   https://github.com/Vector-Wangel/XLeRobot
 #   https://github.com/bingogome/lerobot
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict, is_dataclass
 from typing import Any
 
 from lerobot.cameras import CameraConfig
 
-from ..bi_so101_follower.config_bi_so101_follower import BiSO101FollowerConfig
 from ..config import RobotConfig
+from .shared_bus_mode.component_assembly import SharedBusConfig, SharedBusDeviceConfig
 from .sub_robots.biwheel_base.config_biwheel_base import BiWheelBaseConfig
 from .sub_robots.lekiwi_base.config import LeKiwiBaseConfig
-from .sub_robots.xlerobot_mount.config import XLeRobotMountConfig
 
 
 @RobotConfig.register_subclass("xlerobot")
 @dataclass
 class XLeRobotConfig(RobotConfig):
-    BASE_TYPE_LEKIWI = "lekiwi_base"
-    BASE_TYPE_BIWHEEL = "biwheel_base"
-
-    arms: dict[str, Any] = field(default_factory=dict)
+    left_arm: dict[str, Any] = field(default_factory=dict)
+    right_arm: dict[str, Any] = field(default_factory=dict)
     base: dict[str, Any] = field(default_factory=dict)
     mount: dict[str, Any] = field(default_factory=dict)
+    shared_buses: dict[str, Any] = field(default_factory=dict)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-    base_type: str | None = BASE_TYPE_LEKIWI
 
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        arms_cfg: BiSO101FollowerConfig | None = None
-        if isinstance(self.arms, BiSO101FollowerConfig):
-            arms_cfg = self.arms
-        elif self.arms:
-            arms_cfg = BiSO101FollowerConfig(**self.arms)
+        self.left_arm = self._normalize_component_dict(self.left_arm)
+        self.right_arm = self._normalize_component_dict(self.right_arm)
+        self.base = self._normalize_base_dict(self.base)
+        self.mount = self._normalize_component_dict(self.mount)
 
-        base_cfg: LeKiwiBaseConfig | BiWheelBaseConfig | None = None
-        base_type = self.base_type or self.BASE_TYPE_LEKIWI
-        if self.base:
-            if base_type == self.BASE_TYPE_LEKIWI:
-                base_cfg = (
-                    self.base if isinstance(self.base, LeKiwiBaseConfig) else LeKiwiBaseConfig(**self.base)
-                )
-            elif base_type == self.BASE_TYPE_BIWHEEL:
-                base_cfg = (
-                    self.base if isinstance(self.base, BiWheelBaseConfig) else BiWheelBaseConfig(**self.base)
-                )
-            else:
-                raise ValueError(f"Unsupported XLeRobot base type: {base_type}")
+        self.shared_buses_config = self._coerce_shared_buses()
+        self._validate_component_ports()
+
+    def _normalize_component_dict(self, cfg: dict[str, Any] | Any) -> dict[str, Any]:
+        if not cfg:
+            return {}
+        if isinstance(cfg, dict):
+            return dict(cfg)
+        if is_dataclass(cfg):
+            return asdict(cfg)
+        return dict(cfg)
+
+    def _normalize_base_dict(self, cfg: dict[str, Any] | Any) -> dict[str, Any]:
+        if not cfg:
+            return {}
+
+        if isinstance(cfg, dict):
+            data = dict(cfg)
+        elif isinstance(cfg, LeKiwiBaseConfig):
+            data = asdict(cfg)
+            data.setdefault("type", "lekiwi_base")
+        elif isinstance(cfg, BiWheelBaseConfig):
+            data = asdict(cfg)
+            data.setdefault("type", "biwheel_base")
+        elif is_dataclass(cfg):
+            data = asdict(cfg)
         else:
-            base_type = None
+            data = dict(cfg)
 
-        mount_cfg: XLeRobotMountConfig | None = None
-        if isinstance(self.mount, XLeRobotMountConfig):
-            mount_cfg = self.mount
-        elif self.mount:
-            mount_cfg = XLeRobotMountConfig(**self.mount)
+        if "type" not in data:
+            raise ValueError("Base configuration must specify a 'type' field (e.g. 'lekiwi_base').")
+        return data
 
-        self.arms = arms_cfg
-        self.base = base_cfg
-        self.mount = mount_cfg
-        self.arms_config: BiSO101FollowerConfig | None = arms_cfg
-        self.base_config: LeKiwiBaseConfig | BiWheelBaseConfig | None = base_cfg
-        self.mount_config: XLeRobotMountConfig | None = mount_cfg
-        self.base_type = base_type
+    def _coerce_shared_buses(self) -> dict[str, SharedBusConfig]:
+        if not self.shared_buses:
+            raise ValueError("`shared_buses` must be provided for XLeRobot.")
 
-        if self.id:
-            if arms_cfg and arms_cfg.id is None:
-                arms_cfg.id = f"{self.id}_arms"
-            if base_cfg and getattr(base_cfg, "id", None) is None:
-                base_cfg.id = f"{self.id}_base"
-            if mount_cfg and mount_cfg.id is None:
-                mount_cfg.id = f"{self.id}_mount"
+        coerced: dict[str, SharedBusConfig] = {}
+        component_ports: dict[str, str] = {}
+        for name, value in self.shared_buses.items():
+            if isinstance(value, SharedBusConfig):
+                bus_cfg = value
+            else:
+                port = value.get("port")
+                if not port:
+                    raise ValueError(f"Shared bus '{name}' is missing required field 'port'.")
+                components_data = value.get("components", [])
+                components = [
+                    device if isinstance(device, SharedBusDeviceConfig) else SharedBusDeviceConfig(**device)
+                    for device in components_data
+                ]
+                bus_cfg = SharedBusConfig(
+                    port=port,
+                    components=components,
+                    handshake_on_connect=value.get("handshake_on_connect", True),
+                )
 
-        if self.calibration_dir:
-            if arms_cfg and arms_cfg.calibration_dir is None:
-                arms_cfg.calibration_dir = self.calibration_dir
-            if base_cfg and getattr(base_cfg, "calibration_dir", None) is None:
-                base_cfg.calibration_dir = self.calibration_dir
-            if mount_cfg and mount_cfg.calibration_dir is None:
-                mount_cfg.calibration_dir = self.calibration_dir
+            if not bus_cfg.components:
+                raise ValueError(f"Shared bus '{name}' must list at least one component.")
+
+            for device in bus_cfg.components:
+                previous = component_ports.get(device.component)
+                if previous and previous != bus_cfg.port:
+                    raise ValueError(
+                        f"Component '{device.component}' is assigned to multiple shared buses "
+                        f"({previous} vs {bus_cfg.port})."
+                    )
+                component_ports[device.component] = bus_cfg.port
+
+            coerced[name] = bus_cfg
+
+        self.component_ports = component_ports
+        return coerced
+
+    def _validate_component_ports(self) -> None:
+        for component_name, spec in (
+            ("left_arm", self.left_arm),
+            ("right_arm", self.right_arm),
+            ("base", self.base),
+            ("mount", self.mount),
+        ):
+            if spec and component_name not in getattr(self, "component_ports", {}):
+                raise ValueError(
+                    f"Component '{component_name}' is configured but missing from `shared_buses`. "
+                    "Declare a shared bus entry that references it."
+                )

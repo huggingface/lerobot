@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# XLeRobot integration based on
+#   https://www.hackster.io/brainbot/brainbot-big-brain-with-xlerobot-ad1b4c
+#   https://github.com/Astera-org/brainbot
+#   https://github.com/Vector-Wangel/XLeRobot
+#   https://github.com/bingogome/lerobot
+
 from dataclasses import dataclass, field
 from typing import Any
 
