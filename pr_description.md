@@ -2,15 +2,17 @@
 
 ## Summary
 
-This PR enables third-party robots to work with LeRobot's async inference system by fixing registration timing and dynamic robot discovery.
+This PR enables third-party robots to work with LeRobot's async inference system by implementing automatic device discovery and early registration.
 
 ## Problem
 
-Third-party robots couldn't be used with `lerobot.async_inference.robot_client` because the argument parser couldn't see dynamically registered robot types.
+Third-party robots couldn't be used with `lerobot.async_inference.robot_client` because:
+- The argument parser couldn't see dynamically registered robot types
+- Device discovery didn't handle editable package installations
 
 ## Solution
 
-**Two minimal changes:**
+**Three key improvements:**
 
 #### 1. Early Device Registration (`robot_client.py`)
 ```python
@@ -26,37 +28,40 @@ def get_supported_robots():
     return list(RobotConfig.get_known_choices().keys())
 ```
 
+#### 3. Enhanced Device Discovery (`import_utils.py`)
+- Automatic detection of regular pip-installed packages
+- Automatic detection and extraction of editable package finder objects
+- Graceful import of robot config modules for registration
+
 ## Files Changed
 
-- `src/lerobot/async_inference/constants.py` (9 lines added)
-- `src/lerobot/async_inference/robot_client.py` (8 lines added)
-- `src/lerobot/utils/import_utils.py` (enhanced with editable package support)
+- `src/lerobot/async_inference/constants.py` (9 lines)
+- `src/lerobot/async_inference/robot_client.py` (8 lines)
+- `src/lerobot/utils/import_utils.py` (enhanced)
 
 ## Impact
 
 **For Third-Party Robot Developers:**
-- ✅ Standard pip installs work immediately
+- ✅ Works with both `pip install` and `pip install -e`
 - ✅ No core LeRobot modifications needed
+- ✅ Standard CLI commands work immediately
 - ✅ Async inference support out-of-the-box
 
 **For LeRobot Maintainers:**
 - ✅ Automatic robot type discovery
-- ✅ No hardcoded robot lists
+- ✅ No hardcoded robot lists to maintain
 - ✅ Backward compatible
 
 ## Testing
 
-Verified with Piper robot:
+Verified with Piper robot integration:
 ```bash
-python -m lerobot.async_inference.robot_client --robot.type=piper
-# Now accepts piper as valid robot type ✅
+# Both installation methods now work
+pip install lerobot-robot-piper          # ✅ Regular install
+pip install -e lerobot-robot-piper       # ✅ Editable install
 
-python -m lerobot.async_inference.robot_client \
-    --robot.type=piper \
-    --server_address=127.0.0.1:8080 \
-    # ... full command now works ✅
+# Commands work immediately
+python -m lerobot.async_inference.robot_client --robot.type=piper  # ✅
+lerobot-record --robot.type=piper                                 # ✅
+lerobot-teleoperate --robot.type=piper                            # ✅
 ```
-
-## Future
-
-Editable package support and integration tests can be added in follow-up PRs.
