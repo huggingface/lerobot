@@ -514,6 +514,7 @@ def make_processors(
                 max_gripper_pos=cfg.processor.max_gripper_pos
                 if cfg.processor.max_gripper_pos is not None
                 else 100.0,
+                use_ik_solution=True,
             )
         )
 
@@ -539,7 +540,7 @@ def make_processors(
                 end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
                 motor_names=motor_names,
                 use_latched_reference=False,
-                use_ik_solution=False,
+                use_ik_solution=True,
             ),
             EEBoundsAndSafety(
                 end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
@@ -552,7 +553,7 @@ def make_processors(
                 scale_velocity=True,  # TODO(jpizarrom): make this configurable
             ),
             InverseKinematicsRLStep(
-                kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=True
+                kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=False
             ),
         ]
         action_pipeline_steps.extend(inverse_kinematics_steps)

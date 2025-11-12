@@ -50,6 +50,7 @@ class LeaderFollowerProcessor(ProcessorStep):
     use_gripper: bool = True
     prev_leader_gripper: float | None = None
     max_gripper_pos: float = 100.0
+    use_ik_solution: bool = False
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Process transition with leader-follower logic."""
@@ -75,10 +76,16 @@ class LeaderFollowerProcessor(ProcessorStep):
 
             if isinstance(teleop_action, dict) and raw_joint_pos is not None:
                 leader_pos = np.array([teleop_action[f"{motor}.pos"] for motor in self.motor_names])
-                follower_pos = np.array([raw_joint_pos[f"{motor}.pos"] for motor in self.motor_names])
 
                 leader_ee = self.kinematics.forward_kinematics(leader_pos)
+
+                if self.use_ik_solution and "IK_solution" in transition.get(TransitionKey.COMPLEMENTARY_DATA):
+                    follower_pos = transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
+                else:
+                    follower_pos = np.array([raw_joint_pos[f"{motor}.pos"] for motor in self.motor_names])
+
                 follower_ee = self.kinematics.forward_kinematics(follower_pos)
+
                 follower_gripper_pos = raw_joint_pos["gripper.pos"]
 
                 leader_ee_pos = leader_ee[:3, 3]
@@ -110,14 +117,40 @@ class LeaderFollowerProcessor(ProcessorStep):
                     "Gripper delta computation error"
                 )
 
+                # Normalize the action to the range [-1, 1]
+                delta_pos = delta_pos / np.array(
+                    [
+                        self.end_effector_step_sizes["x"],
+                        self.end_effector_step_sizes["y"],
+                        self.end_effector_step_sizes["z"],
+                    ]
+                )
+                delta_rvec = delta_rvec / np.array(
+                    [
+                        self.end_effector_step_sizes["wx"],
+                        self.end_effector_step_sizes["wy"],
+                        self.end_effector_step_sizes["wz"],
+                    ]
+                )
+                max_normalized_pos = max(
+                    abs(delta_pos[0]),
+                    abs(delta_pos[1]),
+                    abs(delta_pos[2]),
+                )
+
+                if max_normalized_pos > 1.0:
+                    # Scale proportionally
+                    delta_pos = delta_pos / max_normalized_pos
+                    delta_rvec = delta_rvec / max_normalized_pos
+
                 intervention_action = np.array(
                     [
-                        delta_pos[0] / self.end_effector_step_sizes["x"],
-                        delta_pos[1] / self.end_effector_step_sizes["y"],
-                        delta_pos[2] / self.end_effector_step_sizes["z"],
-                        delta_rvec[0] / self.end_effector_step_sizes["wx"],
-                        delta_rvec[1] / self.end_effector_step_sizes["wy"],
-                        delta_rvec[2] / self.end_effector_step_sizes["wz"],
+                        delta_pos[0],
+                        delta_pos[1],
+                        delta_pos[2],
+                        delta_rvec[0],
+                        delta_rvec[1],
+                        delta_rvec[2],
                         np.clip(delta_gripper, -self.max_gripper_pos, self.max_gripper_pos)
                         / self.max_gripper_pos,
                     ],
