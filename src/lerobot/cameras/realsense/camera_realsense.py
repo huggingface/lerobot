@@ -27,8 +27,11 @@ from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for num
 
 try:
     import pyrealsense2 as rs  # type: ignore  # TODO: add type stubs for pyrealsense2
-except Exception as e:
-    logging.info(f"Could not import realsense: {e}")
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
+    rs = None  # type: ignore[assignment]
+    _REALSENSE_IMPORT_ERROR = exc
+else:
+    _REALSENSE_IMPORT_ERROR = None
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -127,8 +130,9 @@ class RealSenseCamera(Camera):
         self.use_depth = config.use_depth
         self.warmup_s = config.warmup_s
 
-        self.rs_pipeline: rs.pipeline | None = None
-        self.rs_profile: rs.pipeline_profile | None = None
+        # Avoid referencing rs types directly to keep file importable without the extra
+        self.rs_pipeline: object | None = None
+        self.rs_profile: object | None = None
 
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
@@ -166,6 +170,12 @@ class RealSenseCamera(Camera):
         """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} is already connected.")
+
+        if rs is None:
+            raise ImportError(
+                "RealSenseCamera requires the optional 'pyrealsense2' package. "
+                "Install with `pip install lerobot[intelrealsense]` to enable RealSense cameras."
+            ) from _REALSENSE_IMPORT_ERROR
 
         self.rs_pipeline = rs.pipeline()
         rs_config = rs.config()
