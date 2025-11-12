@@ -10,25 +10,30 @@ This script demonstrates:
 4. Managing action buffers and timing for real-time operation
 
 Usage:
-    # With real robot
-    python rtc_demo.py --policy.path=lerobot/smolvla_base --robot.type=so100
+    # Run RTC with Real robot with RTC
+    uv run examples/rtc/eval_with_real_robot.py \
+        --policy.path=helper2424/smolvla_check_rtc_last3 \
+        --policy.device=mps \
+        --rtc.enabled=true \
+        --rtc.execution_horizon=20 \
+        --robot.type=so100_follower \
+        --robot.port=/dev/tty.usbmodem58FA0834591 \
+        --robot.id=so100_follower \
+        --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+        --task="Move green small object into the purple platform" \
+        --duration=120
 
-    # With simulation environment
-    python rtc_demo.py --policy.path=lerobot/smolvla_base --env.type=pusht
-
-    # With config file
-    python rtc_demo.py --config_path=path/to/config.json
-
-    # With policy compilation for faster inference (recommended for production)
-    python rtc_demo.py --policy.path=lerobot/smolvla_base --robot.type=so100 --compile_policy=true
-
-    # With aggressive compilation for maximum speed
-    python rtc_demo.py --policy.path=lerobot/smolvla_base --robot.type=so100 --compile_policy=true --compile_mode=max-autotune
-
-Performance Notes:
-    - torch.compile() is NOT supported on MPS (Apple Silicon) due to attention operation limitations
-    - For MPS optimization, reduce num_steps in the policy config (biggest speedup)
-    - CUDA devices will see 2-5x speedup with compilation enabled
+    # Run RTC with Real robot without RTC
+    uv run examples/rtc/eval_with_real_robot.py \
+        --policy.path=helper2424/smolvla_check_rtc_last3 \
+        --policy.device=mps \
+        --rtc.enabled=false \
+        --robot.type=so100_follower \
+        --robot.port=/dev/tty.usbmodem58FA0834591 \
+        --robot.id=so100_follower \
+        --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+        --task="Move green small object into the purple platform" \
+        --duration=120
 """
 
 import logging
@@ -44,6 +49,7 @@ import torch
 from torch import Tensor
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
@@ -340,13 +346,20 @@ def get_actions(
         dataset_features = hw_to_dataset_features(robot.observation_features(), "observation")
         policy_device = policy.config.device
 
+        # Load preprocessor and postprocessor from pretrained files
+        # The stats are embedded in the processor .safetensors files
+        logger.info(f"[GET_ACTIONS] Loading preprocessor/postprocessor from {cfg.policy.pretrained_path}")
+
         preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
             pretrained_path=cfg.policy.pretrained_path,
+            dataset_stats=None,  # Will load from pretrained processor files
             preprocessor_overrides={
                 "device_processor": {"device": cfg.policy.device},
             },
         )
+
+        logger.info("[GET_ACTIONS] Preprocessor/postprocessor loaded successfully with embedded stats")
 
         get_actions_threshold = cfg.action_queue_size_to_get_new_actions
 
@@ -383,17 +396,10 @@ def get_actions(
                     obs_with_policy_features[name] = obs_with_policy_features[name].unsqueeze(0)
                     obs_with_policy_features[name] = obs_with_policy_features[name].to(policy_device)
 
-                # for k, v in obs_with_policy_features.items():
-                #     if isinstance(v, np.ndarray):
-                #         obs_with_policy_features[k] = torch.from_numpy(v).to(policy_device)
-
-                #     if is_image_key(k):
-                #         obs_with_policy_features[k] = obs_with_policy_features[k].type(torch.float32) / 255
-                #         obs_with_policy_features[k] = obs_with_policy_features[k].permute(2, 0, 1).unsqueeze(0)
-                #     elif isinstance(obs_with_policy_features[k], torch.Tensor):
-                #         obs_with_policy_features[k] = obs_with_policy_features[k].unsqueeze(0)
-
-                obs_with_policy_features["task"] = cfg.task
+                obs_with_policy_features["task"] = [cfg.task]  # Task should be a list, not a string!
+                obs_with_policy_features["robot_type"] = (
+                    robot.robot.name if hasattr(robot.robot, "name") else ""
+                )
 
                 preproceseded_obs = preprocessor(obs_with_policy_features)
 
@@ -463,9 +469,9 @@ def actor_control(
 
             if action is not None:
                 action = action.cpu()
-                action = {key: action[i].item() for i, key in enumerate(robot.action_features())}
-                action = robot_action_processor((action, None))
-                robot.send_action(action)
+                action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
+                action_processed = robot_action_processor((action_dict, None))
+                robot.send_action(action_processed)
 
                 action_count += 1
 
