@@ -65,6 +65,12 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.images.top']"
 
+Rename camera feature:
+    python -m lerobot.scripts.lerobot_edit_dataset \
+        --repo_id lerobot/pusht_image \
+        --operation.type rename_feature \
+        --operation.feature_mapping '{"observation.image": "observation.images.camera"}'
+
 Using JSON config file:
     python -m lerobot.scripts.lerobot_edit_dataset \
         --config_path path/to/edit_config.json
@@ -80,6 +86,7 @@ from lerobot.datasets.dataset_tools import (
     delete_episodes,
     merge_datasets,
     remove_feature,
+    rename_feature,
     split_dataset,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -112,9 +119,15 @@ class RemoveFeatureConfig:
 
 
 @dataclass
+class RenameFeatureConfig:
+    type: str = "rename_feature"
+    feature_mapping: dict[str, str] | None = None
+
+
+@dataclass
 class EditDatasetConfig:
     repo_id: str
-    operation: DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig
+    operation: DeleteEpisodesConfig | SplitConfig | MergeConfig | RemoveFeatureConfig | RenameFeatureConfig
     root: str | None = None
     new_repo_id: str | None = None
     push_to_hub: bool = False
@@ -258,6 +271,38 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
 
 
+def handle_rename_feature(cfg: EditDatasetConfig) -> None:
+    print(cfg)
+    if not isinstance(cfg.operation, RenameFeatureConfig):
+        raise ValueError("Operation config must be RenameFeatureConfig")
+
+    if not cfg.operation.feature_mapping:
+        raise ValueError("feature_mapping must be specified for rename_feature operation")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    output_repo_id, output_dir = get_output_path(
+        cfg.repo_id, cfg.new_repo_id, Path(cfg.root) if cfg.root else None
+    )
+
+    if cfg.new_repo_id is None:
+        dataset.root = Path(str(dataset.root) + "_old")
+
+    logging.info(f"Renaming features {cfg.operation.feature_mapping} from {cfg.repo_id}")
+    new_dataset = rename_feature(
+        dataset,
+        feature_mapping=cfg.operation.feature_mapping,
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Current feature names: {list(new_dataset.meta.features.keys())}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
     operation_type = cfg.operation.type
@@ -270,15 +315,22 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_merge(cfg)
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
+    elif operation_type == "rename_feature":
+        handle_rename_feature(cfg)
     else:
         raise ValueError(
             f"Unknown operation type: {operation_type}\n"
-            f"Available operations: delete_episodes, split, merge, remove_feature"
+            f"Available operations: delete_episodes, split, merge, remove_feature, rename_feature"
         )
 
 
 def main() -> None:
     init_logging()
+    edit_dataset()
+
+
+if __name__ == "__main__":
+    main()
     edit_dataset()
 
 
