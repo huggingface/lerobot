@@ -308,7 +308,7 @@ def modify_features(
         )
     """
     if add_features is None and remove_features is None and rename_features is None:
-        raise ValueError("Must specify at least one of add_features or remove_features")
+        raise ValueError("Must specify at least one of add_features, remove_features or rename_features")
 
     remove_features_list: list[str] = []
     if remove_features is not None:
