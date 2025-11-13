@@ -66,6 +66,7 @@ from lerobot.datasets.utils import (
     write_tasks,
 )
 from lerobot.datasets.video_utils import (
+    RealtimeVideoEncoder,
     VideoFrame,
     concatenate_video_files,
     decode_video_frames,
@@ -430,7 +431,9 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         for key in video_keys:
             if not self.features[key].get("info", None):
-                video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
+                video_path = self.root / self.video_path.format(
+                    video_key=video_key, chunk_index=0, file_index=0
+                )
                 self.info["features"][key]["info"] = get_video_info(video_path)
 
     def update_chunk_settings(
@@ -1071,6 +1074,131 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             self.image_writer.save_image(image=image, fpath=fpath)
 
+    def _init_realtime_encoders(self) -> None:
+        """Initialize realtime video encoders for each camera at the start of an episode."""
+        episode_index = self.episode_buffer["episode_index"]
+
+        for video_key in self.meta.video_keys:
+            # Create temporary video path for this episode
+            temp_dir = Path(tempfile.mkdtemp(dir=self.root))
+            temp_video_path = temp_dir / f"{video_key}_{episode_index:03d}.mp4"
+
+            # Get video dimensions from features metadata
+            video_feature = self.features.get(video_key)
+            if video_feature and "shape" in video_feature:
+                height, width, _ = video_feature["shape"]
+            else:
+                # Default to common resolution if not specified
+                logging.warning(f"No shape found for {video_key}, using default 480x640")
+                height, width = 480, 640
+
+            # Create realtime encoder
+            try:
+                encoder = RealtimeVideoEncoder(
+                    output_path=temp_video_path,
+                    fps=self.fps,
+                    width=width,
+                    height=height,
+                    vcodec=self.video_codec,
+                    crf=self.video_crf,
+                    preset=self.video_preset,
+                    max_queue_size=self.realtime_encoder_max_queue_size,
+                )
+                self.realtime_encoders[video_key] = {
+                    "encoder": encoder,
+                    "temp_path": temp_video_path,
+                    "temp_dir": temp_dir,
+                }
+                logging.info(
+                    f"Initialized realtime encoder for {video_key} ({width}x{height}, "
+                    f"codec={self.video_codec}, crf={self.video_crf}, preset={self.video_preset})"
+                )
+            except Exception as e:
+                logging.error(f"Failed to initialize realtime encoder for {video_key}: {e}")
+                # Fall back to traditional encoding
+                self.realtime_encoding = False
+                raise
+
+    def _add_frame_to_realtime_encoder(
+        self, video_key: str, frame: np.ndarray | PIL.Image.Image, frame_index: int
+    ) -> bool:
+        """
+        Add a frame to the realtime video encoder for a specific camera.
+
+        Returns:
+            bool: True if frame was successfully added, False if encoding failed
+        """
+        if video_key not in self.realtime_encoders:
+            logging.error(f"Encoder for {video_key} not initialized")
+            return False
+
+        encoder_info = self.realtime_encoders[video_key]
+        encoder = encoder_info["encoder"]
+
+        # Convert PIL Image to numpy array if needed
+        if isinstance(frame, PIL.Image.Image):
+            frame = np.array(frame)
+
+        # Ensure frame is RGB uint8
+        if frame.dtype != np.uint8:
+            frame = (frame * 255).astype(np.uint8) if frame.max() <= 1.0 else frame.astype(np.uint8)
+
+        # Ensure frame is 3-channel RGB
+        if len(frame.shape) == 2:  # Grayscale
+            frame = np.stack([frame] * 3, axis=-1)
+        elif frame.shape[2] == 4:  # RGBA
+            frame = frame[:, :, :3]
+
+        try:
+            encoder.add_frame(frame)
+            return True
+        except Exception as e:
+            logging.error(f"Error adding frame {frame_index} to encoder for {video_key}: {e}")
+            return False
+
+    def _finalize_realtime_encoders(self) -> dict:
+        """Finalize all realtime encoders and return video metadata."""
+        video_metadata = {}
+
+        episode_index = self.episode_buffer["episode_index"]
+        # Extract scalar value from numpy array if needed
+        if isinstance(episode_index, np.ndarray):
+            episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
+
+        for video_key, encoder_info in self.realtime_encoders.items():
+            encoder = encoder_info["encoder"]
+            temp_path = encoder_info["temp_path"]
+            temp_dir = encoder_info["temp_dir"]
+
+            try:
+                # Finalize encoding
+                logging.info(f"Finalizing realtime encoder for {video_key}")
+                encoder.finalize()
+
+                # Get video file metrics
+                ep_size_in_mb = get_file_size_in_mb(temp_path)
+                ep_duration_in_s = get_video_duration_in_s(temp_path)
+
+                # Process video file placement using shared logic
+                metadata = self._process_video_file_placement(
+                    video_key=video_key,
+                    temp_path=temp_path,
+                    temp_dir=temp_dir,
+                    ep_size_in_mb=ep_size_in_mb,
+                    ep_duration_in_s=ep_duration_in_s,
+                    episode_index=episode_index,
+                )
+                video_metadata.update(metadata)
+
+            except Exception as e:
+                logging.error(f"Error finalizing encoder for {video_key}: {e}")
+                raise
+
+        # Clear encoders for next episode
+        self.realtime_encoders.clear()
+
+        return video_metadata
+
     def add_frame(self, frame: dict) -> None:
         """
         This function only adds the frame to the episode_buffer. Apart from images — which are written in a
@@ -1094,6 +1222,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episode_buffer["timestamp"].append(timestamp)
         self.episode_buffer["task"].append(frame.pop("task"))  # Remove task from frame after processing
 
+        # Initialize realtime encoders on first frame if realtime encoding is enabled
+        if self.realtime_encoding and frame_index == 0:
+            self._init_realtime_encoders()
+
         # Add frame features to episode_buffer
         for key in frame:
             if key not in self.features:
@@ -1102,13 +1234,55 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
 
             if self.features[key]["dtype"] in ["image", "video"]:
-                img_path = self._get_image_file_path(
-                    episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
-                )
-                if frame_index == 0:
-                    img_path.parent.mkdir(parents=True, exist_ok=True)
-                self._save_image(frame[key], img_path)
-                self.episode_buffer[key].append(str(img_path))
+                if self.realtime_encoding:
+                    # Try to send frame to realtime encoder
+                    success = self._add_frame_to_realtime_encoder(key, frame[key], frame_index)
+
+                    if not success:
+                        # Encoding failed - fall back to PNG saving
+                        logging.warning(
+                            f"Realtime encoding failed for {key} at frame {frame_index}. "
+                            "Falling back to PNG saving for remainder of episode."
+                        )
+                        self.realtime_encoding = False
+                        # Initialize image writer if not already started
+                        if self.image_writer is None:
+                            self.start_image_writer(num_processes=0, num_threads=4)
+                        # Save this frame as PNG
+                        img_path = self._get_image_file_path(
+                            episode_index=self.episode_buffer["episode_index"],
+                            image_key=key,
+                            frame_index=frame_index,
+                        )
+                        if frame_index == 0 or not img_path.parent.exists():
+                            img_path.parent.mkdir(parents=True, exist_ok=True)
+                        self._save_image(frame[key], img_path)
+                        self.episode_buffer[key].append(str(img_path))
+                    else:
+                        # Success - store empty string since no PNG file is saved
+                        self.episode_buffer[key].append("")
+
+                    # Always store frames temporarily for stats computation
+                    stats_key = f"{key}_arrays_for_stats"
+                    if stats_key not in self.episode_buffer:
+                        self.episode_buffer[stats_key] = []
+                    # Convert to numpy array and store
+                    if isinstance(frame[key], PIL.Image.Image):
+                        frame_array = np.array(frame[key])
+                    else:
+                        frame_array = frame[key]
+                    self.episode_buffer[stats_key].append(frame_array)
+                else:
+                    # Use traditional PNG saving
+                    img_path = self._get_image_file_path(
+                        episode_index=self.episode_buffer["episode_index"],
+                        image_key=key,
+                        frame_index=frame_index,
+                    )
+                    if frame_index == 0:
+                        img_path.parent.mkdir(parents=True, exist_ok=True)
+                    self._save_image(frame[key], img_path)
+                    self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
 
@@ -1128,6 +1302,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 None.
         """
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
+
+        temp_stat_keys = [k for k in list(episode_buffer.keys()) if k.endswith("_arrays_for_stats")]
+        for k in temp_stat_keys:
+            del episode_buffer[k]
 
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 
@@ -1154,16 +1332,62 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_buffer[key] = np.stack(episode_buffer[key])
 
         # Wait for image writer to end, so that episode stats over images can be computed
-        self._wait_image_writer()
-        ep_stats = compute_episode_stats(episode_buffer, self.features)
+        if not self.realtime_encoding:
+            self._wait_image_writer()
+
+        # Compute episode stats
+        if self.realtime_encoding:
+            # Import here to avoid circular dependency
+            from lerobot.datasets.compute_stats import get_feature_stats
+
+            # For realtime encoding, compute stats differently for images
+            # First, compute stats for non-image features
+            buffer_for_stats = {
+                k: v
+                for k, v in episode_buffer.items()
+                if k not in self.features or self.features[k]["dtype"] not in ["image", "video"]
+            }
+            features_for_stats = {
+                k: v for k, v in self.features.items() if v["dtype"] not in ["image", "video"]
+            }
+            ep_stats = compute_episode_stats(buffer_for_stats, features_for_stats)
+
+            # Now compute image stats from temporarily stored arrays
+            for k in episode_buffer:
+                if k.endswith("_arrays_for_stats"):
+                    original_key = k.replace("_arrays_for_stats", "")
+                    # Stack arrays into (N, H, W, C) format
+                    image_array = np.stack(episode_buffer[k])
+                    # Transpose to (N, C, H, W) for stats computation
+                    if image_array.ndim == 4 and image_array.shape[-1] == 3:
+                        image_array = np.transpose(image_array, (0, 3, 1, 2))
+                    # Compute stats with axis=(0,2,3) for per-channel stats
+                    ep_stats[original_key] = get_feature_stats(image_array, axis=(0, 2, 3), keepdims=True)
+                    # Normalize to [0,1] range like in compute_episode_stats
+                    ep_stats[original_key] = {
+                        k: v if k == "count" else np.squeeze(v / 255.0, axis=0)
+                        for k, v in ep_stats[original_key].items()
+                    }
+
+            # Clean up temporary image arrays to free memory
+            keys_to_remove = [k for k in list(episode_buffer.keys()) if k.endswith("_arrays_for_stats")]
+            for k in keys_to_remove:
+                del episode_buffer[k]
+        else:
+            ep_stats = compute_episode_stats(episode_buffer, self.features)
 
         ep_metadata = self._save_episode_data(episode_buffer)
         has_video_keys = len(self.meta.video_keys) > 0
         use_batched_encoding = self.batch_encoding_size > 1
 
-        if has_video_keys and not use_batched_encoding:
-            for video_key in self.meta.video_keys:
-                ep_metadata.update(self._save_episode_video(video_key, episode_index))
+        if has_video_keys:
+            if self.realtime_encoding:
+                # Use realtime encoder finalization
+                ep_metadata.update(self._finalize_realtime_encoders())
+            elif not use_batched_encoding:
+                # Use PyAV encoding
+                for video_key in self.meta.video_keys:
+                    ep_metadata.update(self._save_episode_video(video_key, episode_index))
 
         # `meta.save_episode` need to be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
@@ -1250,7 +1474,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Convert buffer into HF Dataset
         ep_dict = {key: episode_buffer[key] for key in self.hf_features}
         ep_dataset = datasets.Dataset.from_dict(ep_dict, features=self.hf_features, split="train")
-        ep_dataset = embed_images(ep_dataset)
+
+        # Skip embedding images when using realtime encoding (images are already in video files)
+        if not self.realtime_encoding:
+            ep_dataset = embed_images(ep_dataset)
+
         ep_num_frames = len(ep_dataset)
 
         if self.latest_episode is None:
@@ -1328,12 +1556,30 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         return metadata
 
-    def _save_episode_video(self, video_key: str, episode_index: int) -> dict:
-        # Encode episode frames into a temporary video
-        ep_path = self._encode_temporary_episode_video(video_key, episode_index)
-        ep_size_in_mb = get_file_size_in_mb(ep_path)
-        ep_duration_in_s = get_video_duration_in_s(ep_path)
+    def _process_video_file_placement(
+        self,
+        video_key: str,
+        temp_path: Path,
+        temp_dir: Path,
+        ep_size_in_mb: float,
+        ep_duration_in_s: float,
+        episode_index: int,
+    ) -> dict:
+        """
+        Process video file placement in the dataset structure.
 
+        Args:
+            video_key: Key identifying the video/camera
+            temp_path: Path to the temporary video file
+            temp_dir: Temporary directory to clean up after processing
+            ep_size_in_mb: Size of the episode video in MB
+            ep_duration_in_s: Duration of the episode video in seconds
+            episode_index: Index of the current episode
+
+        Returns:
+            dict: Metadata dict with chunk_index, file_index, and timestamps
+        """
+        # Determine chunk and file indices
         if (
             episode_index == 0
             or self.meta.latest_episode is None
@@ -1354,7 +1600,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
             new_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(ep_path), str(new_path))
+            shutil.move(str(temp_path), str(new_path))
         else:
             # Retrieve information from the latest updated video file using latest_episode
             latest_ep = self.meta.latest_episode
@@ -1374,25 +1620,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
                 )
                 new_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(ep_path), str(new_path))
+                shutil.move(str(temp_path), str(new_path))
                 latest_duration_in_s = 0.0
             else:
-                # Update latest video file
-                concatenate_video_files(
-                    [latest_path, ep_path],
-                    latest_path,
-                )
+                # Update latest video file by concatenating
+                concatenate_video_files([latest_path, temp_path], latest_path)
 
-        # Remove temporary directory
-        shutil.rmtree(str(ep_path.parent))
+        # Clean up temporary directory
+        if temp_dir.exists():
+            shutil.rmtree(str(temp_dir))
 
         # Update video info (only needed when first episode is encoded since it reads from episode 0)
         if episode_index == 0:
             self.meta.update_video_info(video_key)
-            write_info(self.meta.info, self.meta.root)  # ensure video info always written properly
+            write_info(self.meta.info, self.meta.root)
 
+        # Return metadata
         metadata = {
-            "episode_index": episode_index,
             f"videos/{video_key}/chunk_index": chunk_idx,
             f"videos/{video_key}/file_index": file_idx,
             f"videos/{video_key}/from_timestamp": latest_duration_in_s,
@@ -1400,9 +1644,31 @@ class LeRobotDataset(torch.utils.data.Dataset):
         }
         return metadata
 
+    def _save_episode_video(self, video_key: str, episode_index: int) -> dict:
+        """Encode episode frames from PNG files and save to dataset structure."""
+        # Encode episode frames into a temporary video
+        ep_path = self._encode_temporary_episode_video(video_key, episode_index)
+        ep_size_in_mb = get_file_size_in_mb(ep_path)
+        ep_duration_in_s = get_video_duration_in_s(ep_path)
+
+        # Process video file placement using shared logic
+        metadata = self._process_video_file_placement(
+            video_key=video_key,
+            temp_path=ep_path,
+            temp_dir=ep_path.parent,
+            ep_size_in_mb=ep_size_in_mb,
+            ep_duration_in_s=ep_duration_in_s,
+            episode_index=episode_index,
+        )
+
+        # Add episode_index to metadata for compatibility
+        metadata["episode_index"] = episode_index
+        return metadata
+
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
         # Clean up image files for the current episode buffer
-        if delete_images:
+        # Skip cleanup when using realtime encoding (no PNG files are saved)
+        if delete_images and not self.realtime_encoding:
             # Wait for the async image writer to finish
             if self.image_writer is not None:
                 self._wait_image_writer()
@@ -1467,7 +1733,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
         video_backend: str | None = None,
+        video_codec: str = "libsvtav1",
         batch_encoding_size: int = 1,
+        realtime_encoding: bool = False,
+        video_crf: int = 23,
+        video_preset: str | None = None,
+        realtime_encoder_max_queue_size: int = 30,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1486,8 +1757,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.image_writer = None
         obj.batch_encoding_size = batch_encoding_size
         obj.episodes_since_last_encoding = 0
+        obj.realtime_encoding = realtime_encoding
+        obj.realtime_encoders = {}  # Dict to store encoder instances per camera
+        obj.video_codec = video_codec  # Store video codec for realtime encoding
+        obj.video_crf = video_crf  # Store CRF for realtime encoding
+        obj.video_preset = video_preset  # Store preset for realtime encoding
+        obj.realtime_encoder_max_queue_size = realtime_encoder_max_queue_size  # Queue size per encoder
 
-        if image_writer_processes or image_writer_threads:
+        # Only use image writer if not using realtime encoding, or as fallback
+        if (image_writer_processes or image_writer_threads) and not realtime_encoding:
             obj.start_image_writer(image_writer_processes, image_writer_threads)
 
         # TODO(aliberts, rcadene, alexander-soare): Merge this with OnlineBuffer/DataBuffer
