@@ -103,23 +103,26 @@ class ForwardKinematicsJointsToEETargetAction(RobotActionProcessorStep):
         raw_joint_pos = self.transition.get(TransitionKey.OBSERVATION)
 
         leader_pos = np.array([teleop_action[f"{motor}.pos"] for motor in self.motor_names])
-        follower_pos = np.array([raw_joint_pos[f"{motor}.pos"] for motor in self.motor_names])
 
         leader_ee = self.kinematics.forward_kinematics(leader_pos)
 
         if self.use_ik_solution and "IK_solution" in self.transition.get(TransitionKey.COMPLEMENTARY_DATA):
-            q_raw = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
-            follower_ee = self.kinematics.forward_kinematics(q_raw)
+            follower_pos = transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
         else:
-            follower_ee = self.kinematics.forward_kinematics(follower_pos)
+            follower_pos = np.array([raw_joint_pos[f"{motor}.pos"] for motor in self.motor_names])
+
+        follower_ee = self.kinematics.forward_kinematics(follower_pos)
 
         follower_ee_pos = follower_ee[:3, 3]
         follower_ee_rvec = Rotation.from_matrix(follower_ee[:3, :3]).as_rotvec()
-        follower_gripper_pos = raw_joint_pos["gripper.pos"]
+        # follower_gripper_pos = raw_joint_pos["gripper.pos"]
+        follower_gripper_pos = follower_pos[-1]  # assuming gripper is the last motor
 
         leader_ee_pos = leader_ee[:3, 3]
         leader_ee_rvec = Rotation.from_matrix(leader_ee[:3, :3]).as_rotvec()
-        leader_gripper_pos = teleop_action["gripper.pos"]
+        leader_gripper_pos = np.clip(
+            teleop_action["gripper.pos"], -self.max_gripper_pos, self.max_gripper_pos
+        )
 
         print("f pos:", follower_ee_pos)
         print("l pos:", leader_ee_pos)
@@ -175,20 +178,20 @@ class ForwardKinematicsJointsToEETargetAction(RobotActionProcessorStep):
             abs(delta_pos[2]),
         )
 
-        # max_normalized_rot = max(
-        #     # abs(delta_rvec[0]),
-        #     abs(delta_rvec[1]),
-        #     abs(delta_rvec[2]),
-        # )
+        max_normalized_rot = max(
+            abs(delta_rvec[0]),
+            abs(delta_rvec[1]),
+            abs(delta_rvec[2]),
+        )
 
         # Use the same scaling factor for both position and rotation
-        # max_normalized = max(max_normalized_pos, max_normalized_rot)
-        if max_normalized_pos > 1.0:
+        max_normalized = max(max_normalized_pos, max_normalized_rot)
+        if max_normalized > 1.0:
             print(f"Warning: EE delta too large, scaling. Max normalized delta: {max_normalized_pos}")
             print(f"Original delta_pos: {delta_pos}, delta_rvec: {delta_rvec}")
             # Scale proportionally
-            delta_pos = delta_pos / max_normalized_pos
-            delta_rvec = delta_rvec / max_normalized_pos
+            delta_pos = delta_pos / max_normalized
+            delta_rvec = delta_rvec / max_normalized
 
         new_action = {}
         new_action["enabled"] = True
@@ -235,12 +238,12 @@ leader_kinematics_solver = RobotKinematics(
 )
 
 end_effector_step_sizes = {
-    "x": 0.01,
-    "y": 0.01,
-    "z": 0.01,
-    "wx": 30 * np.pi / 180,
-    "wy": 30 * np.pi / 180,
-    "wz": 30 * np.pi / 180,
+    "x": 0.004,
+    "y": 0.004,
+    "z": 0.004,
+    "wx": 5 * np.pi / 180,
+    "wy": 5 * np.pi / 180,
+    "wz": 5 * np.pi / 180,
 }
 
 
@@ -288,6 +291,7 @@ ee_to_follower_joints = RobotProcessorPipeline[tuple[RobotAction, RobotObservati
             speed_factor=0.2,
             discrete_gripper=False,
             scale_velocity=True,
+            use_ik_solution=True,
         ),
         LogRobotAction(),
         InverseKinematicsRLStep(

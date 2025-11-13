@@ -551,6 +551,7 @@ def make_processors(
                 speed_factor=cfg.processor.gripper_speed_factor,
                 discrete_gripper=False,  # TODO(jpizarrom): make this configurable
                 scale_velocity=True,  # TODO(jpizarrom): make this configurable
+                use_ik_solution=True,
             ),
             InverseKinematicsRLStep(
                 kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=False

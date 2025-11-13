@@ -48,7 +48,7 @@ class LeaderFollowerProcessor(ProcessorStep):
     kinematics: RobotKinematics
     end_effector_step_sizes: np.ndarray | None = None
     use_gripper: bool = True
-    prev_leader_gripper: float | None = None
+    # prev_leader_gripper: float | None = None
     max_gripper_pos: float = 100.0
     use_ik_solution: bool = False
 
@@ -86,11 +86,14 @@ class LeaderFollowerProcessor(ProcessorStep):
 
                 follower_ee = self.kinematics.forward_kinematics(follower_pos)
 
-                follower_gripper_pos = raw_joint_pos["gripper.pos"]
+                # follower_gripper_pos = raw_joint_pos["gripper.pos"]
+                follower_gripper_pos = follower_pos[-1]  # assuming gripper is the last motor
 
                 leader_ee_pos = leader_ee[:3, 3]
                 leader_ee_rvec = Rotation.from_matrix(leader_ee[:3, :3]).as_rotvec()
-                leader_gripper_pos = teleop_action["gripper.pos"]
+                leader_gripper_pos = np.clip(
+                    teleop_action["gripper.pos"], -self.max_gripper_pos, self.max_gripper_pos
+                )
 
                 follower_ee_pos = follower_ee[:3, 3]
                 # follower_ee_rvec = Rotation.from_matrix(follower_ee[:3, :3]).as_rotvec()
@@ -230,7 +233,7 @@ class LeaderFollowerProcessor(ProcessorStep):
 
     def reset(self) -> None:
         """Reset leader-follower state."""
-        self.prev_leader_gripper = None
+        # self.prev_leader_gripper = None
         if hasattr(self.leader_device, "reset"):
             self.leader_device.reset()
 

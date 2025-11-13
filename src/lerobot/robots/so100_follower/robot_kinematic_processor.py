@@ -371,6 +371,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
     clip_max: float = 100.0
     discrete_gripper: bool = False
     scale_velocity: bool = False
+    use_ik_solution: bool = False
 
     def action(self, action: RobotAction) -> RobotAction:
         observation = self.transition.get(TransitionKey.OBSERVATION).copy()
@@ -380,10 +381,13 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
         if observation is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
-        q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
-            dtype=float,
-        )
+        if self.use_ik_solution and "IK_solution" in self.transition.get(TransitionKey.COMPLEMENTARY_DATA):
+            q_raw = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
+        else:
+            q_raw = np.array(
+                [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+                dtype=float,
+            )
         if q_raw is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
@@ -592,6 +596,8 @@ class InverseKinematicsRLStep(ProcessorStep):
 
         # Compute inverse kinematics
         q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+        # TODO(jpizarrom): verify that this not affect anything
+        q_target[-1] = gripper_pos  # Set gripper position
         self.q_curr = q_target
 
         # TODO: This is sentitive to order of motor_names = q_target mapping
