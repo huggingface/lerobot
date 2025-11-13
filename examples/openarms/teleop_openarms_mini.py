@@ -7,6 +7,11 @@ an OpenArms Mini leader (Feetech-based) with dual arms (16 motors total).
 The OpenArms Mini has:
 - Right arm: 8 motors (joint_1 to joint_7 + gripper)
 - Left arm: 8 motors (joint_1 to joint_7 + gripper)
+
+Note on gripper normalization:
+- OpenArms Mini gripper: 0-100 scale (0=closed, 100=open)
+- OpenArms follower gripper: degrees (0=closed, -65=open)
+- This script automatically converts between the two ranges
 """
 
 import time
@@ -17,7 +22,10 @@ from lerobot.robots.openarms.openarms_follower import OpenArmsFollower
 from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
 from lerobot.teleoperators.openarms_mini.openarms_mini import OpenArmsMini
 from lerobot.teleoperators.openarms_mini.config_openarms_mini import OpenArmsMiniConfig
+from lerobot.utils.robot_utils import busy_wait
 
+# Target control frequency
+TARGET_FPS = 30
 
 # Configure the OpenArms follower (Damiao motors on CAN bus)
 follower_config = OpenArmsFollowerConfig(
@@ -80,8 +88,11 @@ all_joints = [
 
 # Performance monitoring
 loop_times = []
-start_time = time.perf_counter()
-last_print_time = start_time
+avg_loop_time = 0.0
+min_loop_time = float('inf')
+max_loop_time = 0.0
+stats_update_interval = 1.0  # Update stats every 1 second
+last_stats_update = time.perf_counter()
 
 JOINT_DIRECTION = {
     # invert direction
@@ -126,17 +137,51 @@ try:
             # Get leader position (default 0 if missing)
             pos = leader_action.get(leader_key, 0.0)
 
-            # Apply direction reversal if specified
-            pos *= JOINT_DIRECTION.get(joint, 1)
+            # Convert gripper values: Mini uses 0-100, OpenArms uses 0 to -65 degrees
+            if "gripper" in joint:
+                # Map 0-100 (Mini) to 0 to -65 (OpenArms)
+                # 0 (closed) -> 0°, 100 (open) -> -65°
+                pos = (pos / 100.0) * -65.0
+            else:
+                # Apply direction reversal if specified (non-gripper joints only)
+                pos *= JOINT_DIRECTION.get(joint, 1)
 
             # Store in action dict for follower
-
             joint_action[follower_key] = pos
 
         #follower.send_action(joint_action)
 
+        # Loop timing
+        loop_end = time.perf_counter()
+        loop_time = loop_end - loop_start
+        loop_times.append(loop_time)
+
+        # Update stats periodically
+        current_time = time.perf_counter()
+        if current_time - last_stats_update >= stats_update_interval:
+            if loop_times:
+                avg_loop_time = sum(loop_times) / len(loop_times)
+                min_loop_time = min(loop_times)
+                max_loop_time = max(loop_times)
+                loop_times = []
+                last_stats_update = current_time
+
+        # Display everything
         sys.stdout.write("\033[H\033[J")  # Clear screen
-        print(f"{'Joint':<20} {'Leader (deg)':>15} {'Follower (deg)':>15}")
+        
+        # Show timing stats at the top
+        if avg_loop_time > 0:
+            avg_hz = 1.0 / avg_loop_time
+            min_hz = 1.0 / max_loop_time if max_loop_time > 0 else 0
+            max_hz = 1.0 / min_loop_time if min_loop_time > 0 and min_loop_time < float('inf') else 0
+            print(f"[Performance] Target: {TARGET_FPS} Hz | Avg: {avg_hz:.1f} Hz | Range: {min_hz:.1f}-{max_hz:.1f} Hz | Loop: {avg_loop_time*1000:.1f} ms\n")
+        else:
+            print(f"[Performance] Target: {TARGET_FPS} Hz | Measuring...\n")
+
+        # Show joint positions
+        print(f"{'Joint':<20} {'Leader':>15} {'Follower':>15}")
+        print(f"{'':20} {'(0-100/deg)':>15} {'(deg)':>15}")
+        print("-" * 52)
 
         for joint in all_joints:
             leader_key = f"{joint}.pos"
@@ -148,27 +193,9 @@ try:
 
             print(f"{joint:<20} {leader_pos:>15.2f} {follower_pos:>15.2f}")
 
-        # Loop timing and stats
-        loop_end = time.perf_counter()
-        loop_time = loop_end - loop_start
-        loop_times.append(loop_time)
-
-        # Print stats every 2 seconds
-        if loop_times:
-            avg_time = sum(loop_times) / len(loop_times)
-            current_hz = 1.0 / avg_time if avg_time > 0 else 0
-            min_time = min(loop_times)
-            max_time = max(loop_times)
-            max_hz = 1.0 / min_time if min_time > 0 else 0
-            min_hz = 1.0 / max_time if max_time > 0 else 0
-            print(f"\n[Hz Stats] Avg: {current_hz:.1f} Hz | "
-                      f"Range: {min_hz:.1f}-{max_hz:.1f} Hz | "
-                      f"Avg loop time: {avg_time*1000:.1f} ms")
-
-            loop_times = []
-            last_print_time = loop_end
-
-        time.sleep(0.05)  # Small sleep to prevent flooding the terminal
+        # Smart sleep to maintain target FPS
+        dt_s = time.perf_counter() - loop_start
+        busy_wait(max(0, 1.0 / TARGET_FPS - dt_s))
             
 except KeyboardInterrupt:
     print("\n\nStopping teleoperation...")

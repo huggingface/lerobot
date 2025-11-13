@@ -394,10 +394,28 @@ class OpenArmsFollower(Robot):
                 motor_name = key.removesuffix(".pos")
                 if motor_name.startswith("right_"):
                     # Remove "right_" prefix for bus access
-                    goal_pos_right[motor_name.removeprefix("right_")] = val # do we also do this read in other robots in send action?
+                    goal_pos_right[motor_name.removeprefix("right_")] = val
                 elif motor_name.startswith("left_"):
                     # Remove "left_" prefix for bus access
                     goal_pos_left[motor_name.removeprefix("left_")] = val
+        
+        # Apply joint limit clipping to right arm
+        for motor_name, position in goal_pos_right.items():
+            if motor_name in self.config.joint_limits_right:
+                min_limit, max_limit = self.config.joint_limits_right[motor_name]
+                clipped_position = max(min_limit, min(max_limit, position))
+                if clipped_position != position:
+                    logger.debug(f"Clipped right_{motor_name} from {position:.2f}° to {clipped_position:.2f}°")
+                goal_pos_right[motor_name] = clipped_position
+        
+        # Apply joint limit clipping to left arm
+        for motor_name, position in goal_pos_left.items():
+            if motor_name in self.config.joint_limits_left:
+                min_limit, max_limit = self.config.joint_limits_left[motor_name]
+                clipped_position = max(min_limit, min(max_limit, position))
+                if clipped_position != position:
+                    logger.debug(f"Clipped left_{motor_name} from {position:.2f}° to {clipped_position:.2f}°")
+                goal_pos_left[motor_name] = clipped_position
         
         # Apply safety limits if configured
         if self.config.max_relative_target is not None:
