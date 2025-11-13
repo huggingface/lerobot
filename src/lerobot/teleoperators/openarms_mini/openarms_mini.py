@@ -192,14 +192,13 @@ class OpenArmsMini(Teleoperator):
         homing_offsets = bus.set_half_turn_homings()
         logger.info(f"{arm_name.capitalize()} arm zero position set.")
         
-        # Step 2: Set fixed ranges
+        # Step 2: Set fixed ranges (use full motor range for all motors)
         print(
-            f"\nSetting fixed ranges:\n"
-            f"  - Joints 1-7: -90° to +90°\n"
-            f"  - Gripper: 0 to 100\n"
+            f"\nSetting motor ranges to full range (0-4095)\n"
+            f"Normalization will handle conversion to degrees/0-100 at runtime\n"
         )
         
-        # Create calibration data with fixed ranges
+        # Create calibration data with full motor ranges
         if self.calibration is None:
             self.calibration = {}
         
@@ -207,15 +206,14 @@ class OpenArmsMini(Teleoperator):
             # Prefix motor name with arm name for storage
             prefixed_name = f"{arm_name}_{motor_name}"
             
-            # Set ranges based on motor type
-            if motor_name == "gripper":
-                # Gripper uses 0-100 range
-                range_min = 0
-                range_max = 100
-            else:
-                # All joints use -90° to +90° range
-                range_min = -90
-                range_max = 90
+            # Get motor resolution
+            motor_resolution = bus.model_resolution_table[motor.model]
+            max_res = motor_resolution - 1
+            
+            # Use full motor range for all motors
+            # The normalization layer will convert to degrees or 0-100 based on norm_mode
+            range_min = 0
+            range_max = max_res
             
             self.calibration[prefixed_name] = MotorCalibration(
                 id=motor.id,
@@ -224,7 +222,7 @@ class OpenArmsMini(Teleoperator):
                 range_min=range_min,
                 range_max=range_max,
             )
-            logger.info(f"  {prefixed_name}: range set to [{range_min}, {range_max}]")
+            logger.info(f"  {prefixed_name}: range set to [0, {max_res}] (full motor range)")
         
         # Write calibration to this arm's motors
         cal_for_bus = {k.replace(f"{arm_name}_", ""): v for k, v in self.calibration.items() if k.startswith(f"{arm_name}_")}
