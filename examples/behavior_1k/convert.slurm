@@ -15,8 +15,8 @@ set -x
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}  # avoid BLAS oversubscription
 
-DATA_PATH="/fsx/francesco_capuano/.cache/behavior-1k/2025-challenge-demos"
-BASE_OUT="/fsx/francesco_capuano/behavior1k"
+DATA_PATH="/fsx/francesco_capuano/behavior1k-2025-v21"
+BASE_OUT="/fsx/francesco_capuano/behavior1k-v3"
 mkdir -p "$BASE_OUT" logs
 
 i="${SLURM_ARRAY_TASK_ID}"
