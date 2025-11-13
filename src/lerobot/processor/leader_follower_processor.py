@@ -138,10 +138,14 @@ class LeaderFollowerProcessor(ProcessorStep):
                     abs(delta_pos[2]),
                 )
 
-                if max_normalized_pos > 1.0:
+                normalized_rot = max(abs(delta_rvec[0]), abs(delta_rvec[1]), abs(delta_rvec[2]))
+
+                max_normalized = max(max_normalized_pos, normalized_rot)
+
+                if max_normalized > 1.0:
                     # Scale proportionally
-                    delta_pos = delta_pos / max_normalized_pos
-                    delta_rvec = delta_rvec / max_normalized_pos
+                    delta_pos = delta_pos / max_normalized
+                    delta_rvec = delta_rvec / max_normalized
 
                 intervention_action = np.array(
                     [
