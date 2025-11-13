@@ -192,28 +192,49 @@ class OpenArmsMini(Teleoperator):
         homing_offsets = bus.set_half_turn_homings()
         logger.info(f"{arm_name.capitalize()} arm zero position set.")
         
-        # Step 2: Set fixed ranges (use full motor range for all motors)
-        print(
-            f"\nSetting motor ranges to full range (0-4095)\n"
-            f"Normalization will handle conversion to degrees/0-100 at runtime\n"
-        )
+        # Step 2: Set ranges for joints and gripper
+        print(f"\nSetting motor ranges for {arm_name.upper()} arm\n")
         
         # Create calibration data with full motor ranges
         if self.calibration is None:
             self.calibration = {}
         
+        # Get motor resolution
+        motor_resolution = bus.model_resolution_table[list(bus.motors.values())[0].model]
+        max_res = motor_resolution - 1
+        
         for motor_name, motor in bus.motors.items():
             # Prefix motor name with arm name for storage
             prefixed_name = f"{arm_name}_{motor_name}"
             
-            # Get motor resolution
-            motor_resolution = bus.model_resolution_table[motor.model]
-            max_res = motor_resolution - 1
-            
-            # Use full motor range for all motors
-            # The normalization layer will convert to degrees or 0-100 based on norm_mode
-            range_min = 0
-            range_max = max_res
+            if motor_name == "gripper":
+                # Interactive calibration for gripper
+                input(
+                    f"\nGripper Calibration ({arm_name.upper()} arm)\n"
+                    f"Step 1: CLOSE the gripper fully\n"
+                    f"Press ENTER when gripper is closed..."
+                )
+                closed_pos = bus.read("Present_Position", motor_name, normalize=False)
+                logger.info(f"  Gripper closed position recorded: {closed_pos}")
+                
+                input(
+                    f"\nStep 2: OPEN the gripper fully\n"
+                    f"Press ENTER when gripper is fully open..."
+                )
+                open_pos = bus.read("Present_Position", motor_name, normalize=False)
+                logger.info(f"  Gripper open position recorded: {open_pos}")
+                
+                # Use recorded positions as min/max for 0-100 normalization
+                # 0 = closed, 100 = open
+                range_min = int(closed_pos)
+                range_max = int(open_pos)
+                
+                logger.info(f"  {prefixed_name}: range set to [{range_min}, {range_max}] (0=closed, 100=open)")
+            else:
+                # Use full motor range for joint motors (will use degrees normalization)
+                range_min = 0
+                range_max = max_res
+                logger.info(f"  {prefixed_name}: range set to [0, {max_res}] (full motor range)")
             
             self.calibration[prefixed_name] = MotorCalibration(
                 id=motor.id,
@@ -222,7 +243,6 @@ class OpenArmsMini(Teleoperator):
                 range_min=range_min,
                 range_max=range_max,
             )
-            logger.info(f"  {prefixed_name}: range set to [0, {max_res}] (full motor range)")
         
         # Write calibration to this arm's motors
         cal_for_bus = {k.replace(f"{arm_name}_", ""): v for k, v in self.calibration.items() if k.startswith(f"{arm_name}_")}
