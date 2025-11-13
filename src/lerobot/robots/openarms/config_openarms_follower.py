@@ -91,3 +91,28 @@ class OpenArmsFollowerConfig(RobotConfig):
     # Calibration parameters
     calibration_mode: str = "manual"  # "manual" or "auto"
     zero_position_on_connect: bool = False  # Set zero position on connect
+    
+    # Joint limits for position clipping (degrees)
+    # Format: [min, max] for each joint
+    # These limits clip commands in send_action to prevent mechanical damage
+    joint_limits_right: Dict[str, tuple[float, float]] = field(default_factory=lambda: {
+        "joint_1": (-75.0, 75.0),
+        "joint_2": (-9.0, 90.0),
+        "joint_3": (-85.0, 85.0),
+        "joint_4": (0.0, 135.0),
+        "joint_5": (-85.0, 85.0),
+        "joint_6": (-40.0, 40.0),
+        "joint_7": (-80.0, 80.0),
+        "gripper": (-65.0, 0.0),
+    })
+    
+    joint_limits_left: Dict[str, tuple[float, float]] = field(default_factory=lambda: {
+        "joint_1": (-75.0, 75.0),
+        "joint_2": (-90.0, 9.0),
+        "joint_3": (-85.0, 85.0),
+        "joint_4": (0.0, 135.0),
+        "joint_5": (-85.0, 85.0),
+        "joint_6": (-40.0, 40.0),
+        "joint_7": (-80.0, 80.0),
+        "gripper": (-65.0, 0.0),
+    })
