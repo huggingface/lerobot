@@ -31,6 +31,7 @@ from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.groot.configuration_groot import GrootConfig
+from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -59,7 +60,7 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy. Supported names are "tdmpc", "diffusion", "act",
-              "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla".
+            "multi_task_dit", "vqbet", "pi0", "pi05", "sac", "reward_classifier", "smolvla".
 
     Returns:
         The policy class corresponding to the given name.
@@ -79,6 +80,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.act.modeling_act import ACTPolicy
 
         return ACTPolicy
+    elif name == "multi_task_dit":
+        from lerobot.policies.multi_task_dit.modeling_multi_task_dit import MultiTaskDiTPolicy
+
+        return MultiTaskDiTPolicy
     elif name == "vqbet":
         from lerobot.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
@@ -120,8 +125,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
     Args:
         policy_type: The type of the policy. Supported types include "tdmpc",
-                     "diffusion", "act", "vqbet", "pi0", "pi05", "sac", "smolvla",
-                     "reward_classifier".
+                     "multi_task_dit", "diffusion", "act", "vqbet", "pi0", "pi05", "sac",
+                     "reward_classifier", "smolvla".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -136,6 +141,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return DiffusionConfig(**kwargs)
     elif policy_type == "act":
         return ACTConfig(**kwargs)
+    elif policy_type == "multi_task_dit":
+        return MultiTaskDiTConfig(**kwargs)
     elif policy_type == "vqbet":
         return VQBeTConfig(**kwargs)
     elif policy_type == "pi0":
@@ -270,6 +277,16 @@ def make_pre_post_processors(
         from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
         processors = make_act_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, MultiTaskDiTConfig):
+        from lerobot.policies.multi_task_dit.processor_multi_task_dit import (
+            make_multi_task_dit_pre_post_processors,
+        )
+
+        processors = make_multi_task_dit_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
