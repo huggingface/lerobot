@@ -25,8 +25,9 @@ This module provides utilities for:
 
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any, cast
 
 import datasets
 import numpy as np
@@ -141,7 +142,7 @@ def delete_episodes(
 
 def split_dataset(
     dataset: LeRobotDataset,
-    splits: dict[str, float | list[int]],
+    splits: Mapping[str, float | list[int]],
     output_dir: str | Path | None = None,
 ) -> dict[str, LeRobotDataset]:
     """Split a LeRobotDataset into multiple smaller datasets.
@@ -165,12 +166,13 @@ def split_dataset(
         raise ValueError("No splits provided")
 
     if all(isinstance(v, float) for v in splits.values()):
-        splits = _fractions_to_episode_indices(dataset.meta.total_episodes, splits)
+        splits = _fractions_to_episode_indices(dataset.meta.total_episodes, cast(dict[str, float], splits))
 
-    all_episodes = set()
+    all_episodes: set[int] = set()
     for split_name, episodes in splits.items():
         if not episodes:
             raise ValueError(f"Split '{split_name}' has no episodes")
+        assert not isinstance(episodes, float)
         episode_set = set(episodes)
         if episode_set & all_episodes:
             raise ValueError("Episodes cannot appear in multiple splits")
@@ -187,6 +189,7 @@ def split_dataset(
     result_datasets = {}
 
     for split_name, episodes in splits.items():
+        assert not isinstance(episodes, float)
         logging.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
 
         split_repo_id = f"{dataset.repo_id}_{split_name}"
@@ -442,8 +445,8 @@ def remove_feature(
 
 def _fractions_to_episode_indices(
     total_episodes: int,
-    splits: dict[str, float],
-) -> dict[str, list[int]]:
+    splits: Mapping[str, float],
+) -> Mapping[str, list[int]]:
     """Convert split fractions to episode indices."""
     if sum(splits.values()) > 1.0:
         raise ValueError("Split fractions must sum to <= 1.0")
@@ -841,7 +844,7 @@ def _copy_and_reindex_episodes_metadata(
         #   array([array([array([0.])]), array([array([0.])]), array([array([0.])])])
         # This happens particularly with image/video statistics. We need to detect and flatten
         # these nested structures back to proper (3, 1, 1) arrays so aggregate_stats can process them.
-        episode_stats = {}
+        episode_stats: dict[str, Any] = {}
         for key in src_episode_full:
             if key.startswith("stats/"):
                 stat_key = key.replace("stats/", "")
