@@ -81,6 +81,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .reachy2_teleoperator import Reachy2Teleoperator
 
         return Reachy2Teleoperator(config)
+    elif config.type == "openarms_mini":
+        from .openarms_mini import OpenArmsMini
+
+        return OpenArmsMini(config)
     else:
         try:
             return cast(Teleoperator, make_device_from_device_class(config))
