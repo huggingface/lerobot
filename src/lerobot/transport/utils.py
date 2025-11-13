@@ -43,7 +43,7 @@ def bytes_buffer_size(buffer: io.BytesIO) -> int:
 
 
 def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = "", silent: bool = True):
-    bytes_buffer: io.BytesIO = io.BytesIO(buffer)  # type: ignore[assignment]
+    bytes_buffer: io.BytesIO = io.BytesIO(buffer)
     size_in_bytes = bytes_buffer_size(bytes_buffer)
 
     sent_bytes = 0
