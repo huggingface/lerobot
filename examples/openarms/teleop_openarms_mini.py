@@ -10,6 +10,8 @@ The OpenArms Mini has:
 """
 
 import time
+import os
+import sys
 
 from lerobot.robots.openarms.openarms_follower import OpenArmsFollower
 from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
@@ -19,8 +21,8 @@ from lerobot.teleoperators.openarms_mini.config_openarms_mini import OpenArmsMin
 
 # Configure the OpenArms follower (Damiao motors on CAN bus)
 follower_config = OpenArmsFollowerConfig(
-    port_left="can2",   # CAN interface for follower left arm
-    port_right="can3",  # CAN interface for follower right arm
+    port_left="can0",   # CAN interface for follower left arm
+    port_right="can1",  # CAN interface for follower right arm
     can_interface="socketcan",  # Linux SocketCAN
     id="openarms_follower",
     disable_torque_on_disconnect=True,
@@ -29,9 +31,9 @@ follower_config = OpenArmsFollowerConfig(
 
 # Configure the OpenArms Mini leader (Feetech motors on serial)
 leader_config = OpenArmsMiniConfig(
-    port_right="/dev/ttyUSB0",  # Serial port for right arm
-    port_left="/dev/ttyUSB1",   # Serial port for left arm
-    id="openarms_mini",
+    port_right="/dev/ttyACM0",  # Serial port for right arm
+    port_left="/dev/ttyACM1",   # Serial port for left arm
+    id="openarms_minis",
     use_degrees=True,
 )
 
@@ -81,46 +83,92 @@ loop_times = []
 start_time = time.perf_counter()
 last_print_time = start_time
 
+JOINT_DIRECTION = {
+    # invert direction
+    "right_joint_1": -1,
+    "right_joint_2": -1,
+    "right_joint_3": -1,
+    "right_joint_4": -1,
+    "right_joint_5": -1,
+    "left_joint_1": -1,
+    "left_joint_3": -1,
+    "left_joint_4": -1,
+    "left_joint_5": -1,
+    "left_joint_6": -1,
+    "left_joint_7": -1,
+}
+
+SWAPPED_JOINTS = {
+    "right_joint_6": "right_joint_7",
+    "right_joint_7": "right_joint_6",
+    "left_joint_6": "left_joint_7",
+    "left_joint_7": "left_joint_6",
+}
+
 try:
     while True:
         loop_start = time.perf_counter()
-        
-        # Get action from leader (OpenArms Mini)
+
+        # Get actions and observations
         leader_action = leader.get_action()
-        
-        # Filter to only position data for all joints (both arms)
+        follower_obs = follower.get_observation()
+
         joint_action = {}
         for joint in all_joints:
-            pos_key = f"{joint}.pos"
-            if pos_key in leader_action:
-                joint_action[pos_key] = leader_action[pos_key]
-        
-        # Send action to follower (OpenArms)
-        if joint_action:
-            follower.send_action(joint_action)
-        
-        # Measure loop time
+            leader_key = f"{joint}.pos"
+
+            # Determine which follower joint this leader joint controls
+            follower_joint = SWAPPED_JOINTS.get(joint, joint)
+            follower_key = f"{follower_joint}.pos"
+            if "left" in follower_key:
+                 continue
+
+            # Get leader position (default 0 if missing)
+            pos = leader_action.get(leader_key, 0.0)
+
+            # Apply direction reversal if specified
+            pos *= JOINT_DIRECTION.get(joint, 1)
+
+            # Store in action dict for follower
+
+            joint_action[follower_key] = pos
+
+        #follower.send_action(joint_action)
+
+        sys.stdout.write("\033[H\033[J")  # Clear screen
+        print(f"{'Joint':<20} {'Leader (deg)':>15} {'Follower (deg)':>15}")
+
+        for joint in all_joints:
+            leader_key = f"{joint}.pos"
+            follower_joint = SWAPPED_JOINTS.get(joint, joint)
+            follower_key = f"{follower_joint}.pos"
+
+            leader_pos = leader_action.get(leader_key, 0.0)
+            follower_pos = follower_obs.get(follower_key, 0.0)
+
+            print(f"{joint:<20} {leader_pos:>15.2f} {follower_pos:>15.2f}")
+
+        # Loop timing and stats
         loop_end = time.perf_counter()
         loop_time = loop_end - loop_start
         loop_times.append(loop_time)
-        
+
         # Print stats every 2 seconds
-        if loop_end - last_print_time >= 2.0:
-            if loop_times:
-                avg_time = sum(loop_times) / len(loop_times)
-                current_hz = 1.0 / avg_time if avg_time > 0 else 0
-                min_time = min(loop_times)
-                max_time = max(loop_times)
-                max_hz = 1.0 / min_time if min_time > 0 else 0
-                min_hz = 1.0 / max_time if max_time > 0 else 0
-                
-                print(f"[Hz Stats] Avg: {current_hz:.1f} Hz | "
+        if loop_times:
+            avg_time = sum(loop_times) / len(loop_times)
+            current_hz = 1.0 / avg_time if avg_time > 0 else 0
+            min_time = min(loop_times)
+            max_time = max(loop_times)
+            max_hz = 1.0 / min_time if min_time > 0 else 0
+            min_hz = 1.0 / max_time if max_time > 0 else 0
+            print(f"\n[Hz Stats] Avg: {current_hz:.1f} Hz | "
                       f"Range: {min_hz:.1f}-{max_hz:.1f} Hz | "
                       f"Avg loop time: {avg_time*1000:.1f} ms")
-                
-                # Reset for next measurement window
-                loop_times = []
-                last_print_time = loop_end
+
+            loop_times = []
+            last_print_time = loop_end
+
+        time.sleep(0.05)  # Small sleep to prevent flooding the terminal
             
 except KeyboardInterrupt:
     print("\n\nStopping teleoperation...")
