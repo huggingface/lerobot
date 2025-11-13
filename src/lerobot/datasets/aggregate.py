@@ -234,7 +234,6 @@ def aggregate_datasets(
     }
 
     dst_meta.episodes = {}
-
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
         videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
         data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size)
@@ -316,6 +315,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 # Rotate to a new file, this source becomes start of new destination
                 # So its offset should be 0
                 videos_idx[key]["src_to_offset"][(src_chunk_idx, src_file_idx)] = 0
+                video_idx["latest_duration"] = 0
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
                 dst_path = dst_meta.root / DEFAULT_VIDEO_PATH.format(
                     video_key=key,
