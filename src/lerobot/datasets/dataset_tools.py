@@ -955,6 +955,28 @@ def _save_data_chunk(
 
     return chunk_idx, file_idx, episode_metadata
 
+def fix_array2d(col, shape):
+    """Fix columns that should match Array2DExtensionType."""
+    target_rows, target_cols = shape  # e.g. [1,6] or [2,6]
+
+    fixed = []
+    for v in col:
+        # v is typically array([array([...])], dtype=object)
+        if isinstance(v, np.ndarray) and v.dtype == object and v.size == 1:
+            v = v[0]  # unpack inner array
+
+        v = np.asarray(v, dtype=np.float32)
+
+        # reshape into Array2D required shape
+        if v.ndim == 1 and v.shape[0] == target_cols:
+            v = v.reshape(target_rows, target_cols)
+        elif v.shape != (target_rows, target_cols):
+            raise ValueError(f"Bad shape {v.shape}, expected {(target_rows, target_cols)}")
+
+        fixed.append(v)
+
+    return fixed  # keep as python list (HF will pack into Array2D)
+
 
 def _copy_data_with_feature_changes(
     dataset: LeRobotDataset,
@@ -973,6 +995,12 @@ def _copy_data_with_feature_changes(
 
     for src_path in tqdm(parquet_files, desc="Processing data files"):
         df = pd.read_parquet(src_path).reset_index(drop=True)
+
+        for col, info in new_meta.features.items():
+            if col in df and df[col].dtype == object:
+                print(f"[fix] repairing 2D feature {col}")
+                df[col] = fix_array2d(df[col], info["shape"])
+
 
         relative_path = src_path.relative_to(dataset.root)
         chunk_dir = relative_path.parts[1]
@@ -999,16 +1027,12 @@ def _copy_data_with_feature_changes(
                     df[feature_name] = feature_values
                 else:
                     feature_slice = values[frame_idx:end_idx]
-                    if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
-                        df[feature_name] = feature_slice.flatten()
-                    else:
-                        df[feature_name] = list(feature_slice)
+                    df[feature_name] = list(feature_slice)
             frame_idx = end_idx
 
         # Write using the same chunk/file structure as source
         dst_path = new_meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         dst_path.parent.mkdir(parents=True, exist_ok=True)
-
         _write_parquet(df, dst_path, new_meta)
 
     _copy_episodes_metadata_and_stats(dataset, new_meta)
