@@ -105,8 +105,8 @@ lerobot-teleoperate \
 #         "base_radius_m": 0.125
 #     }' \
 #     --robot.mount='{
-#         "pan_motor_id": 0,
-#         "tilt_motor_id": 1,
+#         "pan_motor_id": 1,
+#         "tilt_motor_id": 2,
 #         "motor_model": "sts3215",
 #         "pan_key": "mount_pan.pos",
 #         "tilt_key": "mount_tilt.pos",

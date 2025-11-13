@@ -24,8 +24,8 @@ class XLeRobotMountConfig(RobotConfig):
     port: str = "/dev/ttyACM5"  # USB-to-serial port (adjust for your system)
 
     # Motor IDs
-    pan_motor_id: int = 0
-    tilt_motor_id: int = 1
+    pan_motor_id: int = 1
+    tilt_motor_id: int = 2
     motor_model: str = "sts3215"  # Feetech STS3215 servo
 
     # Feature keys for observation/action dictionaries
