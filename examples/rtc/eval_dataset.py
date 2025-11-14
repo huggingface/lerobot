@@ -83,9 +83,16 @@ import os
 import random
 from dataclasses import dataclass, field
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
+
+try:
+    import matplotlib.pyplot as plt
+
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    plt = None
 
 from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig
@@ -112,6 +119,16 @@ def set_seed(seed: int):
         torch.mps.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def _check_matplotlib_available():
+    """Check if matplotlib is available, raise helpful error if not."""
+    if not MATPLOTLIB_AVAILABLE:
+        raise ImportError(
+            "matplotlib is required for RTC debug visualizations. "
+            "Please install it by running:\n"
+            "  uv pip install -e '.[matplotlib-dep]'"
+        )
 
 
 @dataclass
@@ -686,6 +703,8 @@ class RTCEvaluator:
             no_rtc_actions: Final actions from non-RTC policy
             prev_chunk_left_over: Previous chunk used as ground truth
         """
+        _check_matplotlib_available()
+
         # Remove batch dimension if present
         rtc_actions_plot = rtc_actions.squeeze(0).cpu() if len(rtc_actions.shape) == 3 else rtc_actions.cpu()
         no_rtc_actions_plot = (
@@ -776,6 +795,8 @@ class RTCEvaluator:
         plt.close(fig)
 
     def plot_tracked_data(self, rtc_tracked_steps, no_rtc_tracked_steps, prev_chunk_left_over, num_steps):
+        _check_matplotlib_available()
+
         # Create side-by-side figures for denoising visualization
         fig_xt, axs_xt = self._create_figure("x_t Denoising: No RTC (left) vs RTC (right)")
         fig_vt, axs_vt = self._create_figure("v_t Denoising: No RTC (left) vs RTC (right)")
