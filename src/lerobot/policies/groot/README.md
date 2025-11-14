@@ -1,1 +1,0 @@
-../../../../docs/source/policy_groot_README.md

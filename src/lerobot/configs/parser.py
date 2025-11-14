@@ -16,18 +16,13 @@ import inspect
 import pkgutil
 import sys
 from argparse import ArgumentError
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Sequence
 from functools import wraps
 from pathlib import Path
-from pkgutil import ModuleInfo
-from types import ModuleType
-from typing import Any, TypeVar, cast
 
 import draccus
 
 from lerobot.utils.utils import has_method
-
-F = TypeVar("F", bound=Callable[..., object])
 
 PATH_KEY = "path"
 PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
@@ -65,7 +60,7 @@ def parse_arg(arg_name: str, args: Sequence[str] | None = None) -> str | None:
     return None
 
 
-def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, str]:
+def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict:
     """Parse plugin-related arguments from command-line arguments.
 
     This function extracts arguments from command-line arguments that match a specified suffix pattern.
@@ -132,7 +127,7 @@ def load_plugin(plugin_path: str) -> None:
             f"Failed to load plugin '{plugin_path}'. Verify the path and installation: {str(e)}"
         ) from e
 
-    def iter_namespace(ns_pkg: ModuleType) -> Iterable[ModuleInfo]:
+    def iter_namespace(ns_pkg):
         return pkgutil.iter_modules(ns_pkg.__path__, ns_pkg.__name__ + ".")
 
     try:
@@ -153,8 +148,6 @@ def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | No
 
 
 def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
-    if args is None:
-        return []
     return [arg for arg in args if not arg.startswith(f"--{field_to_filter}=")]
 
 
@@ -178,8 +171,7 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
     if isinstance(fields_to_filter, str):
         fields_to_filter = [fields_to_filter]
 
-    filtered_args = [] if args is None else list(args)
-
+    filtered_args = args
     for field in fields_to_filter:
         if get_path_arg(field, args):
             if get_type_arg(field, args):
@@ -192,7 +184,7 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
     return filtered_args
 
 
-def wrap(config_path: Path | None = None) -> Callable[[F], F]:
+def wrap(config_path: Path | None = None):
     """
     HACK: Similar to draccus.wrap but does three additional things:
         - Will remove '.path' arguments from CLI in order to process them later on.
@@ -203,9 +195,9 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
             from the CLI '.type' arguments
     """
 
-    def wrapper_outer(fn: F) -> F:
+    def wrapper_outer(fn):
         @wraps(fn)
-        def wrapper_inner(*args: Any, **kwargs: Any) -> Any:
+        def wrapper_inner(*args, **kwargs):
             argspec = inspect.getfullargspec(fn)
             argtype = argspec.annotations[argspec.args[0]]
             if len(args) > 0 and type(args[0]) is argtype:
@@ -233,6 +225,6 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
             response = fn(cfg, *args, **kwargs)
             return response
 
-        return cast(F, wrapper_inner)
+        return wrapper_inner
 
-    return cast(Callable[[F], F], wrapper_outer)
+    return wrapper_outer
