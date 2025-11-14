@@ -16,7 +16,6 @@ import datetime as dt
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -64,18 +63,18 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
-    checkpoint_path: Path | None = field(init=False, default=None)
-    # Rename map for the observation to override the image and state keys
-    rename_map: dict[str, str] = field(default_factory=dict)
 
-    def validate(self) -> None:
+    def __post_init__(self):
+        self.checkpoint_path = None
+
+    def validate(self):
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             # Only load the policy config
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = Path(policy_path)
+            self.policy.pretrained_path = policy_path
         elif self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
             config_path = parser.parse_arg("config_path")
@@ -83,22 +82,14 @@ class TrainPipelineConfig(HubMixin):
                 raise ValueError(
                     f"A config_path is expected when resuming a run. Please specify path to {TRAIN_CONFIG_NAME}"
                 )
-
             if not Path(config_path).resolve().exists():
                 raise NotADirectoryError(
                     f"{config_path=} is expected to be a local path. "
                     "Resuming from the hub is not supported for now."
                 )
-
-            policy_dir = Path(config_path).parent
-            if self.policy is not None:
-                self.policy.pretrained_path = policy_dir
-            self.checkpoint_path = policy_dir.parent
-
-        if self.policy is None:
-            raise ValueError(
-                "Policy is not configured. Please specify a pretrained policy with `--policy.path`."
-            )
+            policy_path = Path(config_path).parent
+            self.policy.pretrained_path = policy_path
+            self.checkpoint_path = policy_path.parent
 
         if not self.job_name:
             if self.env is None:
@@ -135,8 +126,8 @@ class TrainPipelineConfig(HubMixin):
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["policy"]
 
-    def to_dict(self) -> dict[str, Any]:
-        return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
+    def to_dict(self) -> dict:
+        return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
@@ -148,13 +139,13 @@ class TrainPipelineConfig(HubMixin):
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict[Any, Any] | None = None,
+        resume_download: bool = None,
+        proxies: dict | None = None,
         token: str | bool | None = None,
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        **kwargs: Any,
+        **kwargs,
     ) -> "TrainPipelineConfig":
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
@@ -190,6 +181,4 @@ class TrainPipelineConfig(HubMixin):
 
 @dataclass(kw_only=True)
 class TrainRLServerPipelineConfig(TrainPipelineConfig):
-    # NOTE: In RL, we don't need an offline dataset
-    # TODO: Make `TrainPipelineConfig.dataset` optional
-    dataset: DatasetConfig | None = None  # type: ignore[assignment] # because the parent class has made it's type non-optional
+    dataset: DatasetConfig | None = None  # NOTE: In RL, we don't need an offline dataset

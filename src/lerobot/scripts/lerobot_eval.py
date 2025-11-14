@@ -1,3 +1,5 @@
+#TODO: Fix this copyright to match ours
+
 #!/usr/bin/env python
 
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
@@ -13,12 +15,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+
 """Evaluate a policy on an environment by running rollouts and computing metrics.
+
+The policy lets the robot interact in the environment for several episodes and records metrics.
 
 Usage examples:
 
 You want to evaluate a model from the hub (eg: https://huggingface.co/lerobot/diffusion_pusht)
 for 10 episodes.
+
+The code below is specifying what pre-trained policy will be run, the environment type, 
+how many concurrent evaluations is happning, how many episodes will be run, and specifying 
+that it will run on a gpu.
 
 ```
 lerobot-eval \
@@ -26,19 +36,24 @@ lerobot-eval \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --policy.use_amp=false \
-    --policy.device=cuda
+    --use_amp=false \
+    --device=cuda
 ```
 
 OR, you want to evaluate a model checkpoint from the LeRobot training script for 10 episodes.
+
+The code below is specifying that a checkpoint you evaluatated yourself will be used, the environment type, 
+how many concurrent evaluations is happning, how many episodes will be run, and specifying 
+that it will run on a gpu.
+
 ```
 lerobot-eval \
     --policy.path=outputs/train/diffusion_pusht/checkpoints/005000/pretrained_model \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --policy.use_amp=false \
-    --policy.device=cuda
+    --use_amp=false \
+    --device=cuda
 ```
 
 Note that in both examples, the repo/folder should contain at least `config.json` and `model.safetensors` files.
@@ -46,17 +61,17 @@ Note that in both examples, the repo/folder should contain at least `config.json
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
 
-import concurrent.futures as cf
-import json
+import concurrent.futures as cf #lets you do multi-threading
+import json 
 import logging
-import threading
+import threading #work with threads
 import time
-from collections import defaultdict
-from collections.abc import Callable
-from contextlib import nullcontext
-from copy import deepcopy
-from dataclasses import asdict
-from functools import partial
+from collections import defaultdict #dictionary that creates default values
+from collections.abc import Callable 
+from contextlib import nullcontext #
+from copy import deepcopy #makes a deep copy with all nested data
+from dataclasses import asdict #converts into normal dictionary
+from functools import partial #
 from pathlib import Path
 from pprint import pformat
 from typing import Any, TypedDict
@@ -180,15 +195,9 @@ def rollout(
             render_callback(env)
 
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
-        # available if none of the envs finished.
+        # available of none of the envs finished.
         if "final_info" in info:
-            final_info = info["final_info"]
-            if not isinstance(final_info, dict):
-                raise RuntimeError(
-                    "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
-                    "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
-                )
-            successes = final_info["is_success"].tolist()
+            successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
         else:
             successes = [False] * env.num_envs
 
@@ -501,21 +510,14 @@ def eval_main(cfg: EvalPipelineConfig):
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
-        rename_map=cfg.rename_map,
     )
 
     policy.eval()
-
-    # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
-    preprocessor_overrides = {
-        "device_processor": {"device": str(policy.config.device)},
-        "rename_observations_processor": {"rename_map": cfg.rename_map},
-    }
-
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
-        preprocessor_overrides=preprocessor_overrides,
+        # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
+        preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
     )
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(

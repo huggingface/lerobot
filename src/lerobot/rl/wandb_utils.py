@@ -99,7 +99,7 @@ class WandBLogger:
         cfg.wandb.run_id = run_id
         # Handle custom step key for rl asynchronous training.
         self._wandb_custom_step_key: set[str] | None = None
-        logging.info(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
+        print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
         logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
         self._wandb = wandb
 
@@ -137,7 +137,7 @@ class WandBLogger:
                 self._wandb.define_metric(new_custom_key, hidden=True)
 
         for k, v in d.items():
-            if not isinstance(v, (int | float | str)):
+            if not isinstance(v, (int, float, str)):
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
                 )

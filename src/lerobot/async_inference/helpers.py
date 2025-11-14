@@ -16,7 +16,7 @@ import logging
 import logging.handlers
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -25,19 +25,13 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
-from lerobot.policies import (  # noqa: F401
-    ACTConfig,
-    DiffusionConfig,
-    PI0Config,
-    PI05Config,
-    SmolVLAConfig,
-    VQBeTConfig,
-)
+from lerobot.policies import ACTConfig, DiffusionConfig, PI0Config, SmolVLAConfig, VQBeTConfig  # noqa: F401
 from lerobot.robots.robot import Robot
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import init_logging
 
 Action = torch.Tensor
+ActionChunk = torch.Tensor
 
 # observation as received from the robot
 RawObservation = dict[str, torch.Tensor]
@@ -52,7 +46,7 @@ Observation = dict[str, torch.Tensor]
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:
     import matplotlib.pyplot as plt
 
-    _, ax = plt.subplots()
+    fig, ax = plt.subplots()
     ax.set_title("Action Queue Size Over Time")
     ax.set_xlabel("Environment steps")
     ax.set_ylabel("Action Queue Size")
@@ -60,6 +54,15 @@ def visualize_action_queue_size(action_queue_size: list[int]) -> None:
     ax.grid(True, alpha=0.3)
     ax.plot(range(len(action_queue_size)), action_queue_size)
     plt.show()
+
+
+def validate_robot_cameras_for_policy(
+    lerobot_observation_features: dict[str, dict], policy_image_features: dict[str, PolicyFeature]
+) -> None:
+    image_keys = list(filter(is_image_key, lerobot_observation_features))
+    assert set(image_keys) == set(policy_image_features.keys()), (
+        f"Policy image features must match robot cameras! Received {list(policy_image_features.keys())} != {image_keys}"
+    )
 
 
 def map_robot_keys_to_lerobot_features(robot: Robot) -> dict[str, dict]:
@@ -83,11 +86,11 @@ def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, 
     return resized.squeeze(0)
 
 
-# TODO(Steven): Consider implementing a pipeline step for this
 def raw_observation_to_observation(
     raw_observation: RawObservation,
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
+    device: str,
 ) -> Observation:
     observation = {}
 
@@ -96,7 +99,9 @@ def raw_observation_to_observation(
         if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions in observations
             if "image" in k:
                 # Policy expects images in shape (B, C, H, W)
-                observation[k] = prepare_image(v).unsqueeze(0)
+                observation[k] = prepare_image(v).unsqueeze(0).to(device)
+            else:
+                observation[k] = v.to(device)
         else:
             observation[k] = v
 
@@ -268,7 +273,6 @@ class RemotePolicyConfig:
     lerobot_features: dict[str, PolicyFeature]
     actions_per_chunk: int
     device: str = "cpu"
-    rename_map: dict[str, str] = field(default_factory=dict)
 
 
 def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:

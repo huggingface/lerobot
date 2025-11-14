@@ -16,8 +16,6 @@ from dataclasses import dataclass
 
 from ..configs import CameraConfig, ColorMode
 
-__all__ = ["CameraConfig", "ColorMode", "Reachy2CameraConfig"]
-
 
 @CameraConfig.register_subclass("reachy2_camera")
 @dataclass
@@ -64,7 +62,7 @@ class Reachy2CameraConfig(CameraConfig):
     port: int = 50065
     # use_depth: bool = False
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         if self.name not in ["teleop", "depth"]:
             raise ValueError(f"`name` is expected to be 'teleop' or 'depth', but {self.name} is provided.")
         if (self.name == "teleop" and self.image_type not in ["left", "right"]) or (
