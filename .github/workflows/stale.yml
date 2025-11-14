@@ -44,6 +44,7 @@ jobs:
   # This job runs the actions/stale action to close stale issues and PRs.
   stale:
     name: Close Stale Issues and PRs
+    if: github.repository == 'huggingface/lerobot'
     runs-on: ubuntu-latest
     permissions:
       actions: write

@@ -40,6 +40,7 @@ jobs:
   # This job runs pre-commit hooks to check code style and formatting.
   pre-commit-checks:
     name: Run Pre-commit Hooks (Lint, Format & Static Analysis)
+    if: github.repository == 'huggingface/lerobot'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

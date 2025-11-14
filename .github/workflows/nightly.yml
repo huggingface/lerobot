@@ -41,6 +41,7 @@ jobs:
   # This job builds a CPU image for testing & distribution
   build-docker-cpu-nightly:
     name: Build CPU Docker for Nightly
+    if: github.repository == 'huggingface/lerobot'
     runs-on:
       group: aws-general-8-plus
     outputs:
@@ -75,6 +76,7 @@ jobs:
   # This job builds a GPU image for testing & distribution
   build-docker-gpu-nightly:
     name: Build GPU Docker for Nightly
+    if: github.repository == 'huggingface/lerobot'
     runs-on:
       group: aws-general-8-plus
     outputs:
@@ -109,6 +111,7 @@ jobs:
   # This job runs the E2E tests + pytest with all extras in the CPU image
   nightly-cpu-tests:
     name: Nightly CPU Tests
+    if: github.repository == 'huggingface/lerobot'
     needs: [build-docker-cpu-nightly]
     runs-on:
       group: aws-g6-4xlarge-plus
@@ -136,6 +139,7 @@ jobs:
   # This job runs the E2E tests + pytest with all extras in the GPU image
   nightly-gpu-tests:
     name: Nightly GPU Tests
+    if: github.repository == 'huggingface/lerobot'
     needs: [build-docker-gpu-nightly]
     runs-on:
       group: aws-g6-4xlarge-plus
@@ -163,6 +167,7 @@ jobs:
   # This job runs multi-GPU training tests with 4 GPUs
   nightly-multi-gpu-tests:
     name: Nightly Multi-GPU Tests
+    if: github.repository == 'huggingface/lerobot'
     needs: [build-docker-gpu-nightly]
     runs-on:
       group: aws-g4dn-12xlarge  # Instance with 4 GPUs

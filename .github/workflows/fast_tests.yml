@@ -57,6 +57,7 @@ jobs:
   # It runs everytime we commit to a PR or push to main
   fast-pytest-tests:
     name: Fast Pytest Tests
+    if: github.repository == 'huggingface/lerobot'
     runs-on: ubuntu-latest
     env:
       MUJOCO_GL: egl

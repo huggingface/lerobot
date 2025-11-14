@@ -42,6 +42,7 @@ jobs:
   # This job runs the E2E tests + pytest with all unbound extras
   full-tests:
     name: Full Unbound Tests
+    if: github.repository == 'huggingface/lerobot'
     runs-on: ubuntu-latest
     env:
       MUJOCO_GL: egl
@@ -87,6 +88,7 @@ jobs:
       image_tag: ${{ env.DOCKER_IMAGE_NAME }}
     env:
       GITHUB_REF: ${{ github.ref }}
+    if: github.repository == 'huggingface/lerobot'
     steps:
       - name: Install Git LFS
         run: |
@@ -123,6 +125,7 @@ jobs:
     needs: [build-and-push-docker]
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: github.repository == 'huggingface/lerobot'
     env:
       HF_HOME: /home/user_lerobot/.cache/huggingface
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
@@ -149,7 +152,7 @@ jobs:
   delete-unbound-image:
     name: Delete Unbound Image
     needs: [gpu-tests, build-and-push-docker]
-    if: always() && needs.build-and-push-docker.result == 'success'
+    if: always() && needs.build-and-push-docker.result == 'success' && github.repository == 'huggingface/lerobot'
     runs-on: ubuntu-latest
     steps:
       - name: Get Docker Hub Token and Delete Image
