@@ -44,7 +44,6 @@ def get_storage_backend(name: str, **kwargs):
     if name is None:
         raise ValueError("storage backend name is None")
     if name.lower() == "lance":
-        # 延迟导入，避免未选择时引入额外依赖
         from .lance_backend import LanceBackend
 
         return LanceBackend(**kwargs)
