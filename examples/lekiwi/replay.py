@@ -26,13 +26,13 @@ from lerobot.utils.utils import log_say
 EPISODE_IDX = 0
 
 # Initialize the robot config
-robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
+robot_config = LeKiwiClientConfig(remote_ip="127.0.0.1", id="my_awesome_kiwi")
 
 # Initialize the robot
 robot = LeKiwiClient(robot_config)
 
 # Fetch the dataset to replay
-dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[EPISODE_IDX])
+dataset = LeRobotDataset("PinkOcelot/il_gym", episodes=[EPISODE_IDX])
 # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
 episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == EPISODE_IDX)
 actions = episode_frames.select_columns(ACTION)
