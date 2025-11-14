@@ -134,7 +134,7 @@ conda install ffmpeg -c conda-forge
 First, clone the repository and navigate into the directory:
 
 ```bash
-git clone https://github.com/huggingface/lerobot.git
+git clone https://github.com/TroteaTeodor/lerobot-animate-arm.git
 cd lerobot
 ```
 
@@ -227,6 +227,49 @@ It will open `rerun.io` and display the camera streams, robot states and actions
 https://github-production-user-asset-6210df.s3.amazonaws.com/4681518/328035972-fd46b787-b532-47e2-bb6f-fd536a55a7ed.mov?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20240505%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240505T172924Z&X-Amz-Expires=300&X-Amz-Signature=d680b26c532eeaf80740f08af3320d22ad0b8a4e4da1bcc4f33142c15b509eda&X-Amz-SignedHeaders=host&actor_id=24889239&key_id=0&repo_id=748713144
 
 Our script can also visualize datasets stored on a distant server. See `lerobot-dataset-viz --help` for more instructions.
+
+### Robot arm animation with `lerobot-animate`
+
+For SO-101 robot arms, you can create and play custom animations using the built-in animation tool:
+
+```bash
+# Find your robot's port first
+lerobot-find-port
+
+# Start the animation tool with your robot's port
+lerobot-animate /dev/tty.usbmodem5A680123451
+```
+
+This opens an interactive session where you can:
+
+**Record animations:**
+1. Manually move your robot arm to a desired position
+2. Press ENTER to record the pose
+3. Repeat to create a sequence of poses
+4. Type `play` to see your animation
+
+**Control playback:**
+- `speed 2.0` - Set movement speed (0.1-5.0x, default: 1.0)
+- `delay 0.2` - Set pause between poses in seconds (0-5.0s, default: 0.5)
+- `play` - Play current animation
+- `loop` - Play animation in continuous loop
+
+**Manage animations:**
+- `save` - Save your animation to a JSON file
+- `load` - Load a previously saved animation
+- `list` - Show all saved animations
+- `library` - Browse and play saved animations
+
+**Auto-load animations:**
+```bash
+# Load and play an animation file on startup
+lerobot-animate /dev/tty.usbmodem5A680123451 --load my_animation.json
+
+# Auto-loop an animation
+lerobot-animate /dev/tty.usbmodem5A680123451 --load my_animation.json --loop
+```
+
+See `lerobot-animate --help` for more options.
 
 ### The `LeRobotDataset` format
 
