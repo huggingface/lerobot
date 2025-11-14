@@ -22,12 +22,21 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("keyboard")
 @dataclass
 class KeyboardTeleopConfig(TeleoperatorConfig):
-    """KeyboardTeleopConfig"""
-
     # TODO(Steven): Consider setting in here the keys that we want to capture/listen
+    mock: bool = False
 
 
 @TeleoperatorConfig.register_subclass("keyboard_ee")
 @dataclass
 class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
     use_gripper: bool = True
+
+@TeleoperatorConfig.register_subclass("keyboard_rover")
+@dataclass
+class KeyboardRoverTeleopConfig(TeleoperatorConfig):
+    """Configuration for keyboard rover teleop"""
+    linear_speed: float = 50.0  # Default linear speed
+    angular_speed: float = 30.0  # Default angular speed
+    speed_increment: float = 10.0  # Speed adjustment increment
+    mock: bool = False
+

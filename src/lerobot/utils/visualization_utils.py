@@ -32,8 +32,11 @@ def init_rerun(session_name: str = "lerobot_control_loop") -> None:
 
 
 def _is_scalar(x):
-    return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
-        isinstance(x, np.ndarray) and x.ndim == 0
+    return (
+        isinstance(x, float)
+        or isinstance(x, numbers.Real)
+        or isinstance(x, (np.integer, np.floating))
+        or (isinstance(x, np.ndarray) and x.ndim == 0)
     )
 
 
@@ -46,7 +49,7 @@ def log_rerun_data(
 
     This function iterates through the provided observation and action dictionaries and sends their contents
     to the Rerun viewer. It handles different data types appropriately:
-    - Scalars values (floats, ints) are logged as `rr.Scalars`.
+    - Scalar values (floats, ints) are logged as `rr.Scalar`.
     - 3D NumPy arrays that resemble images (e.g., with 1, 3, or 4 channels first) are transposed
       from CHW to HWC format and logged as `rr.Image`.
     - 1D NumPy arrays are logged as a series of individual scalars, with each element indexed.
@@ -65,7 +68,7 @@ def log_rerun_data(
             key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
 
             if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
+                rr.log(key, rr.Scalar(float(v)))
             elif isinstance(v, np.ndarray):
                 arr = v
                 # Convert CHW -> HWC when needed
@@ -73,7 +76,7 @@ def log_rerun_data(
                     arr = np.transpose(arr, (1, 2, 0))
                 if arr.ndim == 1:
                     for i, vi in enumerate(arr):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                        rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
                 else:
                     rr.log(key, rr.Image(arr), static=True)
 
@@ -84,13 +87,13 @@ def log_rerun_data(
             key = k if str(k).startswith("action.") else f"action.{k}"
 
             if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
+                rr.log(key, rr.Scalar(float(v)))
             elif isinstance(v, np.ndarray):
                 if v.ndim == 1:
                     for i, vi in enumerate(v):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                        rr.log(f"{key}_{i}", rr.Scalar(float(vi)))
                 else:
                     # Fall back to flattening higher-dimensional arrays
                     flat = v.flatten()
                     for i, vi in enumerate(flat):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                        rr.log(f"{key}_{i}", rr.Scalar(float(vi)))

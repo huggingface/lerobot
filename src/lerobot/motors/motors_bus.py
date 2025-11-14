@@ -99,6 +99,12 @@ class Motor:
     norm_mode: MotorNormMode
 
 
+class JointOutOfRangeError(Exception):
+    def __init__(self, message="Joint is out of range"):
+        self.message = message
+        super().__init__(self.message)
+
+
 class PortHandler(Protocol):
     def __init__(self, port_name):
         self.is_open: bool
@@ -342,7 +348,7 @@ class MotorsBus(abc.ABC):
             raise TypeError(motors)
 
     def _get_ids_values_dict(self, values: Value | dict[str, Value] | None) -> list[str]:
-        if isinstance(values, (int | float)):
+        if isinstance(values, (int, float)):
             return dict.fromkeys(self.ids, values)
         elif isinstance(values, dict):
             return {self.motors[motor].id: val for motor, val in values.items()}
@@ -669,7 +675,7 @@ class MotorsBus(abc.ABC):
         """
         if motors is None:
             motors = list(self.motors)
-        elif isinstance(motors, (str | int)):
+        elif isinstance(motors, (str, int)):
             motors = [motors]
         elif not isinstance(motors, list):
             raise TypeError(motors)
@@ -697,7 +703,7 @@ class MotorsBus(abc.ABC):
         """
         if motors is None:
             motors = list(self.motors)
-        elif isinstance(motors, (str | int)):
+        elif isinstance(motors, (str, int)):
             motors = [motors]
         elif not isinstance(motors, list):
             raise TypeError(motors)
@@ -733,7 +739,7 @@ class MotorsBus(abc.ABC):
         """
         if motors is None:
             motors = list(self.motors)
-        elif isinstance(motors, (str | int)):
+        elif isinstance(motors, (str, int)):
             motors = [motors]
         elif not isinstance(motors, list):
             raise TypeError(motors)

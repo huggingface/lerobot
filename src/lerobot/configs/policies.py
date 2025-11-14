@@ -14,12 +14,12 @@
 import abc
 import builtins
 import json
+import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
-from logging import getLogger
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TypeVar
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -34,11 +34,10 @@ from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 
 T = TypeVar("T", bound="PreTrainedConfig")
-logger = getLogger(__name__)
 
 
 @dataclass
-class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: ignore[misc,name-defined] #TODO: draccus issue
+class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     """
     Base configuration class for policy models.
 
@@ -58,12 +57,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
 
-    device: str | None = None  # e.g. "cuda", "cuda:0", "cpu", or "mps"
+    device: str | None = None  # cuda | cpu | mp
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
 
-    push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
+    push_to_hub: bool = True
     repo_id: str | None = None
 
     # Upload on private repository on the Hugging Face hub.
@@ -72,43 +71,38 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     tags: list[str] | None = None
     # Add tags to your policy on the hub.
     license: str | None = None
-    # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
-    # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.
-    pretrained_path: Path | None = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
+        self.pretrained_path = None
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
-            logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+            logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
             self.device = auto_device.type
 
         # Automatically deactivate AMP if necessary
         if self.use_amp and not is_amp_available(self.device):
-            logger.warning(
+            logging.warning(
                 f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
             )
             self.use_amp = False
 
     @property
     def type(self) -> str:
-        choice_name = self.get_choice_name(self.__class__)
-        if not isinstance(choice_name, str):
-            raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
-        return choice_name
+        return self.get_choice_name(self.__class__)
 
     @property
     @abc.abstractmethod
-    def observation_delta_indices(self) -> list | None:  # type: ignore[type-arg] #TODO: No implementation
+    def observation_delta_indices(self) -> list | None:
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def action_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
+    def action_delta_indices(self) -> list | None:
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
+    def reward_delta_indices(self) -> list | None:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -158,13 +152,13 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict[Any, Any] | None = None,
+        resume_download: bool = None,
+        proxies: dict | None = None,
         token: str | bool | None = None,
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        **policy_kwargs: Any,
+        **policy_kwargs,
     ) -> T:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
@@ -172,7 +166,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
             if CONFIG_NAME in os.listdir(model_id):
                 config_file = os.path.join(model_id, CONFIG_NAME)
             else:
-                logger.error(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
+                print(f"{CONFIG_NAME} not found in {Path(model_id).resolve()}")
         else:
             try:
                 config_file = hf_hub_download(
@@ -197,9 +191,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         # something like --policy.path (in addition to --policy.type)
         with draccus.config_type("json"):
             orig_config = draccus.parse(cls, config_file, args=[])
-
-        if config_file is None:
-            raise FileNotFoundError(f"{CONFIG_NAME} not found in {model_id}")
 
         with open(config_file) as f:
             config = json.load(f)
