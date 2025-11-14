@@ -20,6 +20,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import OBS_IMAGES
 
 
@@ -46,6 +47,9 @@ class PI0Config(PreTrainedConfig):
     time_sampling_offset: float = 0.001
     min_period: float = 4e-3
     max_period: float = 4.0
+
+    # Real-Time Chunking (RTC) configuration
+    rtc_config: RTCConfig | None = None
 
     image_resolution: tuple[int, int] = (224, 224)  # see openpi `preprocessing_pytorch.py`
 
