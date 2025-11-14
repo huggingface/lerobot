@@ -134,7 +134,7 @@ conda install ffmpeg -c conda-forge
 First, clone the repository and navigate into the directory:
 
 ```bash
-git clone https://github.com/huggingface/lerobot.git
+git clone https://github.com/TroteaTeodor/lerobot-animate-arm.git
 cd lerobot
 ```
 
