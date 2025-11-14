@@ -17,6 +17,7 @@
 import builtins
 import logging
 import math
+import threading
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -1028,9 +1029,36 @@ class PI05Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
+    def _new_action_queue(self) -> deque:
+        """Create a fresh action queue honoring n_action_steps."""
+        return deque(maxlen=self.config.n_action_steps)
+
+    def _get_thread_action_queue(self) -> deque:
+        """Return the action queue scoped to the current thread."""
+        if not hasattr(self, "_thread_local"):
+            self._thread_local = threading.local()
+        action_queue = getattr(self._thread_local, "action_queue", None)
+        if action_queue is None:
+            action_queue = self._new_action_queue()
+            self._thread_local.action_queue = action_queue
+        return action_queue
+
+    @property
+    def _action_queue(self) -> deque:
+        """Expose the thread-local action queue (backwards compatible attribute)."""
+        return self._get_thread_action_queue()
+
+    @_action_queue.setter
+    def _action_queue(self, queue: deque) -> None:
+        if not hasattr(self, "_thread_local"):
+            self._thread_local = threading.local()
+
+        self._thread_local.action_queue = queue
+
     def reset(self):
         """Reset internal state - called when environment resets."""
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
+        self._thread_local = threading.local()
+        self._action_queue = self._new_action_queue()
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
