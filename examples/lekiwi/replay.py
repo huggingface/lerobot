@@ -26,7 +26,7 @@ from lerobot.utils.utils import log_say
 EPISODE_IDX = 0
 
 # Initialize the robot config
-robot_config = LeKiwiClientConfig(remote_ip="127.0.0.1", id="my_awesome_kiwi")
+robot_config = LeKiwiClientConfig(remote_ip="192.168.31.203", id="my_awesome_kiwi")
 
 # Initialize the robot
 robot = LeKiwiClient(robot_config)

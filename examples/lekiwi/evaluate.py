@@ -34,7 +34,7 @@ HF_MODEL_ID = "<hf_username>/<model_repo_id>"
 HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
 
 # Create the robot configuration & robot
-robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
+robot_config = LeKiwiClientConfig(remote_ip="192.168.31.203", id="lekiwi")
 
 robot = LeKiwiClient(robot_config)
 

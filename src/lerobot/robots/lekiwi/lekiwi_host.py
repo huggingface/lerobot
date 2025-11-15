@@ -101,8 +101,14 @@ def main(cfg: LeKiwiServerConfig):
 
             # Encode ndarrays to base64 strings
             for cam_key, _ in robot.cameras.items():
+                image = last_observation[cam_key]
+                
+                # 根据相机名称旋转图像（根据你的需求调整）
+                if cam_key == "front":
+                    image = cv2.rotate(image, cv2.ROTATE_180)  # 前置相机旋转180度
+                
                 ret, buffer = cv2.imencode(
-                    ".jpg", last_observation[cam_key], [int(cv2.IMWRITE_JPEG_QUALITY), 90]
+                    ".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 90]
                 )
                 if ret:
                     last_observation[cam_key] = base64.b64encode(buffer).decode("utf-8")

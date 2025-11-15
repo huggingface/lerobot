@@ -27,16 +27,16 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
-NUM_EPISODES = 2
+NUM_EPISODES = 12
 FPS = 30
-EPISODE_TIME_SEC = 30
-RESET_TIME_SEC = 10
-TASK_DESCRIPTION = "Pick up the green level and put it in the box."
+EPISODE_TIME_SEC = 45
+RESET_TIME_SEC = 3
+TASK_DESCRIPTION = "Put the green tissues in the box."
 HF_REPO_ID = "PinkOcelot/il_gym"
 
 # Create the robot and teleoperator configurations
-robot_config = LeKiwiClientConfig(remote_ip="127.0.0.1", id="my_awesome_kiwi")
-leader_arm_config = SO100LeaderConfig(port="/dev/ttyACM1", id="my_awesome_leader_arm")
+robot_config = LeKiwiClientConfig(remote_ip="192.168.31.203", id="my_awesome_kiwi")
+leader_arm_config = SO100LeaderConfig(port="COM4", id="my_awesome_leader_arm")
 keyboard_config = KeyboardTeleopConfig()
 
 # Initialize the robot and teleoperator
