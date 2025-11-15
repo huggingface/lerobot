@@ -191,6 +191,28 @@ xinput_calibrator
 
 Follow on-screen instructions and save the calibration.
 
+## Find Your USB Ports
+
+Before launching, identify which USB ports your arms are connected to:
+
+```bash
+# List all USB serial devices
+ls -l /dev/ttyUSB*
+
+# Or use the LeRobot tool
+lerobot-find-port
+```
+
+You'll see something like:
+```
+/dev/ttyUSB0
+/dev/ttyUSB1
+/dev/ttyUSB2
+/dev/ttyUSB3
+```
+
+Then use these actual port names in the launch command!
+
 ## Troubleshooting
 
 ### USB Permissions
