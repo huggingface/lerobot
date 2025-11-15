@@ -430,9 +430,7 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         for key in video_keys:
             if not self.features[key].get("info", None):
-                video_path = self.root / self.video_path.format(
-                    video_key=video_key, chunk_index=0, file_index=0
-                )
+                video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
                 self.info["features"][key]["info"] = get_video_info(video_path)
 
     def update_chunk_settings(
@@ -942,11 +940,26 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return query_timestamps
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
-        return {
-            key: torch.stack(self.hf_dataset[q_idx][key])
-            for key, q_idx in query_indices.items()
-            if key not in self.meta.video_keys
-        }
+        """
+        Query dataset for indices across keys, skipping video keys.
+
+        Tries column-first [key][indices] for speed, falls back to row-first.
+
+        Args:
+            query_indices: Dict mapping keys to index lists to retrieve
+
+        Returns:
+            Dict with stacked tensors of queried data (video keys excluded)
+        """
+        result: dict = {}
+        for key, q_idx in query_indices.items():
+            if key in self.meta.video_keys:
+                continue
+            try:
+                result[key] = torch.stack(self.hf_dataset[key][q_idx])
+            except (KeyError, TypeError, IndexError):
+                result[key] = torch.stack(self.hf_dataset[q_idx][key])
+        return result
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
         """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
