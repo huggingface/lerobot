@@ -100,7 +100,7 @@ transformers-dep = ["transformers>=4.53.0,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"] # TODO: Bumb dependency (compatible with wandb)
 
 # Motors
-feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
+feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0", "lerobot[pygame-dep]"]
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0"]
 
 # Robots
@@ -184,6 +184,7 @@ lerobot-info="lerobot.scripts.lerobot_info:main"
 lerobot-find-joint-limits="lerobot.scripts.lerobot_find_joint_limits:main"
 lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
+lerobot-touch-ui="lerobot.scripts.lerobot_touch_ui:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
