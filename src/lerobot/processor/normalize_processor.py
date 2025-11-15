@@ -27,7 +27,7 @@ from torch import Tensor
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import ACTION
-
+from lerobot.datasets.factory import IMAGENET_STATS
 from .converters import from_tensor_to_numpy, to_tensor
 from .core import EnvTransition, PolicyAction, TransitionKey
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
@@ -303,14 +303,15 @@ class _NormalizationMixin:
             ValueError: If an unsupported normalization mode is encountered.
         """
         norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
+        breakpoint()
+        if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats and norm_mode != NormalizationMode.IMAGENET:
             return tensor
-
         if norm_mode not in (
             NormalizationMode.MEAN_STD,
             NormalizationMode.MIN_MAX,
             NormalizationMode.QUANTILES,
             NormalizationMode.QUANTILE10,
+            NormalizationMode.IMAGENET,
         ):
             raise ValueError(f"Unsupported normalization mode: {norm_mode}")
 
@@ -319,6 +320,22 @@ class _NormalizationMixin:
             first_stat = next(iter(self._tensor_stats[key].values()))
             if first_stat.device != tensor.device or first_stat.dtype != tensor.dtype:
                 self.to(device=tensor.device, dtype=tensor.dtype)
+
+        if norm_mode == NormalizationMode.IMAGENET:
+            mean = torch.tensor(IMAGENET_STATS["mean"], device=tensor.device, dtype=tensor.dtype)
+            std = torch.tensor(IMAGENET_STATS["std"], device=tensor.device, dtype=tensor.dtype)
+
+            # Expand mean/std to match tensor dims (e.g., BCHW or BNCHW)
+            while mean.dim() < tensor.dim():
+                mean = mean.unsqueeze(0)
+                std = std.unsqueeze(0)
+
+            if inverse:
+                # De-normalize
+                return (tensor * std + mean) * 255.0
+
+            # Normalize
+            return (tensor / 255.0 - mean) / std
 
         stats = self._tensor_stats[key]
         if norm_mode == NormalizationMode.MEAN_STD:

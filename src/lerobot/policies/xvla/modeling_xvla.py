@@ -319,7 +319,9 @@ class XVLAPolicy(PreTrainedPolicy):
         return total_loss, log_dict
 
     def _get_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        print("get_action_chunk")
         inputs = self._build_model_inputs(batch)
+        breakpoint()
         actions = self.model.generate_actions(**inputs, steps=self.config.num_denoising_steps)
         actions = self._trim_action_dim(actions)
         return actions
