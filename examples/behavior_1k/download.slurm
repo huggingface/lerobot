@@ -2,7 +2,7 @@
 #SBATCH -J b1k-download
 #SBATCH -p hopper-cpu
 #SBATCH --qos=high
-#SBATCH -c 64                    # CPUs per conversion (tune as needed)
+#SBATCH -c 32                    # CPUs per conversion (tune as needed)
 #SBATCH -t 20:00:00              # Time per conversion
 #SBATCH -D /admin/home/francesco_capuano/lerobot
 #SBATCH -o /admin/home/francesco_capuano/lerobot/examples/behavior_1k/logs/%x-%A.out
@@ -24,4 +24,4 @@ conda activate lerobot
 python examples/behavior_1k/download_data.py \
   --repo-id "behavior-1k/2025-challenge-demos" \
   --local-dir "/fsx/francesco_capuano/behavior1k-2025-v21" \
-  --max-workers 64
+  --max-workers 32
