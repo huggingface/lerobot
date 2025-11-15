@@ -17,8 +17,11 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project.urls]
-source = "https://github.com/alanchelmickjr/lerobot"
-issues = "https://github.com/alanchelmickjr/lerobot/issues"
+homepage = "https://huggingface.co/lerobot"
+documentation = "https://huggingface.co/docs/lerobot/index"
+source = "https://github.com/huggingface/lerobot"
+issues = "https://github.com/huggingface/lerobot/issues"
+discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
