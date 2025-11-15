@@ -36,7 +36,7 @@ HF_REPO_ID = "davidlau90/lekiwi_toy_pickup"
 
 # Create the robot and teleoperator configurations
 robot_config = LeKiwiClientConfig(remote_ip="192.168.0.207", id="didi")
-leader_arm_config = SO101LeaderConfig(port="/dev/tty.usbmodem58760431551", id="di")
+leader_arm_config = SO101LeaderConfig(port="/dev/tty.usbmodem5AB01813381", id="di")
 keyboard_config = KeyboardTeleopConfig()
 
 # Initialize the robot and teleoperator
