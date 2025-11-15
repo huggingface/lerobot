@@ -27,12 +27,12 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
-NUM_EPISODES = 12
+NUM_EPISODES = 50
 FPS = 30
 EPISODE_TIME_SEC = 45
-RESET_TIME_SEC = 3
+RESET_TIME_SEC = 1
 TASK_DESCRIPTION = "Put the green tissues in the box."
-HF_REPO_ID = "PinkOcelot/il_gym"
+HF_REPO_ID = "PinkOcelot/lekiwi_test"
 
 # Create the robot and teleoperator configurations
 robot_config = LeKiwiClientConfig(remote_ip="192.168.31.203", id="my_awesome_kiwi")
