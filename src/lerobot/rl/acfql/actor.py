@@ -339,6 +339,7 @@ def act_with_policy(
                 **{"observation.state": observation["observation.state"]},
                 # [B, C, H, W] -> [B, H, W, C]
                 **{k: v.permute(0, 2, 3, 1) for k, v in observation.items() if "observation.images" in k},
+                **{"task": ["pick up the pink cube"]},
             }
         )
 

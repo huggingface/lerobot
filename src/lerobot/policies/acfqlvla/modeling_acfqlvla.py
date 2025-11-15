@@ -707,7 +707,14 @@ class SACObservationEncoderVLA(nn.Module):
     def forward(
         self, obs: dict[str, Tensor], cache: dict[str, Tensor] | None = None, detach: bool = False
     ) -> Tensor:
-        batch = self.vla._prepare_batch(obs)
+        observations_with_task = {
+            # "task": "pick up the pink cube",
+            **obs,
+            "observation.images.front": obs["observation.images.front.raw"],
+            "observation.images.wrist": obs["observation.images.wrist.raw"],
+        }
+
+        batch = self.vla._prepare_batch(observations_with_task)
         images, img_masks = self.vla.prepare_images(batch)
         state = self.vla.prepare_state(batch)
         # batch["task"] = "pick up the pink cube"
@@ -1165,11 +1172,14 @@ class ActorVectorFieldPolicyVLA(nn.Module):
         # bsize = state.shape[0]
 
         observations_with_task = {
-            "task": "pick up the pink cube",
+            # "task": "pick up the pink cube",
             "action": actions,  # Assuming actions are part of the observations
             "actions_is_pad": actions_is_pad,
             **observations,
+            "observation.images.front": observations["observation.images.front.raw"],
+            "observation.images.wrist": observations["observation.images.wrist.raw"],
         }
+
         loss, loss_dict, v_t = self.encoder.vla.forward(observations_with_task, noise=None)
 
         return (
@@ -1204,12 +1214,14 @@ class ActorVectorFieldPolicyVLA(nn.Module):
         # prefix_embs, prefix_pad_masks, prefix_att_masks, state = obs_enc
         # bsize = state.shape[0]
 
-        # observations_with_task = {
-        #     "task": "pick up the pink cube",
-        #     **observations,
-        # }
+        observations_with_task = {
+            # "task": "pick up the pink cube",
+            **observations,
+            "observation.images.front": observations["observation.images.front.raw"],
+            "observation.images.wrist": observations["observation.images.wrist.raw"],
+        }
 
-        batch = self.encoder.vla._prepare_batch(observations)
+        batch = self.encoder.vla._prepare_batch(observations_with_task)
         images, img_masks = self.encoder.vla.prepare_images(batch)
         state = self.encoder.vla.prepare_state(batch)
         # lang_tokens, lang_masks = self.encoder.vla.prepare_language(batch)
