@@ -89,7 +89,7 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
-
+from lerobot.policies.xvla.utils import Rotate6D_to_AxisAngle
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -155,6 +155,17 @@ def rollout(
         disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
         leave=False,
     )
+    from transformers import AutoProcessor, AutoModel
+    model = AutoModel.from_pretrained(
+        "2toINF/X-VLA-WidowX",
+        trust_remote_code=True,
+        device="cuda"
+    )
+    model.to("cuda")
+    processor = AutoProcessor.from_pretrained("2toINF/X-VLA-WidowX", num_views=2, trust_remote_code=True)
+
+    from collections import deque
+    action_queue = deque(maxlen=30)
     check_env_attributes_and_types(env)
     while not np.all(done) and step < max_steps:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
@@ -165,13 +176,54 @@ def rollout(
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
+        inputs = processor([observation[f"observation.images.image"], observation[f"observation.images.image2"]], observation["task"], do_rescale=False)
         observation = preprocessor(observation)
+        observation["observation.images.image"] = inputs["image_input"][:, 0, ...].to("cuda")
+        observation["observation.images.image2"] = inputs["image_input"][:, 1, ...].to("cuda")
+        observation["observation.language.tokens"] = inputs["input_ids"].to("cuda")
+
+        # (Pdb) inputs.keys()
+        # dict_keys(['input_ids', 'image_input', 'image_mask', 'proprio', 'domain_id'])
+        # image_input should be torch.Size([1, 2, 3, 224, 224])
+        img0 = observation["observation.images.image"]      # [1, 3, 224, 224]
+        img1 = observation["observation.images.image2"]     # [1, 3, 224, 224]
+        img0 = img0.unsqueeze(1)   # [1, 1, 3, 224, 224]
+        img1 = img1.unsqueeze(1)   # [1, 1, 3, 224, 224]
+        obs = {}
+        obs['input_ids'] = observation["observation.language.tokens"].to("cuda")
+        obs['image_input'] = torch.cat([img0, img1], dim=1).to("cuda")
+        obs['domain_id'] = torch.tensor([int(3)], dtype=torch.long).to("cuda")
+        obs['proprio'] = observation["observation.state"].to("cuda")
+        obs['image_mask'] = inputs["image_mask"].to("cuda")
+
         with torch.inference_mode():
-            action = policy.select_action(observation)
-        action = postprocessor(action)
+            action_1 = policy.select_action(observation).to("cpu").numpy()
+            if len(action_queue) == 0:
+                action = model.generate_actions(**obs, steps=10)     # shape (1, 30, 20)
+                actions_np = action.detach().cpu().numpy()
+                # add each timestep as (1, 20)
+                for t in range(actions_np.shape[1]):
+                    act_t = actions_np[:, t, :] 
+                    action_queue.append(act_t)
+                action = action_queue.popleft()
+            else:
+                action = action_queue.popleft()
+        # action = postprocessor(action)
+        # breakpoint()
+        # .to("cpu").numpy()
+        target_eef = action[:, :3]
+        target_axis = Rotate6D_to_AxisAngle(action[:, 3:9])
+        target_act = action[:, 9:10]
+        action_numpy = np.concatenate([target_eef, target_axis, target_act], axis=-1)
+
+        target_eef_1 = action_1[:, :3]
+        target_axis_1 = Rotate6D_to_AxisAngle(action_1[:, 3:9])
+        target_act_1 = action_1[:, 9:10]
+        action_numpy_1 = np.concatenate([target_eef_1, target_axis_1, target_act_1], axis=-1)
+        breakpoint()
 
         # Convert to CPU / numpy.
-        action_numpy: np.ndarray = action.to("cpu").numpy()
+        # action_numpy: np.ndarray = action.to("cpu").numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
         # Apply the next action.
@@ -497,7 +549,6 @@ def eval_main(cfg: EvalPipelineConfig):
     envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Making policy.")
-
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,

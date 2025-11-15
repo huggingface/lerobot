@@ -29,7 +29,7 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 from robosuite.utils.transform_utils import quat2axisangle
-
+from lerobot.policies.xvla.utils import Mat_to_Rotate6D
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     """Normalize camera_name into a non-empty list of strings."""
@@ -81,14 +81,14 @@ def get_libero_dummy_action():
     return [0, 0, 0, 0, 0, 0, -1]
 
 
-OBS_STATE_DIM = 8
+OBS_STATE_DIM = 20
 ACTION_DIM = 7
 AGENT_POS_LOW = -1000.0
 AGENT_POS_HIGH = 1000.0
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
 TASK_SUITE_MAX_STEPS: dict[str, int] = {
-    "libero_spatial": 280,  # longest training demo has 193 steps
+    "libero_spatial": 800,  # longest training demo has 193 steps
     "libero_object": 280,  # longest training demo has 254 steps
     "libero_goal": 300,  # longest training demo has 270 steps
     "libero_10": 520,  # longest training demo has 505 steps
@@ -221,6 +221,11 @@ class LiberoEnv(gym.Env):
                 raw_obs["robot0_gripper_qpos"],
             )
         )
+        # add new obs for XVLA: jadechoghari
+        robo_ori = Mat_to_Rotate6D(self._env.robots[0].controller.ee_ori_mat)
+        robo_pos = self._env.robots[0].controller.ee_pos
+        proprio = np.concatenate([robo_pos, robo_ori, np.array([0.0])], axis=-1)
+        state = np.concatenate([proprio, np.zeros_like(proprio)], axis=-1)
         agent_pos = state
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}

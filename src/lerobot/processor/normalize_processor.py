@@ -321,7 +321,6 @@ class _NormalizationMixin:
                 self.to(device=tensor.device, dtype=tensor.dtype)
 
         stats = self._tensor_stats[key]
-
         if norm_mode == NormalizationMode.MEAN_STD:
             mean = stats.get("mean", None)
             std = stats.get("std", None)

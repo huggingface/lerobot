@@ -94,10 +94,9 @@ class XVLAModel(nn.Module):
         batch_size, num_views = pixel_values.shape[:2]
         flat_mask = image_mask.view(-1).to(dtype=torch.bool)
         flat_images = pixel_values.flatten(0, 1)
-
         #TODO: jadechoghari: remove this resizing logic, and provide a way in training to do this
-        target_size = (224, 224)
-        flat_images = F.interpolate(flat_images, size=target_size, mode="bilinear", align_corners=False)
+        # target_size = (224, 224)
+        # flat_images = F.interpolate(flat_images, size=target_size, mode="bilinear", align_corners=False)
 
 
         num_valid = int(flat_mask.sum().item())
@@ -197,7 +196,6 @@ class XVLAPolicy(PreTrainedPolicy):
     def __init__(self, config: XVLAConfig):
         super().__init__(config)
         config.validate_features()
-
         florence_config = config.get_florence_config()
         proprio_dim = config.max_state_dim if config.use_proprio else 0
         self.model = XVLAModel(config=config, florence_config=florence_config, proprio_dim=proprio_dim)
@@ -381,7 +379,6 @@ class XVLAPolicy(PreTrainedPolicy):
 
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
-
         # --- Step 2: Locate model.safetensors ---
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
@@ -422,9 +419,13 @@ class XVLAPolicy(PreTrainedPolicy):
             k: v for k, v in new_state_dict.items()
             if k not in keys_to_skip
         }
-
+        # ---- ADD THIS: Fix shared embeddings ----
+        encoder_key = "model.vlm.language_model.model.encoder.embed_tokens.weight"
+        shared_key  = "model.vlm.language_model.model.shared.weight"
+        if encoder_key in state_dict:
+            state_dict[shared_key] = state_dict[encoder_key]
         # --- Step 5: Load into instance ---
-        missing, unexpected = instance.load_state_dict(new_state_dict, strict=False)
+        missing, unexpected = instance.load_state_dict(state_dict, strict=True)
         print("✅ Loaded XVLA checkpoint with modified keys.")
         if missing:
             print(f"Missing keys: {missing}")
