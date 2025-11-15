@@ -25,11 +25,27 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForImageTextToText,
+    SmolVLMForConditionalGeneration,
+)
 
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.acfqlvla.configuration_acfqlvla import ACFQLVLAConfig, is_image_feature
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_ENV_STATE,
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+)
 
 
 class ACFQLVLAPolicy(
@@ -85,21 +101,21 @@ class ACFQLVLAPolicy(
             "ACFQLVLAPolicy does not support action chunking. It returns single actions!"
         )
 
-    @torch.no_grad()
-    def compute_flow_actions(self, observations, observations_features, noises: Tensor) -> Tensor:
-        actions = noises
-        flow_steps = self.config.flow_steps
+    # @torch.no_grad()
+    # def compute_flow_actions(self, observations, observations_features, noises: Tensor) -> Tensor:
+    #     actions = noises
+    #     flow_steps = self.config.flow_steps
 
-        # Euler method.
-        for i in range(flow_steps):
-            t_val = float(i) / flow_steps
-            t = torch.full((actions.shape[0], 1), t_val, device=noises.device)
-            vels = self.actor_bc_flow(observations, observations_features, actions, t)
-            actions = actions + vels / flow_steps
+    #     # Euler method.
+    #     for i in range(flow_steps):
+    #         t_val = float(i) / flow_steps
+    #         t = torch.full((actions.shape[0], 1), t_val, device=noises.device)
+    #         vels = self.actor_bc_flow(observations, observations_features, actions, t)
+    #         actions = actions + vels / flow_steps
 
-        actions = torch.clamp(actions, -1.0, 1.0)
+    #     actions = torch.clamp(actions, -1.0, 1.0)
 
-        return actions
+    #     return actions
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -422,25 +438,26 @@ class ACFQLVLAPolicy(
         actions: Tensor | None,
         valid: Tensor | None,
     ) -> Tensor:
-        batch_size = actions.shape[0]
-        action_dim = self.actor_bc_flow.action_dim
+        # batch_size = actions.shape[0]
+        # action_dim = self.actor_bc_flow.action_dim
 
         # BC flow loss - action chunking version
-        x_0 = torch.randn(batch_size, action_dim, device=observations["observation.state"].device)
-        x_1 = actions.reshape(
-            batch_size, -1
-        )  # Flatten the action dimension [batch_size, chunk_size * action_dim]
-        t = torch.rand(batch_size, 1, device=observations["observation.state"].device)
-        x_t = (1 - t) * x_0 + t * x_1
-        vel = x_1 - x_0
+        # x_0 = torch.randn(batch_size, action_dim, device=observations["observation.state"].device)
+        # x_1 = actions.reshape(
+        #     batch_size, -1
+        # )  # Flatten the action dimension [batch_size, chunk_size * action_dim]
+        # t = torch.rand(batch_size, 1, device=observations["observation.state"].device)
+        # x_t = (1 - t) * x_0 + t * x_1
+        # vel = x_1 - x_0
 
-        vel_pred = self.actor_bc_flow(observations, observation_features, x_t, t)
+        # vel_pred = self.actor_bc_flow(observations, observation_features, x_t, t)
 
-        # Reshape to match action chunking structure
-        vel_pred = vel_pred.reshape(batch_size, self.config.chunk_size, -1)
-        vel = vel.reshape(batch_size, self.config.chunk_size, -1)
+        # # Reshape to match action chunking structure
+        # vel_pred = vel_pred.reshape(batch_size, self.config.chunk_size, -1)
+        # vel = vel.reshape(batch_size, self.config.chunk_size, -1)
 
-        bc_flow_loss = (((vel_pred - vel) ** 2) * valid[..., None]).mean()
+        # bc_flow_loss = (((vel_pred - vel) ** 2) * valid[..., None]).mean()
+        bc_flow_loss, _, _ = self.actor_bc_flow(observations, observation_features, actions, valid == 0)
 
         info = {
             "bc_flow_loss": bc_flow_loss,
@@ -455,12 +472,31 @@ class ACFQLVLAPolicy(
         actions: Tensor | None,
     ) -> Tensor:
         batch_size = actions.shape[0]
-        action_dim = self.actor_onestep_flow.action_dim
+        # action_dim = self.actor_onestep_flow.action_dim
 
         # Distillation loss
-        noises = torch.randn(batch_size, action_dim, device=observations["observation.state"].device)
-        target_flow_actions = self.compute_flow_actions(observations, observation_features, noises)
-        actor_actions = self.actor_onestep_flow(observations, observation_features, noises)
+        # noises = torch.randn(batch_size, action_dim, device=observations["observation.state"].device)
+        # target_flow_actions = self.compute_flow_actions(observations, observation_features, noises)
+        with torch.no_grad():
+            noises = self.actor_bc_flow.encoder.vla.model.sample_noise(
+                (
+                    batch_size,
+                    self.actor_bc_flow.encoder.vla.model.config.chunk_size,
+                    self.actor_bc_flow.encoder.vla.model.config.max_action_dim,
+                ),
+                device=observations["observation.state"].device,
+            )
+            target_flow_actions, _, _ = self.actor_bc_flow.sample_actions(
+                observations, observation_features, noises=noises
+            )
+        target_flow_actions = target_flow_actions[:, :, : self.config.output_features[ACTION].shape[0]]
+        target_flow_actions = target_flow_actions.reshape(target_flow_actions.shape[0], -1)
+
+        actor_actions = self.actor_onestep_flow(
+            observations,
+            observation_features,
+            noises[:, :, : self.config.output_features[ACTION].shape[0]].reshape(batch_size, -1),
+        )
         distill_loss = F.mse_loss(input=actor_actions, target=target_flow_actions)
 
         # Q loss
@@ -532,8 +568,61 @@ class ACFQLVLAPolicy(
         self.encoder_critic = SACObservationEncoder(self.config)
 
     def _init_encoders_actor(self):
-        self.encoder_actor_bc_flow = (
-            self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
+        if self.config.bc_policy == "SmolVLA":
+            cfg_policy: SmolVLAConfig = PreTrainedConfig.from_pretrained("lerobot/smolvla_base")
+            # cfg_policy.n_obs_steps: int = 1
+            cfg_policy.chunk_size = self.config.chunk_size
+            cfg_policy.n_action_steps = self.config.chunk_size
+            # cfg_policy.train_state_proj = False
+            cfg_policy.max_action_dim = self.config.max_action_dim
+            cfg_policy.max_state_dim = self.config.max_state_dim
+            cfg_policy.num_vlm_layers = 2
+            cfg_policy.expert_width_multiplier = 0.5
+        elif self.config.bc_policy == "Gemma3nVLA":
+            raise NotImplementedError("Gemma3nVLA policy not implemented yet.")
+        else:
+            raise ValueError(f"Unsupported BC policy: {self.config.bc_policy}")
+
+        kwargs = {}
+        cfg_policy.output_features = {
+            "action": PolicyFeature(
+                type=FeatureType.ACTION, shape=(self.config.output_features[ACTION].shape[0],)
+            )
+        }
+        cfg_policy.input_features = {
+            "observation.images.front": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
+            "observation.images.wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
+            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(18,)),
+        }
+        kwargs["config"] = cfg_policy
+
+        if isinstance(cfg_policy, SmolVLAConfig):
+            vlm_config = AutoConfig.from_pretrained(cfg_policy.vlm_model_name)
+            vlm_config.text_config.num_hidden_layers = cfg_policy.num_vlm_layers
+            self.vlm: SmolVLMForConditionalGeneration = AutoModelForImageTextToText.from_pretrained(
+                pretrained_model_name_or_path=cfg_policy.vlm_model_name,
+                device_map="auto",
+                torch_dtype="bfloat16",
+                low_cpu_mem_usage=True,
+                config=vlm_config,
+            )
+            vla_policy = SmolVLAPolicy(vlm=self.vlm, **kwargs)
+
+        # elif isinstance(cfg_policy, Gemma3nVLAConfig):
+        #     raise NotImplementedError("Gemma3nVLA encoder not implemented yet.")
+        else:
+            raise ValueError(f"Unsupported BC policy config: {type(cfg_policy)}")
+
+        # self.encoder_actor_bc_flow = (
+        #     self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
+        # )
+        self.encoder_actor_bc_flow = SACObservationEncoderVLA(
+            self.config,
+            # SmolVLAPolicy.from_pretrained(
+            #     pretrained_name_or_path="lerobot/smolvla_base", vlm=self.vlm, **kwargs
+            # ),
+            # Gemma3nVLAPolicy(vlm=self.vlm, **kwargs),
+            vla_policy,
         )
         self.encoder_actor_onestep_flow = (
             self.encoder_critic if self.shared_encoder else SACObservationEncoder(self.config)
@@ -565,15 +654,24 @@ class ACFQLVLAPolicy(
 
     def _init_actor_bc_flow(self, action_dim):
         """Initialize policy actor network and default target entropy."""
-        self.actor_bc_flow = ActorVectorFieldPolicy(
+        # self.actor_bc_flow = ActorVectorFieldPolicy(
+        #     encoder=self.encoder_actor_bc_flow,
+        #     network=MLP(
+        #         input_dim=self.encoder_actor_bc_flow.output_dim
+        #         + action_dim * self.config.chunk_size
+        #         + 1,  # add one for time
+        #         **asdict(self.config.actor_network_kwargs),
+        #     ),
+        #     action_dim=action_dim * self.config.chunk_size,
+        #     encoder_is_shared=self.shared_encoder,
+        #     **asdict(self.config.policy_kwargs),
+        # )
+        self.actor_bc_flow = ActorVectorFieldPolicyVLA(
             encoder=self.encoder_actor_bc_flow,
-            network=MLP(
-                input_dim=self.encoder_actor_bc_flow.output_dim
-                + action_dim * self.config.chunk_size
-                + 1,  # add one for time
-                **asdict(self.config.actor_network_kwargs),
-            ),
-            action_dim=action_dim * self.config.chunk_size,
+            # network=MLP(input_dim=self.encoder_actor_bc_flow.output_dim + continuous_action_dim + 1, **params),
+            # network=MLP(input_dim=720, **params),
+            # network=action_out_proj,
+            action_dim=action_dim,
             encoder_is_shared=self.shared_encoder,
             **asdict(self.config.policy_kwargs),
         )
@@ -596,6 +694,32 @@ class ACFQLVLAPolicy(
 
         if self.config.use_torch_compile:
             self.actor_onestep_flow = torch.compile(self.actor_onestep_flow)
+
+
+class SACObservationEncoderVLA(nn.Module):
+    """Encode image and/or state vector observations."""
+
+    def __init__(self, config: ACFQLVLAConfig, vla: SmolVLAPolicy) -> None:
+        super().__init__()
+        self.config = config
+        self.vla = vla
+
+    def forward(
+        self, obs: dict[str, Tensor], cache: dict[str, Tensor] | None = None, detach: bool = False
+    ) -> Tensor:
+        batch = self.vla._prepare_batch(obs)
+        images, img_masks = self.vla.prepare_images(batch)
+        state = self.vla.prepare_state(batch)
+        # batch["task"] = "pick up the pink cube"
+        # lang_tokens, lang_masks = self.vla.prepare_language(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.vla.model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+
+        return prefix_embs, prefix_pad_masks, prefix_att_masks, state
 
 
 class SACObservationEncoder(nn.Module):
@@ -974,6 +1098,139 @@ class ActorVectorFieldPolicy(nn.Module):
         return outputs
 
 
+class ActorVectorFieldPolicyVLA(nn.Module):
+    """
+    Actor vector field network for flow matching.
+
+    Args:
+        hidden_dims (list[int]): Hidden layer dimensions.
+        action_dim (int): Action dimension.
+        layer_norm (bool): Whether to apply layer normalization.
+        encoder (nn.Module, optional): Optional encoder module to encode the inputs.
+    """
+
+    def __init__(
+        self,
+        encoder: SACObservationEncoderVLA,
+        # network: nn.Module,
+        action_dim: int,
+        init_final: float | None = None,
+        encoder_is_shared: bool = False,
+    ):
+        super().__init__()
+        self.encoder: SACObservationEncoderVLA = encoder
+        # self.network = network
+        self.action_dim = action_dim
+        self.encoder_is_shared = encoder_is_shared
+
+        # # Find the last Linear layer's output dimension
+        # for layer in reversed(network.net):
+        #     if isinstance(layer, nn.Linear):
+        #         out_features = layer.out_features
+        #         break
+
+        # # self.output_layer = nn.Linear(out_features, action_dim)
+        # self.output_layer = nn.Linear(out_features, 32)
+        # if init_final is not None:
+        #     nn.init.uniform_(self.output_layer.weight, -init_final, init_final)
+
+    #     nn.init.uniform_(self.output_layer.bias, -init_final, init_final)
+    # else:
+    #     orthogonal_init()(self.output_layer.weight)
+
+    def forward(
+        self,
+        observations: torch.Tensor,
+        observation_features: torch.Tensor | None,
+        actions: torch.Tensor,
+        actions_is_pad: torch.Tensor,
+        # times: torch.Tensor = None,
+        # is_encoded: bool = False,
+        # noises: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Return the vectors at the given states, actions, and times (optional).
+
+        Args:
+            observations (Tensor): Observations.
+            actions (Tensor): Actions.
+            times (Tensor, optional): Times.
+            is_encoded (bool): Whether the observations are already encoded.
+        """
+        # if not is_encoded and self.encoder is not None:
+        #     observations = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)
+        # obs_enc = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)
+
+        # prefix_embs, prefix_pad_masks, prefix_att_masks, state = obs_enc
+        # bsize = state.shape[0]
+
+        observations_with_task = {
+            "task": "pick up the pink cube",
+            "action": actions,  # Assuming actions are part of the observations
+            "actions_is_pad": actions_is_pad,
+            **observations,
+        }
+        loss, loss_dict, v_t = self.encoder.vla.forward(observations_with_task, noise=None)
+
+        return (
+            loss,
+            loss_dict,
+            v_t,
+        )  # Return None for log_probs and means as they are not used in this context
+
+    @torch.no_grad()
+    def sample_actions(
+        self,
+        observations: torch.Tensor,
+        observation_features: torch.Tensor | None,
+        actions: torch.Tensor = None,
+        times: torch.Tensor = None,
+        noises: torch.Tensor | None = None,
+        # is_encoded: bool = False,
+    ) -> torch.Tensor:
+        """
+        Return the vectors at the given states, actions, and times (optional).
+
+        Args:
+            observations (Tensor): Observations.
+            actions (Tensor): Actions.
+            times (Tensor, optional): Times.
+            is_encoded (bool): Whether the observations are already encoded.
+        """
+        # if not is_encoded and self.encoder is not None:
+        #     observations = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)
+        # obs_enc = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)
+
+        # prefix_embs, prefix_pad_masks, prefix_att_masks, state = obs_enc
+        # bsize = state.shape[0]
+
+        # observations_with_task = {
+        #     "task": "pick up the pink cube",
+        #     **observations,
+        # }
+
+        batch = self.encoder.vla._prepare_batch(observations)
+        images, img_masks = self.encoder.vla.prepare_images(batch)
+        state = self.encoder.vla.prepare_state(batch)
+        # lang_tokens, lang_masks = self.encoder.vla.prepare_language(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        actions = self.encoder.vla.model.sample_actions(
+            images, img_masks, lang_tokens, lang_masks, state, noise=noises
+        )
+
+        # Unpad actions
+        # original_action_dim = self.encoder.vla.config.action_feature.shape[0]
+        # actions = actions[:, :, :original_action_dim]
+
+        # actions = self.encoder.vla.unnormalize_outputs({"action": actions})["action"]
+
+        actions = torch.clamp(actions, -1.0, 1.0)
+
+        return actions, None, None  # Return None for log_probs and means as they are not used in this context
+
+
 class DefaultImageEncoder(nn.Module):
     def __init__(self, config: ACFQLVLAConfig):
         super().__init__()
@@ -1028,7 +1285,6 @@ class PretrainedImageEncoder(nn.Module):
 
     def _load_pretrained_vision_encoder(self, config: ACFQLVLAConfig):
         """Set up CNN encoder"""
-        from transformers import AutoModel
 
         self.image_enc_layers = AutoModel.from_pretrained(config.vision_encoder_name, trust_remote_code=True)
 

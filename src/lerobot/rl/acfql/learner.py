@@ -434,16 +434,22 @@ def add_actor_information_and_train(
                             if "observation.images" in k
                         },
                         **{"action": actions},
+                        **{"task": ["pick up the pink cube"] * batch_size},
                     }
                 )
 
                 actions = observations.pop("action")
 
                 # The preprocessor may add extra keys, filter them out
-                observations = {k: v for k, v in observations.items() if k in cfg.policy.input_features}
+                observations = {
+                    k: v
+                    for k, v in observations.items()
+                    if k in cfg.policy.input_features
+                    or k in ["observation.language.tokens", "observation.language.attention_mask"]
+                }
 
                 observations = {
-                    **{"observation.state": observations["observation.state"]},
+                    **{k: observations[k] for k in observations if "observation.images" not in k},
                     # [B, H, W, C] -> [B, C, H, W]
                     **{
                         k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k
@@ -459,14 +465,18 @@ def add_actor_information_and_train(
                             for k, v in next_observations.items()
                             if "observation.images" in k
                         },
+                        **{"task": ["pick up the pink cube"] * batch_size},
                     }
                 )
                 # The preprocessor may add extra keys, filter them out
                 next_observations = {
-                    k: v for k, v in next_observations.items() if k in cfg.policy.input_features
+                    k: v
+                    for k, v in next_observations.items()
+                    if k in cfg.policy.input_features
+                    or k in ["observation.language.tokens", "observation.language.attention_mask"]
                 }
                 next_observations = {
-                    **{"observation.state": next_observations["observation.state"]},
+                    **{k: next_observations[k] for k in next_observations if "observation.images" not in k},
                     # [B, H, W, C] -> [B, C, H, W]
                     **{
                         k: v.permute(0, 3, 1, 2)
@@ -533,16 +543,22 @@ def add_actor_information_and_train(
                         k: v.permute(0, 2, 3, 1) for k, v in observations.items() if "observation.images" in k
                     },
                     **{"action": actions},
+                    **{"task": ["pick up the pink cube"] * batch_size},
                 }
             )
 
             actions = observations.pop("action")
 
             # The preprocessor may add extra keys, filter them out
-            observations = {k: v for k, v in observations.items() if k in cfg.policy.input_features}
+            observations = {
+                k: v
+                for k, v in observations.items()
+                if k in cfg.policy.input_features
+                or k in ["observation.language.tokens", "observation.language.attention_mask"]
+            }
 
             observations = {
-                **{"observation.state": observations["observation.state"]},
+                **{k: observations[k] for k in observations if "observation.images" not in k},
                 # [B, H, W, C] -> [B, C, H, W]
                 **{k: v.permute(0, 3, 1, 2) for k, v in observations.items() if "observation.images" in k},
             }
@@ -556,12 +572,18 @@ def add_actor_information_and_train(
                         for k, v in next_observations.items()
                         if "observation.images" in k
                     },
+                    **{"task": ["pick up the pink cube"] * batch_size},
                 }
             )
             # The preprocessor may add extra keys, filter them out
-            next_observations = {k: v for k, v in next_observations.items() if k in cfg.policy.input_features}
             next_observations = {
-                **{"observation.state": next_observations["observation.state"]},
+                k: v
+                for k, v in next_observations.items()
+                if k in cfg.policy.input_features
+                or k in ["observation.language.tokens", "observation.language.attention_mask"]
+            }
+            next_observations = {
+                **{k: next_observations[k] for k in next_observations if "observation.images" not in k},
                 # [B, H, W, C] -> [B, C, H, W]
                 **{
                     k: v.permute(0, 3, 1, 2)

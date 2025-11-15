@@ -205,6 +205,17 @@ class ACFQLVLAConfig(PreTrainedConfig):
     # Optimizations
     use_torch_compile: bool = True
 
+    # VLA specific
+    # Shorter state and action vectors will be padded
+    max_state_dim: int = 32
+    max_action_dim: int = 32
+
+    bc_policy: str | None = None  # TODO: Literal["mlp","SmolVLA", "Gemma3nVLA"] | None = None
+
+    vlm_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"  # Select the VLM backbone.
+    pad_language_to: str = "longest"  # "max_length"
+    tokenizer_max_length: int = 48
+
     def __post_init__(self):
         super().__post_init__()
 
