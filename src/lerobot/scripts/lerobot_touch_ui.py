@@ -29,11 +29,18 @@ lerobot-touch-ui \
 """
 
 import argparse
+import glob
 import logging
 from pathlib import Path
 
 from lerobot.touch_ui import BimanualTouchUI
 from lerobot.utils.utils import init_logging
+
+
+def auto_detect_ports():
+    """Auto-detect available USB serial ports"""
+    ports = glob.glob("/dev/ttyUSB*") or glob.glob("/dev/ttyACM*") or glob.glob("/dev/tty.usbserial*")
+    return sorted(ports)
 
 
 def main():
@@ -43,26 +50,26 @@ def main():
     parser.add_argument(
         "--follower-left-port",
         type=str,
-        default="/dev/ttyUSB0",
-        help="USB port for left follower arm",
+        default=None,
+        help="USB port for left follower arm (auto-detected if not specified)",
     )
     parser.add_argument(
         "--follower-right-port",
         type=str,
-        default="/dev/ttyUSB1",
-        help="USB port for right follower arm",
+        default=None,
+        help="USB port for right follower arm (auto-detected if not specified)",
     )
     parser.add_argument(
         "--leader-left-port",
         type=str,
-        default="/dev/ttyUSB2",
-        help="USB port for left leader arm",
+        default=None,
+        help="USB port for left leader arm (auto-detected if not specified)",
     )
     parser.add_argument(
         "--leader-right-port",
         type=str,
-        default="/dev/ttyUSB3",
-        help="USB port for right leader arm",
+        default=None,
+        help="USB port for right leader arm (auto-detected if not specified)",
     )
     parser.add_argument(
         "--calibration-dir",
@@ -72,6 +79,23 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Auto-detect ports if not specified
+    if not all([args.follower_left_port, args.follower_right_port, args.leader_left_port, args.leader_right_port]):
+        detected_ports = auto_detect_ports()
+        if len(detected_ports) < 4:
+            logging.error(f"Only found {len(detected_ports)} USB ports, need 4 arms connected")
+            logging.error(f"Detected ports: {detected_ports}")
+            logging.error("Please connect all 4 SO-101 arms or specify ports manually")
+            return
+
+        # Auto-assign in order
+        args.follower_left_port = args.follower_left_port or detected_ports[0]
+        args.follower_right_port = args.follower_right_port or detected_ports[1]
+        args.leader_left_port = args.leader_left_port or detected_ports[2]
+        args.leader_right_port = args.leader_right_port or detected_ports[3]
+
+        logging.info("Auto-detected USB ports:")
 
     logging.info("Starting Bimanual SO-101 Touch UI")
     logging.info(f"Follower ports: {args.follower_left_port}, {args.follower_right_port}")
