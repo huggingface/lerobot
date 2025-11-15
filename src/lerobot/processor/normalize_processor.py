@@ -303,7 +303,6 @@ class _NormalizationMixin:
             ValueError: If an unsupported normalization mode is encountered.
         """
         norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        breakpoint()
         if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats and norm_mode != NormalizationMode.IMAGENET:
             return tensor
         if norm_mode not in (
