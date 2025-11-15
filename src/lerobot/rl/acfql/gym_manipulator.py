@@ -54,7 +54,6 @@ from lerobot.processor import (
 from lerobot.processor.converters import identity_transition
 from lerobot.rl.gym_manipulator import (
     DatasetConfig,
-    replay_trajectory,
     reset_follower_position,
     step_env_and_process_transition,
 )
@@ -758,6 +757,47 @@ def control_loop(
         dataset.push_to_hub()
 
 
+def replay_trajectory(
+    env: gym.Env,
+    env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
+    action_processor: DataProcessorPipeline,
+    cfg: GymManipulatorConfig,
+) -> None:
+    """Replay recorded trajectory on robot environment."""
+    assert cfg.dataset.replay_episode is not None, "Replay episode must be provided for replay"
+
+    dataset = LeRobotDataset(
+        cfg.dataset.repo_id,
+        root=cfg.dataset.root,
+        episodes=[cfg.dataset.replay_episode],
+        download_videos=False,
+    )
+    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.replay_episode)
+    actions = episode_frames.select_columns(ACTION)
+
+    obs, info = env.reset()
+
+    complementary_data = (
+        {"raw_joint_positions": info.pop("raw_joint_positions")} if "raw_joint_positions" in info else {}
+    )
+    # Process initial observation
+    transition = create_transition(observation=obs, info=info, complementary_data=complementary_data)
+    transition = env_processor(data=transition)
+
+    for action_data in actions:
+        start_time = time.perf_counter()
+        action = action_data[ACTION]
+        # Use the new step function
+        transition = step_env_and_process_transition(
+            env=env,
+            transition=transition,
+            action=action,
+            env_processor=env_processor,
+            action_processor=action_processor,
+        )
+        busy_wait(1 / cfg.env.fps - (time.perf_counter() - start_time))
+
+
 @parser.wrap()
 def main(cfg: GymManipulatorConfig) -> None:
     """Main entry point for gym manipulator script."""
@@ -772,7 +812,7 @@ def main(cfg: GymManipulatorConfig) -> None:
     print("Action processor:", action_processor)
 
     if cfg.mode == "replay":
-        replay_trajectory(env, action_processor, cfg)
+        replay_trajectory(env, env_processor, action_processor, cfg)
         exit()
 
     control_loop(env, env_processor, action_processor, teleop_device, cfg)
