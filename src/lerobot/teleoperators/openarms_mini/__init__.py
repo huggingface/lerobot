@@ -14,11 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .motors_bus import (
-    Motor,
-    MotorCalibration,
-    MotorNormMode,
-    MotorsBus,  # Backward compatibility (alias for SerialMotorsBus)
-    MotorsBusBase,
-    SerialMotorsBus,
-)
+from .config_openarms_mini import OpenArmsMiniConfig
+from .openarms_mini import OpenArmsMini
+
+__all__ = ["OpenArmsMini", "OpenArmsMiniConfig"]
+

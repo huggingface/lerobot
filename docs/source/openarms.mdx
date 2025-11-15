@@ -1,0 +1,328 @@
+# OpenArms Robot
+
+OpenArms is a 7 DOF robotic arm with a gripper, designed by [Enactic, Inc.](https://www.enactic.com/) It uses Damiao motors controlled via CAN bus communication and MIT control mode for smooth, precise motion.
+
+## Hardware Overview
+
+- **7 DOF per arm** (14 DOF total for dual arm setup)
+- **1 gripper per arm** (2 grippers total)
+- **Damiao motors** with 4 different types:
+  - **DM8009** (DM-J8009P-2EC) for shoulders (J1, J2) - high torque
+  - **DM4340** for shoulder rotation and elbow (J3, J4)
+  - **DM4310** (DM-J4310-2EC V1.1) for wrist (J5, J6, J7) and gripper (J8)
+- **24V power supply** required
+- **CAN interface device**:
+  - **Linux**: Any SocketCAN-compatible adapter
+  - **macOS**: CANable, PEAK PCAN-USB, or Kvaser USBcan
+- Proper CAN wiring (CANH, CANL, 120Ω termination)
+
+
+## Motor Configuration
+
+Each arm has the following motor configuration based on the [OpenArm setup guide](https://docs.openarm.dev/software/setup/):
+
+| Joint | Motor | Motor Type | Sender CAN ID | Receiver ID | Description |
+|-------|-------|------------|---------------|-------------|-------------|
+| J1 | joint_1 | DM8009 | 0x01 | 0x11 | Shoulder pan |
+| J2 | joint_2 | DM8009 | 0x02 | 0x12 | Shoulder lift |
+| J3 | joint_3 | DM4340 | 0x03 | 0x13 | Shoulder rotation |
+| J4 | joint_4 | DM4340 | 0x04 | 0x14 | Elbow flex |
+| J5 | joint_5 | DM4310 | 0x05 | 0x15 | Wrist roll |
+| J6 | joint_6 | DM4310 | 0x06 | 0x16 | Wrist pitch |
+| J7 | joint_7 | DM4310 | 0x07 | 0x17 | Wrist rotation |
+| J8 | gripper | DM4310 | 0x08 | 0x18 | Gripper |
+
+For dual arm setups, the left arm uses IDs 0x09-0x10 for joints 1-8 with the same motor types.
+
+## Quick Start 
+
+```bash
+# Install system dependencies
+sudo apt install can-utils iproute2
+
+# Install LeRobot with OpenArms support
+pip install -e ".[openarms]"
+```
+
+## Setup Guide
+
+### Step 1: Motor ID Configuration
+
+**IMPORTANT**: Before using the robot, motors must be configured with the correct CAN IDs.
+
+Refer to the [OpenArm Motor ID Configuration Guide](https://docs.openarm.dev/software/setup/motor-id) for detailed instructions using the Damiao Debugging Tools on Windows.
+
+Key points:
+- Each motor needs a unique **Sender CAN ID** (0x01-0x08)
+- Each motor needs a unique **Receiver/Master ID** (0x11-0x18)
+- Use the Damiao Debugging Tools to set these IDs
+
+### Step 2: Setup CAN Interface
+
+Configure your CAN interface as described in the [OpenArm CAN Setup Guide](https://docs.openarm.dev/software/setup/can-setup):
+
+#### Linux (SocketCAN)
+
+```bash
+# Find your CAN interface
+ip link show
+
+# Configure can0, 1, 2, 3
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+
+sudo ip link set can1 down
+sudo ip link set can1 type can bitrate 1000000
+sudo ip link set can1 up
+
+sudo ip link set can2 down
+sudo ip link set can2 type can bitrate 1000000
+sudo ip link set can2 up
+
+sudo ip link set can3 down
+sudo ip link set can3 type can bitrate 1000000
+sudo ip link set can3 up
+
+# Verify configuration
+ip link show can0
+```
+
+or run:
+
+`examples/openarms/setup_can.sh`
+
+### Testing canbus and motor connection
+
+Please run this script to check if all motors can be found and to find your can-fd speed: `python examples/openarms/debug_can_communication.py`
+
+## Usage
+
+### Basic Setup
+
+
+```python
+from lerobot.robots.openarms import OpenArmsFollower
+from lerobot.robots.openarms.config_openarms_follower import OpenArmsFollowerConfig
+
+# Configure for dual arm setup
+config = OpenArmsFollowerConfig(
+    port="can0",
+    can_interface="socketcan",  # Or "auto" for auto-detection
+    id="openarms_dual",
+    is_dual_arm=True,
+)
+
+robot = OpenArmsFollower(config)
+robot.connect()
+```
+
+### Calibration
+
+On first use, you'll need to calibrate the robot:
+
+```python
+robot.calibrate()
+```
+
+The calibration process will:
+1. Disable torque on all motors
+2. Ask you to position arms in **hanging position with grippers closed**
+3. Set this as the zero position
+4. Ask you to move each joint through its full range
+5. Record min/max positions for each joint
+6. Save calibration to file
+
+### Reading Observations
+
+The robot provides comprehensive state information:
+
+```python
+observation = robot.get_observation()
+
+# Observation includes for each motor:
+# - {motor_name}.pos: Position in degrees
+# - {motor_name}.vel: Velocity in degrees/second  
+# - {motor_name}.torque: Motor torque
+# - {camera_name}: Camera images (if configured)
+
+print(f"Right arm joint 1 position: {observation['right_joint_1.pos']:.1f}°")
+print(f"Right arm joint 1 velocity: {observation['right_joint_1.vel']:.1f}°/s")
+print(f"Right arm joint 1 torque: {observation['right_joint_1.torque']:.3f} N·m")
+```
+
+### Sending Actions
+
+```python
+# Send target positions (in degrees)
+action = {
+    "right_joint_1.pos": 45.0,
+    "right_joint_2.pos": -30.0,
+    # ... all joints
+    "right_gripper.pos": 45.0,  # Half-closed
+}
+
+actual_action = robot.send_action(action)
+```
+
+### Gripper Control
+
+```python
+# Open gripper
+robot.open_gripper(arm="right")
+
+# Close gripper  
+robot.close_gripper(arm="right")
+```
+
+## Safety Features
+
+### 1. Maximum Relative Target
+
+Limits how far a joint can move in a single command to prevent sudden movements:
+
+```python
+config = OpenArmsFollowerConfig(
+    port="can0",
+    # Limit all joints to 10 degrees per command
+    max_relative_target=10.0,
+    
+    # Or set per-motor limits
+    max_relative_target={
+        "right_joint_1": 15.0,  # Slower moving joint
+        "right_joint_2": 10.0,
+        "right_gripper": 5.0,   # Very slow gripper
+    }
+)
+```
+
+**How it works**: If current position is 50° and you command 80°, with `max_relative_target=10.0`, the robot will only move to 60° in that step.
+
+### 2. Torque Limits
+
+Control maximum torque output, especially important for grippers and teleoperation:
+
+```python
+config = OpenArmsFollowerConfig(
+    port="can0",
+    # Gripper torque limit (fraction of motor's max torque)
+    gripper_torque_limit=0.5,  # 50% of max torque
+)
+```
+
+Lower torque limits prevent damage when gripping delicate objects.
+
+### 3. MIT Control Gains
+
+Control responsiveness and stability via PID-like gains:
+
+```python
+config = OpenArmsFollowerConfig(
+    port="can0",
+    position_kp=10.0,  # Position gain (higher = more responsive)
+    position_kd=0.5,   # Velocity damping (higher = more damped)
+)
+```
+
+**Guidelines**:
+- **For following (robot)**: Higher gains for responsiveness
+  - `position_kp=10.0`, `position_kd=0.5`
+- **For teleoperation (leader)**: Lower gains or disable torque for manual movement
+  - `manual_control=True` (torque disabled)
+
+### 4. Velocity Limits
+
+Velocity limits are enforced by the Damiao motors based on motor type. For DM4310:
+- Max velocity: 30 rad/s ≈ 1718°/s
+
+The motors will automatically limit velocity to safe values.
+
+## Teleoperation
+
+### Leader Arm Setup
+
+The leader arm is moved manually (torque disabled) to generate commands:
+
+```python
+from lerobot.teleoperators.openarms import OpenArmsLeader
+from lerobot.teleoperators.openarms.config_openarms_leader import OpenArmsLeaderConfig
+
+config = OpenArmsLeaderConfig(
+    port="can1",  # Separate CAN interface for leader
+    id="openarms_leader",
+    manual_control=True,  # Torque disabled for manual movement
+    is_dual_arm=True,
+)
+
+leader = OpenArmsLeader(config)
+leader.connect()
+
+# Read current position as action
+action = leader.get_action()
+# action contains positions for all joints in degrees
+```
+
+### Safety Considerations for Teleoperation
+
+1. **Use separate CAN interfaces** for leader and follower to avoid conflicts
+2. **Enable max_relative_target** on follower to smooth abrupt movements
+3. **Lower torque limits** on follower to prevent damage from tracking errors
+4. **Test with one arm** before enabling dual arm teleoperation
+5. **Have emergency stop** ready (power switch or CAN disable)
+
+```python
+# Recommended follower config for teleoperation
+follower_config = OpenArmsFollowerConfig(
+    port="can0",
+    max_relative_target=5.0,  # Small steps for smooth following
+    gripper_torque_limit=0.3, # Low torque for safety
+    position_kp=5.0,  # Lower gains for gentler following
+    position_kd=0.3,
+)
+```
+
+## Troubleshooting
+
+### Motor Shaking/Unstable
+
+- **Lower control gains**: Reduce `position_kp` and `position_kd`
+- **Check calibration**: Re-run calibration procedure
+- **Verify power**: Insufficient current can cause instability
+- **Check mechanical**: Loose connections, binding, or damaged components
+
+### CAN Bus Errors
+
+```bash
+# Check for errors
+ip -s link show can0
+
+# Reset CAN interface
+sudo ip link set can0 down
+sudo ip link set can0 up
+```
+
+### Control Mode
+
+OpenArms uses **MIT control mode** which allows simultaneous control of:
+- Position (degrees)
+- Velocity (degrees/second)
+- Torque (N·m)
+- Position gain (Kp)
+- Velocity damping (Kd)
+
+### Communication
+
+- **Protocol**: CAN 2.0 at 1 Mbps (or CAN-FD at 5 Mbps)
+- **Frame format**: Standard 11-bit IDs
+- **Update rate**: Typically 50-100 Hz depending on motor count
+- **Latency**: ~10-20ms per motor command
+
+## References
+
+- [OpenArm Official Documentation](https://docs.openarm.dev/)
+- [OpenArm Setup Guide](https://docs.openarm.dev/software/setup/)
+- [Motor ID Configuration](https://docs.openarm.dev/software/setup/motor-id)
+- [CAN Interface Setup](https://docs.openarm.dev/software/setup/can-setup)
+- [Motor Communication Test](https://docs.openarm.dev/software/setup/configure-test)
+- [Damiao Motor Documentation](https://wiki.seeedstudio.com/damiao_series/)
+- [Enactic GitHub](https://github.com/enactic/openarm_can)
