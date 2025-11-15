@@ -112,7 +112,12 @@ def eval_policy(
             )
 
             # The preprocessor may add extra keys, filter them out
-            observation = {k: v for k, v in observation.items() if k in cfg.policy.input_features}
+            observation = {
+                k: v
+                for k, v in observation.items()
+                if k in cfg.policy.input_features
+                or k in ["observation.language.tokens", "observation.language.attention_mask"]
+            }
 
             # Change image from HWC to CHW
             observation = {
