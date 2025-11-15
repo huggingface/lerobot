@@ -209,6 +209,8 @@ class ACFQLVLAConfig(PreTrainedConfig):
     # Shorter state and action vectors will be padded
     max_state_dim: int = 32
     max_action_dim: int = 32
+    num_vlm_layers: int = 16  # Number of layers used in the VLM (first num_vlm_layers layers)
+    expert_width_multiplier: float = 0.75  # The action expert hidden size (wrt to the VLM)
 
     bc_policy: str | None = None  # TODO: Literal["mlp","SmolVLA", "Gemma3nVLA"] | None = None
 

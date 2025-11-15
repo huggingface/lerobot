@@ -576,8 +576,8 @@ class ACFQLVLAPolicy(
             # cfg_policy.train_state_proj = False
             cfg_policy.max_action_dim = self.config.max_action_dim
             cfg_policy.max_state_dim = self.config.max_state_dim
-            cfg_policy.num_vlm_layers = 2
-            cfg_policy.expert_width_multiplier = 0.5
+            cfg_policy.num_vlm_layers = self.config.num_vlm_layers
+            cfg_policy.expert_width_multiplier = self.config.expert_width_multiplier
         elif self.config.bc_policy == "Gemma3nVLA":
             raise NotImplementedError("Gemma3nVLA policy not implemented yet.")
         else:
