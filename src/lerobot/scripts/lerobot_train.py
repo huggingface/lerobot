@@ -89,6 +89,7 @@ def update_policy(
     # Let accelerator handle mixed precision
     with accelerator.autocast():
         loss, output_dict = policy.forward(batch)
+        output_dict = {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in output_dict.items()}
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
     # Use accelerator's backward method
