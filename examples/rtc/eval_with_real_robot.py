@@ -34,6 +34,19 @@ Usage:
         --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
         --task="Move green small object into the purple platform" \
         --duration=120
+
+    # Run RTC with Real robot with pi0.5 policy
+    uv run examples/rtc/eval_with_real_robot.py \
+        --policy.path=helper2424/pi05_check_rtc \
+        --policy.device=mps \
+        --rtc.enabled=true \
+        --rtc.execution_horizon=20 \
+        --robot.type=so100_follower \
+        --robot.port=/dev/tty.usbmodem58FA0834591 \
+        --robot.id=so100_follower \
+        --robot.cameras="{ gripper: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+        --task="Move green small object into the purple platform" \
+        --duration=120
 """
 
 import logging
@@ -476,7 +489,7 @@ def actor_control(
                 action_count += 1
 
             dt_s = time.perf_counter() - start_time
-            time.sleep((action_interval - dt_s) - 0.001)
+            time.sleep(max(0, (action_interval - dt_s) - 0.001))
 
         logger.info(f"[ACTOR] Actor thread shutting down. Total actions executed: {action_count}")
     except Exception as e:
