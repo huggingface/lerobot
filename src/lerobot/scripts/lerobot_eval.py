@@ -45,7 +45,17 @@ Note that in both examples, the repo/folder should contain at least `config.json
 
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
+import sys
+import os
 
+# ABSOLUTE PATH TO YOUR PROJECT ROOT
+PROJECT_ROOT = "/home/jade_choghari/robot/lerobot"
+
+# Add root to sys.path BEFORE any imports
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+from xvla.models.modeling_xvla import XVLA
+from xvla.models.processing_xvla import XVLAProcessor
 import concurrent.futures as cf
 import json
 import logging
@@ -155,14 +165,11 @@ def rollout(
         disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
         leave=False,
     )
-    from transformers import AutoProcessor, AutoModel
-    model = AutoModel.from_pretrained(
-        "2toINF/X-VLA-WidowX",
-        trust_remote_code=True,
-        device="cuda"
-    )
+
+    model = XVLA.from_pretrained("/raid/jade/models/xvla-libero")
+    model.eval()
     model.to("cuda")
-    processor = AutoProcessor.from_pretrained("2toINF/X-VLA-WidowX", num_views=2, trust_remote_code=True)
+    processor = XVLAProcessor.from_pretrained("/raid/jade/models/xvla-libero", num_views=2)
 
     from collections import deque
     action_queue = deque(maxlen=30)
@@ -174,40 +181,43 @@ def rollout(
             all_observations.append(deepcopy(observation))
 
         # Infer "task" from attributes of environments.
+        observation[f"observation.images.image"] = observation[f"observation.images.image"] * 255
+        observation[f"observation.images.image2"] = observation[f"observation.images.image2"] * 255
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
-        inputs = processor([observation[f"observation.images.image"], observation[f"observation.images.image2"]], observation["task"], do_rescale=False)
+        inputs = processor([observation[f"observation.images.image"], observation[f"observation.images.image2"]], observation["task"])
         observation = preprocessor(observation)
-        observation["observation.images.image"] = inputs["image_input"][:, 0, ...].to("cuda")
-        observation["observation.images.image2"] = inputs["image_input"][:, 1, ...].to("cuda")
-        observation["observation.language.tokens"] = inputs["input_ids"].to("cuda")
+        inputs_1 = policy._build_model_inputs(observation)
+        for k in inputs.keys() & inputs_1.keys():   # intersection of keys
+            a = inputs[k].to("cuda")
+            b = inputs_1[k].to("cuda")
 
-        # (Pdb) inputs.keys()
-        # dict_keys(['input_ids', 'image_input', 'image_mask', 'proprio', 'domain_id'])
-        # image_input should be torch.Size([1, 2, 3, 224, 224])
-        img0 = observation["observation.images.image"]      # [1, 3, 224, 224]
-        img1 = observation["observation.images.image2"]     # [1, 3, 224, 224]
-        img0 = img0.unsqueeze(1)   # [1, 1, 3, 224, 224]
-        img1 = img1.unsqueeze(1)   # [1, 1, 3, 224, 224]
-        obs = {}
-        obs['input_ids'] = observation["observation.language.tokens"].to("cuda")
-        obs['image_input'] = torch.cat([img0, img1], dim=1).to("cuda")
-        obs['domain_id'] = torch.tensor([int(3)], dtype=torch.long).to("cuda")
-        obs['proprio'] = observation["observation.state"].to("cuda")
-        obs['image_mask'] = inputs["image_mask"].to("cuda")
+            print(f"\n🔎 Key: {k}")
 
-        with torch.inference_mode():
-            action_1 = policy.select_action(observation).to("cpu").numpy()
-            if len(action_queue) == 0:
-                action = model.generate_actions(**obs, steps=10)     # shape (1, 30, 20)
-                actions_np = action.detach().cpu().numpy()
-                # add each timestep as (1, 20)
-                for t in range(actions_np.shape[1]):
-                    act_t = actions_np[:, t, :] 
-                    action_queue.append(act_t)
-                action = action_queue.popleft()
+            # Check shape
+            print("  shape:", a.shape, b.shape)
+
+            # Check if close
+            if torch.allclose(a, b, atol=1e-5, rtol=1e-5):
+                print("  ✔️ tensors are equal (allclose)")
             else:
-                action = action_queue.popleft()
+                diff = torch.abs(a - b)
+                print("  ❌ tensors differ")
+                print("  max diff:", diff.max().item())
+                print("  mean diff:", diff.mean().item())
+        breakpoint()
+        with torch.inference_mode():
+            action = policy.select_action(observation).to("cpu").numpy()
+            # if len(action_queue) == 0:
+            #     action = model.generate_actions(**inputs_1, steps=10)     # shape (1, 30, 20)
+            #     actions_np = action.detach().cpu().numpy()
+            #     # add each timestep as (1, 20)
+            #     for t in range(actions_np.shape[1]):
+            #         act_t = actions_np[:, t, :] 
+            #         action_queue.append(act_t)
+            #     action = action_queue.popleft()
+            # else:
+            #     action = action_queue.popleft()
         # action = postprocessor(action)
         # breakpoint()
         # .to("cpu").numpy()
@@ -216,10 +226,10 @@ def rollout(
         target_act = action[:, 9:10]
         action_numpy = np.concatenate([target_eef, target_axis, target_act], axis=-1)
 
-        target_eef_1 = action_1[:, :3]
-        target_axis_1 = Rotate6D_to_AxisAngle(action_1[:, 3:9])
-        target_act_1 = action_1[:, 9:10]
-        action_numpy_1 = np.concatenate([target_eef_1, target_axis_1, target_act_1], axis=-1)
+        # target_eef_1 = action_1[:, :3]
+        # target_axis_1 = Rotate6D_to_AxisAngle(action_1[:, 3:9])
+        # target_act_1 = action_1[:, 9:10]
+        # action_numpy_1 = np.concatenate([target_eef_1, target_axis_1, target_act_1], axis=-1)
         breakpoint()
 
         # Convert to CPU / numpy.

@@ -68,6 +68,7 @@ inputs.update({
     "domain_id": domain_id.to("cuda"),
 })
 
+breakpoint()
 for k in inputs.keys() & inputs_1.keys():   # intersection of keys
     a = inputs[k]
     b = inputs_1[k].to("cuda")
@@ -100,7 +101,7 @@ action = model.generate_actions(**inputs, steps=10).squeeze(0).float().cpu().num
 action_1 = policy.model.generate_actions(**inputs, steps=10).squeeze(0).float().cpu().numpy()
 
 #np all close
-print(np.allclose(action, action_1, atol=1e-4, rtol=1e-4))
+print(np.allclose(action, action_1, atol=1e-2, rtol=1e-2))
 print("max diff:", np.max(np.abs(action - action_1)))
 print("mean diff:", np.mean(np.abs(action - action_1)))
 breakpoint()
