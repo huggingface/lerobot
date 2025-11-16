@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.act.modeling_act import ACTPolicy
@@ -26,20 +27,35 @@ from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 
-NUM_EPISODES = 2
+NUM_EPISODES = 1
 FPS = 30
 EPISODE_TIME_SEC = 60
-TASK_DESCRIPTION = "My task description"
-HF_MODEL_ID = "<hf_username>/<model_repo_id>"
-HF_DATASET_ID = "<hf_username>/<eval_dataset_repo_id>"
+TASK_DESCRIPTION = "Put the green tissues in the box."
+HF_MODEL_ID = "models/act"
+HF_DATASET_ID = "pinkocelot/il_gym2"
+
+# 检查并设置设备
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"=== Device Configuration ===")
+print(f"Using device: {device}")
+if torch.cuda.is_available():
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"CUDA version: {torch.version.cuda}")
+else:
+    print("⚠ WARNING: GPU not available, inference will be slow on CPU")
 
 # Create the robot configuration & robot
-robot_config = LeKiwiClientConfig(remote_ip="192.168.31.203", id="lekiwi")
-
+robot_config = LeKiwiClientConfig(remote_ip="192.168.31.203", id="my_awesome_kiwi")
 robot = LeKiwiClient(robot_config)
 
-# Create policy
+# Create policy with explicit device
 policy = ACTPolicy.from_pretrained(HF_MODEL_ID)
+policy.model = policy.model.to(device)
+policy.config.device = device
+
+# 验证模型在正确设备上
+actual_device = next(policy.model.parameters()).device
+print(f"✓ Model loaded on: {actual_device}")
 
 # Configure the dataset features
 action_features = hw_to_dataset_features(robot.action_features, ACTION)
@@ -61,12 +77,10 @@ preprocessor, postprocessor = make_pre_post_processors(
     policy_cfg=policy,
     pretrained_path=HF_MODEL_ID,
     dataset_stats=dataset.meta.stats,
-    # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
-    preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
+    preprocessor_overrides={"device_processor": {"device": str(device)}},  # 使用正确的设备
 )
 
 # Connect the robot
-# To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
 robot.connect()
 
 # TODO(Steven): Update this example to use pipelines
@@ -90,7 +104,7 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
         events=events,
         fps=FPS,
         policy=policy,
-        preprocessor=preprocessor,  # Pass the pre and post policy processors
+        preprocessor=preprocessor,
         postprocessor=postprocessor,
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
