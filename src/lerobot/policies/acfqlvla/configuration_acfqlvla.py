@@ -76,6 +76,25 @@ class PolicyConfig:
     init_final: float | None = None
 
 
+@dataclass
+class CalQLConfig:
+    enabled: bool = False
+    weight: float = 1.0
+    num_samples: int = 10
+    temperature: float = 1.0
+    # Sampling source for CalQL candidates: single-source modes or a mixed policy mode
+    sample_source: str = "uniform"  # ["uniform", "gaussian", "policy_noise", "policy_mixed"]
+    # Aggregation over critic ensemble for sampled actions
+    critic_agg: str = "min"  # ["min", "mean"]
+    # Whether to include the dataset action Q-value inside the log-sum-exp set
+    include_dataset_in_lse: bool = True
+    # Subtract log(K) after logsumexp for numerical calibration (as in CO-RFT reference)
+    normalize_by_k: bool = True
+    # Optional clipping on the CalQL diff (lse - q_data)
+    clip_diff_min: float = -float("inf")
+    clip_diff_max: float = float("inf")
+
+
 @PreTrainedConfig.register_subclass("acfqlvla")
 @dataclass
 class ACFQLVLAConfig(PreTrainedConfig):
@@ -219,6 +238,9 @@ class ACFQLVLAConfig(PreTrainedConfig):
     vlm_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"  # Select the VLM backbone.
     pad_language_to: str = "longest"  # "max_length"
     tokenizer_max_length: int = 48
+
+    # Calibrated Q-Learning regularizer
+    calql: CalQLConfig = field(default_factory=CalQLConfig)
 
     def __post_init__(self):
         super().__post_init__()
