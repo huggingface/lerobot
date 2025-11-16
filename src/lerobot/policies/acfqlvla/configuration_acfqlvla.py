@@ -236,6 +236,7 @@ class ACFQLVLAConfig(PreTrainedConfig):
     bc_policy: str | None = None  # TODO: Literal["mlp","SmolVLA", "Gemma3nVLA"] | None = None
 
     vlm_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"  # Select the VLM backbone.
+    load_vlm_weights: bool = True  # Set to True in case of training the expert from scratch. True when init from pretrained SmolVLA weights
     pad_language_to: str = "longest"  # "max_length"
     tokenizer_max_length: int = 48
 

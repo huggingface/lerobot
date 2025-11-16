@@ -749,6 +749,7 @@ class ACFQLVLAPolicy(
             cfg_policy.max_state_dim = self.config.max_state_dim
             cfg_policy.num_vlm_layers = self.config.num_vlm_layers
             cfg_policy.expert_width_multiplier = self.config.expert_width_multiplier
+            cfg_policy.load_vlm_weights = self.config.load_vlm_weights
         elif self.config.bc_policy == "Gemma3nVLA":
             raise NotImplementedError("Gemma3nVLA policy not implemented yet.")
         else:
@@ -768,16 +769,26 @@ class ACFQLVLAPolicy(
         kwargs["config"] = cfg_policy
 
         if isinstance(cfg_policy, SmolVLAConfig):
-            vlm_config = AutoConfig.from_pretrained(cfg_policy.vlm_model_name)
-            vlm_config.text_config.num_hidden_layers = cfg_policy.num_vlm_layers
-            self.vlm: SmolVLMForConditionalGeneration = AutoModelForImageTextToText.from_pretrained(
-                pretrained_model_name_or_path=cfg_policy.vlm_model_name,
-                device_map="auto",
-                torch_dtype="bfloat16",
-                low_cpu_mem_usage=True,
-                config=vlm_config,
-            )
-            vla_policy = SmolVLAPolicy(vlm=self.vlm, **kwargs)
+            if self.config.load_vlm_weights:
+                vlm_config = AutoConfig.from_pretrained(cfg_policy.vlm_model_name)
+                vlm_config.text_config.num_hidden_layers = cfg_policy.num_vlm_layers
+                self.vlm: SmolVLMForConditionalGeneration = AutoModelForImageTextToText.from_pretrained(
+                    pretrained_model_name_or_path=cfg_policy.vlm_model_name,
+                    device_map="auto",
+                    torch_dtype="bfloat16",
+                    low_cpu_mem_usage=True,
+                    config=vlm_config,
+                )
+                vla_policy = SmolVLAPolicy(vlm=self.vlm, **kwargs)
+            else:
+                vla_policy = SmolVLAPolicy.from_pretrained(
+                    pretrained_name_or_path="lerobot/smolvla_base",
+                    **kwargs,
+                    # device_map="auto",
+                    # torch_dtype="bfloat16",
+                    # low_cpu_mem_usage=True,
+                )
+                self.vlm = vla_policy.model.vlm_with_expert.vlm
 
         # elif isinstance(cfg_policy, Gemma3nVLAConfig):
         #     raise NotImplementedError("Gemma3nVLA encoder not implemented yet.")

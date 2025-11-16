@@ -17,6 +17,7 @@ import copy
 import torch
 from torch import nn
 from transformers import (
+    AutoConfig,
     AutoModel,
     AutoModelForImageTextToText,
     AutoProcessor,
@@ -87,11 +88,8 @@ class SmolVLMWithExpertModel(nn.Module):
                 self.vlm = vlm
             config = self.vlm.config
         else:
-            raise ValueError(
-                "Loading VLM weights is required for SmolVLMWithExpertModel. Set load_vlm_weights to True."
-            )
-            # config = AutoConfig.from_pretrained(model_id)
-            # self.vlm = SmolVLMForConditionalGeneration(config=config)
+            config = AutoConfig.from_pretrained(model_id)
+            self.vlm = SmolVLMForConditionalGeneration(config=config)
         self.processor = AutoProcessor.from_pretrained(model_id)
         if num_vlm_layers > 0:
             print(f"Reducing the number of VLM layers to {num_vlm_layers} ...")
