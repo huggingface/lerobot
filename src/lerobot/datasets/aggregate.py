@@ -125,10 +125,43 @@ def update_meta_data(
         pd.DataFrame: Updated DataFrame with adjusted indices and timestamps.
     """
 
-    df["meta/episodes/chunk_index"] = df["meta/episodes/chunk_index"] + meta_idx["chunk"]
-    df["meta/episodes/file_index"] = df["meta/episodes/file_index"] + meta_idx["file"]
-    df["data/chunk_index"] = data_idx["chunk"]
-    df["data/file_index"] = data_idx["file"]
+    # Store original metadata file indices before updating
+    df["_orig_meta_chunk"] = df["meta/episodes/chunk_index"].copy()
+    df["_orig_meta_file"] = df["meta/episodes/file_index"].copy()
+    
+    # Apply per-source-file destination mapping for metadata files
+    src_to_dest_meta = meta_idx.get("src_to_dest", {})
+    if src_to_dest_meta:
+        for idx in df.index:
+            src_key = (df.at[idx, "_orig_meta_chunk"], df.at[idx, "_orig_meta_file"])
+            dest_chunk, dest_file = src_to_dest_meta.get(src_key, (meta_idx["chunk"], meta_idx["file"]))
+            df.at[idx, "meta/episodes/chunk_index"] = dest_chunk
+            df.at[idx, "meta/episodes/file_index"] = dest_file
+    else:
+        # Fallback to simple mapping (for backward compatibility)
+        df["meta/episodes/chunk_index"] = meta_idx["chunk"]
+        df["meta/episodes/file_index"] = meta_idx["file"]
+    
+    # Clean up temporary metadata columns
+    df = df.drop(columns=["_orig_meta_chunk", "_orig_meta_file"])
+    
+    # Store original data file indices before updating
+    df["_orig_data_chunk"] = df["data/chunk_index"].copy()
+    df["_orig_data_file"] = df["data/file_index"].copy()
+    # Apply per-source-file destination mapping for data files
+    src_to_dest_data = data_idx.get("src_to_dest", {})
+    if src_to_dest_data:
+        for idx in df.index:
+            src_key = (df.at[idx, "_orig_data_chunk"], df.at[idx, "_orig_data_file"])
+            dest_chunk, dest_file = src_to_dest_data.get(src_key, (data_idx["chunk"], data_idx["file"]))
+            df.at[idx, "data/chunk_index"] = dest_chunk
+            df.at[idx, "data/file_index"] = dest_file
+    else:
+        # Fallback to simple mapping (for backward compatibility)
+        df["data/chunk_index"] = data_idx["chunk"]
+        df["data/file_index"] = data_idx["file"]
+    # Clean up temporary columns
+    df = df.drop(columns=["_orig_data_chunk", "_orig_data_file"])
     for key, video_idx in videos_idx.items():
         # Store original video file indices before updating
         orig_chunk_col = f"videos/{key}/chunk_index"
@@ -230,8 +263,8 @@ def aggregate_datasets(
     unique_tasks = pd.concat([m.tasks for m in all_metadata]).index.unique()
     dst_meta.tasks = pd.DataFrame({"task_index": range(len(unique_tasks))}, index=unique_tasks)
 
-    meta_idx = {"chunk": 0, "file": 0}
-    data_idx = {"chunk": 0, "file": 0}
+    meta_idx = {"chunk": 0, "file": 0, "src_to_dest": {}}
+    data_idx = {"chunk": 0, "file": 0, "src_to_dest": {}}
     videos_idx = {
         key: {"chunk": 0, "file": 0, "latest_duration": 0, "episode_duration": 0} for key in video_keys
     }
@@ -424,6 +457,11 @@ def aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx):
     for chunk_idx, file_idx in chunk_file_ids:
         src_path = src_meta.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         df = pd.read_parquet(src_path)
+        
+        # Pre-populate the mapping for this source file before calling update_meta_data
+        # This ensures episodes can look up their correct destination
+        meta_idx["src_to_dest"][(chunk_idx, file_idx)] = (meta_idx["chunk"], meta_idx["file"])
+        
         df = update_meta_data(
             df,
             dst_meta,
@@ -442,6 +480,9 @@ def aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx):
             contains_images=False,
             aggr_root=dst_meta.root,
         )
+        
+        # Update the mapping after potential rotation
+        meta_idx["src_to_dest"][(chunk_idx, file_idx)] = (meta_idx["chunk"], meta_idx["file"])
 
     # Increment latest_duration by the total duration added from this source dataset
     for k in videos_idx:
